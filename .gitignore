@@ -1,0 +1,50 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# PTVS analysis
+.ptvs/
+
+# Build results
+/bin/
+/obj/
+/dist/
+/MANIFEST
+
+# Result of running python setup.py install/pip install -e
+/build/
+/msal.egg-info/
+
+# Test results
+/TestResults/
+
+# User-specific files
+*.suo
+*.user
+*.sln.docstates
+/tests/config.py
+
+# Windows image file caches
+Thumbs.db
+ehthumbs.db
+
+# Folder config file
+Desktop.ini
+
+# Recycle Bin used on file shares
+$RECYCLE.BIN/
+
+# Mac desktop service store files
+.DS_Store
+
+.idea
+src/build
+*.iml
+/doc/_build
+
+# Virtual Environments
+/env*
+
+# Visual Studio Files
+/.vs/*
+/tests/.vs/*
