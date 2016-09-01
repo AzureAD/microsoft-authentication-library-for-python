@@ -1,3 +1,4 @@
+import requests
 
 
 class ClientApplication(object):
@@ -34,6 +35,13 @@ class ConfidentialClientApplication(ClientApplication):
         self.user_token_cache = user_token_cache
         self.app_token_cache = None  # TODO
 
-    def acquire_token_for_client(self, scope, policy=None):  # Can policy default to None?
-        pass
+    def acquire_token_for_client(self, scope, policy=None):
+        data = {
+            'grant_type': 'client_credentials', 'client_id': self.client_id,
+            'scope': scope}
+        if True:  # TODO: Need to differenciate the certificate use case
+            data['client_secret'] = self.client_credential
+        return requests.post(
+            self.authority + self.TOKEN_ENDPOINT_PATH, params={'p': policy},
+            headers={'Accept': 'application/json'}, data=data).json()
 
