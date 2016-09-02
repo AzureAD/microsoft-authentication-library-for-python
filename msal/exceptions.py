@@ -32,3 +32,6 @@ class MsalError(Exception):
         super(MsalError, self).__init__(self.msg.format(**kwargs), *args)
         self.kwargs = kwargs
 
+class MsalServiceError(MsalError):
+    msg = "{error}: {error_description}"
+

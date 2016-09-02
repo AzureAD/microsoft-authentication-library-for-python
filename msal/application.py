@@ -1,9 +1,10 @@
-import requests
+from . import oauth2
+from .exceptions import MsalServiceError
 
 
 class ClientApplication(object):
     DEFAULT_AUTHORITY = "https://login.microsoftonline.com/common/"
-    TOKEN_ENDPOINT_PATH = '/oauth2/v2.0/token'
+    TOKEN_ENDPOINT_PATH = 'oauth2/v2.0/token'
 
     def __init__(
             self, client_id,
@@ -35,13 +36,13 @@ class ConfidentialClientApplication(ClientApplication):
         self.user_token_cache = user_token_cache
         self.app_token_cache = None  # TODO
 
-    def acquire_token_for_client(self, scope, policy=None):
-        data = {
-            'grant_type': 'client_credentials', 'client_id': self.client_id,
-            'scope': scope}
-        if True:  # TODO: Need to differenciate the certificate use case
-            data['client_secret'] = self.client_credential
-        return requests.post(
-            self.authority + self.TOKEN_ENDPOINT_PATH, params={'p': policy},
-            headers={'Accept': 'application/json'}, data=data).json()
+    def acquire_token_for_client(self, scope, policy=''):
+        result = oauth2.ClientCredentialGrant(
+            self.client_id,
+            token_endpoint="%s%s?policy=%s" % (
+                self.authority, self.TOKEN_ENDPOINT_PATH, policy),
+            ).get_token(scope=scope, client_secret=self.client_credential)
+        if 'error' in result:
+            raise MsalServiceError(**result)
+        return result
 
