@@ -51,6 +51,7 @@ class Client(object):
             'state': state,
             }
         params.update(kwargs)
+        params = {k: v for k, v in params.items() if v is not None}  # clean up
         return "%s%s%s" % (self.authorization_endpoint, sep, urlencode(params))
 
     def get_token(
@@ -64,6 +65,7 @@ class Client(object):
             'client_id': self.client_id, 'grant_type': grant_type,
             'scope': scope}
         data.update(kwargs)
+        # We don't need to clean up None values here, because requests lib will.
 
         # Quoted from https://tools.ietf.org/html/rfc6749#section-2.3.1
         # Clients in possession of a client password MAY use the HTTP Basic
