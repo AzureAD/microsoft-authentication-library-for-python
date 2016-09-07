@@ -1,10 +1,8 @@
-from . import oauth2
-from .exceptions import MsalServiceError
+from . import request
 
 
 class ClientApplication(object):
     DEFAULT_AUTHORITY = "https://login.microsoftonline.com/common/"
-    TOKEN_ENDPOINT_PATH = 'oauth2/v2.0/token'
 
     def __init__(
             self, client_id,
@@ -37,12 +35,7 @@ class ConfidentialClientApplication(ClientApplication):
         self.app_token_cache = None  # TODO
 
     def acquire_token_for_client(self, scope, policy=''):
-        result = oauth2.ClientCredentialGrant(
-            self.client_id,
-            token_endpoint="%s%s?policy=%s" % (
-                self.authority, self.TOKEN_ENDPOINT_PATH, policy),
-            ).get_token(scope=scope, client_secret=self.client_credential)
-        if 'error' in result:
-            raise MsalServiceError(**result)
-        return result
+        return request.ClientCredentialRequest(
+            client_id=self.client_id, client_credential=self.client_credential,
+            scope=scope, policy=policy, authority=self.authority).run()
 
