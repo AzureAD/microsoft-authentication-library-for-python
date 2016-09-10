@@ -58,9 +58,51 @@ class BaseRequest(object):
 
 class ClientCredentialRequest(BaseRequest):
     def get_token(self):
-        return oauth2.ClientCredentialGrant(
-            self.client_id,
-            token_endpoint="%s%s?policy=%s" % (
-                self.authority, self.TOKEN_ENDPOINT_PATH, self.policy),
-            ).get_token(scope=self.scope, client_secret=self.client_credential)
+        token_endpoint="%s%s?policy=%s" % (
+            self.authority, self.TOKEN_ENDPOINT_PATH, self.policy)
+        if isinstance(self.client_credential, dict):  # certification logic
+            return ClientCredentialCertificateGrant(
+                    self.client_id, token_endpoint=token_endpoint
+                ).get_token(
+                    self.client_credential['certificate'],
+                    self.client_credential['thumbprint'],
+                    scope=self.scope)
+        else:
+            return oauth2.ClientCredentialGrant(
+                    self.client_id, token_endpoint=token_endpoint
+                ).get_token(
+                    scope=self.scope, client_secret=self.client_credential)
+
+
+import binascii
+import base64
+import uuid
+
+import jwt
+
+
+def create(private_pem, thumbprint, audience, issuer, subject=None):
+    assert private_pem.startswith('-----BEGIN PRIVATE KEY-----'), "Wrong format"
+    payload = {  # key names are all from JWT standard names
+        'aud': audience,
+        'iss': issuer,
+        'sub': subject or issuer,
+        'nbf': time.time(),
+        'exp': time.time() + 10*60,  # 10 minutes
+        'jti': str(uuid.uuid4()),
+        }
+    # http://self-issued.info/docs/draft-jones-json-web-token-01.html
+    h = {'x5t': base64.urlsafe_b64encode(binascii.a2b_hex(thumbprint)).decode()}
+    return jwt.encode(payload, private_pem, algorithm='RS256', headers=h)  # .decode()  # TODO: Is the decode() really necessary?
+
+
+class ClientCredentialCertificateGrant(oauth2.ClientCredentialGrant):
+    def get_token(self, pem, thumbprint, scope=None):
+        JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+        assertion = create(pem, thumbprint, self.token_endpoint, self.client_id)
+        import logging
+        logging.warning('assertion: %s', assertion)
+        return super(ClientCredentialCertificateGrant, self).get_token(
+            client_assertion_type=JWT_BEARER, client_assertion=assertion,
+            scope=scope)
 
