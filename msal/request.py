@@ -1,19 +1,30 @@
 import time
 
-from . import oauth2
 from .exceptions import MsalServiceError
 
 
 class BaseRequest(object):
-    TOKEN_ENDPOINT_PATH = 'oauth2/v2.0/token'
 
     def __init__(
-            self, authority=None, token_cache=None, scope=None, policy="",
+            self, authority=None, token_cache=None,
+	    scope=None, policy="",  # TBD: If scope and policy are paramters
+		# of both high level ClientApplication.acquire_token()
+                # and low level oauth2.*Grant.get_token(),
+		# shouldn't they be the parameters for run()?
             client_id=None, client_credential=None, authenticator=None,
             support_adfs=False, restrict_to_single_user=False):
         if not scope:
             raise ValueError("scope cannot be empty")
         self.__dict__.update(locals())
+
+        # TODO: Temporary solution here
+        self.token_endpoint = authority
+        if authority.startswith('https://login.microsoftonline.com/common/'):
+            self.token_endpoint += 'oauth2/v2.0/token'
+        elif authority.startswith('https://login.windows.net/'):  # AAD?
+            self.token_endpoint += 'oauth2/token'
+        if policy:
+            self.token_endpoint += '?policy={}'.format(policy)
 
     def run(self):
         """Returns a dictionary, which typically contains following keys:
@@ -54,55 +65,4 @@ class BaseRequest(object):
 
     def get_token(self):
         raise NotImplemented("Use proper sub-class instead")
-
-
-class ClientCredentialRequest(BaseRequest):
-    def get_token(self):
-        token_endpoint="%s%s?policy=%s" % (
-            self.authority, self.TOKEN_ENDPOINT_PATH, self.policy)
-        if isinstance(self.client_credential, dict):  # certification logic
-            return ClientCredentialCertificateGrant(
-                    self.client_id, token_endpoint=token_endpoint
-                ).get_token(
-                    self.client_credential['certificate'],
-                    self.client_credential['thumbprint'],
-                    scope=self.scope)
-        else:
-            return oauth2.ClientCredentialGrant(
-                    self.client_id, token_endpoint=token_endpoint
-                ).get_token(
-                    scope=self.scope, client_secret=self.client_credential)
-
-
-import binascii
-import base64
-import uuid
-
-import jwt
-
-
-def create(private_pem, thumbprint, audience, issuer, subject=None):
-    assert private_pem.startswith('-----BEGIN PRIVATE KEY-----'), "Wrong format"
-    payload = {  # key names are all from JWT standard names
-        'aud': audience,
-        'iss': issuer,
-        'sub': subject or issuer,
-        'nbf': time.time(),
-        'exp': time.time() + 10*60,  # 10 minutes
-        'jti': str(uuid.uuid4()),
-        }
-    # http://self-issued.info/docs/draft-jones-json-web-token-01.html
-    h = {'x5t': base64.urlsafe_b64encode(binascii.a2b_hex(thumbprint)).decode()}
-    return jwt.encode(payload, private_pem, algorithm='RS256', headers=h)  # .decode()  # TODO: Is the decode() really necessary?
-
-
-class ClientCredentialCertificateGrant(oauth2.ClientCredentialGrant):
-    def get_token(self, pem, thumbprint, scope=None):
-        JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
-        assertion = create(pem, thumbprint, self.token_endpoint, self.client_id)
-        import logging
-        logging.warning('assertion: %s', assertion)
-        return super(ClientCredentialCertificateGrant, self).get_token(
-            client_assertion_type=JWT_BEARER, client_assertion=assertion,
-            scope=scope)
 
