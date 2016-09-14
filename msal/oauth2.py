@@ -29,7 +29,7 @@ class Client(object):
         sep = '&' if '?' in self.authorization_endpoint else '?'
         return "%s%s%s" % (self.authorization_endpoint, sep, urlencode(params))
 
-    def get_token(self, grant_type, **kwargs):
+    def _get_token(self, grant_type, **kwargs):
         data = {'client_id': self.client_id, 'grant_type': grant_type}
         data.update(kwargs)  # Note: None values will override data
         # We don't need to clean up None values here, because requests lib will.
@@ -56,8 +56,12 @@ class Client(object):
         # so we simply return it here, without needing to invent an exception.
         return resp.json()
 
+    def get_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
+        return self._get_token(
+            "refresh_token", refresh_token=refresh_token, scope=scope, **kwargs)
 
-class AuthorizationCodeGrant(Client):
+
+class AuthorizationCodeGrant(Client):  # a.k.a. Web Application Flow
 
     def authorization_url(
             self, redirect_uri=None, scope=None, state=None, **kwargs):
@@ -85,7 +89,7 @@ class AuthorizationCodeGrant(Client):
         :param client_id: Required, if the client is not authenticating itself.
             See https://tools.ietf.org/html/rfc6749#section-3.2.1
         """
-        return super(AuthorizationCodeGrantFlow, self).get_token(
+        return super(AuthorizationCodeGrantFlow, self)._get_token(
             'authorization_code', code=code,
             redirect_uri=redirect_uri, **kwargs)
 
@@ -99,34 +103,31 @@ def validate_authorization(params, state=None):
     return params
 
 
-class ImplicitGrant(Client):
+class ImplicitGrant(Client):  # a.k.a. Browser or Mobile Application flow
     # This class is only for illustrative purpose.
     # You probably won't implement your ImplicitGrant flow in Python anyway.
     def authorization_url(self, redirect_uri=None, scope=None, state=None):
         return super(ImplicitGrant, self).authorization_url('token', **locals())
 
-    def get_token(self):
-        raise NotImplemented("Token is already issued during authorization")
 
-
-class ResourceOwnerPasswordCredentialsGrant(Client):
+class ResourceOwnerPasswordCredentialsGrant(Client):  # Legacy Application flow
 
     def authorization_url(self, **kwargs):
         raise NotImplemented(
             "You should have already obtained resource owner's password")
 
     def get_token(self, username, password, scope=None, **kwargs):
-        return super(ResourceOwnerPasswordCredentialsGrant, self).get_token(
+        return super(ResourceOwnerPasswordCredentialsGrant, self)._get_token(
             "password", username=username, password=password, scope=scope,
             **kwargs)
 
 
-class ClientCredentialGrant(Client):
+class ClientCredentialGrant(Client):  # a.k.a. Backend Application flow
     def authorization_url(self, **kwargs):
         # Since the client authentication is used as the authorization grant
         raise NotImplemented("No additional authorization request is needed")
 
     def get_token(self, scope=None, **kwargs):
-        return super(ClientCredentialGrant, self).get_token(
+        return super(ClientCredentialGrant, self)._get_token(
             "client_credentials", scope=scope, **kwargs)
 
