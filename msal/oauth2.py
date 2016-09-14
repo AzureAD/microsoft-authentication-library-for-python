@@ -117,7 +117,15 @@ class ResourceOwnerPasswordCredentialsGrant(Client):  # Legacy Application flow
 
 
 class ClientCredentialGrant(Client):  # a.k.a. Backend Application flow
-    def get_token(self, scope=None, **kwargs):
+    def get_token(self, client_secret=None, scope=None, **kwargs):
+        '''Get token by client credential.
+
+        :param client_secret:
+            You may explicitly provide it, so that it will show up in http body;
+            Or you may skip it, the base class will use self.client_credentials;
+            Or you may skip it and provide other parameters required by your AS.
+        '''
         return super(ClientCredentialGrant, self)._get_token(
-            "client_credentials", scope=scope, **kwargs)
+            "client_credentials", client_secret=client_secret, scope=scope,
+            **kwargs)
 
