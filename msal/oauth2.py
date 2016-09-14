@@ -22,7 +22,7 @@ class Client(object):
         self.authorization_endpoint = authorization_endpoint
         self.token_endpoint = token_endpoint
 
-    def authorization_url(self, response_type, **kwargs):
+    def _authorization_url(self, response_type, **kwargs):
         params = {'client_id': self.client_id, 'response_type': response_type}
         params.update(kwargs)  # Note: None values will override params
         params = {k: v for k, v in params.items() if v is not None}  # clean up
@@ -71,7 +71,7 @@ class AuthorizationCodeGrant(Client):  # a.k.a. Web Application Flow
         :param scope: It is a space-delimited, case-sensitive string.
             Some ID provider can accept empty string to represent default scope.
         """
-        return super(AuthorizationCodeGrant, self).authorization_url(
+        return super(AuthorizationCodeGrant, self)._authorization_url(
             'code', redirect_uri=redirect_uri, scope=scope, state=state,
             **kwargs)
         # Later when you receive the response at your redirect_uri,
@@ -104,18 +104,12 @@ def validate_authorization(params, state=None):
 
 
 class ImplicitGrant(Client):  # a.k.a. Browser or Mobile Application flow
-    # This class is only for illustrative purpose.
-    # You probably won't implement your ImplicitGrant flow in Python anyway.
     def authorization_url(self, redirect_uri=None, scope=None, state=None):
-        return super(ImplicitGrant, self).authorization_url('token', **locals())
+        return super(ImplicitGrant, self)._authorization_url(
+            'token', **locals())
 
 
 class ResourceOwnerPasswordCredentialsGrant(Client):  # Legacy Application flow
-
-    def authorization_url(self, **kwargs):
-        raise NotImplemented(
-            "You should have already obtained resource owner's password")
-
     def get_token(self, username, password, scope=None, **kwargs):
         return super(ResourceOwnerPasswordCredentialsGrant, self)._get_token(
             "password", username=username, password=password, scope=scope,
@@ -123,10 +117,6 @@ class ResourceOwnerPasswordCredentialsGrant(Client):  # Legacy Application flow
 
 
 class ClientCredentialGrant(Client):  # a.k.a. Backend Application flow
-    def authorization_url(self, **kwargs):
-        # Since the client authentication is used as the authorization grant
-        raise NotImplemented("No additional authorization request is needed")
-
     def get_token(self, scope=None, **kwargs):
         return super(ClientCredentialGrant, self)._get_token(
             "client_credentials", scope=scope, **kwargs)
