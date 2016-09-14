@@ -24,14 +24,14 @@ class Client(object):
 
     def authorization_url(self, response_type, **kwargs):
         params = {'client_id': self.client_id, 'response_type': response_type}
-        params.update(kwargs)
+        params.update(kwargs)  # Note: None values will override params
         params = {k: v for k, v in params.items() if v is not None}  # clean up
         sep = '&' if '?' in self.authorization_endpoint else '?'
         return "%s%s%s" % (self.authorization_endpoint, sep, urlencode(params))
 
     def get_token(self, grant_type, **kwargs):
         data = {'client_id': self.client_id, 'grant_type': grant_type}
-        data.update(kwargs)
+        data.update(kwargs)  # Note: None values will override data
         # We don't need to clean up None values here, because requests lib will.
 
         # Quoted from https://tools.ietf.org/html/rfc6749#section-2.3.1
@@ -42,8 +42,9 @@ class Client(object):
         # client credentials in the request-body using the following
         # parameters: client_id, client_secret.
         auth = None
-        if self.client_credential and not 'client_secret' in data:
-            auth = (self.client_id, self.client_credential)  # HTTP Basic Auth
+        if (self.client_credential and data.get('client_id')
+                and 'client_secret' not in data):
+            auth = (data['client_id'], self.client_credential) # HTTP Basic Auth
 
         resp = requests.post(
             self.token_endpoint, headers={'Accept': 'application/json'},
@@ -72,7 +73,7 @@ class AuthorizationCodeGrant(Client):
         # Later when you receive the response at your redirect_uri,
         # validate_authorization() may be handy to check the returned state.
 
-    def get_token(self, code, redirect_uri=None, client_id=None, **kwargs):
+    def get_token(self, code, redirect_uri=None, **kwargs):
         """Get an access token.
 
         See also https://tools.ietf.org/html/rfc6749#section-4.1.3
@@ -86,7 +87,7 @@ class AuthorizationCodeGrant(Client):
         """
         return super(AuthorizationCodeGrantFlow, self).get_token(
             'authorization_code', code=code,
-            redirect_uri=redirect_uri, client_id=client_id, **kwargs)
+            redirect_uri=redirect_uri, **kwargs)
 
 
 def validate_authorization(params, state=None):
