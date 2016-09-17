@@ -13,6 +13,7 @@ import requests
 class Client(object):
     # This low-level interface works. Yet you'll find those *Grant sub-classes
     # more friendly to remind you what parameters are needed in each scenario.
+    # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
     def __init__(
             self, client_id,
             client_credential=None,  # Only needed for Confidential Client
@@ -23,6 +24,7 @@ class Client(object):
         self.token_endpoint = token_endpoint
 
     def _authorization_url(self, response_type, **kwargs):
+        # response_type can be set to "code" or "token".
         params = {'client_id': self.client_id, 'response_type': response_type}
         params.update(kwargs)  # Note: None values will override params
         params = {k: v for k, v in params.items() if v is not None}  # clean up
@@ -61,13 +63,15 @@ class Client(object):
             "refresh_token", refresh_token=refresh_token, scope=scope, **kwargs)
 
 
-class AuthorizationCodeGrant(Client):  # a.k.a. Web Application Flow
+class AuthorizationCodeGrant(Client):
+    # Can be used by Confidential Client or Public Client.
+    # See https://tools.ietf.org/html/rfc6749#section-4.1.3
 
     def authorization_url(
             self, redirect_uri=None, scope=None, state=None, **kwargs):
         """Generate an authorization url to be visited by resource owner.
 
-        :param response_type: MUST be set to "code" or "token".
+        :param redirect_uri: Optional. Server will use the pre-registered one.
         :param scope: It is a space-delimited, case-sensitive string.
             Some ID provider can accept empty string to represent default scope.
         """
@@ -103,7 +107,14 @@ def validate_authorization(params, state=None):
     return params
 
 
-class ImplicitGrant(Client):  # a.k.a. Browser or Mobile Application flow
+class ImplicitGrant(Client):
+    """Implicit Grant is used to obtain access tokens (but not refresh token).
+
+    It is optimized for public clients known to operate a particular
+    redirection URI.  These clients are typically implemented in a browser
+    using a scripting language such as JavaScript.
+    Quoted from https://tools.ietf.org/html/rfc6749#section-4.2
+    """
     def authorization_url(self, redirect_uri=None, scope=None, state=None):
         return super(ImplicitGrant, self)._authorization_url(
             'token', **locals())
