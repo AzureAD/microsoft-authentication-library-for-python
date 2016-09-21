@@ -26,12 +26,13 @@
 #------------------------------------------------------------------------------
 
 class MsalError(Exception):
-    msg = 'An unspecified error'
+    # Define the template in Unicode to accommodate possible Unicode variables
+    msg = u'An unspecified error'
 
     def __init__(self, *args, **kwargs):
         super(MsalError, self).__init__(self.msg.format(**kwargs), *args)
         self.kwargs = kwargs
 
 class MsalServiceError(MsalError):
-    msg = "{error}: {error_description}"
+    msg = u"{error}: {error_description}"
 
