@@ -93,7 +93,7 @@ class AuthorizationCodeGrant(Client):
         :param client_id: Required, if the client is not authenticating itself.
             See https://tools.ietf.org/html/rfc6749#section-3.2.1
         """
-        return super(AuthorizationCodeGrantFlow, self)._get_token(
+        return super(AuthorizationCodeGrant, self)._get_token(
             'authorization_code', code=code,
             redirect_uri=redirect_uri, **kwargs)
 
