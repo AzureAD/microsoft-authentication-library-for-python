@@ -48,6 +48,7 @@ class Client(object):
                 and 'client_secret' not in data):
             auth = (data['client_id'], self.client_credential) # HTTP Basic Auth
 
+        assert self.token_endpoint, "You need to provide token_endpoint"
         resp = requests.post(
             self.token_endpoint, headers={'Accept': 'application/json'},
             data=data, auth=auth)
