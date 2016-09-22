@@ -1,4 +1,4 @@
-from . import request
+from .client_credential import ClientCredentialRequest
 
 
 class ClientApplication(object):
@@ -35,7 +35,7 @@ class ConfidentialClientApplication(ClientApplication):
         self.app_token_cache = None  # TODO
 
     def acquire_token_for_client(self, scope, policy=''):
-        return request.ClientCredentialRequest(
+        return ClientCredentialRequest(
             client_id=self.client_id, client_credential=self.client_credential,
             scope=scope, policy=policy, authority=self.authority).run()
 

@@ -1,19 +1,30 @@
 import time
 
-from . import oauth2
 from .exceptions import MsalServiceError
 
 
 class BaseRequest(object):
-    TOKEN_ENDPOINT_PATH = 'oauth2/v2.0/token'
 
     def __init__(
-            self, authority=None, token_cache=None, scope=None, policy="",
+            self, authority=None, token_cache=None,
+	    scope=None, policy="",  # TBD: If scope and policy are paramters
+		# of both high level ClientApplication.acquire_token()
+                # and low level oauth2.*Grant.get_token(),
+		# shouldn't they be the parameters for run()?
             client_id=None, client_credential=None, authenticator=None,
             support_adfs=False, restrict_to_single_user=False):
         if not scope:
             raise ValueError("scope cannot be empty")
         self.__dict__.update(locals())
+
+        # TODO: Temporary solution here
+        self.token_endpoint = authority
+        if authority.startswith('https://login.microsoftonline.com/common/'):
+            self.token_endpoint += 'oauth2/v2.0/token'
+        elif authority.startswith('https://login.windows.net/'):  # AAD?
+            self.token_endpoint += 'oauth2/token'
+        if policy:
+            self.token_endpoint += '?policy={}'.format(policy)
 
     def run(self):
         """Returns a dictionary, which typically contains following keys:
@@ -54,13 +65,4 @@ class BaseRequest(object):
 
     def get_token(self):
         raise NotImplemented("Use proper sub-class instead")
-
-
-class ClientCredentialRequest(BaseRequest):
-    def get_token(self):
-        return oauth2.ClientCredentialGrant(
-            self.client_id,
-            token_endpoint="%s%s?policy=%s" % (
-                self.authority, self.TOKEN_ENDPOINT_PATH, self.policy),
-            ).get_token(scope=self.scope, client_secret=self.client_credential)
 
