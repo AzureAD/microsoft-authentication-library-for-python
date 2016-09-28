@@ -33,7 +33,7 @@ class Client(object):
         sep = '&' if '?' in self.authorization_endpoint else '?'
         return "%s%s%s" % (self.authorization_endpoint, sep, urlencode(params))
 
-    def _get_token(self, grant_type, **kwargs):
+    def _get_token(self, grant_type, query=None, **kwargs):
         data = {'client_id': self.client_id, 'grant_type': grant_type}
         data.update(kwargs)  # Note: None values will override data
         # We don't need to clean up None values here, because requests lib will.
@@ -56,7 +56,7 @@ class Client(object):
         assert self.token_endpoint, "You need to provide token_endpoint"
         resp = requests.post(
             self.token_endpoint, headers={'Accept': 'application/json'},
-            data=data, auth=auth)
+            params=query, data=data, auth=auth)
         if resp.status_code>=500:
             resp.raise_for_status()  # TODO: Will probably retry here
         # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
