@@ -4,14 +4,13 @@ from .client_credential import ClientCredentialRequest
 
 
 class ClientApplication(object):
-    DEFAULT_AUTHORITY = "https://login.microsoftonline.com/common/"
 
     def __init__(
             self, client_id,
-            validate_authority=True, authority=DEFAULT_AUTHORITY):
+            authority_url="https://login.microsoftonline.com/common/",
+            validate_authority=True):
         self.client_id = client_id
-        self.validate_authority = validate_authority
-        self.authority = authority
+        self.authority = Authority(authority_url, validate_authority)
 
     def acquire_token_silent(
             self, scope,
@@ -20,12 +19,13 @@ class ClientApplication(object):
             policy='',
             force_refresh=False,  # To force refresh an Access Token (not a RT)
             **kwargs):
-        a = Authority(self.authority, policy=policy)  # TODO
+        a = Authority(authority) if authority else self.authority
         client = oauth2.Client(self.client_id, token_endpoint=a.token_endpoint)
         refresh_token = kwargs.get('refresh_token')  # For testing purpose
         response = client.get_token_by_refresh_token(
             refresh_token, scope=scope,
-            client_secret=getattr(self, 'client_credential'))  # TODO: JWT too
+            client_secret=getattr(self, 'client_credential'),  # TODO: JWT too
+            query={'policy': policy} if policy else None)
         # TODO: refresh the refresh_token
         return response
 
@@ -106,13 +106,13 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             sending them on the wire.)
         :param str state: Recommended by OAuth2 for CSRF protection.
         """
-        a = Authority(self.authority, policy=policy)  # TODO
+        a = Authority(authority) if authority else self.authority
         grant = oauth2.AuthorizationCodeGrant(
             self.client_id, authorization_endpoint=a.authorization_endpoint)
         return grant.authorization_url(
-            redirect_uri=redirect_uri,
+            redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             scope=scope,  # TODO: handle additional_scope
-            state=state, login_hint=login_hint,
+            policy=policy if policy else None,
             **(extra_query_params or {}))
 
     def acquire_token_by_authorization_code(
@@ -148,12 +148,12 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         #    So only omit this when you are working with only one scope.
         scope = scope or ["openid", "email", "profile", "offline_access"]  # TBD
 
-        a = Authority(self.authority, policy=policy)  # TODO
         grant = oauth2.AuthorizationCodeGrant(
-            self.client_id, token_endpoint=a.token_endpoint)
+            self.client_id, token_endpoint=self.authority.token_endpoint)
         return grant.get_token(
             code, scope=scope, redirect_uri=redirect_uri,
-            client_secret=self.client_credential)
+            client_secret=self.client_credential,  # TODO: Support certificate
+            query={'policy': policy} if policy else None)
 
     def acquire_token_on_behalf_of(
             self, user_assertion, scope, authority=None, policy=''):

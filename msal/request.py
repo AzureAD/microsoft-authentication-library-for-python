@@ -17,15 +17,6 @@ class BaseRequest(object):
             raise ValueError("scope cannot be empty")
         self.__dict__.update(locals())
 
-        # TODO: Temporary solution here
-        self.token_endpoint = authority
-        if authority.startswith('https://login.microsoftonline.com/common/'):
-            self.token_endpoint += 'oauth2/v2.0/token'
-        elif authority.startswith('https://login.windows.net/'):  # AAD?
-            self.token_endpoint += 'oauth2/token'
-        if policy:
-            self.token_endpoint += '?policy={}'.format(policy)
-
     def run(self):
         """Returns a dictionary, which typically contains following keys:
 
@@ -38,7 +29,7 @@ class BaseRequest(object):
           instead you would need to access them safely by dict.get('...').
         """
         # TODO Some cache stuff here
-        raw = self.get_token()
+        raw = self.get_token()  # TODO: Support policy
         if 'error' in raw:
             raise MsalServiceError(**raw)
         # TODO: Deal with refresh_token
