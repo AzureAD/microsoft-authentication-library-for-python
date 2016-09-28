@@ -54,6 +54,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         # It will handle the TWO round trips of Authorization Code Grant flow.
         raise NotImplemented()
 
+    # TODO: Support Device Code flow
+
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
     def __init__(
@@ -83,13 +85,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
     def get_authorization_request_url(
             self,
             scope,
-            # additional_scope=None,
-                # TBD: Under the hood, we will merge additional_scope and scope
-                # before sending them on the wire. So there is no practical
-                # difference than removing this parameter and using scope only.
+            # additional_scope=None,  # Not yet implemented
             login_hint=None,
-            state=None,  # TBD: It is not in MSAL-dotnet nor MSAL-Android,
-                         # but it is recommended in OAuth2 RFC. Do we want it?
+            state=None,  # Recommended by OAuth2 for CSRF protection
             policy='',
             redirect_uri=None,
             authority=None,  # By default, it will use self.authority;
@@ -106,6 +104,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             token for in this particular operation.
             (Under the hood, we simply merge scope and additional_scope before
             sending them on the wire.)
+        :param str state: Recommended by OAuth2 for CSRF protection.
         """
         a = Authority(self.authority, policy=policy)  # TODO
         grant = oauth2.AuthorizationCodeGrant(
@@ -118,20 +117,12 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
     def acquire_token_by_authorization_code(
             self,
-            code,  # TBD:
-                   # .NET 's protected method defines 2 parameters: code, scope.
-                   # .NET 's public method defines 2 parameters: scope, code.
-            scope,  # TBD: This could be optional. Shall it? See the document below.
+            code,
+            scope,  # Syntactically required. STS accepts empty value though.
             redirect_uri=None,
-                # TBD: It is not in MSAL-dotnet. Do we need it? OAuth2 RFC says:
-                #
                 # REQUIRED, if the "redirect_uri" parameter was included in the
                 # authorization request as described in Section 4.1.1, and their
                 # values MUST be identical.
-                #
-                # So, shall we either also provide this parameter here,
-                # or shall we remove the redirect_uri in the
-                # get_authorization_request_url()?
             policy=''
             ):
         """The second half of the Authorization Code Grant.
@@ -153,8 +144,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             token to be issued for the corresponding audience.
         """
         #    If absent, STS will give you a token associated to ONE of the scope
-        #    sent in the authorization request. So only omit this when you are
-        #    working with only one scope.
+        #    sent in the authorization request, typically the very first one.
+        #    So only omit this when you are working with only one scope.
         scope = scope or ["openid", "email", "profile", "offline_access"]  # TBD
 
         a = Authority(self.authority, policy=policy)  # TODO
