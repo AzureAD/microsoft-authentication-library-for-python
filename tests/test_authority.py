@@ -26,7 +26,7 @@ class TestAuthority(unittest.TestCase):
     def test_unknown_authority(self):
         url = 'https://login.microsoftonline.in/unknown-tenant.onmicrosoft.com'
         with self.assertRaises(MsalServiceError):
-            a = Authority(url)
+            a = Authority(url)  # Expects tenant discovery failure
         a = Authority(url, validate_authority=False)
         self.assertEqual(
             a.authorization_endpoint,
@@ -38,20 +38,34 @@ class TestAuthority(unittest.TestCase):
 
 class TestAuthorityInternalHelpers(unittest.TestCase):  # They aren't public API
 
-    def test_canonicalize(self):
+    def test_canonicalize_tenant_followed_by_extra_paths(self):
         self.assertEqual(
-            canonicalize("https://example.com/tenant/subpath?foo=bar"),
+            canonicalize("https://example.com/tenant/subpath?foo=bar#fragment"),
             ("https://example.com/tenant", "example.com", "tenant"))
 
-    def test_canonicalize_without_https(self):
+    def test_canonicalize_tenant_followed_by_extra_query(self):
+        self.assertEqual(
+            canonicalize("https://example.com/tenant?foo=bar#fragment"),
+            ("https://example.com/tenant", "example.com", "tenant"))
+
+    def test_canonicalize_tenant_followed_by_extra_fragment(self):
+        self.assertEqual(
+            canonicalize("https://example.com/tenant#fragment"),
+            ("https://example.com/tenant", "example.com", "tenant"))
+
+    def test_canonicalize_rejects_non_https(self):
         with self.assertRaises(ValueError):
             canonicalize("http://non.https.example.com/tenant")
 
-    def test_canonicalize_without_tenant(self):
+    def test_canonicalize_rejects_tenantless(self):
         with self.assertRaises(ValueError):
             canonicalize("https://no.tenant.example.com")
 
-    def test_instance_discovery_with_unknow_tenant(self):
+    def test_canonicalize_rejects_tenantless_host_with_trailing_slash(self):
+        with self.assertRaises(ValueError):
+            canonicalize("https://no.tenant.example.com/")
+
+    def test_instance_discovery_with_unknown_tenant(self):
         with self.assertRaises(MsalServiceError):
             instance_discovery("https://login.microsoftonline.in/nonexist.com")
 
