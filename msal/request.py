@@ -3,6 +3,36 @@ import time
 from .exceptions import MsalServiceError
 
 
+def decorate_scope(
+        scope, client_id, policy,
+        reserved_scope=frozenset(['openid', 'profile', 'offline_access'])):
+    scope_set = set(scope)  # Input scope is typically a list. Copy it to a set.
+    if scope_set & reserved_scope:
+        # These scopes are reserved for the API to provide good experience.
+        # We could make the developer pass these and then if they do they will
+        # come back asking why they don't see refresh token or user information.
+        raise ValueError(
+            "API does not accept {} value as user-provided scopes".format(
+                reserved_scope))
+    if client_id in scope_set:
+        if len(scope_set) > 1:
+            # We make developers pass their client id, so that they can express
+            # the intent that they want the token for themselves (their own
+            # app).
+            # If we do not restrict them to passing only client id then they
+            # could write code where they expect an id token but end up getting
+            # access_token.
+            raise ValueError("Client Id can only be provided as a single scope")
+        decorated = set(reserved_scope)  # Make a writable copy
+    else:
+        decorated = scope_set | reserved_scope
+    if policy:
+        # special case b2c scenarios to not send email and profile as scopes
+        decorated.discard("email")
+        decorated.discard("profile")
+    return decorated
+
+
 class BaseRequest(object):
 
     def __init__(

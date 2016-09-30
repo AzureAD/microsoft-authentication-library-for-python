@@ -1,5 +1,6 @@
 from . import oauth2
 from .authority import Authority
+from .request import decorate_scope
 from .client_credential import ClientCredentialRequest
 
 
@@ -23,7 +24,8 @@ class ClientApplication(object):
         client = oauth2.Client(self.client_id, token_endpoint=a.token_endpoint)
         refresh_token = kwargs.get('refresh_token')  # For testing purpose
         response = client.get_token_by_refresh_token(
-            refresh_token, scope=scope,
+            refresh_token,
+            scope=decorate_scope(scope, self.client_id, policy),
             client_secret=getattr(self, 'client_credential'),  # TODO: JWT too
             query={'policy': policy} if policy else None)
         # TODO: refresh the refresh_token
@@ -80,7 +82,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
     def acquire_token_for_client(self, scope, policy=''):
         return ClientCredentialRequest(
             client_id=self.client_id, client_credential=self.client_credential,
-            scope=scope, policy=policy, authority=self.authority).run()
+            scope=scope,  # This grant flow requires no scope decoration
+            policy=policy, authority=self.authority).run()
 
     def get_authorization_request_url(
             self,
@@ -111,7 +114,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             self.client_id, authorization_endpoint=a.authorization_endpoint)
         return grant.authorization_url(
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
-            scope=scope,  # TODO: handle additional_scope
+            scope=decorate_scope(scope, self.client_id, policy),
             policy=policy if policy else None,
             **(extra_query_params or {}))
 
@@ -143,15 +146,16 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             So the developer need to specify a scope so that we can restrict the
             token to be issued for the corresponding audience.
         """
-        #    If absent, STS will give you a token associated to ONE of the scope
-        #    sent in the authorization request, typically the very first one.
-        #    So only omit this when you are working with only one scope.
-        scope = scope or ["openid", "email", "profile", "offline_access"]  # TBD
-
+        # If scope is absent on the wire, STS will give you a token associated
+        # to the FIRST scope sent during the authorization request.
+        # So in theory, you can omit scope here when you were working with only
+        # one scope. But, MSAL decorates your scope anyway, so they are never
+        # really empty.
         grant = oauth2.AuthorizationCodeGrant(
             self.client_id, token_endpoint=self.authority.token_endpoint)
         return grant.get_token(
-            code, scope=scope, redirect_uri=redirect_uri,
+            code, redirect_uri=redirect_uri,
+            scope=decorate_scope(scope, self.client_id, policy),
             client_secret=self.client_credential,  # TODO: Support certificate
             query={'policy': policy} if policy else None)
 

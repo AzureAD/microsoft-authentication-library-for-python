@@ -15,7 +15,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
     def test_confidential_client_using_secret(self):
         app = ConfidentialClientApplication(
             self.config['CLIENT_ID'], self.config['CLIENT_SECRET'])
-        result = app.acquire_token_for_client(self.scope, "policy")
+        result = app.acquire_token_for_client(self.scope)
         self.assertIn('access_token', result)
 
     def test_confidential_client_using_certificate(self):
@@ -27,7 +27,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
             }
         app = ConfidentialClientApplication(
             self.config['CLIENT_ID'], certificate)
-        result = app.acquire_token_for_client(self.scope, "policy")
+        result = app.acquire_token_for_client(self.scope)
         self.assertIn('access_token', result)
 
     def test_get_authorization_request_url(self):
@@ -41,10 +41,10 @@ class TestConfidentialClientApplication(unittest.TestCase):
     def test_acquire_token_by_authorization_code(self):
         app = ConfidentialClientApplication(
             self.config['CLIENT_ID'], self.config['CLIENT_SECRET'])
-        auth_code = "OAQ...snipped..."
+        auth_code = self.config['AUTHORIZATION_CODE']  # TODO: It expires soon
         token = app.acquire_token_by_authorization_code(auth_code, self.scope2)
         self.assertEqual(token.get('error_description', ""), "")  # Expired?
-        # print(token)
+        print(token)  # Show your refresh token
 
     def test_acquire_token_silent(self):
         app = ConfidentialClientApplication(
