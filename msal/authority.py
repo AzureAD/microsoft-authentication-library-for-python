@@ -12,8 +12,6 @@ WELL_KNOWN_AUTHORITY_HOSTS = set([
     'login-us.microsoftonline.com',
     'login.microsoftonline.de',
     ])
-AUTHORIZATION_ENDPOINT = "/oauth2/v2.0/authorize"
-TOKEN_ENDPOINT = "/oauth2/v2.0/token"
 
 
 class Authority(object):
@@ -24,11 +22,16 @@ class Authority(object):
     """
     def __init__(self, authority_url, validate_authority=True):
         canonicalized, host, tenant = canonicalize(authority_url)
-        if host not in WELL_KNOWN_AUTHORITY_HOSTS and validate_authority:
-            # AAD only requires instance_discovery() passes, and ignores result
-            instance_discovery(canonicalized + AUTHORIZATION_ENDPOINT)
-        self.authorization_endpoint = canonicalized + AUTHORIZATION_ENDPOINT
-        self.token_endpoint = canonicalized + TOKEN_ENDPOINT
+        tenant_discovery_endpoint = (  # Hard code a V2 pattern as default value
+            'https://login.windows.net/{}/v2.0/.well-known/openid-configuration'
+            .format(tenant))
+        if validate_authority and host not in WELL_KNOWN_AUTHORITY_HOSTS:
+            tenant_discovery_endpoint = instance_discovery(
+                canonicalized + "/oauth2/v2.0/authorize")
+        openid_config = tenant_discovery(tenant_discovery_endpoint)
+        self.authorization_endpoint = openid_config['authorization_endpoint']
+        self.token_endpoint = openid_config['token_endpoint']
+
 
 def canonicalize(url):
     # Returns (canonicalized_url, host, tenant). Raises ValueError on errors.
@@ -40,12 +43,19 @@ def canonicalize(url):
             "https://login.microsoftonline.com/<tenant_name>" % url)
     return m.group(0), m.group(1), m.group(2)
 
-def instance_discovery(url, response=None):
-    resp = requests.get(
+def instance_discovery(url, response=None):  # Returns tenant discovery endpoint
+    resp = requests.get(  # Note: This URL seemingly returns V1 endpoint only
         'https://login.windows.net/common/discovery/instance',  # World-wide
         params={'authorization_endpoint': url, 'api-version': '1.0'})
     payload = response or resp.json()
     if 'tenant_discovery_endpoint' not in payload:
         raise MsalServiceError(status_code=resp.status_code, **payload)
     return payload['tenant_discovery_endpoint']
+
+def tenant_discovery(tenant_discovery_endpoint):  # Returns Openid Configuration
+    resp = requests.get(tenant_discovery_endpoint)
+    payload = resp.json()
+    if 'authorization_endpoint' in payload and 'token_endpoint' in payload:
+        return payload
+    raise MsalServiceError(status_code=resp.status_code, **payload)
 
