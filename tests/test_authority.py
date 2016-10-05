@@ -5,12 +5,13 @@ from tests import unittest
 
 class TestAuthority(unittest.TestCase):
     COMMON_AUTH_ENDPOINT = \
-        'https://login.windows.net/common/oauth2/v2.0/authorize'
-    COMMON_TOKEN_ENDPOINT = 'https://login.windows.net/common/oauth2/v2.0/token'
+        'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
+    COMMON_TOKEN_ENDPOINT = \
+        'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 
     def test_wellknown_host_and_tenant(self):
         # Test one specific sample in straightforward way, for readability
-        a = Authority('https://login.windows.net/common')
+        a = Authority('https://login.microsoftonline.com/common')
         self.assertEqual(a.authorization_endpoint, self.COMMON_AUTH_ENDPOINT)
         self.assertEqual(a.token_endpoint, self.COMMON_TOKEN_ENDPOINT)
 
@@ -22,13 +23,14 @@ class TestAuthority(unittest.TestCase):
                 a.authorization_endpoint, self.COMMON_AUTH_ENDPOINT)
             self.assertEqual(a.token_endpoint, self.COMMON_TOKEN_ENDPOINT)
 
-    @unittest.skip("Havne't found a valid less-known host for this experiment")
     def test_lessknown_host_will_return_a_set_of_v1_endpoints(self):
         # This is an observation for current (2016-10) server-side behavior.
         # It is probably not a strict API contract. I simply mention it here.
-        v1_token_endpoint = 'https://less.known.host/common/oauth2/token'
-        a = Authority('https://less.known.host/common')
+        less_known = 'login.windows.net'  # less.known.host/
+        v1_token_endpoint = 'https://{}/common/oauth2/token'.format(less_known)
+        a = Authority('https://{}/common'.format(less_known))
         self.assertEqual(a.token_endpoint, v1_token_endpoint)
+        self.assertNotIn('v2.0', a.token_endpoint)
 
     def test_unknown_host(self):
         with self.assertRaisesRegexp(MsalServiceError, "invalid_instance"):
@@ -36,7 +38,7 @@ class TestAuthority(unittest.TestCase):
 
     def test_unknown_host_valid_tenant_and_skip_host_validation(self):
         # When skipping host (a.k.a. instance) validation,
-        # the Tenant Discovery will always use login.windows.net as instance,
+        # the Tenant Discovery will always use WORLD_WIDE service as instance,
         # so, if the tenant happens to exist there, it will find some endpoints.
         a = Authority('https://incorrect.host/common', validate_authority=False)
         self.assertEqual(a.authorization_endpoint, self.COMMON_AUTH_ENDPOINT)
@@ -80,9 +82,8 @@ class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
 class TestAuthorityInternalHelperInstanceDiscovery(unittest.TestCase):
 
     def test_instance_discovery_happy_case(self):
-        endpoint = instance_discovery("https://login.windows.net/tenant")
         self.assertEqual(
-            endpoint,
+            instance_discovery("https://login.windows.net/tenant"),
             "https://login.windows.net/tenant/.well-known/openid-configuration")
 
     def test_instance_discovery_with_unknown_instance(self):

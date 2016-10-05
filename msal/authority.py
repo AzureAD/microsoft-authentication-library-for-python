@@ -5,9 +5,9 @@ import requests
 from .exceptions import MsalServiceError
 
 
+WORLD_WIDE = 'login.microsoftonline.com'  # There was an alias login.windows.net
 WELL_KNOWN_AUTHORITY_HOSTS = set([
-    'login.windows.net',
-    'login.microsoftonline.com',
+    WORLD_WIDE,
     'login.chinacloudapi.cn',
     'login-us.microsoftonline.com',
     'login.microsoftonline.de',
@@ -23,8 +23,8 @@ class Authority(object):
     def __init__(self, authority_url, validate_authority=True):
         canonicalized, host, tenant = canonicalize(authority_url)
         tenant_discovery_endpoint = (  # Hard code a V2 pattern as default value
-            'https://login.windows.net/{}/v2.0/.well-known/openid-configuration'
-            .format(tenant))
+            'https://{}/{}/v2.0/.well-known/openid-configuration'
+            .format(WORLD_WIDE, tenant))
         if validate_authority and host not in WELL_KNOWN_AUTHORITY_HOSTS:
             tenant_discovery_endpoint = instance_discovery(
                 canonicalized + "/oauth2/v2.0/authorize")
@@ -45,7 +45,7 @@ def canonicalize(url):
 
 def instance_discovery(url, response=None):  # Returns tenant discovery endpoint
     resp = requests.get(  # Note: This URL seemingly returns V1 endpoint only
-        'https://login.windows.net/common/discovery/instance',  # World-wide
+        'https://{}/common/discovery/instance'.format(WORLD_WIDE),
         params={'authorization_endpoint': url, 'api-version': '1.0'})
     payload = response or resp.json()
     if 'tenant_discovery_endpoint' not in payload:
