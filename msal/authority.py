@@ -35,13 +35,13 @@ class Authority(object):
 
 def canonicalize(url):
     # Returns (canonicalized_url, host, tenant). Raises ValueError on errors.
-    m = re.match("https://([^/]+)/([^/\?#]+)", url.lower())
-    if not m:
+    match_object = re.match("https://([^/]+)/([^/\?#]+)", url.lower())
+    if not match_object:
         raise ValueError(
             "Your given address (%s) should consist of "
             "an https url with a minimum of one segment in a path: e.g. "
             "https://login.microsoftonline.com/<tenant_name>" % url)
-    return m.group(0), m.group(1), m.group(2)
+    return match_object.group(0), match_object.group(1), match_object.group(2)
 
 def instance_discovery(url, response=None):  # Returns tenant discovery endpoint
     resp = requests.get(  # Note: This URL seemingly returns V1 endpoint only
