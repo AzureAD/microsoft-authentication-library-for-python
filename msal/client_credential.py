@@ -13,7 +13,7 @@ class ClientCredentialRequest(BaseRequest):
     def __init__(self, **kwargs):
         super(ClientCredentialRequest, self).__init__(**kwargs)
         self.grant = ClientCredentialGrant(
-            self.client_id, token_endpoint=self.token_endpoint)
+            self.client_id, token_endpoint=self.authority.token_endpoint)
 
     def get_token(self):
         if isinstance(self.client_credential, dict):
