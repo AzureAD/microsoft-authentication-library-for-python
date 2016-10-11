@@ -8,10 +8,11 @@ class ClientApplication(object):
 
     def __init__(
             self, client_id,
-            authority_url="https://login.microsoftonline.com/common/",
+            authority="https://login.microsoftonline.com/common/",
             validate_authority=True):
         self.client_id = client_id
-        self.authority = Authority(authority_url, validate_authority)
+        self.authority = Authority(authority, validate_authority)
+            # Here the self.authority is not the same type as authority in input
 
     def acquire_token_silent(
             self, scope,
