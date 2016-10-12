@@ -16,10 +16,15 @@ class Client(object):
     # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
     def __init__(
             self, client_id,
-            client_credential=None,  # Only needed for Confidential Client
+            client_secret=None,  # Triggers HTTP AUTH for Confidential Client
+            default_body=None,  # a dict to be sent in each token request,
+                # usually contains Confidential Client authentication parameters
+                # such as {'client_id': 'your_id', 'client_secret': 'secret'}
+                # if you choose to not use HTTP AUTH
             authorization_endpoint=None, token_endpoint=None):
         self.client_id = client_id
-        self.client_credential = client_credential
+        self.client_secret = client_secret
+        self.default_body = default_body or {}
         self.authorization_endpoint = authorization_endpoint
         self.token_endpoint = token_endpoint
 
@@ -39,6 +44,7 @@ class Client(object):
             **kwargs  # All relevant parameters, which will go into the body
             ):
         data = {'client_id': self.client_id, 'grant_type': grant_type}
+        data.update(self.default_body)  # It may contain authen parameters
         data.update(  # Here we use None to mean "use default value instead"
             {k: v for k, v in kwargs.items() if v is not None})
         # We don't have to clean up None values here, because requests lib will.
@@ -54,9 +60,8 @@ class Client(object):
         # client credentials in the request-body using the following
         # parameters: client_id, client_secret.
         auth = None
-        if (self.client_credential and data.get('client_id')
-                and 'client_secret' not in data):
-            auth = (data['client_id'], self.client_credential) # HTTP Basic Auth
+        if self.client_secret and self.client_id:
+            auth = (self.client_id, self.client_secret)  # for HTTP Basic Auth
 
         assert self.token_endpoint, "You need to provide token_endpoint"
         resp = requests.post(
@@ -144,15 +149,13 @@ class ResourceOwnerPasswordCredentialsGrant(Client):  # Legacy Application flow
 
 
 class ClientCredentialGrant(Client):  # a.k.a. Backend Application flow
-    def get_token(self, client_secret=None, scope=None, **kwargs):
+    def get_token(self, scope=None, **kwargs):
         '''Get token by client credential.
 
-        :param client_secret:
-            You may explicitly provide it, so that it will show up in http body;
-            Or you may skip it, the base class will use self.client_credentials;
-            Or you may skip it and provide other parameters required by your AS.
+        You may want to also provide an optional client_secret parameter,
+        or you can provide such extra parameters as `default_body` during the
+        class initialization.
         '''
         return super(ClientCredentialGrant, self)._get_token(
-            "client_credentials", client_secret=client_secret, scope=scope,
-            **kwargs)
+            "client_credentials", scope=scope, **kwargs)
 
