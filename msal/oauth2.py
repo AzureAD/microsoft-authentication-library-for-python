@@ -33,10 +33,15 @@ class Client(object):
         sep = '&' if '?' in self.authorization_endpoint else '?'
         return "%s%s%s" % (self.authorization_endpoint, sep, urlencode(params))
 
-    def _get_token(self, grant_type, query=None, **kwargs):
+    def _get_token(
+            self, grant_type,
+            query=None,  # a dict to be send as query string to the endpoint
+            **kwargs  # All relevant parameters, which will go into the body
+            ):
         data = {'client_id': self.client_id, 'grant_type': grant_type}
-        data.update(kwargs)  # Note: None values will override data
-        # We don't need to clean up None values here, because requests lib will.
+        data.update(  # Here we use None to mean "use default value instead"
+            {k: v for k, v in kwargs.items() if v is not None})
+        # We don't have to clean up None values here, because requests lib will.
 
         if data.get('scope'):
             data['scope'] = normalize_to_string(data['scope'])
