@@ -34,14 +34,17 @@ class ClientApplication(object):
             policy='',
             force_refresh=False,  # To force refresh an Access Token (not a RT)
             **kwargs):
-        a = Authority(authority) if authority else self.authority
-        client = oauth2.Client(self.client_id, token_endpoint=a.token_endpoint)
+        the_authority = Authority(authority) if authority else self.authority
         refresh_token = kwargs.get('refresh_token')  # For testing purpose
-        response = client.get_token_by_refresh_token(
-            refresh_token,
-            scope=decorate_scope(scope, self.client_id, policy),
-            client_secret=getattr(self, 'client_credential'),  # TODO: JWT too
-            query={'policy': policy} if policy else None)
+        response = oauth2.Client(
+            self.client_id, token_endpoint=the_authority.token_endpoint,
+            default_body=self._build_auth_parameters(
+                self.client_credential,
+                the_authority.token_endpoint, self.client_id)
+            ).get_token_by_refresh_token(
+                refresh_token,
+                scope=decorate_scope(scope, self.client_id, policy),
+                query={'p': policy} if policy else None)
         # TODO: refresh the refresh_token
         return response
 
@@ -127,9 +130,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             sending them on the wire.)
         :param str state: Recommended by OAuth2 for CSRF protection.
         """
-        a = Authority(authority) if authority else self.authority
+        the_authority = Authority(authority) if authority else self.authority
         grant = oauth2.AuthorizationCodeGrant(
-            self.client_id, authorization_endpoint=a.authorization_endpoint)
+            self.client_id,
+            authorization_endpoint=the_authority.authorization_endpoint)
         return grant.authorization_url(
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             scope=decorate_scope(scope, self.client_id, policy),
@@ -169,13 +173,15 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         # So in theory, you can omit scope here when you were working with only
         # one scope. But, MSAL decorates your scope anyway, so they are never
         # really empty.
-        grant = oauth2.AuthorizationCodeGrant(
-            self.client_id, token_endpoint=self.authority.token_endpoint)
-        return grant.get_token(
-            code, redirect_uri=redirect_uri,
-            scope=decorate_scope(scope, self.client_id, policy),
-            client_secret=self.client_credential,  # TODO: Support certificate
-            query={'policy': policy} if policy else None)
+        return oauth2.AuthorizationCodeGrant(
+            self.client_id, token_endpoint=self.authority.token_endpoint,
+            default_body=self._build_auth_parameters(
+                self.client_credential,
+                self.authority.token_endpoint, self.client_id)
+            ).get_token(
+                code, redirect_uri=redirect_uri,
+                scope=decorate_scope(scope, self.client_id, policy),
+                query={'p': policy} if policy else None)
 
     def acquire_token_on_behalf_of(
             self, user_assertion, scope, authority=None, policy=''):
