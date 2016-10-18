@@ -1,7 +1,7 @@
 from . import oauth2
 from .authority import Authority
 from .request import decorate_scope
-from .client_credential import ClientCredentialRequest
+from .assertion import create_jwt_assertion
 
 
 class ClientApplication(object):
@@ -13,6 +13,19 @@ class ClientApplication(object):
         self.client_id = client_id
         self.authority = Authority(authority, validate_authority)
             # Here the self.authority is not the same type as authority in input
+
+    @staticmethod
+    def _build_auth_parameters(client_credential, token_endpoint, client_id):
+        if isinstance(client_credential, dict):
+            type_ = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+            assertion = create_jwt_assertion(
+                client_credential['certificate'],
+                client_credential['thumbprint'],
+                audience=token_endpoint, issuer=client_id)
+            return {
+                'client_assertion_type': type_, 'client_assertion': assertion}
+        else:
+            return {'client_secret': client_credential}
 
     def acquire_token_silent(
             self, scope,
@@ -80,11 +93,15 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         self.user_token_cache = user_token_cache
         self.app_token_cache = None  # TODO
 
-    def acquire_token_for_client(self, scope, policy=''):
-        return ClientCredentialRequest(
-            client_id=self.client_id, client_credential=self.client_credential,
-            scope=scope,  # This grant flow requires no scope decoration
-            policy=policy, authority=self.authority).run()
+    def acquire_token_for_client(self, scope, policy=None):
+        token_endpoint = self.authority.token_endpoint
+        return oauth2.ClientCredentialGrant(
+            self.client_id, token_endpoint=token_endpoint,
+            default_body=self._build_auth_parameters(
+                self.client_credential, token_endpoint, self.client_id)
+            ).get_token(
+                scope=scope,  # This grant flow requires no scope decoration
+                query={'p': policy} if policy else None)
 
     def get_authorization_request_url(
             self,
