@@ -29,7 +29,7 @@ class Client(object):
         params.update(kwargs)  # Note: None values will override params
         params = {k: v for k, v in params.items() if v is not None}  # clean up
         if params.get('scope'):
-            params['scope'] = normalize_to_string(params['scope'])
+            params['scope'] = self._normalize_to_string(params['scope'])
         sep = '&' if '?' in self.authorization_endpoint else '?'
         return "%s%s%s" % (self.authorization_endpoint, sep, urlencode(params))
 
@@ -44,7 +44,7 @@ class Client(object):
         # We don't have to clean up None values here, because requests lib will.
 
         if data.get('scope'):
-            data['scope'] = normalize_to_string(data['scope'])
+            data['scope'] = self._normalize_to_string(data['scope'])
 
         # Quoted from https://tools.ietf.org/html/rfc6749#section-2.3.1
         # Clients in possession of a client password MAY use the HTTP Basic
@@ -73,9 +73,10 @@ class Client(object):
         return self._get_token(
             "refresh_token", refresh_token=refresh_token, scope=scope, **kwargs)
 
-
-def normalize_to_string(scope):
-    return ' '.join(scope) if isinstance(scope, (list, set, tuple)) else scope
+    def _normalize_to_string(self, scope):
+        if isinstance(scope, (list, set, tuple)):
+            return ' '.join(scope)
+        return scope  # as-is
 
 
 class AuthorizationCodeGrant(Client):
