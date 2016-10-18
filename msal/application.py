@@ -639,6 +639,17 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 scope=scopes,  # This grant flow requires no scope decoration
                 **kwargs)
 
-    def acquire_token_on_behalf_of(self, user_assertion, scopes, authority=None):
-        raise NotImplementedError()
+    def acquire_token_on_behalf_of(
+            self, user_assertion, scope, authority=None, policy=''):
+        the_authority = Authority(authority) if authority else self.authority
+        return oauth2.Client(
+            self.client_id, token_endpoint=the_authority.token_endpoint,
+            default_body=self._build_auth_parameters(
+                self.client_credential, the_authority.token_endpoint,
+                self.client_id)
+            )._get_token(  # TODO: Avoid using internal methods
+                "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                assertion=user_assertion, requested_token_use='on_behalf_of',
+                scope=scope,  # This grant flow requires no scope decoration???
+                query={'p': policy} if policy else None)
 

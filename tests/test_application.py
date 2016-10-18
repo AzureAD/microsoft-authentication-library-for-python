@@ -194,3 +194,12 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
         self.assertNotEqual(None, at)
         self.assertEqual(self.access_token, at.get('access_token'))
 
+    def test_acquire_token_obo(self):
+        token = self.app.acquire_token_on_behalf_of(
+            self.token['access_token'], self.scope2)
+        error_description = token.get('error_description', "")
+        if 'grant is not supported by this API version' in error_description:
+            raise unittest.SkipTest(
+                "OBO is not yet supported by service: %s" % error_description)
+        self.assertEqual(error_description, "")
+
