@@ -4,11 +4,21 @@ import json
 from msal.application import ConfidentialClientApplication
 from tests import unittest
 
+from authcode import AuthCodeReceiver
+
 
 THIS_FOLDER = os.path.dirname(__file__)
 CONFIG_FILE = os.path.join(THIS_FOLDER, 'config.json')
 
 
+def acquire_token_by_authorization_code(app, redirect_port, scope):
+    # Note: This func signature does not and should not require client_secret
+    fresh_auth_code = AuthCodeReceiver.acquire(
+        app.get_authorization_request_url(scope), redirect_port)
+    return app.acquire_token_by_authorization_code(fresh_auth_code, scope)
+
+
+# Note: This test case requires human interaction to obtain authorization code
 @unittest.skipUnless(os.path.exists(CONFIG_FILE), "%s missing" % CONFIG_FILE)
 class TestConfidentialClientApplication(unittest.TestCase):
     scope = ["https://graph.microsoft.com/.default"]
@@ -18,6 +28,11 @@ class TestConfidentialClientApplication(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.config = json.load(open(CONFIG_FILE))
+        cls.app = ConfidentialClientApplication(
+            cls.config['CLIENT_ID'], cls.config['CLIENT_SECRET'])
+        cls.token = acquire_token_by_authorization_code(
+            # Prepare a token. It will be shared among multiple test cases.
+            cls.app, cls.config.get('REDIRECTION_PORT', 8000), cls.scope2)
 
     def test_confidential_client_using_secret(self):
         app = ConfidentialClientApplication(
@@ -40,24 +55,21 @@ class TestConfidentialClientApplication(unittest.TestCase):
     def test_get_authorization_request_url(self):
         app = ConfidentialClientApplication(self.config['CLIENT_ID'], "secret")
         url = app.get_authorization_request_url(self.scope2)
-        print("Authorization URL:", url)
+        print("Authorization URL: {}".format(url))
         self.assertIn("response_type=code", url)  # A weak check, for now
         # After user consent, your redirect endpoint will be hit like this:
         # http://localhost:8000/?code=blahblah&other_param=foo
 
     def test_acquire_token_by_authorization_code(self):
-        app = ConfidentialClientApplication(
-            self.config['CLIENT_ID'], self.config['CLIENT_SECRET'])
-        auth_code = self.config['AUTHORIZATION_CODE']  # TODO: It expires soon
-        token = app.acquire_token_by_authorization_code(auth_code, self.scope2)
-        self.assertEqual(token.get('error_description', ""), "")  # Expired?
-        print(token)  # Show your refresh token
+        # Actually we already obtain a token during this TestCase initialization
+        self.assertEqual(self.token.get('error_description'), None)
+        print(self.token)  # It may also contain your refresh token
 
     def test_acquire_token_silent(self):
-        app = ConfidentialClientApplication(
-            self.config['CLIENT_ID'], self.config['CLIENT_SECRET'])
-        token = app.acquire_token_silent(
-            self.scope2, refresh_token=self.config['REFRESH_TOKEN'])
+        if 'refresh_token' not in self.token:
+            raise unittest.SkipTest("refresh_token not available")
+        token = self.app.acquire_token_silent(
+            self.scope2, refresh_token=self.token['refresh_token'])
         self.assertEqual(token.get('error_description', ""), "")
         #print(token)
 
