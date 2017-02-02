@@ -23,6 +23,7 @@ class TestAuthority(unittest.TestCase):
                 a.authorization_endpoint, self.COMMON_AUTH_ENDPOINT)
             self.assertEqual(a.token_endpoint, self.COMMON_TOKEN_ENDPOINT)
 
+    @unittest.skip("As of Jan 2017, the server no longer returns V1 endpoint")
     def test_lessknown_host_will_return_a_set_of_v1_endpoints(self):
         # This is an observation for current (2016-10) server-side behavior.
         # It is probably not a strict API contract. I simply mention it here.

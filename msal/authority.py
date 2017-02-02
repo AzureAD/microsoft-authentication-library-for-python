@@ -21,6 +21,14 @@ class Authority(object):
     TODO: It will also cache the previously-validated authority instances.
     """
     def __init__(self, authority_url, validate_authority=True):
+        """Creates an authority instance, and also validates it.
+
+        :param validate_authority:
+            The Authority validation process actually checks two parts:
+            instance (a.k.a. host) and tenant. We always do a tenant discovery.
+            This parameter only controls whether an instance discovery will be
+            performed.
+        """
         canonicalized, host, tenant = canonicalize(authority_url)
         tenant_discovery_endpoint = (  # Hard code a V2 pattern as default value
             'https://{}/{}/v2.0/.well-known/openid-configuration'
