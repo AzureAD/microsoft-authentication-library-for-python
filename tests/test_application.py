@@ -5,12 +5,19 @@ from msal.application import ConfidentialClientApplication
 from tests import unittest
 
 
+THIS_FOLDER = os.path.dirname(__file__)
+CONFIG_FILE = os.path.join(THIS_FOLDER, 'config.json')
+
+
+@unittest.skipUnless(os.path.exists(CONFIG_FILE), "%s missing" % CONFIG_FILE)
 class TestConfidentialClientApplication(unittest.TestCase):
-    same_folder = os.path.dirname(__file__)
-    config = json.load(open(os.path.join(same_folder, 'config.json')))
     scope = ["https://graph.microsoft.com/.default"]
     scope2 = ["User.Read"]
     scope_rt = ["offline_access"]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = json.load(open(CONFIG_FILE))
 
     def test_confidential_client_using_secret(self):
         app = ConfidentialClientApplication(
@@ -19,7 +26,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
         self.assertIn('access_token', result)
 
     def test_confidential_client_using_certificate(self):
-        private_key = os.path.join(self.same_folder, self.config['PRIVATE_KEY'])
+        private_key = os.path.join(THIS_FOLDER, self.config['PRIVATE_KEY'])
         with open(private_key) as f: pem = f.read()
         certificate = {
             'certificate': pem,
