@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 
 from msal.application import ConfidentialClientApplication
 from tests import unittest
@@ -60,10 +61,13 @@ class TestConfidentialClientApplication(unittest.TestCase):
         # After user consent, your redirect endpoint will be hit like this:
         # http://localhost:8000/?code=blahblah&other_param=foo
 
+    def beautify(self, json_payload):
+        return json.dumps(json_payload, indent=2)
+
     def test_acquire_token_by_authorization_code(self):
         # Actually we already obtain a token during this TestCase initialization
         self.assertEqual(self.token.get('error_description'), None)
-        print(self.token)  # It may also contain your refresh token
+        logging.info("Authorization Code Grant: %s", self.beautify(self.token))
 
     def test_acquire_token_silent(self):
         if 'refresh_token' not in self.token:
@@ -71,5 +75,9 @@ class TestConfidentialClientApplication(unittest.TestCase):
         token = self.app.acquire_token_silent(
             self.scope2, refresh_token=self.token['refresh_token'])
         self.assertEqual(token.get('error_description', ""), "")
-        #print(token)
+        if 'refresh_token' in token:
+            logging.warn(
+                "Authorization Server also issues a new Refresh Token: %s",
+                self.beautify(token))
+            self.token = token  # https://tools.ietf.org/html/rfc6749#section-6
 
