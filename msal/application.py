@@ -41,7 +41,7 @@ class ClientApplication(object):
             default_body=self._build_auth_parameters(
                 self.client_credential,
                 the_authority.token_endpoint, self.client_id)
-            ).get_token_by_refresh_token(
+            ).acquire_token_with_refresh_token(
                 refresh_token,
                 scope=decorate_scope(scope, self.client_id, policy),
                 query={'p': policy} if policy else None)
@@ -98,11 +98,11 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
     def acquire_token_for_client(self, scope, policy=None):
         token_endpoint = self.authority.token_endpoint
-        return oauth2.ClientCredentialGrant(
+        return oauth2.Client(
             self.client_id, token_endpoint=token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential, token_endpoint, self.client_id)
-            ).get_token(
+            ).acquire_token_with_client_credentials(
                 scope=scope,  # This grant flow requires no scope decoration
                 query={'p': policy} if policy else None)
 
@@ -131,16 +131,17 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         :param str state: Recommended by OAuth2 for CSRF protection.
         """
         the_authority = Authority(authority) if authority else self.authority
-        grant = oauth2.AuthorizationCodeGrant(
+        client = oauth2.Client(
             self.client_id,
             authorization_endpoint=the_authority.authorization_endpoint)
-        return grant.authorization_url(
+        return client.authorization_url(
+            response_type="code",  # Using Authorization Code grant
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             scope=decorate_scope(scope, self.client_id, policy),
             policy=policy if policy else None,
             **(extra_query_params or {}))
 
-    def acquire_token_by_authorization_code(
+    def acquire_token_with_authorization_code(
             self,
             code,
             scope,  # Syntactically required. STS accepts empty value though.
@@ -173,12 +174,12 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         # So in theory, you can omit scope here when you were working with only
         # one scope. But, MSAL decorates your scope anyway, so they are never
         # really empty.
-        return oauth2.AuthorizationCodeGrant(
+        return oauth2.Client(
             self.client_id, token_endpoint=self.authority.token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential,
                 self.authority.token_endpoint, self.client_id)
-            ).get_token(
+            ).acquire_token_with_authorization_code(
                 code, redirect_uri=redirect_uri,
                 scope=decorate_scope(scope, self.client_id, policy),
                 query={'p': policy} if policy else None)

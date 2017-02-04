@@ -10,8 +10,8 @@ except ImportError:
 import requests
 
 
-class Client(object):
-    # This low-level interface works. Yet you'll find those *Grant sub-classes
+class BaseClient(object):
+    # This low-level interface works. Yet you'll find its sub-class
     # more friendly to remind you what parameters are needed in each scenario.
     # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
     def __init__(
@@ -74,7 +74,8 @@ class Client(object):
         # so we simply return it here, without needing to invent an exception.
         return resp.json()
 
-    def get_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
+    def acquire_token_with_refresh_token(
+            self, refresh_token, scope=None, **kwargs):
         return self._get_token(
             "refresh_token", refresh_token=refresh_token, scope=scope, **kwargs)
 
@@ -84,28 +85,33 @@ class Client(object):
         return scope  # as-is
 
 
-class AuthorizationCodeGrant(Client):
-    # Can be used by Confidential Client or Public Client.
-    # See https://tools.ietf.org/html/rfc6749#section-4.1.3
-
+class Client(BaseClient):
     def authorization_url(
-            self, redirect_uri=None, scope=None, state=None, **kwargs):
+            self,
+            response_type, redirect_uri=None, scope=None, state=None, **kwargs):
         """Generate an authorization url to be visited by resource owner.
 
+        :param response_type:
+            Must be "code" when you are using Authorization Code Grant.
+            Must be "token" when you are using Implicit Grant
         :param redirect_uri: Optional. Server will use the pre-registered one.
         :param scope: It is a space-delimited, case-sensitive string.
             Some ID provider can accept empty string to represent default scope.
         """
+        assert response_type in ["code", "token"]
         return self._authorization_url(
-            'code', redirect_uri=redirect_uri, scope=scope, state=state,
+            response_type, redirect_uri=redirect_uri, scope=scope, state=state,
             **kwargs)
         # Later when you receive the response at your redirect_uri,
         # validate_authorization() may be handy to check the returned state.
 
-    def get_token(self, code, redirect_uri=None, **kwargs):
-        """Get an access token.
+    def acquire_token_with_authorization_code(
+            self, code, redirect_uri=None, **kwargs):
+        """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
 
-        See also https://tools.ietf.org/html/rfc6749#section-4.1.3
+        This is typically used by a server-side app (Confidential Client),
+        but it can also be used by a device-side native app (Public Client).
+        See more detail at https://tools.ietf.org/html/rfc6749#section-4.1.3
 
         :param code: The authorization code received from authorization server.
         :param redirect_uri:
@@ -118,6 +124,23 @@ class AuthorizationCodeGrant(Client):
             'authorization_code', code=code,
             redirect_uri=redirect_uri, **kwargs)
 
+    def acquire_token_with_username_password(
+            self, username, password, scope=None, **kwargs):
+        """The Resource Owner Password Credentials Grant, used by legacy app."""
+        return self._get_token(
+            "password", username=username, password=password, scope=scope,
+            **kwargs)
+
+    def acquire_token_with_client_credentials(self, scope=None, **kwargs):
+        '''Get token by client credentials. a.k.a. Client Credentials Grant,
+        used by Backend Applications.
+
+        You may want to explicitly provide an optional client_secret parameter,
+        or you can provide such extra parameters as `default_body` during the
+        class initialization.
+        '''
+        return self._get_token("client_credentials", scope=scope, **kwargs)
+
 
 def validate_authorization(params, state=None):
     """A thin helper to examine the authorization being redirected back"""
@@ -126,34 +149,4 @@ def validate_authorization(params, state=None):
     if params.get('state') != state:
         raise ValueError('state mismatch')
     return params
-
-
-class ImplicitGrant(Client):
-    """Implicit Grant is used to obtain access tokens (but not refresh token).
-
-    It is optimized for public clients known to operate a particular
-    redirection URI.  These clients are typically implemented in a browser
-    using a scripting language such as JavaScript.
-    Quoted from https://tools.ietf.org/html/rfc6749#section-4.2
-    """
-    def authorization_url(self, redirect_uri=None, scope=None, state=None):
-        return self._authorization_url('token', **locals())
-
-
-class ResourceOwnerPasswordCredentialsGrant(Client):  # Legacy Application flow
-    def get_token(self, username, password, scope=None, **kwargs):
-        return self._get_token(
-            "password", username=username, password=password, scope=scope,
-            **kwargs)
-
-
-class ClientCredentialGrant(Client):  # a.k.a. Backend Application flow
-    def get_token(self, scope=None, **kwargs):
-        '''Get token by client credential.
-
-        You may want to also provide an optional client_secret parameter,
-        or you can provide such extra parameters as `default_body` during the
-        class initialization.
-        '''
-        return self._get_token("client_credentials", scope=scope, **kwargs)
 

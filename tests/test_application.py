@@ -12,11 +12,11 @@ THIS_FOLDER = os.path.dirname(__file__)
 CONFIG_FILE = os.path.join(THIS_FOLDER, 'config.json')
 
 
-def acquire_token_by_authorization_code(app, redirect_port, scope):
+def acquire_token_with_authorization_code(app, redirect_port, scope):
     # Note: This func signature does not and should not require client_secret
     fresh_auth_code = AuthCodeReceiver.acquire(
         app.get_authorization_request_url(scope), redirect_port)
-    return app.acquire_token_by_authorization_code(fresh_auth_code, scope)
+    return app.acquire_token_with_authorization_code(fresh_auth_code, scope)
 
 
 # Note: This test case requires human interaction to obtain authorization code
@@ -31,7 +31,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
         cls.config = json.load(open(CONFIG_FILE))
         cls.app = ConfidentialClientApplication(
             cls.config['CLIENT_ID'], cls.config['CLIENT_SECRET'])
-        cls.token = acquire_token_by_authorization_code(
+        cls.token = acquire_token_with_authorization_code(
             # Prepare a token. It will be shared among multiple test cases.
             cls.app, cls.config.get('REDIRECTION_PORT', 8000), cls.scope2)
 
@@ -64,7 +64,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
     def beautify(self, json_payload):
         return json.dumps(json_payload, indent=2)
 
-    def test_acquire_token_by_authorization_code(self):
+    def test_acquire_token_with_authorization_code(self):
         # Actually we already obtain a token during this TestCase initialization
         self.assertEqual(self.token.get('error_description'), None)
         logging.info("Authorization Code Grant: %s", self.beautify(self.token))
