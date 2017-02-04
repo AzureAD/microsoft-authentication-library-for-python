@@ -96,7 +96,7 @@ class AuthorizationCodeGrant(Client):
         :param scope: It is a space-delimited, case-sensitive string.
             Some ID provider can accept empty string to represent default scope.
         """
-        return super(AuthorizationCodeGrant, self)._authorization_url(
+        return self._authorization_url(
             'code', redirect_uri=redirect_uri, scope=scope, state=state,
             **kwargs)
         # Later when you receive the response at your redirect_uri,
@@ -114,7 +114,7 @@ class AuthorizationCodeGrant(Client):
         :param client_id: Required, if the client is not authenticating itself.
             See https://tools.ietf.org/html/rfc6749#section-3.2.1
         """
-        return super(AuthorizationCodeGrant, self)._get_token(
+        return self._get_token(
             'authorization_code', code=code,
             redirect_uri=redirect_uri, **kwargs)
 
@@ -137,13 +137,12 @@ class ImplicitGrant(Client):
     Quoted from https://tools.ietf.org/html/rfc6749#section-4.2
     """
     def authorization_url(self, redirect_uri=None, scope=None, state=None):
-        return super(ImplicitGrant, self)._authorization_url(
-            'token', **locals())
+        return self._authorization_url('token', **locals())
 
 
 class ResourceOwnerPasswordCredentialsGrant(Client):  # Legacy Application flow
     def get_token(self, username, password, scope=None, **kwargs):
-        return super(ResourceOwnerPasswordCredentialsGrant, self)._get_token(
+        return self._get_token(
             "password", username=username, password=password, scope=scope,
             **kwargs)
 
@@ -156,6 +155,5 @@ class ClientCredentialGrant(Client):  # a.k.a. Backend Application flow
         or you can provide such extra parameters as `default_body` during the
         class initialization.
         '''
-        return super(ClientCredentialGrant, self)._get_token(
-            "client_credentials", scope=scope, **kwargs)
+        return self._get_token("client_credentials", scope=scope, **kwargs)
 
