@@ -1,4 +1,4 @@
-from . import oauth2
+from .oauth2 import Client
 from .authority import Authority
 from .request import decorate_scope
 from .assertion import create_jwt_assertion
@@ -36,7 +36,7 @@ class ClientApplication(object):
             **kwargs):
         the_authority = Authority(authority) if authority else self.authority
         refresh_token = kwargs.get('refresh_token')  # For testing purpose
-        response = oauth2.Client(
+        response = Client(
             self.client_id, token_endpoint=the_authority.token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential,
@@ -98,7 +98,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
     def acquire_token_for_client(self, scope, policy=None):
         token_endpoint = self.authority.token_endpoint
-        return oauth2.Client(
+        return Client(
             self.client_id, token_endpoint=token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential, token_endpoint, self.client_id)
@@ -131,7 +131,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         :param str state: Recommended by OAuth2 for CSRF protection.
         """
         the_authority = Authority(authority) if authority else self.authority
-        client = oauth2.Client(
+        client = Client(
             self.client_id,
             authorization_endpoint=the_authority.authorization_endpoint)
         return client.authorization_url(
@@ -174,7 +174,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         # So in theory, you can omit scope here when you were working with only
         # one scope. But, MSAL decorates your scope anyway, so they are never
         # really empty.
-        return oauth2.Client(
+        return Client(
             self.client_id, token_endpoint=self.authority.token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential,

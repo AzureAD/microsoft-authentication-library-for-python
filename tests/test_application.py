@@ -61,7 +61,8 @@ class TestConfidentialClientApplication(unittest.TestCase):
         # After user consent, your redirect endpoint will be hit like this:
         # http://localhost:8000/?code=blahblah&other_param=foo
 
-    def beautify(self, json_payload):
+    @classmethod
+    def beautify(cls, json_payload):
         return json.dumps(json_payload, indent=2)
 
     def test_acquire_token_with_authorization_code(self):
