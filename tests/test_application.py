@@ -73,8 +73,8 @@ class TestConfidentialClientApplication(unittest.TestCase):
     def test_acquire_token_silent(self):
         if 'refresh_token' not in self.token:
             raise unittest.SkipTest("refresh_token not available")
-        token = self.app.acquire_token_silent(
-            self.scope2, refresh_token=self.token['refresh_token'])
+        token = self.app.acquire_token_silent(self.scope2)
+        self.assertIsNotNone(token, msg="An AT should be returned")
         self.assertEqual(token.get('error_description', ""), "")
         if 'refresh_token' in token:
             logging.warn(

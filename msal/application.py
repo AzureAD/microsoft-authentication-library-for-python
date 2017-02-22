@@ -1,4 +1,4 @@
-from .oauth2 import Client
+from .token_storage import ClientWithRefreshTokenStorage as Client
 from .authority import Authority
 from .request import decorate_scope
 from .assertion import create_jwt_assertion
@@ -35,17 +35,16 @@ class ClientApplication(object):
             force_refresh=False,  # To force refresh an Access Token (not a RT)
             **kwargs):
         the_authority = Authority(authority) if authority else self.authority
-        refresh_token = kwargs.get('refresh_token')  # For testing purpose
         response = Client(
             self.client_id, token_endpoint=the_authority.token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential,
                 the_authority.token_endpoint, self.client_id)
-            ).acquire_token_with_refresh_token(
-                refresh_token,
-                scope=decorate_scope(scope, self.client_id, policy),
-                query={'p': policy} if policy else None)
-        # TODO: refresh the refresh_token
+            ).acquire_token_with_refresh_token_in_storage({
+                "client_id": self.client_id,
+                "authority": the_authority.token_endpoint,
+                # TODO: "user_id": user,
+            })
         return response
 
 
