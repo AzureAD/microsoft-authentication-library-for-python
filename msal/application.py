@@ -1,4 +1,5 @@
 from .token_storage import ClientWithRefreshTokenStorage as Client
+from .token_storage_sqlalchemy import StorageInAlchemy, RefreshToken
 from .authority import Authority
 from .request import decorate_scope
 from .assertion import create_jwt_assertion
@@ -9,10 +10,13 @@ class ClientApplication(object):
     def __init__(
             self, client_id,
             authority="https://login.microsoftonline.com/common/",
-            validate_authority=True):
+            validate_authority=True,
+            refresh_token_storage=StorageInAlchemy("sqlite://", RefreshToken),
+            ):
         self.client_id = client_id
         self.authority = Authority(authority, validate_authority)
             # Here the self.authority is not the same type as authority in input
+        self.refresh_token_storage = refresh_token_storage
 
     @staticmethod
     def _build_auth_parameters(client_credential, token_endpoint, client_id):
@@ -39,7 +43,8 @@ class ClientApplication(object):
             self.client_id, token_endpoint=the_authority.token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential,
-                the_authority.token_endpoint, self.client_id)
+                the_authority.token_endpoint, self.client_id),
+            refresh_token_storage=self.refresh_token_storage,
             ).acquire_token_with_refresh_token_in_storage({
                 "client_id": self.client_id,
                 "authority": the_authority.token_endpoint,
@@ -100,7 +105,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         return Client(
             self.client_id, token_endpoint=token_endpoint,
             default_body=self._build_auth_parameters(
-                self.client_credential, token_endpoint, self.client_id)
+                self.client_credential, token_endpoint, self.client_id),
+            refresh_token_storage=self.refresh_token_storage,
             ).acquire_token_with_client_credentials(
                 scope=scope,  # This grant flow requires no scope decoration
                 query={'p': policy} if policy else None)
@@ -132,7 +138,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         the_authority = Authority(authority) if authority else self.authority
         client = Client(
             self.client_id,
-            authorization_endpoint=the_authority.authorization_endpoint)
+            authorization_endpoint=the_authority.authorization_endpoint,
+            refresh_token_storage=self.refresh_token_storage)
         return client.authorization_url(
             response_type="code",  # Using Authorization Code grant
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
@@ -177,7 +184,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             self.client_id, token_endpoint=self.authority.token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential,
-                self.authority.token_endpoint, self.client_id)
+                self.authority.token_endpoint, self.client_id),
+            refresh_token_storage=self.refresh_token_storage,
             ).acquire_token_with_authorization_code(
                 code, redirect_uri=redirect_uri,
                 scope=decorate_scope(scope, self.client_id, policy),
