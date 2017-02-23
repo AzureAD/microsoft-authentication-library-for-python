@@ -76,6 +76,12 @@ class TestConfidentialClientApplication(unittest.TestCase):
         token = self.app.acquire_token_silent(self.scope2)
         self.assertIsNotNone(token, msg="An AT should be returned")
         self.assertEqual(token.get('error_description', ""), "")
+
+        # 2nd run will trigger a cache hit. TODO: perhaps show log on console?
+        token = self.app.acquire_token_silent(self.scope2)
+        self.assertIsNotNone(token, msg="An AT should be returned")
+        self.assertEqual(token.get('error_description', ""), "")
+
         if 'refresh_token' in token:
             logging.warn(
                 "Authorization Server also issues a new Refresh Token: %s",

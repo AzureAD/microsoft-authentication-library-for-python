@@ -54,3 +54,17 @@ class RefreshToken(Base, DictionaryMixin):
     scope = Column(String)
     create_at = Column(Integer)
 
+
+class AccessToken(Base, DictionaryMixin):
+    __tablename__ = 'access_token'
+    id = Column(Integer, primary_key=True)
+    client_id = Column(String)
+    authority = Column(String)
+    user_id = Column(String)
+    access_token = Column(String)
+    id_token = Column(String)
+    scope = Column(String)
+    expires_in = Column(Integer)
+    ext_expires_in = Column(Integer)
+    create_at = Column(Integer)
+
