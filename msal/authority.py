@@ -10,6 +10,7 @@ WELL_KNOWN_AUTHORITY_HOSTS = set([
     WORLD_WIDE,
     'login.chinacloudapi.cn',
     'login-us.microsoftonline.com',
+    'login.microsoftonline.us',
     'login.microsoftonline.de',
     ])
 
