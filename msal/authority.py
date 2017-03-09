@@ -21,6 +21,9 @@ class Authority(object):
     Once constructed, it contains members named "*_endpoint" for this instance.
     TODO: It will also cache the previously-validated authority instances.
     """
+    AUTHORIZE_ENDPOINT_PATH = '/oauth2/authorize'
+    TOKEN_ENDPOINT_PATH = '/oauth2/token'
+
     def __init__(self, authority_url, validate_authority=True):
         """Creates an authority instance, and also validates it.
 
@@ -34,6 +37,10 @@ class Authority(object):
         tenant_discovery_endpoint = (  # Hard code a V2 pattern as default value
             'https://{}/{}/v2.0/.well-known/openid-configuration'
             .format(WORLD_WIDE, tenant))
+        self.authorization_endpoint = canonicalized + self.AUTHORIZE_ENDPOINT_PATH
+        self.token_endpoint = canonicalized + self.TOKEN_ENDPOINT_PATH
+        if tenant == 'adfs':  # But, what if there is a tenant named "adfs"?
+           return  # Skip instance discovery and tenant discovery
         if validate_authority and host not in WELL_KNOWN_AUTHORITY_HOSTS:
             tenant_discovery_endpoint = instance_discovery(
                 canonicalized + "/oauth2/v2.0/authorize")
