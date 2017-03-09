@@ -11,10 +11,10 @@ except ImportError:  # Fall back to Python 2
     from urllib import urlencode
 
 
-def build_auth_endpoint(tenant, client_id):  # Microsoft specific
-    return (  # Lucky that redirect_uri can be omitted, so it works for any app
-        "https://login.microsoftonline.com/{t}/oauth2/authorize"  # V1 endpoint
-        "?response_type=code&client_id={c}").format(t=tenant, c=client_id)
+def build_auth_url(authority, client_id):
+    # Lucky that redirect_uri can be omitted, so it works for any app
+    return "{a}/oauth2/authorize?response_type=code&client_id={c}".format(
+        a=authority, c=client_id)
 
 class AuthCodeReceiver(BaseHTTPRequestHandler):
     """A one-stop solution to acquire an authorization code.
@@ -67,10 +67,11 @@ if __name__ == '__main__':
     p = parser = argparse.ArgumentParser(
         description=AuthCodeReceiver.__doc__
         + "The auth code received will be dumped into stdout.")
-    p.add_argument('tenant', help="The tenant which your app will serve for")
     p.add_argument('client_id', help="The client_id of your web service app")
     p.add_argument('redirect_port', type=int, help="The port in redirect_uri")
+    p.add_argument(
+        "--authority", default="https://login.microsoftonline.com/common")
     args = parser.parse_args()
     print(AuthCodeReceiver.acquire(
-        build_auth_endpoint(args.tenant, args.client_id), args.redirect_port))
+        build_auth_url(args.authority, args.client_id), args.redirect_port))
 
