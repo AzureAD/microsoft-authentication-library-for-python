@@ -12,7 +12,9 @@ def decorate_scope(
         # We could make the developer pass these and then if they do they will
         # come back asking why they don't see refresh token or user information.
         raise ValueError(
-            "API does not accept {} value as user-provided scopes".format(
+            "MSAL always sends the scopes {}. They cannot be suppressed "
+            "as they are required for the library to function. "
+            "Do not include any of these scopes in the scope parameter.".format(
                 reserved_scope))
     if client_id in scope_set:
         if len(scope_set) > 1:
