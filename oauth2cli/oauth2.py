@@ -29,16 +29,19 @@ class BaseClient(object):
         self.authorization_endpoint = authorization_endpoint
         self.token_endpoint = token_endpoint
 
-    def _authorization_url(self, response_type, **kwargs):
+    def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
         #   https://tools.ietf.org/html/rfc6749#section-3.1.1
+        # or it can be a space-delimited string as defined in
+        #   https://tools.ietf.org/html/rfc6749#section-8.4
+        response_type = self._stringify(response_type)
+
         params = {'client_id': self.client_id, 'response_type': response_type}
         params.update(kwargs)  # Note: None values will override params
         params = {k: v for k, v in params.items() if v is not None}  # clean up
         if params.get('scope'):
-            params['scope'] = self._normalize_to_string(params['scope'])
-        sep = '&' if '?' in self.authorization_endpoint else '?'
-        return "%s%s%s" % (self.authorization_endpoint, sep, urlencode(params))
+            params['scope'] = self._stringify(params['scope'])
+        return params  # A dict suitable to be used in http request
 
     def _obtain_token(  # The verb "obtain" is influenced by OAUTH2 RFC 6749
             self, grant_type,
@@ -52,7 +55,7 @@ class BaseClient(object):
         # We don't have to clean up None values here, because requests lib will.
 
         if _data.get('scope'):
-            _data['scope'] = self._normalize_to_string(_data['scope'])
+            _data['scope'] = self._stringify(_data['scope'])
 
         # Quoted from https://tools.ietf.org/html/rfc6749#section-2.3.1
         # Clients in possession of a client password MAY use the HTTP Basic
@@ -91,22 +94,29 @@ class BaseClient(object):
         data.update(refresh_token=refresh_token, scope=scope)
         return self._obtain_token("refresh_token", data=data, **kwargs)
 
-    def _normalize_to_string(self, scope):
-        if isinstance(scope, (list, set, tuple)):
-            return ' '.join(scope)
-        return scope  # as-is
+    def _stringify(self, sequence):
+        if isinstance(sequence, (list, set, tuple)):
+            return ' '.join(sequence)
+        return sequence  # as-is
 
 
-class Client(BaseClient):
+class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     """This is the main API for oauth2 client.
 
     Its methods define and document popular parameters.
     """
 
-    def authorization_url(
+    def build_auth_request_uri(
             self,
             response_type, redirect_uri=None, scope=None, state=None, **kwargs):
-        """Generate an authorization url to be visited by resource owner.
+        """Generate an authorization uri to be visited by resource owner.
+
+        Later when the response reaches your redirect_uri,
+        you can use parse_auth_response() to check the returned state.
+
+        This method could be named build_authorization_request_uri() instead,
+        but then there would be a build_authentication_request_uri() in the OIDC
+        subclass doing almost the same thing. So we use a loose term "auth" here.
 
         :param response_type:
             Must be "code" when you are using Authorization Code Grant,
@@ -120,11 +130,25 @@ class Client(BaseClient):
             maintain state between the request and callback.
         :param kwargs: Other parameters, typically defined in OpenID Connect.
         """
-        return self._authorization_url(
+        params = self._build_auth_request_params(
             response_type, redirect_uri=redirect_uri, scope=scope, state=state,
             **kwargs)
-        # Later when you receive the response at your redirect_uri,
-        # validate_authorization() may be handy to check the returned state.
+        sep = '&' if '?' in self.authorization_endpoint else '?'
+        return "%s%s%s" % (self.authorization_endpoint, sep, urlencode(params))
+
+    @staticmethod
+    def parse_auth_response(params, state=None):
+        """Parse the authorization response being redirected back.
+
+        :param params: A string or dict of the query string
+        :param state: REQUIRED if the state parameter was present in the client
+            authorization request. This function will compare it with response.
+        """
+        if not isinstance(params, dict):
+            params = parse_qs(params)
+        if params.get('state') != state:
+            raise ValueError('state mismatch')
+        return params
 
     def obtain_token_with_authorization_code(
             self, code, redirect_uri=None, client_id=None, **kwargs):
@@ -163,13 +187,4 @@ class Client(BaseClient):
         data = kwargs.pop("data", {})
         data.update(scope=scope)
         return self._obtain_token("client_credentials", data=data, **kwargs)
-
-
-def validate_authorization(params, state=None):
-    """A thin helper to examine the authorization being redirected back"""
-    if not isinstance(params, dict):
-        params = parse_qs(params)
-    if params.get('state') != state:
-        raise ValueError('state mismatch')
-    return params
 
