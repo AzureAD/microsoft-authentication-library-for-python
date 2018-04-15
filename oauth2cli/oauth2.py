@@ -48,7 +48,7 @@ class BaseClient(object):
             params=None,  # a dict to be send as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             timeout=None,  # A timeout value which will be used by requests lib
-            ):
+            ):  # Returns the json object came from the OAUTH2 response
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
         _data.update(self.default_body)  # It may contain authen parameters
         _data.update(data or {})  # So the content in data param prevails
@@ -88,7 +88,8 @@ class BaseClient(object):
 
         :param refresh_token: The refresh token issued to the client
         :param scope: If omitted, is treated as equal to the scope originally
-            granted by the resource ownser. https://tools.ietf.org/html/rfc6749#section-6
+            granted by the resource ownser,
+            according to https://tools.ietf.org/html/rfc6749#section-6
         """
         data = kwargs.pop('data', {})
         data.update(refresh_token=refresh_token, scope=scope)
@@ -96,14 +97,14 @@ class BaseClient(object):
 
     def _stringify(self, sequence):
         if isinstance(sequence, (list, set, tuple)):
-            return ' '.join(sequence)
+            return ' '.join(sorted(sequence))  # normalizing it, ascendingly
         return sequence  # as-is
 
 
 class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     """This is the main API for oauth2 client.
 
-    Its methods define and document popular parameters.
+    Its methods define and document parameters mentioned in OAUTH2 RFC 6749.
     """
 
     def build_auth_request_uri(
