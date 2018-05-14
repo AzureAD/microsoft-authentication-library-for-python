@@ -6,6 +6,7 @@ try:
 except ImportError:
     from urlparse import parse_qs
     from urllib import urlencode
+import logging
 
 import requests
 
