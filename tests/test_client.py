@@ -20,8 +20,9 @@ class TestClient(unittest.TestCase):
             cls.conf = json.load(f)
 
     def test_client_credentials(self):
-        client = Client(self.conf['clientId'], self.conf['clientSecret'],
-                token_endpoint=self.conf["token_endpoint"])
+        client = Client(
+            self.conf['client_id'], self.conf['client_secret'],
+            token_endpoint=self.conf["token_endpoint"])
         result = client.obtain_token_with_client_credentials(self.conf['scope'])
         self.assertIn('access_token', result)
 
