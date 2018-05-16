@@ -18,11 +18,18 @@ class TestClient(unittest.TestCase):
     def setUpClass(cls):
         with open(CONFIG_FILE) as f:
             cls.conf = json.load(f)
+        cls.client = Client(
+            cls.conf['client_id'], cls.conf['client_secret'],
+            token_endpoint=cls.conf["token_endpoint"])
 
     def test_client_credentials(self):
-        client = Client(
-            self.conf['client_id'], self.conf['client_secret'],
-            token_endpoint=self.conf["token_endpoint"])
-        result = client.obtain_token_with_client_credentials(self.conf['scope'])
+        result = self.client.obtain_token_with_client_credentials(
+            self.conf['scope'])
         self.assertIn('access_token', result)
 
+    def test_username_password(self):
+        result = self.client.obtain_token_with_username_password(
+            self.conf["username"], self.conf["password"],
+            data={"resource": self.conf.get("resource")},  # MSFT AAD V1 only
+            scope=self.conf.get("scope"))
+        self.assertIn('access_token', result)

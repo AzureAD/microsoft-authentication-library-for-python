@@ -179,13 +179,13 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         return self._obtain_token("password", data=data, **kwargs)
 
     def obtain_token_with_client_credentials(self, scope=None, **kwargs):
-        '''Get token by client credentials. a.k.a. Client Credentials Grant,
+        """Get token by client credentials. a.k.a. Client Credentials Grant,
         used by Backend Applications.
 
         You may want to explicitly provide an optional client_secret parameter,
         or you can provide such extra parameters as `default_body` during the
         class initialization.
-        '''
+        """
         data = kwargs.pop("data", {})
         data.update(scope=scope)
         return self._obtain_token("client_credentials", data=data, **kwargs)
