@@ -12,16 +12,17 @@ except ImportError:  # Fall back to Python 2
 
 
 class AuthCodeReceiver(BaseHTTPRequestHandler):
-    """A one-stop solution to acquire an authorization code.
+    # Note: This docstring is also used by this script's command line help.
+    """A one-stop helper for desktop app to acquire an authorization code.
 
-    This helper starts a web server as redirect_uri, waiting for auth code.
-    It also opens a browser window to guide a human tester to manually login.
-    After obtaining an auth code, the web server will be shut down.
-    """  # Note: This docstring is also used by this script's command line help.
+    It starts a web server to listen redirect_uri, waiting for auth code.
+    It also opens a browser window to guide a human user to manually login.
+    After obtaining an auth code, the web server will automatically shut down.
+    """
     @classmethod
     def acquire(cls, auth_endpoint, redirect_port):
         """Usage: ac = AuthCodeReceiver.acquire('http://.../authorize', 8088)"""
-        webbrowser.open(
+        webbrowser.open(  # This becomes NO-OP if there is no local browser
             "http://localhost:{p}?{q}".format(p=redirect_port, q=urlencode({
                 "text": """Open this link to acquire auth code.
                     If you prefer, you may want to use incognito window.""",
@@ -44,15 +45,15 @@ class AuthCodeReceiver(BaseHTTPRequestHandler):
         qs = parse_qs(urlparse(self.path).query)
         if qs.get('code'):  # Then store it into the server instance
             ac = self.server.authcode = qs['code'][0]
-            self.send_full_response('Authcode:\n{}'.format(ac))
+            self._send_full_response('Authcode:\n{}'.format(ac))
             # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
         elif qs.get('text') and qs.get('link'):  # Then display a landing page
-            self.send_full_response('<a href={link}>{text}</a>'.format(
+            self._send_full_response('<a href={link}>{text}</a>'.format(
                 link=qs['link'][0], text=qs['text'][0]))
         else:
-            self.send_full_response("This web service serves your redirect_uri")
+            self._send_full_response("This web service serves your redirect_uri")
 
-    def send_full_response(self, body, is_ok=True):
+    def _send_full_response(self, body, is_ok=True):
         self.send_response(200 if is_ok else 400)
         content_type = 'text/html' if body.startswith('<') else 'text/plain'
         self.send_header('Content-type', content_type)

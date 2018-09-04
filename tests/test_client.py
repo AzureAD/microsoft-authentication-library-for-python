@@ -3,9 +3,9 @@ import json
 import logging
 
 from oauth2cli.oauth2 import Client
+from oauth2cli.authcode import AuthCodeReceiver
 from tests import unittest
 
-from .authcode import AuthCodeReceiver
 
 
 THIS_FOLDER = os.path.dirname(__file__)
@@ -33,3 +33,11 @@ class TestClient(unittest.TestCase):
             data={"resource": self.conf.get("resource")},  # MSFT AAD V1 only
             scope=self.conf.get("scope"))
         self.assertIn('access_token', result)
+
+    def test_auth_code(self):
+        port = 1234
+        request_uri = self.client.build_auth_request_uri(
+            "code", "http://localhost:%s" % port)
+        ac = AuthCodeReceiver.acquire(request_uri, port)
+        self.assertEqual(ac, "xyz")
+
