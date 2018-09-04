@@ -1,3 +1,11 @@
+# Note: This docstring is also used by this script's command line help.
+"""A one-stop helper for desktop app to acquire an authorization code.
+
+It starts a web server to listen redirect_uri, waiting for auth code.
+It optionally opens a browser window to guide a human user to manually login.
+After obtaining an auth code, the web server will automatically shut down.
+"""
+
 import argparse
 import webbrowser
 import logging
@@ -10,35 +18,50 @@ except ImportError:  # Fall back to Python 2
     from urlparse import urlparse, parse_qs
     from urllib import urlencode
 
+from oauth2 import Client
+
+
+def obtain_auth_code(listen_port, auth_uri=None):
+    """This function will start a web server listening on http://localhost:port
+    and then you need to open a browser on this device and visit your auth_uri.
+    When interaction finishes, this function will return the auth code,
+    and then shut down the local web server.
+
+    :param listen_port:
+        The local web server will listen at http://localhost:<listen_port>
+        Unless the authorization server supports dynamic port,
+        you need to use the same port when you register with your app.
+    :param auth_uri: If provided, this function will try to open a local browser.
+    :return: Hang indefinitely, until it receives and then return the auth code.
+    """
+    if auth_uri:
+        page = "http://localhost:{p}?{q}".format(p=listen_port, q=urlencode({
+            "text": "Open this link to sign in. You may use incognito window",
+            "link": auth_uri,
+            }))
+        browse(page)
+    server = HTTPServer(("", int(listen_port)), AuthCodeReceiver)
+    server.authcode = None
+    while not server.authcode:
+        # Derived from
+        # https://docs.python.org/2/library/basehttpserver.html#more-examples
+        server.handle_request()
+    return server.authcode
+
+def browse(auth_uri):
+    controller = webbrowser.get()  # Get a default controller
+    # Some Linux Distro does not setup default browser properly,
+    # so we try to explicitly use some popular browser, if we found any.
+    for browser in ["chrome", "firefox", "safari", "windows-default"]:
+        try:
+            controller = webbrowser.get(browser)
+            break
+        except webbrowser.Error:
+            pass  # This browser is not installed. Try next one.
+    logging.info("Please open a browser on THIS device to visit: %s" % auth_uri)
+    controller.open(auth_uri)
 
 class AuthCodeReceiver(BaseHTTPRequestHandler):
-    # Note: This docstring is also used by this script's command line help.
-    """A one-stop helper for desktop app to acquire an authorization code.
-
-    It starts a web server to listen redirect_uri, waiting for auth code.
-    It also opens a browser window to guide a human user to manually login.
-    After obtaining an auth code, the web server will automatically shut down.
-    """
-    @classmethod
-    def acquire(cls, auth_endpoint, redirect_port):
-        """Usage: ac = AuthCodeReceiver.acquire('http://.../authorize', 8088)"""
-        webbrowser.open(  # This becomes NO-OP if there is no local browser
-            "http://localhost:{p}?{q}".format(p=redirect_port, q=urlencode({
-                "text": """Open this link to acquire auth code.
-                    If you prefer, you may want to use incognito window.""",
-                "link": auth_endpoint,})))
-        logging.warn(
-            """Listening on http://localhost:{}, and a browser window is opened
-            for you on THIS machine, and waiting for human interaction.
-            This function call will hang until an auth code is received.
-            """.format(redirect_port))
-        server = HTTPServer(("", int(redirect_port)), cls)
-        server.authcode = None
-        while not server.authcode:
-            # https://docs.python.org/2/library/basehttpserver.html#more-examples
-            server.handle_request()
-        return server.authcode
-
     def do_GET(self):
         # For flexibility, we choose to not check self.path matching redirect_uri
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
@@ -60,19 +83,18 @@ class AuthCodeReceiver(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-def build_auth_endpoint(endpoint, client_id):
-    return "{e}?response_type=code&client_id={c}".format(e=endpoint, c=client_id)
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     p = parser = argparse.ArgumentParser(
-        description=AuthCodeReceiver.__doc__
-        + "The auth code received will be dumped into stdout.")
+        description=__doc__ + "The auth code received will be shown at stdout.")
     p.add_argument('endpoint',
         help="The auth endpoint for your app. For example: "
             "https://login.microsoftonline.com/your_tenant/oauth2/authorize")
-    p.add_argument('client_id', help="The client_id of your web service app")
+    p.add_argument('client_id', help="The client_id of your application")
     p.add_argument('redirect_port', type=int, help="The port in redirect_uri")
     args = parser.parse_args()
-    print(AuthCodeReceiver.acquire(
-        build_auth_endpoint(args.endpoint, args.client_id), args.redirect_port))
+    client = Client(args.client_id, authorization_endpoint=args.endpoint)
+    auth_uri = client.build_auth_request_uri("code")
+    print(obtain_auth_code(args.redirect_port, auth_uri))
 
