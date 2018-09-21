@@ -287,3 +287,64 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         data.update(scope=scope)
         return self._obtain_token("client_credentials", data=data, **kwargs)
 
+    def __init__(self,
+            client_id,
+            on_obtaining_tokens=
+                lambda client_id=None, scope=None, token_endpoint=None,
+                    response=None, params=None, data=None, **kwargs:
+                    None,
+            on_removing_rt=lambda token_item: None,
+            on_updating_rt=lambda token_item, new_rt: None,
+            **kwargs):
+        super(Client, self).__init__(client_id, **kwargs)
+        self.on_obtaining_tokens = on_obtaining_tokens
+        self.on_removing_rt = on_removing_rt
+        self.on_updating_rt = on_updating_rt
+
+    def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
+        resp = super(Client, self)._obtain_token(
+            grant_type, params, data, *args, **kwargs)
+        if "error" not in resp:
+            _resp = resp.copy()
+            if grant_type == "refresh_token" and "refresh_token" in _resp:
+                _resp.pop("refresh_token")  # We'll handle this in its own method
+            if "scope" in _resp:
+                scope = _resp["scope"].split()  # It is conceptually a set,
+                    # but we represent it as a list which can be persisted to JSON
+            else:
+                # TODO: Deal with absent scope in authorization grant
+                scope = data.get("scope")
+            self.on_obtaining_tokens(
+                client_id=self.client_id,
+                scope=scope,
+                token_endpoint=self.configuration["token_endpoint"],
+                response=_resp, params=params, data=data)
+        return resp
+
+    def obtain_token_with_refresh_token(self, token_item, scope=None,
+            rt_getter=lambda token_item: token_item["refresh_token"],
+            **kwargs):
+        # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
+        """This is an "overload" which accepts a refresh token item as a dict,
+        therefore this method can relay refresh_token item to event listeners.
+
+        :param refresh_token_item: A refresh token item came from storage
+        :param scope: If omitted, is treated as equal to the scope originally
+            granted by the resource ownser,
+            according to https://tools.ietf.org/html/rfc6749#section-6
+        :param rt_getter: A callable used to extract the RT from token_item
+        """
+        if isinstance(token_item, str):
+            # Satisfy the L of SOLID, although we expect caller uses a dict
+            return super(Client, self).obtain_token_with_refresh_token(
+                    token_item, scope=scope, **kwargs)
+        if isinstance(token_item, dict):
+            resp = super(Client, self).obtain_token_with_refresh_token(
+                    rt_getter(token_item), scope=scope, **kwargs)
+            if resp.get('error') == 'invalid_grant':
+                self.on_removing_rt(token_item)  # Discard old RT
+            if 'refresh_token' in resp:
+                self.on_updating_rt(token_item, resp['refresh_token'])
+            return resp
+        raise ValueError("token_item should not be a type %s" % type(token_item))
+
