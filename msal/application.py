@@ -1,4 +1,4 @@
-from .oauth2 import Client
+from oauth2cli import Client
 from .authority import Authority
 from .request import decorate_scope
 from .assertion import create_jwt_assertion
@@ -96,15 +96,15 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         self.user_token_cache = user_token_cache
         self.app_token_cache = None  # TODO
 
-    def acquire_token_for_client(self, scope, policy=None):
+    def acquire_token_for_client(self, scope):
         token_endpoint = self.authority.token_endpoint
         return Client(
             self.client_id, token_endpoint=token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential, token_endpoint, self.client_id)
-            ).acquire_token_with_client_credentials(
+            ).obtain_token_with_client_credentials(
                 scope=scope,  # This grant flow requires no scope decoration
-                query={'p': policy} if policy else None)
+                )
 
     def get_authorization_request_url(
             self,
@@ -134,12 +134,11 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         client = Client(
             self.client_id,
             authorization_endpoint=the_authority.authorization_endpoint)
-        return client.authorization_url(
+        return client.build_auth_request_uri(
             response_type="code",  # Using Authorization Code grant
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             scope=decorate_scope(scope, self.client_id, policy),
-            policy=policy if policy else None,
-            **(extra_query_params or {}))
+            )
 
     def acquire_token_with_authorization_code(
             self,
