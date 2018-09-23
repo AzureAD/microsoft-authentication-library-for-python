@@ -59,6 +59,13 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     #     super(PublicClientApplication, self).__init__(client_id, **kwargs)
     #     self.redirect_uri = redirect_uri or self.OUT_OF_BAND
 
+    def acquire_token_with_username_password(
+            self, username, password, scope=None, **kwargs):
+        cli = Client(self.client_id, token_endpoint=self.authority.token_endpoint)
+        return cli.obtain_token_with_username_password(
+                username, password,
+                scope=decorate_scope(scope, self.client_id), **kwargs)
+
     def acquire_token(
             self,
             scope,

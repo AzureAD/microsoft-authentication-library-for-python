@@ -2,7 +2,7 @@ import os
 import json
 import logging
 
-from msal.application import ConfidentialClientApplication
+from msal.application import *
 from tests import unittest
 
 from authcode import AuthCodeReceiver
@@ -40,6 +40,22 @@ class TestConfidentialClientApplication(unittest.TestCase):
         app = ConfidentialClientApplication(CONFIG['client_id'], certificate)
         result = app.acquire_token_for_client(self.scope)
         self.assertIn('access_token', result)
+
+@unittest.skipUnless("client_id" in CONFIG, "client_id missing")
+class TestPublicClientApplication(unittest.TestCase):
+
+    @unittest.skipUnless("username" in CONFIG and "password" in CONFIG, "Missing U/P")
+    def test_username_password(self):
+        app = PublicClientApplication(
+                CONFIG["client_id"], authority=CONFIG["authority"])
+        result = app.acquire_token_with_username_password(
+                CONFIG["username"], CONFIG["password"], scope=CONFIG.get("scope"))
+        if "error" in result:
+            if result["error"] == "invalid_grant":
+                raise unittest.SkipTest(result.get("error_description"))
+            self.assertEqual(result["error"], "interaction_required")
+        else:
+            self.assertIn('access_token', result)
 
 
 # Note: This test case requires human interaction to obtain authorization code
