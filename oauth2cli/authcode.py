@@ -18,7 +18,7 @@ except ImportError:  # Fall back to Python 2
     from urlparse import urlparse, parse_qs
     from urllib import urlencode
 
-from oauth2 import Client
+from .oauth2 import Client
 
 
 def obtain_auth_code(listen_port, auth_uri=None):
@@ -81,7 +81,7 @@ class AuthCodeReceiver(BaseHTTPRequestHandler):
         content_type = 'text/html' if body.startswith('<') else 'text/plain'
         self.send_header('Content-type', content_type)
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(body.encode("utf-8"))
 
 
 if __name__ == '__main__':
