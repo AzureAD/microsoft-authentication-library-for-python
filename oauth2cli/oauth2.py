@@ -153,7 +153,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         return params
 
     def obtain_token_with_authorization_code(
-            self, code, redirect_uri=None, client_id=None, **kwargs):
+            self, code, redirect_uri=None, **kwargs):
         """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
 
         This is typically used by a server-side app (Confidential Client),
@@ -164,11 +164,13 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         :param redirect_uri:
             Required, if the "redirect_uri" parameter was included in the
             authorization request, and their values MUST be identical.
-        :param client_id: Required, if the client is not authenticating itself.
-            See https://tools.ietf.org/html/rfc6749#section-3.2.1
         """
         data = kwargs.pop("data", {})
         data.update(code=code, redirect_uri=redirect_uri)
+        if not self.client_secret:
+            # client_id is required, if the client is not authenticating itself.
+            # See https://tools.ietf.org/html/rfc6749#section-4.1.3
+            data["client_id"] = self.client_id
         return self._obtain_token("authorization_code", data=data, **kwargs)
 
     def obtain_token_with_username_password(
