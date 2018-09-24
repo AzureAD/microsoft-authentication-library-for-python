@@ -32,6 +32,10 @@ pip-log.txt
 # IDEA / PyCharm IDE
 .idea/
 
+# vim
+*.vim
+*.swp
+
 # Virtualenvs
 env*
 
