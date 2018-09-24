@@ -41,12 +41,15 @@ def obtain_auth_code(listen_port, auth_uri=None):
             }))
         browse(page)
     server = HTTPServer(("", int(listen_port)), AuthCodeReceiver)
-    server.authcode = None
-    while not server.authcode:
-        # Derived from
-        # https://docs.python.org/2/library/basehttpserver.html#more-examples
-        server.handle_request()
-    return server.authcode
+    try:
+        server.authcode = None
+        while not server.authcode:
+            # Derived from
+            # https://docs.python.org/2/library/basehttpserver.html#more-examples
+            server.handle_request()
+        return server.authcode
+    finally:
+        server.server_close()
 
 def browse(auth_uri):
     controller = webbrowser.get()  # Get a default controller
