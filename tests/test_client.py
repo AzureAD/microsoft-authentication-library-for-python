@@ -38,14 +38,9 @@ class TestClient(unittest.TestCase):
             CONFIG.get('scope'))
         self.assertIn('access_token', result)
 
-    @unittest.skipUnless(
-        "username" in CONFIG and "password" in CONFIG, "username/password missing")
-    def test_username_password(self):
-        result = self.client.obtain_token_with_username_password(
-            CONFIG["username"], CONFIG["password"],
-            data={"resource": CONFIG.get("resource")},  # MSFT AAD V1 only
-            scope=CONFIG.get("scope"))
+    def assertLoosely(self, result):
         if "error" in result:
+            # Some of these errors are configuration issues, not library issues
             if result["error"] == "invalid_grant":
                 raise unittest.SkipTest(result.get("error_description"))
             self.assertEqual(result["error"], "interaction_required")
@@ -53,11 +48,26 @@ class TestClient(unittest.TestCase):
             self.assertIn('access_token', result)
 
     @unittest.skipUnless(
+        "username" in CONFIG and "password" in CONFIG, "username/password missing")
+    def test_username_password(self):
+        result = self.client.obtain_token_with_username_password(
+            CONFIG["username"], CONFIG["password"],
+            data={"resource": CONFIG.get("resource")},  # MSFT AAD V1 only
+            scope=CONFIG.get("scope"))
+        self.assertLoosely(result)
+
+    @unittest.skipUnless(
         "authorization_endpoint" in CONFIG, "authorization_endpoint missing")
     def test_auth_code(self):
         port = CONFIG.get("listen_port", 44331)
+        redirect_uri = "http://localhost:%s" % port
         auth_request_uri = self.client.build_auth_request_uri(
-            "code", redirect_uri="http://localhost:%s" % port)
+            "code", redirect_uri=redirect_uri, scope=CONFIG.get("scope"))
         ac = obtain_auth_code(port, auth_uri=auth_request_uri)
         self.assertNotEqual(ac, None)
+        result = self.client.obtain_token_with_authorization_code(
+            ac,
+            data={"scope": CONFIG.get("scope")},  # MSFT AAD only
+            redirect_uri=redirect_uri)
+        self.assertLoosely(result)
 
