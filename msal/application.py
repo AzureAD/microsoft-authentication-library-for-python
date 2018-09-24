@@ -164,6 +164,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
     def acquire_token_with_username_password(
             self, username, password, scope=None, **kwargs):
+        """Gets a token for a given resource via user credentails."""
         cli = Client(self.client_id, token_endpoint=self.authority.token_endpoint)
         return cli.obtain_token_with_username_password(
                 username, password,
@@ -206,7 +207,16 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         self.user_token_cache = user_token_cache
         self.app_token_cache = None  # TODO
 
-    def acquire_token_for_client(self, scope):
+    def acquire_token_for_client(self, scope, force_refresh=False):
+        """Acquires token from the service for the confidential client.
+
+        :param force_refresh:
+            This method attempts to look up valid access token in the cache.
+            If this parameter is set to True,
+            this method will ignore the access token in the cache
+            and attempt to acquire new access token using client credentials
+        """
+        # TODO: force_refresh will be implemented after the cache mechanism is ready
         token_endpoint = self.authority.token_endpoint
         return Client(
             self.client_id, token_endpoint=token_endpoint,
