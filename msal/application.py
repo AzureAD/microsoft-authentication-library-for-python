@@ -34,12 +34,12 @@ class ClientApplication(object):
 
     def __init__(
             self, client_id,
-            client_credential=None,
-            authority="https://login.microsoftonline.com/common/",
-            validate_authority=True):
+            client_credential=None, authority=None, validate_authority=True):
         self.client_id = client_id
         self.client_credential = client_credential
-        self.authority = Authority(authority, validate_authority)
+        self.authority = Authority(
+                authority or "https://login.microsoftonline.com/common/",
+                validate_authority)
             # Here the self.authority is not the same type as authority in input
 
     @staticmethod

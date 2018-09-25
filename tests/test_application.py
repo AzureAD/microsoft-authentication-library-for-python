@@ -57,7 +57,8 @@ class TestClientApplication(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = ClientApplication(
-            CONFIG["client_id"], client_credential=CONFIG.get("client_secret"))
+            CONFIG["client_id"], client_credential=CONFIG.get("client_secret"),
+            authority=CONFIG.get("authority"))
 
     def assertLoosely(self, result):
         if "error" in result:
