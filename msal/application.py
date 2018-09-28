@@ -58,6 +58,7 @@ class ClientApplication(object):
         default_body = self._build_auth_parameters(
             self.client_credential,
             self.authority.token_endpoint, self.client_id)
+        default_body["client_info"] = 1
         self.client = Client(
             self.client_id, token_endpoint=self.authority.token_endpoint,
             default_body=default_body,

@@ -41,12 +41,17 @@ def _get_cache_key(entry):
 def is_subdict_of(small, big):
     return dict(big, **small) == big
 
+def base64decode(raw):  # This can handle a padding-less raw input
+    raw += '=' * (-len(raw) % 4)  # https://stackoverflow.com/a/32517907/728675
+    return base64.b64decode(raw).decode("utf-8")
+
 
 class TokenCache(object):
 
     class CredentialType:
         ACCESS_TOKEN = "AccessToken"
         REFRESH_TOKEN = "RefreshToken"
+        ACCOUNT = "Account"  # Not exactly a credential type, but we put it here
 
     def __init__(self, state=None):
         self._cache = {}
@@ -93,13 +98,13 @@ class TokenCache(object):
             #        None,
         logging.debug("event=%s", json.dumps(event, indent=4))
         response = event.get("response", {})
-        client_info = response.get("clientInfo", {})
         access_token = response.get("access_token", {})
         refresh_token = response.get("refresh_token", {})
-        client_info = response.get("client_info")
+        client_info = {}
         home_account_id = None
-        if client_info:
-            home_account_id = None  # TODO
+        if "client_info" in response:
+            client_info = json.loads(base64decode(response["client_info"]))
+            home_account_id = "{uid}.{utid}".format(**client_info)
         environment = realm = None
         if "token_endpoint" in event:
             _, environment, realm = canonicalize(event["token_endpoint"])
@@ -129,7 +134,19 @@ class TokenCache(object):
                     "extended_expires_on": now + response.get("ext_expires_in", 0),
                     }
             if client_info:
-                pass  # Contains uid and utid
+                key = "-".join([
+                    home_account_id or "",
+                    environment or "",
+                    realm or "",
+                    ]).lower()
+                self._cache.setdefault(self.CredentialType.ACCOUNT, {})[key] = {
+                    "home_account_id": home_account_id,
+                    "environment": environment,
+                    "realm": realm,
+                    "local_account_id": "TBD",
+                    "username": "TBD",
+                    "authority_type": "AAD",  # Always AAD?
+                    }
 
     def _remove_rt(self, rt_item):
         with self._lock:
