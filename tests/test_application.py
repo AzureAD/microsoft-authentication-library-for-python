@@ -26,8 +26,9 @@ class TestConfidentialClientApplication(unittest.TestCase):
         result = app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
 
-        result2 = app.acquire_token_silent(scope, account=None)  # AT from cache
-        self.assertEqual(result['access_token'], result2['access_token'])
+        result_from_cache = app.acquire_token_silent(scope, account=None)
+        self.assertIsNotNone(result_from_cache)
+        self.assertEqual(result['access_token'], result_from_cache['access_token'])
 
     @unittest.skipUnless("private_key" in CONFIG, "Missing client cert")
     def test_confidential_client_using_certificate(self):

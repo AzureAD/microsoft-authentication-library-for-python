@@ -52,6 +52,7 @@ class TokenCache(object):
         ACCESS_TOKEN = "AccessToken"
         REFRESH_TOKEN = "RefreshToken"
         ACCOUNT = "Account"  # Not exactly a credential type, but we put it here
+        ID_TOKEN = "IdToken"
 
     def __init__(self, state=None):
         self._cache = {}
@@ -60,7 +61,8 @@ class TokenCache(object):
             self.deserialize(state)
         self.has_state_changed = False
 
-    def _find(self, credential_type, target=frozenset([]), query=None):
+    def _find(self, credential_type, target=None, query=None):
+        target = target or []
         assert isinstance(target, list), "Invalid parameter type"
         with self._lock:
             return [entry
@@ -100,6 +102,7 @@ class TokenCache(object):
         response = event.get("response", {})
         access_token = response.get("access_token", {})
         refresh_token = response.get("refresh_token", {})
+        id_token = response.get("id_token", {})
         client_info = {}
         home_account_id = None
         if "client_info" in response:
@@ -134,6 +137,8 @@ class TokenCache(object):
                     "extended_expires_on": now + response.get("ext_expires_in", 0),
                     }
             if client_info:
+                decoded_id_token = json.loads(
+                    base64decode(id_token.split('.')[1])) if id_token else {}
                 key = "-".join([
                     home_account_id or "",
                     environment or "",
@@ -143,9 +148,27 @@ class TokenCache(object):
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "realm": realm,
-                    "local_account_id": "TBD",
-                    "username": "TBD",
+                    "local_account_id": decoded_id_token.get(
+                        "oid", decoded_id_token.get("sub")),
+                    "username": decoded_id_token.get("preferred_username"),
                     "authority_type": "AAD",  # Always AAD?
+                    }
+            if id_token:
+                key = "-".join([
+                    home_account_id or "",
+                    environment or "",
+                    self.CredentialType.ID_TOKEN,
+                    event.get("client_id", ""),
+                    realm or "",
+                    ]).lower()
+                self._cache.setdefault(self.CredentialType.ID_TOKEN, {})[key] = {
+                    "home_account_id": home_account_id,
+                    "environment": environment,
+                    "realm": realm,
+                    "credential_type": self.CredentialType.ID_TOKEN,
+                    "client_id": event.get("client_id"),
+                    "secret": id_token,
+                    # "authority": "it is optional",
                     }
 
     def _remove_rt(self, rt_item):
