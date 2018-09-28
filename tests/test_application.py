@@ -20,9 +20,14 @@ class TestConfidentialClientApplication(unittest.TestCase):
     @unittest.skipUnless("client_secret" in CONFIG, "Missing client secret")
     def test_confidential_client_using_secret(self):
         app = ConfidentialClientApplication(
-                CONFIG['client_id'], CONFIG['client_secret'])
-        result = app.acquire_token_for_client(CONFIG.get("scope"))
+            CONFIG["client_id"], client_credential=CONFIG.get("client_secret"),
+            authority=CONFIG.get("authority"))
+        scope = CONFIG.get("scope", [])
+        result = app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
+
+        result2 = app.acquire_token_silent(scope, account=None)  # AT from cache
+        self.assertEqual(result['access_token'], result2['access_token'])
 
     @unittest.skipUnless("private_key" in CONFIG, "Missing client cert")
     def test_confidential_client_using_certificate(self):

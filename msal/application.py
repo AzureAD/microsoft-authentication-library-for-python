@@ -1,6 +1,9 @@
+import time
+
 from oauth2cli import Client
 from .authority import Authority
 from .assertion import create_jwt_assertion
+from .token_cache import TokenCache
 
 
 def decorate_scope(
@@ -27,20 +30,41 @@ def decorate_scope(
         decorated = set(reserved_scope)  # Make a writable copy
     else:
         decorated = scope_set | reserved_scope
-    return decorated
+    return list(decorated)
 
 
 class ClientApplication(object):
 
     def __init__(
             self, client_id,
-            client_credential=None, authority=None, validate_authority=True):
+            client_credential=None, authority=None, validate_authority=True,
+            token_cache=None):
+        """
+        :param client_credential: It can be a string containing client secret,
+            or an X509 certificate container in this form:
+
+                {
+                    "certificate": "-----BEGIN PRIVATE KEY-----...",
+                    "thumbprint": "A1B2C3D4E5F6...",
+                }
+        """
         self.client_id = client_id
         self.client_credential = client_credential
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
                 validate_authority)
             # Here the self.authority is not the same type as authority in input
+        self.token_cache = token_cache or TokenCache()
+        default_body = self._build_auth_parameters(
+            self.client_credential,
+            self.authority.token_endpoint, self.client_id)
+        self.client = Client(
+            self.client_id, token_endpoint=self.authority.token_endpoint,
+            default_body=default_body,
+            on_obtaining_tokens=self.token_cache._add,
+            on_removing_rt=self.token_cache._remove_rt,
+            on_updating_rt=self.token_cache._update_rt,
+            )
 
     @staticmethod
     def _build_auth_parameters(client_credential, token_endpoint, client_id):
@@ -120,36 +144,65 @@ class ClientApplication(object):
         # So in theory, you can omit scope here when you were working with only
         # one scope. But, MSAL decorates your scope anyway, so they are never
         # really empty.
-        return Client(
-            self.client_id, token_endpoint=self.authority.token_endpoint,
-            default_body=self._build_auth_parameters(
-                self.client_credential,
-                self.authority.token_endpoint, self.client_id)
-            ).obtain_token_with_authorization_code(
+        assert isinstance(scope, list), "Invalid parameter type"
+        return self.client.obtain_token_with_authorization_code(
                 code, redirect_uri=redirect_uri,
                 data={"scope": decorate_scope(scope, self.client_id)},
             )
 
     def acquire_token_silent(
             self, scope,
-            user=None,  # It can be a string as user id, or a User object
+            account=None,  # It can be a string as user id
             authority=None,  # See get_authorization_request_url()
-            policy='',
             force_refresh=False,  # To force refresh an Access Token (not a RT)
             **kwargs):
+        assert isinstance(scope, list), "Invalid parameter type"
         the_authority = Authority(authority) if authority else self.authority
-        refresh_token = kwargs.get('refresh_token')  # For testing purpose
-        response = Client(
+
+        if force_refresh == False:
+            matches = self.token_cache._find(
+                self.token_cache.CredentialType.ACCESS_TOKEN,
+                target=scope,
+                query={
+                    "client_id": self.client_id,
+                    "environment": the_authority.instance,
+                    "realm": the_authority.tenant,
+                    "home_account_id": "uid.tid" if account else None,  # TODO
+                    })
+            now = time.time()
+            for entry in matches:
+                if entry["expires_on"] - now < 5*60:
+                    continue  # Removal is not necessary, it will be overwritten
+                return {  # Mimic a real response
+                    "access_token": entry["secret"],
+                    "token_type": "Bearer",
+                    "expires_in": entry["expires_on"] - now,
+                    }
+
+        matches = self.token_cache._find(
+            self.token_cache.CredentialType.REFRESH_TOKEN,
+            target=scope,
+            query={
+                "client_id": self.client_id,
+                "environment": the_authority.instance,
+                "realm": the_authority.tenant,
+                "home_account_id": "uid.tid" if account else None,  # TODO
+                })
+        client = Client(
             self.client_id, token_endpoint=the_authority.token_endpoint,
             default_body=self._build_auth_parameters(
                 self.client_credential,
-                the_authority.token_endpoint, self.client_id)
-            ).acquire_token_with_refresh_token(
-                refresh_token,
-                scope=decorate_scope(scope, self.client_id, policy),
-                query={'p': policy} if policy else None)
-        # TODO: refresh the refresh_token
-        return response
+                the_authority.token_endpoint, self.client_id),
+            on_obtaining_tokens=self.token_cache._add,
+            on_removing_rt=self.token_cache._remove_rt,
+            on_updating_rt=self.token_cache._update_rt,
+            )
+        for entry in matches:
+            response = client.obtain_token_with_refresh_token(
+                entry, rt_getter=lambda token_item: token_item["secret"],
+                scope=decorate_scope(scope, self.client_id))
+            if "error" not in response:
+                return response
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
@@ -188,24 +241,6 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
-    def __init__(
-            self, client_id, client_credential, user_token_cache=None,
-            # redirect_uri=None,  # Experimental: Removed for now.
-            #   acquire_token_for_client() doesn't need it
-            **kwargs):
-        """
-        :param client_credential: It can be a string containing client secret,
-            or an X509 certificate container in this form:
-
-                {
-                    "certificate": "-----BEGIN PRIVATE KEY-----...",
-                    "thumbprint": "A1B2C3D4E5F6...",
-                }
-        """
-        super(ConfidentialClientApplication, self).__init__(client_id, **kwargs)
-        self.client_credential = client_credential
-        self.user_token_cache = user_token_cache
-        self.app_token_cache = None  # TODO
 
     def acquire_token_for_client(self, scope, force_refresh=False):
         """Acquires token from the service for the confidential client.
@@ -217,12 +252,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             and attempt to acquire new access token using client credentials
         """
         # TODO: force_refresh will be implemented after the cache mechanism is ready
-        token_endpoint = self.authority.token_endpoint
-        return Client(
-            self.client_id, token_endpoint=token_endpoint,
-            default_body=self._build_auth_parameters(
-                self.client_credential, token_endpoint, self.client_id)
-            ).obtain_token_with_client_credentials(
+        return self.client.obtain_token_with_client_credentials(
                 scope=scope,  # This grant flow requires no scope decoration
                 )
 
