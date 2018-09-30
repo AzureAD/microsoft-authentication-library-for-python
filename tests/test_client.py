@@ -15,14 +15,27 @@ def load_conf(filename):
         with open(filename) as f:
             return json.load(f)
     except:
-        logging.warn("Unable to find/read JSON configuration %s" % filename)
+        logging.warn("Unable to open/read JSON configuration %s" % filename)
 
 CONFIG = load_conf(os.path.join(THIS_FOLDER, 'config.json')) or {}
 
 
+class Oauth2TestCase(unittest.TestCase):
+
+    def assertLoosely(self, response, assertion=None,
+            skippable_errors=("invalid_grant", "interaction_required")):
+        if response.get("error") in skippable_errors:
+            # Some of these errors are configuration issues, not library issues
+            raise unittest.SkipTest(response.get("error_description"))
+        else:
+            if assertion is None:
+                assertion = lambda: self.assertIn("access_token", response)
+            assertion()
+
+
 # Since the OAuth2 specs uses snake_case, this test config also uses snake_case
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
-class TestClient(unittest.TestCase):
+class TestClient(Oauth2TestCase):
 
     @classmethod
     def setUpClass(cls):
@@ -37,15 +50,6 @@ class TestClient(unittest.TestCase):
         result = self.client.obtain_token_with_client_credentials(
             CONFIG.get('scope'))
         self.assertIn('access_token', result)
-
-    def assertLoosely(self, result):
-        if "error" in result:
-            # Some of these errors are configuration issues, not library issues
-            if result["error"] == "invalid_grant":
-                raise unittest.SkipTest(result.get("error_description"))
-            self.assertEqual(result["error"], "interaction_required")
-        else:
-            self.assertIn('access_token', result)
 
     @unittest.skipUnless(
         "username" in CONFIG and "password" in CONFIG, "username/password missing")
@@ -69,5 +73,5 @@ class TestClient(unittest.TestCase):
             ac,
             data={"scope": CONFIG.get("scope")},  # MSFT AAD only
             redirect_uri=redirect_uri)
-        self.assertLoosely(result)
+        self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 
