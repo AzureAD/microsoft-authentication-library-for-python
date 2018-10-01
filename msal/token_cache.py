@@ -111,9 +111,9 @@ class TokenCache(object):
         environment = realm = None
         if "token_endpoint" in event:
             _, environment, realm = canonicalize(event["token_endpoint"])
+
         with self._lock:
-            if refresh_token:
-                self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})["key"] = {}
+
             if access_token:
                 key = "-".join([
                     home_account_id or "",
@@ -125,17 +125,18 @@ class TokenCache(object):
                     ]).lower()
                 now = time.time()
                 self._cache.setdefault(self.CredentialType.ACCESS_TOKEN, {})[key] = {
+                    "credential_type": self.CredentialType.ACCESS_TOKEN,
+                    "secret": access_token,
                     "home_account_id": home_account_id,
                     "environment": environment,
-                    "credential_type": self.CredentialType.ACCESS_TOKEN,
                     "client_id": event.get("client_id"),
-                    "secret": access_token,
                     "target": event.get("scope"),
                     "realm": realm,
                     "cached_at": now,
                     "expires_on": now + response.get("expires_in", 3599),
                     "extended_expires_on": now + response.get("ext_expires_in", 0),
                     }
+
             if client_info:
                 decoded_id_token = json.loads(
                     base64decode(id_token.split('.')[1])) if id_token else {}
@@ -153,6 +154,7 @@ class TokenCache(object):
                     "username": decoded_id_token.get("preferred_username"),
                     "authority_type": "AAD",  # Always AAD?
                     }
+
             if id_token:
                 key = "-".join([
                     home_account_id or "",
@@ -162,22 +164,55 @@ class TokenCache(object):
                     realm or "",
                     ]).lower()
                 self._cache.setdefault(self.CredentialType.ID_TOKEN, {})[key] = {
+                    "credential_type": self.CredentialType.ID_TOKEN,
+                    "secret": id_token,
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "realm": realm,
-                    "credential_type": self.CredentialType.ID_TOKEN,
                     "client_id": event.get("client_id"),
-                    "secret": id_token,
                     # "authority": "it is optional",
                     }
 
+            if refresh_token:
+                key = self._build_rt_key(
+                    home_account_id, environment,
+                    event.get("client_id", ""), event.get("scope", []))
+                self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key] = {
+                    "credential_type": self.CredentialType.REFRESH_TOKEN,
+                    "secret": refresh_token,
+                    "home_account_id": home_account_id,
+                    "environment": environment,
+                    "client_id": event.get("client_id"),
+                    # Fields below are considered optional
+                    # "family_id": None,  # it is optional
+                    "target": event.get("scope"),
+                    "client_info": response.get("client_info"),
+                    }
+
+    @classmethod
+    def _build_rt_key(
+            cls,
+            home_account_id=None, environment=None, client_id=None, target=None,
+            **ignored):
+        return "-".join([
+            home_account_id or "",
+            environment or "",
+            cls.CredentialType.REFRESH_TOKEN,
+            client_id or "",
+            "",  # RT is cross-tenant in AAD
+            ' '.join(sorted(target or [])),
+            ]).lower()
+
     def _remove_rt(self, rt_item):
+        key = self._build_rt_key(**rt_item)
         with self._lock:
-            print(rt_item)
+            self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {}).pop(key, None)
 
     def _update_rt(self, rt_item, new_rt):
+        key = self._build_rt_key(**rt_item)
         with self._lock:
-            print(rt_item, new_rt)
+            rt = self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key]
+            rt["secret"] = new_rt
 
     def add(self, entries):
         with self._lock:

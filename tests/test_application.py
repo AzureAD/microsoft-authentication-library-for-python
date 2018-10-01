@@ -88,13 +88,24 @@ class TestClientApplication(unittest.TestCase):
         result = self.app.acquire_token_with_authorization_code(
             ac, CONFIG["scope"], redirect_uri=redirect_uri)
         logging.debug("cache = %s", json.dumps(self.app.token_cache._cache, indent=4))
-        self.assertIn("access_token", result)
+        self.assertIn("access_token", result, "We should receive AT by auth code")
 
+        # Going to test acquire_token_silent(...) to locate an AT from cache
         # In practice, you may want to filter based on its "username" field
         accounts = self.app.get_accounts()
         self.assertNotEqual(0, len(accounts))
         result_from_cache = self.app.acquire_token_silent(
                 CONFIG["scope"], account=accounts[0])
         self.assertIsNotNone(result_from_cache)
-        self.assertEqual(result['access_token'], result_from_cache['access_token'])
+        self.assertEqual(result['access_token'], result_from_cache['access_token'],
+                "We should get a cached AT")
+
+        # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
+        self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
+        result_from_cache = self.app.acquire_token_silent(
+                CONFIG["scope"], account=accounts[0])
+        self.assertIsNotNone(result_from_cache,
+                "We should get a result from acquire_token_silent(...) call")
+        self.assertNotEqual(result['access_token'], result_from_cache['access_token'],
+                "We should get a fresh AT (via RT)")
 

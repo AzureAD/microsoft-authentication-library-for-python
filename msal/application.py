@@ -195,12 +195,12 @@ class ClientApplication(object):
 
         matches = self.token_cache._find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
-            target=scope,
+            # target=scope,  # AAD RTs are scope-independent
             query={
                 "client_id": self.client_id,
                 "environment": the_authority.instance,
-                "realm": the_authority.tenant,
                 "home_account_id": (account or {}).get("home_account_id"),
+                # "realm": the_authority.tenant,  # AAD RTs are tenant-independent
                 })
         client = Client(
             self.client_id, token_endpoint=the_authority.token_endpoint,
