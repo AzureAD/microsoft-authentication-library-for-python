@@ -151,9 +151,22 @@ class ClientApplication(object):
                 data={"scope": decorate_scope(scope, self.client_id)},
             )
 
+    def get_accounts(self):
+        """Returns a list of account objects that can later be used to find token.
+
+        Each account object is a dict containing a "username" field (among others)
+        which can use to determine which account to use.
+        """
+        # The following implementation finds accounts only from saved accounts,
+        # but does NOT correlate them with saved RTs. It probably won't matter,
+        # because in MSAL universe, there are always Accounts and RTs together.
+        return self.token_cache._find(
+                self.token_cache.CredentialType.ACCOUNT,
+                query={"environment": self.authority.instance})
+
     def acquire_token_silent(
             self, scope,
-            account=None,  # It can be a string as user id
+            account=None,  # one of the account object returned by get_accounts()
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # To force refresh an Access Token (not a RT)
             **kwargs):
@@ -168,7 +181,7 @@ class ClientApplication(object):
                     "client_id": self.client_id,
                     "environment": the_authority.instance,
                     "realm": the_authority.tenant,
-                    "home_account_id": "uid.tid" if account else None,  # TODO
+                    "home_account_id": (account or {}).get("home_account_id"),
                     })
             now = time.time()
             for entry in matches:
@@ -187,7 +200,7 @@ class ClientApplication(object):
                 "client_id": self.client_id,
                 "environment": the_authority.instance,
                 "realm": the_authority.tenant,
-                "home_account_id": "uid.tid" if account else None,  # TODO
+                "home_account_id": (account or {}).get("home_account_id"),
                 })
         client = Client(
             self.client_id, token_endpoint=the_authority.token_endpoint,

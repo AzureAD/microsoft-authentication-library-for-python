@@ -84,7 +84,17 @@ class TestClientApplication(unittest.TestCase):
             CONFIG["scope"], redirect_uri=redirect_uri)
         ac = obtain_auth_code(port, auth_uri=auth_request_uri)
         self.assertNotEqual(ac, None)
+
         result = self.app.acquire_token_with_authorization_code(
             ac, CONFIG["scope"], redirect_uri=redirect_uri)
-        self.assertLoosely(result)
+        logging.debug("cache = %s", json.dumps(self.app.token_cache._cache, indent=4))
+        self.assertIn("access_token", result)
+
+        # In practice, you may want to filter based on its "username" field
+        accounts = self.app.get_accounts()
+        self.assertNotEqual(0, len(accounts))
+        result_from_cache = self.app.acquire_token_silent(
+                CONFIG["scope"], account=accounts[0])
+        self.assertIsNotNone(result_from_cache)
+        self.assertEqual(result['access_token'], result_from_cache['access_token'])
 
