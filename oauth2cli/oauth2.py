@@ -23,12 +23,25 @@ class BaseClient(object):
                 # usually contains Confidential Client authentication parameters
                 # such as {'client_id': 'your_id', 'client_secret': 'secret'}
                 # if you choose to not use HTTP AUTH
-            authorization_endpoint=None, token_endpoint=None):
+            configuration=None,  # configuration dict of the authorization server
+            ):
+        """Initialize a client object to talk all the OAuth2 grants to the server.
+
+        Args:
+            configuration (dict):
+                It contains the configuration (i.e. metadata) of the auth server.
+                The actual content typically contains keys like
+                "authorization_endpoint", "token_endpoint", etc..
+                Based on RFC 8414 (https://tools.ietf.org/html/rfc8414),
+                you can probably fetch it online from either
+                https://example.com/.../.well-known/oauth-authorization-server
+                or
+                https://example.com/.../.well-known/openid-configuration
+        """
         self.client_id = client_id
         self.client_secret = client_secret
         self.default_body = default_body or {}
-        self.authorization_endpoint = authorization_endpoint
-        self.token_endpoint = token_endpoint
+        self.configuration = configuration or {}
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -69,9 +82,11 @@ class BaseClient(object):
         if self.client_secret and self.client_id:
             auth = (self.client_id, self.client_secret)  # for HTTP Basic Auth
 
-        assert self.token_endpoint, "You need to provide token_endpoint"
+        if "token_endpoint" not in self.configuration:
+            raise ValueError("token_endpoint not found in configuration")
         resp = requests.post(
-            self.token_endpoint, headers={'Accept': 'application/json'},
+            self.configuration["token_endpoint"],
+            headers={'Accept': 'application/json'},
             params=params, data=_data, auth=auth, timeout=timeout)
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
@@ -132,11 +147,14 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             maintain state between the request and callback.
         :param kwargs: Other parameters, typically defined in OpenID Connect.
         """
+        if "authorization_endpoint" not in self.configuration:
+            raise ValueError("authorization_endpoint not found in configuration")
+        authorization_endpoint = self.configuration["authorization_endpoint"]
         params = self._build_auth_request_params(
             response_type, redirect_uri=redirect_uri, scope=scope, state=state,
             **kwargs)
-        sep = '&' if '?' in self.authorization_endpoint else '?'
-        return "%s%s%s" % (self.authorization_endpoint, sep, urlencode(params))
+        sep = '&' if '?' in authorization_endpoint else '?'
+        return "%s%s%s" % (authorization_endpoint, sep, urlencode(params))
 
     @staticmethod
     def parse_auth_response(params, state=None):

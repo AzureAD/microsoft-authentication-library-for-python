@@ -2,6 +2,8 @@ import os
 import json
 import logging
 
+import requests
+
 from oauth2cli.oauth2 import Client
 from oauth2cli.authcode import obtain_auth_code
 from tests import unittest
@@ -11,11 +13,42 @@ THIS_FOLDER = os.path.dirname(__file__)
 CONFIG_FILENAME = "config.json"
 
 def load_conf(filename):
+    """
+    Example of a configuration file:
+
+    {
+        "Note": "the following server_configuration is optional",
+        "server_configuration": {
+            "authorization_endpoint": "https://example.com/tenant/oauth2/authorize",
+            "token_endpoint": "https://example.com/tenant/oauth2/token"
+        },
+
+        "client_id": "289a413d-284b-4303-9c79-94380abe5d22",
+        "client_secret": "your_secret",
+
+        "scope": ["your_scope"],
+        "resource": "Some IdP needs this",
+
+        "authority": "https://example.com/tenant/",
+        "username": "you@example.com",
+        "password": "I could tell you but then I would have to kill you",
+
+        "placeholder": null
+    }
+    """
     try:
         with open(filename) as f:
-            return json.load(f)
+            conf = json.load(f)
     except:
         logging.warn("Unable to open/read JSON configuration %s" % filename)
+        raise
+    if not conf.get("server_configuration"):  # Then we do a discovery
+        # The following line may duplicate a '/' at the joining point,
+        # but requests.get(...) would still work.
+        # Besides, standard urljoin(...) is picky on insisting authority ends with '/'
+        discovery_uri = conf["authority"] + '/.well-known/openid-configuration'
+        conf["server_configuration"] = requests.get(discovery_uri).json()
+    return conf
 
 CONFIG = load_conf(os.path.join(THIS_FOLDER, 'config.json')) or {}
 
@@ -42,8 +75,7 @@ class TestClient(Oauth2TestCase):
         cls.client = Client(
             CONFIG['client_id'],
             client_secret=CONFIG.get('client_secret'),
-            authorization_endpoint=CONFIG.get("authorization_endpoint"),
-            token_endpoint=CONFIG.get("token_endpoint"))
+            configuration=CONFIG["server_configuration"])
 
     @unittest.skipUnless("client_secret" in CONFIG, "client_secret missing")
     def test_client_credentials(self):
@@ -61,7 +93,8 @@ class TestClient(Oauth2TestCase):
         self.assertLoosely(result)
 
     @unittest.skipUnless(
-        "authorization_endpoint" in CONFIG, "authorization_endpoint missing")
+        "authorization_endpoint" in CONFIG.get("server_configuration", {}),
+        "authorization_endpoint missing")
     def test_auth_code(self):
         port = CONFIG.get("listen_port", 44331)
         redirect_uri = "http://localhost:%s" % port
@@ -71,7 +104,10 @@ class TestClient(Oauth2TestCase):
         self.assertNotEqual(ac, None)
         result = self.client.obtain_token_with_authorization_code(
             ac,
-            data={"scope": CONFIG.get("scope")},  # MSFT AAD only
+            data={
+                "scope": CONFIG.get("scope"),
+                "resource": CONFIG.get("resource"),
+                },  # MSFT AAD only
             redirect_uri=redirect_uri)
         self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 
