@@ -24,10 +24,18 @@ class TokenCache(object):
         ID_TOKEN = "IdToken"
 
     def __init__(self, state=None):
+        """Initialize a token_cache instance, with an optional initial state,
+        which can come from a previous run of token cache instance.
+
+        Although this class already maintains cached tokens using unified schema,
+        it does not actually persist them.
+        The persistence layer would be implemented in a subclass which provides
+        a serialize() and deserialize() wrapping the self._cache internal structure.
+        """
         self._cache = state or {}
         self._lock = threading.RLock()
 
-    def _find(self, credential_type, target=None, query=None):
+    def find(self, credential_type, target=None, query=None):
         target = target or []
         assert isinstance(target, list), "Invalid parameter type"
         with self._lock:
@@ -36,7 +44,7 @@ class TokenCache(object):
                 if is_subdict_of(query or {}, entry)
                 and set(target) <= set(entry.get("target", []))]
 
-    def _add(self, **event):  # TODO: Changes to a normal dict
+    def add(self, **event):  # TODO: Changes to a normal dict
             # lambda client_id=None, scope=None, token_endpoint=None,
             #        response=None, params=None, data=None, **kwargs:
             #        None,
@@ -145,12 +153,12 @@ class TokenCache(object):
             ' '.join(sorted(target or [])),
             ]).lower()
 
-    def _remove_rt(self, rt_item):
+    def remove_rt(self, rt_item):
         key = self._build_rt_key(**rt_item)
         with self._lock:
             self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {}).pop(key, None)
 
-    def _update_rt(self, rt_item, new_rt):
+    def update_rt(self, rt_item, new_rt):
         key = self._build_rt_key(**rt_item)
         with self._lock:
             rt = self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key]

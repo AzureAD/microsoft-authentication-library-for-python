@@ -62,9 +62,9 @@ class ClientApplication(object):
         self.client = Client(
             self.client_id, token_endpoint=self.authority.token_endpoint,
             default_body=default_body,
-            on_obtaining_tokens=self.token_cache._add,
-            on_removing_rt=self.token_cache._remove_rt,
-            on_updating_rt=self.token_cache._update_rt,
+            on_obtaining_tokens=self.token_cache.add,
+            on_removing_rt=self.token_cache.remove_rt,
+            on_updating_rt=self.token_cache.update_rt,
             )
 
     @staticmethod
@@ -160,7 +160,7 @@ class ClientApplication(object):
         # The following implementation finds accounts only from saved accounts,
         # but does NOT correlate them with saved RTs. It probably won't matter,
         # because in MSAL universe, there are always Accounts and RTs together.
-        return self.token_cache._find(
+        return self.token_cache.find(
                 self.token_cache.CredentialType.ACCOUNT,
                 query={"environment": self.authority.instance})
 
@@ -174,7 +174,7 @@ class ClientApplication(object):
         the_authority = Authority(authority) if authority else self.authority
 
         if force_refresh == False:
-            matches = self.token_cache._find(
+            matches = self.token_cache.find(
                 self.token_cache.CredentialType.ACCESS_TOKEN,
                 target=scope,
                 query={
@@ -193,7 +193,7 @@ class ClientApplication(object):
                     "expires_in": entry["expires_on"] - now,
                     }
 
-        matches = self.token_cache._find(
+        matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scope,  # AAD RTs are scope-independent
             query={
@@ -207,9 +207,9 @@ class ClientApplication(object):
             default_body=self._build_auth_parameters(
                 self.client_credential,
                 the_authority.token_endpoint, self.client_id),
-            on_obtaining_tokens=self.token_cache._add,
-            on_removing_rt=self.token_cache._remove_rt,
-            on_updating_rt=self.token_cache._update_rt,
+            on_obtaining_tokens=self.token_cache.add,
+            on_removing_rt=self.token_cache.remove_rt,
+            on_updating_rt=self.token_cache.update_rt,
             )
         for entry in matches:
             response = client.obtain_token_with_refresh_token(
