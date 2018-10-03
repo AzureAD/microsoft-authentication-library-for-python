@@ -127,17 +127,19 @@ class TokenCache(object):
                 key = self._build_rt_key(
                     home_account_id, environment,
                     event.get("client_id", ""), event.get("scope", []))
-                self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key] = {
+                rt = {
                     "credential_type": self.CredentialType.REFRESH_TOKEN,
                     "secret": refresh_token,
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "client_id": event.get("client_id"),
                     # Fields below are considered optional
-                    # "family_id": None,  # it is optional
                     "target": event.get("scope"),
                     "client_info": response.get("client_info"),
                     }
+                if "foci" in response:
+                    rt["family_id"] = response["foci"]
+                self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key] = rt
 
     @classmethod
     def _build_rt_key(
