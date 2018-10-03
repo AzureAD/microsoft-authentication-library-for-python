@@ -136,13 +136,10 @@ class TestClient(Oauth2TestCase):
 
         duration = 30
         logging.warn("We will wait up to %d seconds for you to sign in" % duration)
-        expiry = time.time() + duration
-        while time.time() < expiry:  # caller has full control on the polling loop
-            result = self.client.obtain_token_by_device_flow(flow)
-            if result.get("error") not in self.client.DEVICE_FLOW_RETRIABLE_ERRORS:
-                break
-            time.sleep(flow.get("interval", 5))  # You SHOULD wait between polling
-            logging.warn("Retrying...")
+        result = self.client.obtain_token_by_device_flow(
+            flow,
+            exit_condition=lambda end=time.time() + duration: time.time() > end)
+
         self.assertLoosely(
                 result,
                 assertion=lambda: self.assertIn('access_token', result),
