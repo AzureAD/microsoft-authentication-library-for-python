@@ -289,10 +289,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
 
     def __init__(self,
             client_id,
-            on_obtaining_tokens=
-                lambda client_id=None, scope=None, token_endpoint=None,
-                    response=None, params=None, data=None, **kwargs:
-                    None,
+            on_obtaining_tokens=lambda event: None,  # event is defined in _obtain_token(...)
             on_removing_rt=lambda token_item: None,
             on_updating_rt=lambda token_item, new_rt: None,
             **kwargs):
@@ -314,11 +311,14 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             else:
                 # TODO: Deal with absent scope in authorization grant
                 scope = data.get("scope")
-            self.on_obtaining_tokens(
-                client_id=self.client_id,
-                scope=scope,
-                token_endpoint=self.configuration["token_endpoint"],
-                response=_resp, params=params, data=data)
+            self.on_obtaining_tokens({
+                "client_id": self.client_id,
+                "scope": scope,
+                "token_endpoint": self.configuration["token_endpoint"],
+                "grant_type": grant_type,  # can be used to know an IdToken-less
+                                           # response is for an app or for a user
+                "response": _resp, "params": params, "data": data,
+                })
         return resp
 
     def obtain_token_with_refresh_token(self, token_item, scope=None,
