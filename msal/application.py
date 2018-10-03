@@ -60,7 +60,8 @@ class ClientApplication(object):
             self.authority.token_endpoint, self.client_id)
         default_body["client_info"] = 1
         self.client = Client(
-            self.client_id, token_endpoint=self.authority.token_endpoint,
+            self.client_id,
+            configuration={"token_endpoint": self.authority.token_endpoint},
             default_body=default_body,
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
@@ -105,8 +106,8 @@ class ClientApplication(object):
         """
         the_authority = Authority(authority) if authority else self.authority
         client = Client(
-            self.client_id,
-            authorization_endpoint=the_authority.authorization_endpoint)
+            self.client_id, configuration={
+                "authorization_endpoint": the_authority.authorization_endpoint})
         return client.build_auth_request_uri(
             response_type="code",  # Using Authorization Code grant
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
@@ -203,7 +204,8 @@ class ClientApplication(object):
                 # "realm": the_authority.tenant,  # AAD RTs are tenant-independent
                 })
         client = Client(
-            self.client_id, token_endpoint=the_authority.token_endpoint,
+            self.client_id,
+            configuration={"token_endpoint": the_authority.token_endpoint},
             default_body=self._build_auth_parameters(
                 self.client_credential,
                 the_authority.token_endpoint, self.client_id),
@@ -232,7 +234,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     def acquire_token_with_username_password(
             self, username, password, scope=None, **kwargs):
         """Gets a token for a given resource via user credentails."""
-        cli = Client(self.client_id, token_endpoint=self.authority.token_endpoint)
+        cli = Client(self.client_id, configuration={
+            "token_endpoint": self.authority.token_endpoint})
         return cli.obtain_token_with_username_password(
                 username, password,
                 scope=decorate_scope(scope, self.client_id), **kwargs)
