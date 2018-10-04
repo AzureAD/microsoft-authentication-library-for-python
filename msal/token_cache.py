@@ -44,10 +44,10 @@ class TokenCache(object):
                 if is_subdict_of(query or {}, entry)
                 and set(target) <= set(entry.get("target", []))]
 
-    def add(self, **event):  # TODO: Changes to a normal dict
-            # lambda client_id=None, scope=None, token_endpoint=None,
-            #        response=None, params=None, data=None, **kwargs:
-            #        None,
+    def add(self, event):
+        # type: (dict) -> None
+        # event typically contains: client_id, scope, token_endpoint,
+        # resposne, params, data, grant_type
         logging.debug("event=%s", json.dumps(event, indent=4))
         response = event.get("response", {})
         access_token = response.get("access_token", {})
