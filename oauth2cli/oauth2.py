@@ -163,10 +163,13 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         skew = 1
         if flow.get("latest_attempt_at", 0) + flow.get("interval", 5) - skew > now:
             warnings.warn('Attempted too soon. Please do time.sleep(flow["interval"])')
-        result = self._obtain_token(self.DEVICE_FLOW["GRANT_TYPE"], data={
+        data = kwargs.pop("data", {})
+        data.update({
             "client_id": self.client_id,
             self.DEVICE_FLOW["DEVICE_CODE"]: flow["device_code"],
-            }, **kwargs)
+            })
+        result = self._obtain_token(
+            self.DEVICE_FLOW["GRANT_TYPE"], data=data, **kwargs)
         if result.get("error") == "slow_down":
             # Respecting https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.5
             flow["interval"] = flow.get("interval", 5) + 5
