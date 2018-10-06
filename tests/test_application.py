@@ -13,6 +13,28 @@ if os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE) as conf:
         CONFIG = json.load(conf)
 
+logger = logging.getLogger(__file__)
+logging.basicConfig(level=logging.DEBUG)
+
+
+class Oauth2TestCase(unittest.TestCase):
+
+    def assertLoosely(self, response, assertion=None,
+            skippable_errors=("invalid_grant", "interaction_required")):
+        if response.get("error") in skippable_errors:
+            logger.debug("Response = %s", response)
+            # Some of these errors are configuration issues, not library issues
+            raise unittest.SkipTest(response.get("error_description"))
+        else:
+            if assertion is None:
+                assertion = lambda: self.assertIn(
+                    "access_token", response,
+                    "{error}: {error_description}".format(
+                        # Do explicit response.get(...) rather than **response
+                        error=response.get("error"),
+                        error_description=response.get("error_description")))
+            assertion()
+
 
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
 class TestConfidentialClientApplication(unittest.TestCase):
@@ -58,22 +80,13 @@ class TestPublicClientApplication(unittest.TestCase):
 
 
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
-class TestClientApplication(unittest.TestCase):
+class TestClientApplication(Oauth2TestCase):
 
     @classmethod
     def setUpClass(cls):
         cls.app = ClientApplication(
             CONFIG["client_id"], client_credential=CONFIG.get("client_secret"),
             authority=CONFIG.get("authority"))
-
-    def assertLoosely(self, result):
-        if "error" in result:
-            # Some of these errors are configuration issues, not library issues
-            if result["error"] == "invalid_grant":
-                raise unittest.SkipTest(result.get("error_description"))
-            self.assertEqual(result["error"], "interaction_required")
-        else:
-            self.assertIn('access_token', result)
 
     @unittest.skipUnless("scope" in CONFIG, "Missing scope")
     def test_auth_code(self):
@@ -88,8 +101,18 @@ class TestClientApplication(unittest.TestCase):
         result = self.app.acquire_token_with_authorization_code(
             ac, CONFIG["scope"], redirect_uri=redirect_uri)
         logging.debug("cache = %s", json.dumps(self.app.token_cache._cache, indent=4))
-        self.assertIn("access_token", result, "We should receive AT by auth code")
+        self.assertIn(
+            "access_token", result,
+            "{error}: {error_description}".format(
+                # Note: No interpolation here, cause error won't always present
+                error=result.get("error"),
+                error_description=result.get("error_description")))
 
+        self.assertCacheWorks(result)
+
+
+    def assertCacheWorks(self, result_from_wire):
+        result = result_from_wire
         # Going to test acquire_token_silent(...) to locate an AT from cache
         # In practice, you may want to filter based on its "username" field
         accounts = self.app.get_accounts()
@@ -108,4 +131,21 @@ class TestClientApplication(unittest.TestCase):
                 "We should get a result from acquire_token_silent(...) call")
         self.assertNotEqual(result['access_token'], result_from_cache['access_token'],
                 "We should get a fresh AT (via RT)")
+
+    def test_device_flow(self):
+        flow = self.app.initiate_device_flow(scope=CONFIG.get("scope"))
+        logging.warn(flow["message"])
+
+        duration = 30
+        logging.warn("We will wait up to %d seconds for you to sign in" % duration)
+        result = self.app.acquire_token_by_device_flow(
+            flow,
+            exit_condition=lambda end=time.time() + duration: time.time() > end)
+        self.assertLoosely(
+                result,
+                assertion=lambda: self.assertIn('access_token', result),
+                skippable_errors=self.app.client.DEVICE_FLOW_RETRIABLE_ERRORS)
+
+        if "access_token" in result:
+            self.assertCacheWorks(result)
 
