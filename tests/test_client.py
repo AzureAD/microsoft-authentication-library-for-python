@@ -14,7 +14,6 @@ from oauth2cli.authcode import obtain_auth_code
 from tests import unittest
 
 
-THIS_FOLDER = os.path.dirname(__file__)
 CONFIG_FILENAME = "config.json"
 
 def load_conf(filename):
@@ -22,8 +21,8 @@ def load_conf(filename):
     Example of a configuration file:
 
     {
-        "Note": "the following server_configuration is optional",
-        "server_configuration": {
+        "Note": "the OpenID Discovery will be updated by following optional content",
+        "openid_configuration": {
             "authorization_endpoint": "https://example.com/tenant/oauth2/authorize",
             "token_endpoint": "https://example.com/tenant/oauth2/token",
             "device_authorization_endpoint": "device_authorization"
@@ -35,7 +34,7 @@ def load_conf(filename):
         "scope": ["your_scope"],
         "resource": "Some IdP needs this",
 
-        "authority": "https://example.com/tenant/",
+        "oidp": "https://example.com/tenant/",
         "username": "you@example.com",
         "password": "I could tell you but then I would have to kill you",
 
@@ -48,20 +47,28 @@ def load_conf(filename):
     except:
         logging.warn("Unable to open/read JSON configuration %s" % filename)
         raise
-    if not conf.get("server_configuration"):  # Then we do a discovery
+    openid_configuration = {}
+    try:
         # The following line may duplicate a '/' at the joining point,
         # but requests.get(...) would still work.
-        # Besides, standard urljoin(...) is picky on insisting authority ends with '/'
-        discovery_uri = conf["authority"] + '/.well-known/openid-configuration'
-        conf["server_configuration"] = requests.get(discovery_uri).json()
-    if conf["server_configuration"].get("device_authorization_endpoint"):
+        # Besides, standard urljoin(...) is picky on insisting oidp ends with '/'
+        discovery_uri = conf["oidp"] + '/.well-known/openid-configuration'
+        openid_configuration.update(requests.get(discovery_uri).json())
+    except:
+        logging.warn("openid-configuration uri not accesible: %s", discovery_uri)
+    openid_configuration.update(conf.get("openid_configuration", {}))
+    if openid_configuration.get("device_authorization_endpoint"):
         # The following urljoin(..., ...) trick allows a "path_name" shorthand
-        conf["server_configuration"]["device_authorization_endpoint"] = urljoin(
-            conf["server_configuration"].get("authorization_endpoint", ""),
-            conf["server_configuration"].get("device_authorization_endpoint", ""))
+        openid_configuration["device_authorization_endpoint"] = urljoin(
+            openid_configuration.get("token_endpoint", ""),
+            openid_configuration.get("device_authorization_endpoint", ""))
+    conf["openid_configuration"] = openid_configuration
     return conf
 
-CONFIG = load_conf(os.path.join(THIS_FOLDER, 'config.json')) or {}
+THIS_FOLDER = os.path.dirname(__file__)
+CONFIG = load_conf(os.path.join(THIS_FOLDER, CONFIG_FILENAME)) or {}
+
+logging.basicConfig(level=logging.DEBUG)
 
 
 class Oauth2TestCase(unittest.TestCase):
@@ -86,7 +93,7 @@ class TestClient(Oauth2TestCase):
         cls.client = Client(
             CONFIG['client_id'],
             client_secret=CONFIG.get('client_secret'),
-            configuration=CONFIG["server_configuration"])
+            configuration=CONFIG["openid_configuration"])
 
     @unittest.skipUnless("client_secret" in CONFIG, "client_secret missing")
     def test_client_credentials(self):
@@ -104,7 +111,7 @@ class TestClient(Oauth2TestCase):
         self.assertLoosely(result)
 
     @unittest.skipUnless(
-        "authorization_endpoint" in CONFIG.get("server_configuration", {}),
+        "authorization_endpoint" in CONFIG.get("openid_configuration", {}),
         "authorization_endpoint missing")
     def test_auth_code(self):
         port = CONFIG.get("listen_port", 44331)
@@ -123,7 +130,7 @@ class TestClient(Oauth2TestCase):
         self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 
     @unittest.skipUnless(
-        CONFIG.get("server_configuration", {}).get("device_authorization_endpoint"),
+        CONFIG.get("openid_configuration", {}).get("device_authorization_endpoint"),
         "device_authorization_endpoint is missing")
     def test_device_flow(self):
         flow = self.client.initiate_device_flow(scope=CONFIG.get("scope"))
