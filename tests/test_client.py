@@ -1,6 +1,11 @@
 import os
 import json
 import logging
+try:  # Python 2
+    from urlparse import urljoin
+except:  # Python 3
+    from urllib.parse import urljoin
+import time
 
 import requests
 
@@ -20,7 +25,8 @@ def load_conf(filename):
         "Note": "the following server_configuration is optional",
         "server_configuration": {
             "authorization_endpoint": "https://example.com/tenant/oauth2/authorize",
-            "token_endpoint": "https://example.com/tenant/oauth2/token"
+            "token_endpoint": "https://example.com/tenant/oauth2/token",
+            "device_authorization_endpoint": "device_authorization"
         },
 
         "client_id": "289a413d-284b-4303-9c79-94380abe5d22",
@@ -48,6 +54,11 @@ def load_conf(filename):
         # Besides, standard urljoin(...) is picky on insisting authority ends with '/'
         discovery_uri = conf["authority"] + '/.well-known/openid-configuration'
         conf["server_configuration"] = requests.get(discovery_uri).json()
+    if conf["server_configuration"].get("device_authorization_endpoint"):
+        # The following urljoin(..., ...) trick allows a "path_name" shorthand
+        conf["server_configuration"]["device_authorization_endpoint"] = urljoin(
+            conf["server_configuration"].get("authorization_endpoint", ""),
+            conf["server_configuration"].get("device_authorization_endpoint", ""))
     return conf
 
 CONFIG = load_conf(os.path.join(THIS_FOLDER, 'config.json')) or {}
@@ -110,4 +121,27 @@ class TestClient(Oauth2TestCase):
                 },  # MSFT AAD only
             redirect_uri=redirect_uri)
         self.assertLoosely(result, lambda: self.assertIn('access_token', result))
+
+    @unittest.skipUnless(
+        CONFIG.get("server_configuration", {}).get("device_authorization_endpoint"),
+        "device_authorization_endpoint is missing")
+    def test_device_flow(self):
+        flow = self.client.initiate_device_flow(scope=CONFIG.get("scope"))
+        try:
+            msg = ("Use a web browser to open the page {verification_uri} and "
+                "enter the code {user_code} to authenticate.".format(**flow))
+        except KeyError:  # Some IdP might not be standard compliant
+            msg = flow["message"]  # Not a standard parameter though
+        logging.warn(msg)  # We avoid print(...) b/c its output would be buffered
+
+        duration = 30
+        logging.warn("We will wait up to %d seconds for you to sign in" % duration)
+        result = self.client.obtain_token_by_device_flow(
+            flow,
+            exit_condition=lambda end=time.time() + duration: time.time() > end)
+
+        self.assertLoosely(
+                result,
+                assertion=lambda: self.assertIn('access_token', result),
+                skippable_errors=self.client.DEVICE_FLOW_RETRIABLE_ERRORS)
 
