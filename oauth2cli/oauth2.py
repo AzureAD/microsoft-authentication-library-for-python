@@ -45,6 +45,7 @@ class BaseClient(object):
         self.client_secret = client_secret
         self.default_body = default_body or {}
         self.configuration = configuration or {}
+        self.logger = logging.getLogger(__name__)
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -99,7 +100,8 @@ class BaseClient(object):
             # so we simply return it here, without needing to invent an exception.
             return resp.json()
         except ValueError:
-            logging.exception("Token response is not in json format")
+            self.logger.exception(
+                    "Token response is not in json format: %s", resp.text)
             raise
 
     def obtain_token_with_refresh_token(self, refresh_token, scope=None, **kwargs):
