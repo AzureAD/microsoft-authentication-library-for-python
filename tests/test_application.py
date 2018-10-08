@@ -35,6 +35,27 @@ class Oauth2TestCase(unittest.TestCase):
                         error_description=response.get("error_description")))
             assertion()
 
+    def assertCacheWorks(self, result_from_wire):
+        result = result_from_wire
+        # Going to test acquire_token_silent(...) to locate an AT from cache
+        # In practice, you may want to filter based on its "username" field
+        accounts = self.app.get_accounts()
+        self.assertNotEqual(0, len(accounts))
+        result_from_cache = self.app.acquire_token_silent(
+                CONFIG["scope"], account=accounts[0])
+        self.assertIsNotNone(result_from_cache)
+        self.assertEqual(result['access_token'], result_from_cache['access_token'],
+                "We should get a cached AT")
+
+        # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
+        self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
+        result_from_cache = self.app.acquire_token_silent(
+                CONFIG["scope"], account=accounts[0])
+        self.assertIsNotNone(result_from_cache,
+                "We should get a result from acquire_token_silent(...) call")
+        self.assertNotEqual(result['access_token'], result_from_cache['access_token'],
+                "We should get a fresh AT (via RT)")
+
 
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
 class TestConfidentialClientApplication(unittest.TestCase):
@@ -63,20 +84,16 @@ class TestConfidentialClientApplication(unittest.TestCase):
 
 
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
-class TestPublicClientApplication(unittest.TestCase):
+class TestPublicClientApplication(Oauth2TestCase):
 
     @unittest.skipUnless("username" in CONFIG and "password" in CONFIG, "Missing U/P")
     def test_username_password(self):
-        app = PublicClientApplication(
+        self.app = PublicClientApplication(
                 CONFIG["client_id"], authority=CONFIG["authority"])
-        result = app.acquire_token_with_username_password(
+        result = self.app.acquire_token_with_username_password(
                 CONFIG["username"], CONFIG["password"], scope=CONFIG.get("scope"))
-        if "error" in result:
-            if result["error"] == "invalid_grant":
-                raise unittest.SkipTest(result.get("error_description"))
-            self.assertEqual(result["error"], "interaction_required")
-        else:
-            self.assertIn('access_token', result)
+        self.assertLoosely(result)
+        self.assertCacheWorks(result)
 
 
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
@@ -107,30 +124,7 @@ class TestClientApplication(Oauth2TestCase):
                 # Note: No interpolation here, cause error won't always present
                 error=result.get("error"),
                 error_description=result.get("error_description")))
-
         self.assertCacheWorks(result)
-
-
-    def assertCacheWorks(self, result_from_wire):
-        result = result_from_wire
-        # Going to test acquire_token_silent(...) to locate an AT from cache
-        # In practice, you may want to filter based on its "username" field
-        accounts = self.app.get_accounts()
-        self.assertNotEqual(0, len(accounts))
-        result_from_cache = self.app.acquire_token_silent(
-                CONFIG["scope"], account=accounts[0])
-        self.assertIsNotNone(result_from_cache)
-        self.assertEqual(result['access_token'], result_from_cache['access_token'],
-                "We should get a cached AT")
-
-        # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
-        self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
-        result_from_cache = self.app.acquire_token_silent(
-                CONFIG["scope"], account=accounts[0])
-        self.assertIsNotNone(result_from_cache,
-                "We should get a result from acquire_token_silent(...) call")
-        self.assertNotEqual(result['access_token'], result_from_cache['access_token'],
-                "We should get a fresh AT (via RT)")
 
     def test_device_flow(self):
         flow = self.app.initiate_device_flow(scope=CONFIG.get("scope"))

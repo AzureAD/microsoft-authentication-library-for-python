@@ -268,9 +268,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     def acquire_token_with_username_password(
             self, username, password, scope=None, **kwargs):
         """Gets a token for a given resource via user credentails."""
-        cli = Client(self.client_id, configuration={
-            "token_endpoint": self.authority.token_endpoint})
-        return cli.obtain_token_with_username_password(
+        return self.client.obtain_token_with_username_password(
                 username, password,
                 scope=decorate_scope(scope, self.client_id), **kwargs)
 
