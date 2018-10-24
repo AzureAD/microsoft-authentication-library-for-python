@@ -22,6 +22,8 @@ class BaseClient(object):
             self,
             client_id,
             client_secret=None,  # Triggers HTTP AUTH for Confidential Client
+            client_assertion=None,  # Assertion for Client Authentication
+            client_assertion_type=None,  # The format of the client_assertion
             default_body=None,  # a dict to be sent in each token request,
                 # usually contains Confidential Client authentication parameters
                 # such as {'client_id': 'your_id', 'client_secret': 'secret'}
@@ -31,6 +33,13 @@ class BaseClient(object):
         """Initialize a client object to talk all the OAuth2 grants to the server.
 
         Args:
+            client_assertion (str):
+                The client assertion to authenticate this client, per RFC 7521.
+            client_assertion_type (str):
+                If you leave it as the default None, this method will try to make
+                a guess between SAML2 (RFC 7522) and JWT (RFC 7523),
+                the only two profiles defined in RFC 7521.
+                But you can also explicitly provide a value, if needed.
             configuration (dict):
                 It contains the configuration (i.e. metadata) of the auth server.
                 The actual content typically contains keys like
@@ -44,6 +53,13 @@ class BaseClient(object):
         self.client_id = client_id
         self.client_secret = client_secret
         self.default_body = default_body or {}
+        if client_assertion is not None:  # See https://tools.ietf.org/html/rfc7521#section-4.2
+            TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+            TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
+            if client_assertion_type is None:  # RFC7521 defines only 2 profiles
+                client_assertion_type = TYPE_JWT if "." in client_assertion else TYPE_SAML2
+            self.default_body["client_assertion"] = client_assertion
+            self.default_body["client_assertion_type"] = client_assertion_type
         self.configuration = configuration or {}
         self.logger = logging.getLogger(__name__)
 
