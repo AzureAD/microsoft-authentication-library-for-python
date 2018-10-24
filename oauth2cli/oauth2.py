@@ -132,6 +132,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         "DEVICE_CODE": "device_code",
         }
     DEVICE_FLOW_RETRIABLE_ERRORS = ("authorization_pending", "slow_down")
+    GRANT_TYPE_SAML2 = "urn:ietf:params:oauth:grant-type:saml2-bearer"  # RFC7522
+    GRANT_TYPE_JWT = "urn:ietf:params:oauth:grant-type:jwt-bearer"  # RFC7523
 
     def initiate_device_flow(self, scope=None, **kwargs):
         # type: (list, **dict) -> dict
@@ -347,4 +349,24 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                 self.on_updating_rt(token_item, resp['refresh_token'])
             return resp
         raise ValueError("token_item should not be a type %s" % type(token_item))
+
+    def obtain_token_with_assertion(
+            self, assertion, grant_type=None, scope=None, **kwargs):
+        # type: (str, Union[str, None], Union[str, list, set, tuple]) -> dict
+        """This method implements Assertion Framework for OAuth2 (RFC 7521).
+        See details at https://tools.ietf.org/html/rfc7521#section-4.1
+
+        :param assertion: The assertion string which will be sent on wire as-is
+        :param grant_type:
+            If you leave it as the default None, this method will try to make
+            a guess between SAML2 (RFC 7522) and JWT (RFC 7523),
+            the only two profiles defined in RFC 7521.
+            But you can also explicitly provide a value, if needed.
+        :param scope: Optional. It must be a subset of previously granted scopes.
+        """
+        if grant_type is None:
+            grant_type = self.GRANT_TYPE_JWT if "." in assertion else self.GRANT_TYPE_SAML2
+        data = kwargs.pop("data", {})
+        data.update(scope=scope, assertion=assertion)
+        return self._obtain_token(grant_type, data=data, **kwargs)
 
