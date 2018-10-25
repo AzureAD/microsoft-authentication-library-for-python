@@ -60,6 +60,11 @@ class Oauth2TestCase(unittest.TestCase):
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
 class TestConfidentialClientApplication(unittest.TestCase):
 
+    def assertCacheWorks(self, result_from_wire, result_from_cache):
+        self.assertIsNotNone(result_from_cache)
+        self.assertEqual(
+            result_from_wire['access_token'], result_from_cache['access_token'])
+
     @unittest.skipUnless("client_secret" in CONFIG, "Missing client secret")
     def test_confidential_client_using_secret(self):
         app = ConfidentialClientApplication(
@@ -68,19 +73,23 @@ class TestConfidentialClientApplication(unittest.TestCase):
         scope = CONFIG.get("scope", [])
         result = app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
+        self.assertCacheWorks(result, app.acquire_token_silent(scope, account=None))
 
-        result_from_cache = app.acquire_token_silent(scope, account=None)
-        self.assertIsNotNone(result_from_cache)
-        self.assertEqual(result['access_token'], result_from_cache['access_token'])
-
-    @unittest.skipUnless("private_key" in CONFIG, "Missing client cert")
+    @unittest.skipUnless("client_certificate" in CONFIG, "Missing client cert")
     def test_confidential_client_using_certificate(self):
-        private_key = os.path.join(THIS_FOLDER, CONFIG['private_key'])
-        with open(private_key) as f: pem = f.read()
-        certificate = {'certificate': pem, "thumbprint": CONFIG['thumbprint']}
-        app = ConfidentialClientApplication(CONFIG['client_id'], certificate)
-        result = app.acquire_token_for_client(self.scope)
+        client_certificate = CONFIG["client_certificate"]
+        assert ("private_key_path" in client_certificate
+                and "thumbprint" in client_certificate)
+        key_path = os.path.join(THIS_FOLDER, client_certificate['private_key_path'])
+        with open(key_path) as f:
+            pem = f.read()
+        app = ConfidentialClientApplication(
+            CONFIG['client_id'],
+            {"private_key": pem, "thumbprint": client_certificate["thumbprint"]})
+        scope = CONFIG.get("scope", [])
+        result = app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
+        self.assertCacheWorks(result, app.acquire_token_silent(scope, account=None))
 
 
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")

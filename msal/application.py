@@ -8,7 +8,7 @@ from base64 import b64encode
 
 from oauth2cli import Client
 from .authority import Authority
-from .assertion import create_jwt_assertion
+from oauth2cli.assertion import JwtSigner
 import mex
 import wstrust_request
 from .wstrust_response import SAML_TOKEN_TYPE_V1, SAML_TOKEN_TYPE_V2
@@ -55,7 +55,7 @@ class ClientApplication(object):
             or an X509 certificate container in this form:
 
                 {
-                    "certificate": "-----BEGIN PRIVATE KEY-----...",
+                    "private_key": "...-----BEGIN PRIVATE KEY-----...",
                     "thumbprint": "A1B2C3D4E5F6...",
                 }
         """
@@ -66,35 +66,35 @@ class ClientApplication(object):
                 validate_authority)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
-        default_body = self._build_auth_parameters(
-            self.client_credential,
-            self.authority.token_endpoint, self.client_id)
-        default_body["client_info"] = 1
-        self.client = Client(
+        self.client = self._build_client(client_credential, self.authority)
+
+    def _build_client(self, client_credential, authority):
+        client_assertion = None
+        default_body = {"client_info": 1}
+        if isinstance(client_credential, dict):
+            assert ("private_key" in client_credential
+                    and "thumbprint" in client_credential)
+            signer = JwtSigner(
+                client_credential["private_key"], algorithm="RS256",
+                sha1_thumbprint=client_credential.get("thumbprint"))
+            client_assertion = signer.sign_assertion(
+                audience=authority.token_endpoint, issuer=self.client_id)
+        else:
+            default_body['client_secret'] = client_credential
+        return Client(
             self.client_id,
             configuration={
-                "token_endpoint": self.authority.token_endpoint,
+                "authorization_endpoint": authority.authorization_endpoint,
+                "token_endpoint": authority.token_endpoint,
                 "device_authorization_endpoint": urljoin(
-                    self.authority.token_endpoint, "devicecode"),
+                    authority.token_endpoint, "devicecode"),
                 },
             default_body=default_body,
+            client_assertion=client_assertion,
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt,
             )
-
-    @staticmethod
-    def _build_auth_parameters(client_credential, token_endpoint, client_id):
-        if isinstance(client_credential, dict):
-            type_ = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
-            assertion = create_jwt_assertion(
-                client_credential['certificate'],
-                client_credential['thumbprint'],
-                audience=token_endpoint, issuer=client_id)
-            return {
-                'client_assertion_type': type_, 'client_assertion': assertion}
-        else:
-            return {'client_secret': client_credential}
 
     def get_authorization_request_url(
             self,
@@ -218,16 +218,7 @@ class ClientApplication(object):
                 "home_account_id": (account or {}).get("home_account_id"),
                 # "realm": the_authority.tenant,  # AAD RTs are tenant-independent
                 })
-        client = Client(
-            self.client_id,
-            configuration={"token_endpoint": the_authority.token_endpoint},
-            default_body=self._build_auth_parameters(
-                self.client_credential,
-                the_authority.token_endpoint, self.client_id),
-            on_obtaining_tokens=self.token_cache.add,
-            on_removing_rt=self.token_cache.remove_rt,
-            on_updating_rt=self.token_cache.update_rt,
-            )
+        client = self._build_client(self.client_credential, the_authority)
         for entry in matches:
             response = client.obtain_token_with_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
