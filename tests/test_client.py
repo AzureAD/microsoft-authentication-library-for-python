@@ -11,6 +11,7 @@ import requests
 
 from oauth2cli.oauth2 import Client
 from oauth2cli.authcode import obtain_auth_code
+from oauth2cli.assertion import JwtSigner
 from tests import unittest
 
 
@@ -90,10 +91,26 @@ class TestClient(Oauth2TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.client = Client(
-            CONFIG['client_id'],
-            client_secret=CONFIG.get('client_secret'),
-            configuration=CONFIG["openid_configuration"])
+        if "client_certificate" in CONFIG:
+            private_key_path = CONFIG["client_certificate"]["private_key_path"]
+            with open(os.path.join(THIS_FOLDER, private_key_path)) as f:
+                private_key = f.read()  # Expecting PEM format
+            cls.client = Client(
+                CONFIG['client_id'],
+                client_assertion=JwtSigner(
+                        private_key,
+                        algorithm="RS256",
+                        sha1_thumbprint=CONFIG["client_certificate"]["thumbprint"]
+                    ).sign_assertion(
+                        audience=CONFIG["openid_configuration"]["token_endpoint"],
+                        issuer=CONFIG["client_id"],
+                    ),
+                configuration=CONFIG["openid_configuration"])
+        else:
+            cls.client = Client(
+                CONFIG['client_id'],
+                client_secret=CONFIG.get('client_secret'),
+                configuration=CONFIG["openid_configuration"])
 
     @unittest.skipUnless("client_secret" in CONFIG, "client_secret missing")
     def test_client_credentials(self):
