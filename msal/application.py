@@ -4,12 +4,18 @@ try:  # Python 2
 except:  # Python 3
     from urllib.parse import urljoin
 import logging
+from base64 import b64encode
 
 from oauth2cli import Client
 from .authority import Authority
 from .assertion import create_jwt_assertion
+import mex
+import wstrust_request
+from .wstrust_response import SAML_TOKEN_TYPE_V1, SAML_TOKEN_TYPE_V2
 from .token_cache import TokenCache
 
+
+logger = logging.getLogger(__name__)
 
 def decorate_scope(
         scope, client_id,
@@ -268,9 +274,40 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     def acquire_token_with_username_password(
             self, username, password, scope=None, **kwargs):
         """Gets a token for a given resource via user credentails."""
+        scope = decorate_scope(scope, self.client_id)
+        if not self.authority.is_adfs:
+            user_realm_result = self.authority.user_realm_discovery(username)
+            if user_realm_result.get("account_type") == "Federated":
+                return self._acquire_token_with_username_password_federated(
+                    user_realm_result, username, password, scope=scope, **kwargs)
         return self.client.obtain_token_with_username_password(
-                username, password,
-                scope=decorate_scope(scope, self.client_id), **kwargs)
+                username, password, scope=scope, **kwargs)
+
+    def _acquire_token_with_username_password_federated(
+            self, user_realm_result, username, password, scope=None, **kwargs):
+        wstrust_endpoint = {}
+        if user_realm_result.get("federation_metadata_url"):
+            wstrust_endpoint = mex.send_request(
+                user_realm_result["federation_metadata_url"])
+        logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
+        wstrust_result = wstrust_request.send_request(
+            username, password, user_realm_result.get("cloud_audience_urn"),
+            wstrust_endpoint.get("address",
+                # Fallback to an AAD supplied endpoint
+                user_realm_result.get("federation_active_auth_url")),
+            wstrust_endpoint.get("action"), **kwargs)
+        if not ("token" in wstrust_result and "type" in wstrust_result):
+            raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
+        grant_type = {
+            SAML_TOKEN_TYPE_V1: 'urn:ietf:params:oauth:grant-type:saml1_1-bearer',
+            SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
+            }.get(wstrust_result.get("type"))
+        if not grant_type:
+            raise RuntimeError(
+                "RSTR returned unknown token type: %s", wstrust_result.get("type"))
+        return self.client.obtain_token_with_assertion(
+            b64encode(wstrust_result["token"]),
+            grant_type=grant_type, scope=scope, **kwargs)
 
     def acquire_token(
             self,
