@@ -12,8 +12,11 @@ import requests
 from oauth2cli.oauth2 import Client
 from oauth2cli.authcode import obtain_auth_code
 from oauth2cli.assertion import JwtSigner
-from tests import unittest
+from tests import unittest, Oauth2TestCase
 
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__file__)
 
 CONFIG_FILENAME = "config.json"
 
@@ -46,7 +49,7 @@ def load_conf(filename):
         with open(filename) as f:
             conf = json.load(f)
     except:
-        logging.warn("Unable to open/read JSON configuration %s" % filename)
+        logger.warn("Unable to open/read JSON configuration %s" % filename)
         raise
     openid_configuration = {}
     try:
@@ -56,7 +59,7 @@ def load_conf(filename):
         discovery_uri = conf["oidp"] + '/.well-known/openid-configuration'
         openid_configuration.update(requests.get(discovery_uri).json())
     except:
-        logging.warn("openid-configuration uri not accesible: %s", discovery_uri)
+        logger.warn("openid-configuration uri not accesible: %s", discovery_uri)
     openid_configuration.update(conf.get("openid_configuration", {}))
     if openid_configuration.get("device_authorization_endpoint"):
         # The following urljoin(..., ...) trick allows a "path_name" shorthand
@@ -68,21 +71,6 @@ def load_conf(filename):
 
 THIS_FOLDER = os.path.dirname(__file__)
 CONFIG = load_conf(os.path.join(THIS_FOLDER, CONFIG_FILENAME)) or {}
-
-logging.basicConfig(level=logging.DEBUG)
-
-
-class Oauth2TestCase(unittest.TestCase):
-
-    def assertLoosely(self, response, assertion=None,
-            skippable_errors=("invalid_grant", "interaction_required")):
-        if response.get("error") in skippable_errors:
-            # Some of these errors are configuration issues, not library issues
-            raise unittest.SkipTest(response.get("error_description"))
-        else:
-            if assertion is None:
-                assertion = lambda: self.assertIn("access_token", response)
-            assertion()
 
 
 # Since the OAuth2 specs uses snake_case, this test config also uses snake_case
@@ -156,10 +144,10 @@ class TestClient(Oauth2TestCase):
                 "enter the code {user_code} to authenticate.".format(**flow))
         except KeyError:  # Some IdP might not be standard compliant
             msg = flow["message"]  # Not a standard parameter though
-        logging.warn(msg)  # We avoid print(...) b/c its output would be buffered
+        logger.warn(msg)  # We avoid print(...) b/c its output would be buffered
 
         duration = 30
-        logging.warn("We will wait up to %d seconds for you to sign in" % duration)
+        logger.warn("We will wait up to %d seconds for you to sign in" % duration)
         result = self.client.obtain_token_by_device_flow(
             flow,
             exit_condition=lambda end=time.time() + duration: time.time() > end)
