@@ -20,17 +20,26 @@ class BaseClient(object):
     # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
     def __init__(
             self,
+            server_configuration,  # type: dict
             client_id,  # type: str
             client_secret=None,  # type: Optional[str]
             client_assertion=None,  # type: Optional[str]
             client_assertion_type=None,  # type: Optional[str]
             default_body=None,  # type: Optional[dict]
-            configuration=None,  # type: Optional[dict]
             ):
         """Initialize a client object to talk all the OAuth2 grants to the server.
 
         Args:
-            client_id (str): The client's id
+            server_configuration (dict):
+                It contains the configuration (i.e. metadata) of the auth server.
+                The actual content typically contains keys like
+                "authorization_endpoint", "token_endpoint", etc..
+                Based on RFC 8414 (https://tools.ietf.org/html/rfc8414),
+                you can probably fetch it online from either
+                https://example.com/.../.well-known/oauth-authorization-server
+                or
+                https://example.com/.../.well-known/openid-configuration
+            client_id (str): The client's id, issued by the authorization server
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (str):
                 The client assertion to authenticate this client, per RFC 7521.
@@ -45,16 +54,8 @@ class BaseClient(object):
                 you could choose to set this as {"client_secret": "your secret"}
                 if your authorization server wants it to be in the request body
                 (rather than in the request header).
-            configuration (dict):
-                It contains the configuration (i.e. metadata) of the auth server.
-                The actual content typically contains keys like
-                "authorization_endpoint", "token_endpoint", etc..
-                Based on RFC 8414 (https://tools.ietf.org/html/rfc8414),
-                you can probably fetch it online from either
-                https://example.com/.../.well-known/oauth-authorization-server
-                or
-                https://example.com/.../.well-known/openid-configuration
         """
+        self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
         self.default_body = default_body or {}
@@ -65,7 +66,6 @@ class BaseClient(object):
                 client_assertion_type = TYPE_JWT if "." in client_assertion else TYPE_SAML2
             self.default_body["client_assertion"] = client_assertion
             self.default_body["client_assertion_type"] = client_assertion_type
-        self.configuration = configuration or {}
         self.logger = logging.getLogger(__name__)
 
     def _build_auth_request_params(self, response_type, **kwargs):
@@ -311,12 +311,12 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         return self._obtain_token("client_credentials", data=data, **kwargs)
 
     def __init__(self,
-            client_id,
+            server_configuration, client_id,
             on_obtaining_tokens=lambda event: None,  # event is defined in _obtain_token(...)
             on_removing_rt=lambda token_item: None,
             on_updating_rt=lambda token_item, new_rt: None,
             **kwargs):
-        super(Client, self).__init__(client_id, **kwargs)
+        super(Client, self).__init__(server_configuration, client_id, **kwargs)
         self.on_obtaining_tokens = on_obtaining_tokens
         self.on_removing_rt = on_removing_rt
         self.on_updating_rt = on_updating_rt

@@ -84,6 +84,7 @@ class TestClient(Oauth2TestCase):
             with open(os.path.join(THIS_FOLDER, private_key_path)) as f:
                 private_key = f.read()  # Expecting PEM format
             cls.client = Client(
+                CONFIG["openid_configuration"],
                 CONFIG['client_id'],
                 client_assertion=JwtSigner(
                         private_key,
@@ -93,12 +94,11 @@ class TestClient(Oauth2TestCase):
                         audience=CONFIG["openid_configuration"]["token_endpoint"],
                         issuer=CONFIG["client_id"],
                     ),
-                configuration=CONFIG["openid_configuration"])
+                )
         else:
             cls.client = Client(
-                CONFIG['client_id'],
-                client_secret=CONFIG.get('client_secret'),
-                configuration=CONFIG["openid_configuration"])
+                CONFIG["openid_configuration"], CONFIG['client_id'],
+                client_secret=CONFIG.get('client_secret'))
 
     @unittest.skipUnless("client_secret" in CONFIG, "client_secret missing")
     def test_client_credentials(self):
