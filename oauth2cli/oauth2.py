@@ -20,26 +20,31 @@ class BaseClient(object):
     # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
     def __init__(
             self,
-            client_id,
-            client_secret=None,  # Triggers HTTP AUTH for Confidential Client
-            client_assertion=None,  # Assertion for Client Authentication
-            client_assertion_type=None,  # The format of the client_assertion
-            default_body=None,  # a dict to be sent in each token request,
-                # usually contains Confidential Client authentication parameters
-                # such as {'client_id': 'your_id', 'client_secret': 'secret'}
-                # if you choose to not use HTTP AUTH
-            configuration=None,  # configuration dict of the authorization server
+            client_id,  # type: str
+            client_secret=None,  # type: Optional[str]
+            client_assertion=None,  # type: Optional[str]
+            client_assertion_type=None,  # type: Optional[str]
+            default_body=None,  # type: Optional[dict]
+            configuration=None,  # type: Optional[dict]
             ):
         """Initialize a client object to talk all the OAuth2 grants to the server.
 
         Args:
+            client_id (str): The client's id
+            client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (str):
                 The client assertion to authenticate this client, per RFC 7521.
             client_assertion_type (str):
+                The format of the client_assertion.
                 If you leave it as the default None, this method will try to make
                 a guess between SAML2 (RFC 7522) and JWT (RFC 7523),
                 the only two profiles defined in RFC 7521.
                 But you can also explicitly provide a value, if needed.
+            default_body (dict):
+                A dict to be sent in each token request body. For example,
+                you could choose to set this as {"client_secret": "your secret"}
+                if your authorization server wants it to be in the request body
+                (rather than in the request header).
             configuration (dict):
                 It contains the configuration (i.e. metadata) of the auth server.
                 The actual content typically contains keys like
