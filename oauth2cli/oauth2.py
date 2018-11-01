@@ -25,6 +25,7 @@ class BaseClient(object):
             client_secret=None,  # type: Optional[str]
             client_assertion=None,  # type: Optional[str]
             client_assertion_type=None,  # type: Optional[str]
+            default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
             ):
         """Initialize a client object to talk all the OAuth2 grants to the server.
@@ -49,6 +50,9 @@ class BaseClient(object):
                 a guess between SAML2 (RFC 7522) and JWT (RFC 7523),
                 the only two profiles defined in RFC 7521.
                 But you can also explicitly provide a value, if needed.
+            default_headers (dict):
+                A dict to be sent in each request header.
+                It is not required by OAuth2 specs, but you may use it for telemetry.
             default_body (dict):
                 A dict to be sent in each token request body. For example,
                 you could choose to set this as {"client_secret": "your secret"}
@@ -58,6 +62,7 @@ class BaseClient(object):
         self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
+        self.default_headers = default_headers or {}
         self.default_body = default_body or {}
         if client_assertion is not None:  # See https://tools.ietf.org/html/rfc7521#section-4.2
             TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
@@ -84,9 +89,10 @@ class BaseClient(object):
 
     def _obtain_token(  # The verb "obtain" is influenced by OAUTH2 RFC 6749
             self, grant_type,
-            params=None,  # a dict to be send as query string to the endpoint
+            params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
-            timeout=None,  # A timeout value which will be used by requests lib
+            headers=None,  # a dict to be sent as request headers
+            **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
         _data.update(self.default_body)  # It may contain authen parameters
@@ -109,10 +115,12 @@ class BaseClient(object):
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
+        _headers = {'Accept': 'application/json'}
+        _headers.update(self.default_headers)
+        _headers.update(headers or {})
         resp = requests.post(
             self.configuration["token_endpoint"],
-            headers={'Accept': 'application/json'},
-            params=params, data=_data, auth=auth, timeout=timeout)
+            headers=_headers, params=params, data=_data, auth=auth, **kwargs)
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
         try:
@@ -174,9 +182,9 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        flow = requests.post(self.configuration[DAE], data={
-            "client_id": self.client_id, "scope": self._stringify(scope or []),
-            }, **kwargs).json()
+        flow = requests.post(self.configuration[DAE], headers=self.default_headers,
+            data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
+            **kwargs).json()
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
         return flow
