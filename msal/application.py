@@ -5,6 +5,7 @@ except:  # Python 3
     from urllib.parse import urljoin
 import logging
 from base64 import b64encode
+import sys
 
 from oauth2cli import Client
 from .authority import Authority
@@ -14,6 +15,9 @@ import wstrust_request
 from .wstrust_response import SAML_TOKEN_TYPE_V1, SAML_TOKEN_TYPE_V2
 from .token_cache import TokenCache
 
+
+# The __init__.py will import this. Not the other way around.
+__version__ = "0.1.0"
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +94,11 @@ class ClientApplication(object):
         return Client(
             server_configuration,
             self.client_id,
+            default_headers={
+                "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
+                "x-client-os": sys.platform,
+                "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
+                },
             default_body=default_body,
             client_assertion=client_assertion,
             on_obtaining_tokens=self.token_cache.add,
