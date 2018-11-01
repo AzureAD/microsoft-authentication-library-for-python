@@ -81,14 +81,15 @@ class ClientApplication(object):
                 audience=authority.token_endpoint, issuer=self.client_id)
         else:
             default_body['client_secret'] = client_credential
+        server_configuration = {
+            "authorization_endpoint": authority.authorization_endpoint,
+            "token_endpoint": authority.token_endpoint,
+            "device_authorization_endpoint":
+                urljoin(authority.token_endpoint, "devicecode"),
+            }
         return Client(
+            server_configuration,
             self.client_id,
-            configuration={
-                "authorization_endpoint": authority.authorization_endpoint,
-                "token_endpoint": authority.token_endpoint,
-                "device_authorization_endpoint": urljoin(
-                    authority.token_endpoint, "devicecode"),
-                },
             default_body=default_body,
             client_assertion=client_assertion,
             on_obtaining_tokens=self.token_cache.add,
@@ -121,8 +122,8 @@ class ClientApplication(object):
         """
         the_authority = Authority(authority) if authority else self.authority
         client = Client(
-            self.client_id, configuration={
-                "authorization_endpoint": the_authority.authorization_endpoint})
+            {"authorization_endpoint": the_authority.authorization_endpoint},
+            self.client_id)
         return client.build_auth_request_uri(
             response_type="code",  # Using Authorization Code grant
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
