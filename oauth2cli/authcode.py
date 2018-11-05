@@ -21,6 +21,8 @@ except ImportError:  # Fall back to Python 2
 from .oauth2 import Client
 
 
+logger = logging.getLogger(__file__)
+
 def obtain_auth_code(listen_port, auth_uri=None):
     """This function will start a web server listening on http://localhost:port
     and then you need to open a browser on this device and visit your auth_uri.
@@ -34,10 +36,13 @@ def obtain_auth_code(listen_port, auth_uri=None):
     :param auth_uri: If provided, this function will try to open a local browser.
     :return: Hang indefinitely, until it receives and then return the auth code.
     """
+    exit_hint = "Visit http://localhost:{p}?code=exit to abort".format(p=listen_port)
+    logger.warn(exit_hint)
     if auth_uri:
         page = "http://localhost:{p}?{q}".format(p=listen_port, q=urlencode({
             "text": "Open this link to sign in. You may use incognito window",
             "link": auth_uri,
+            "exit_hint": exit_hint,
             }))
         browse(page)
     server = HTTPServer(("", int(listen_port)), AuthCodeReceiver)
@@ -61,7 +66,7 @@ def browse(auth_uri):
             break
         except webbrowser.Error:
             pass  # This browser is not installed. Try next one.
-    logging.info("Please open a browser on THIS device to visit: %s" % auth_uri)
+    logger.info("Please open a browser on THIS device to visit: %s" % auth_uri)
     controller.open(auth_uri)
 
 class AuthCodeReceiver(BaseHTTPRequestHandler):
@@ -74,8 +79,11 @@ class AuthCodeReceiver(BaseHTTPRequestHandler):
             self._send_full_response('Authcode:\n{}'.format(ac))
             # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
         elif qs.get('text') and qs.get('link'):  # Then display a landing page
-            self._send_full_response('<a href={link}>{text}</a>'.format(
-                link=qs['link'][0], text=qs['text'][0]))
+            self._send_full_response(
+                '<a href={link}>{text}</a><hr/>{exit_hint}'.format(
+                link=qs['link'][0], text=qs['text'][0],
+                exit_hint=qs.get("exit_hint", [''])[0],
+                ))
         else:
             self._send_full_response("This web service serves your redirect_uri")
 
