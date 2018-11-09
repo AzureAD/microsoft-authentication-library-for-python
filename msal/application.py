@@ -22,10 +22,11 @@ __version__ = "0.1.0"
 logger = logging.getLogger(__name__)
 
 def decorate_scope(
-        scope, client_id,
-        policy=None,  # obsolete
+        scopes, client_id,
         reserved_scope=frozenset(['openid', 'profile', 'offline_access'])):
-    scope_set = set(scope)  # Input scope is typically a list. Copy it to a set.
+    if not isinstance(scopes, (list, set, tuple)):
+        raise ValueError("The input scopes should be a list, tuple, or set")
+    scope_set = set(scopes)  # Input scopes is typically a list. Copy it to a set.
     if scope_set & reserved_scope:
         # These scopes are reserved for the API to provide good experience.
         # We could make the developer pass these and then if they do they will
@@ -108,9 +109,9 @@ class ClientApplication(object):
 
     def get_authorization_request_url(
             self,
-            scope,
-            additional_scope=frozenset([]),  # Not yet supported
-            login_hint=None,
+            scopes,  # type: list[str]
+            # additional_scope=None,  # type: Optional[list]
+            login_hint=None,  # type: Optional[str]
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
             authority=None,  # By default, it will use self.authority;
@@ -119,15 +120,21 @@ class ClientApplication(object):
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
-        :param scope: Scope refers to the resource that will be used in the
-            resulting token's audience.
+        :param scopes:
+            Scopes requested to access a protected API (a resource).
+        :param str state: Recommended by OAuth2 for CSRF protection.
+        :param login_hint:
+            Identifier of the user. Generally a User Principal Name (UPN).
+        :param redirect_uri:
+            Address to return to upon receiving a response from the authority.
+        """
+        """ # TBD: this would only be meaningful in a new acquire_token_interactive()
         :param additional_scope: Additional scope is a concept only in AAD.
             It refers to other resources you might want to prompt to consent
             for in the same interaction, but for which you won't get back a
             token for in this particular operation.
             (Under the hood, we simply merge scope and additional_scope before
             sending them on the wire.)
-        :param str state: Recommended by OAuth2 for CSRF protection.
         """
         the_authority = Authority(authority) if authority else self.authority
         client = Client(
@@ -136,7 +143,7 @@ class ClientApplication(object):
         return client.build_auth_request_uri(
             response_type="code",  # Using Authorization Code grant
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
-            scope=decorate_scope(scope, self.client_id),
+            scope=decorate_scope(scopes, self.client_id),
             )
 
     def acquire_token_with_authorization_code(
