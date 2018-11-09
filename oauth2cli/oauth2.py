@@ -278,7 +278,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             raise ValueError('state mismatch')
         return params
 
-    def obtain_token_with_authorization_code(
+    def obtain_token_by_authorization_code(
             self, code, redirect_uri=None, **kwargs):
         """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
 

@@ -124,7 +124,7 @@ class TestClient(Oauth2TestCase):
             "code", redirect_uri=redirect_uri, scope=CONFIG.get("scope"))
         ac = obtain_auth_code(port, auth_uri=auth_request_uri)
         self.assertNotEqual(ac, None)
-        result = self.client.obtain_token_with_authorization_code(
+        result = self.client.obtain_token_by_authorization_code(
             ac,
             data={
                 "scope": CONFIG.get("scope"),
