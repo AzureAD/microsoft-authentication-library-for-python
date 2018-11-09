@@ -327,19 +327,12 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
-    def acquire_token_for_client(self, scope, force_refresh=False):
-        """Acquires token from the service for the confidential client.
-
-        :param force_refresh:
-            This method attempts to look up valid access token in the cache.
-            If this parameter is set to True,
-            this method will ignore the access token in the cache
-            and attempt to acquire new access token using client credentials
-        """
-        # TODO: force_refresh will be implemented after the cache mechanism is ready
-        return self.client.obtain_token_with_client_credentials(
-                scope=scope,  # This grant flow requires no scope decoration
-                )
+    def acquire_token_for_client(self, scopes, **kwargs):
+        """Acquires token from the service for the confidential client."""
+        # TBD: force_refresh behavior
+        return self.client.obtain_token_for_client(
+                scope=scopes,  # This grant flow requires no scope decoration
+                **kwargs)
 
     def acquire_token_on_behalf_of(
             self, user_assertion, scope, authority=None, policy=''):
