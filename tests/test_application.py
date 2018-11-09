@@ -66,7 +66,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
             result_from_wire['access_token'], result_from_cache['access_token'])
 
     @unittest.skipUnless("client_secret" in CONFIG, "Missing client secret")
-    def test_confidential_client_using_secret(self):
+    def test_client_secret(self):
         app = ConfidentialClientApplication(
             CONFIG["client_id"], client_credential=CONFIG.get("client_secret"),
             authority=CONFIG.get("authority"))
@@ -76,7 +76,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
         self.assertCacheWorks(result, app.acquire_token_silent(scope, account=None))
 
     @unittest.skipUnless("client_certificate" in CONFIG, "Missing client cert")
-    def test_confidential_client_using_certificate(self):
+    def test_client_certificate(self):
         client_certificate = CONFIG["client_certificate"]
         assert ("private_key_path" in client_certificate
                 and "thumbprint" in client_certificate)
