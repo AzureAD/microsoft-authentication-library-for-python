@@ -102,8 +102,7 @@ class TestClient(Oauth2TestCase):
 
     @unittest.skipUnless("client_secret" in CONFIG, "client_secret missing")
     def test_client_credentials(self):
-        result = self.client.obtain_token_with_client_credentials(
-            CONFIG.get('scope'))
+        result = self.client.obtain_token_for_client(CONFIG.get('scope'))
         self.assertIn('access_token', result)
 
     @unittest.skipUnless(
