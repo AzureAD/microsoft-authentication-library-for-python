@@ -124,7 +124,7 @@ class TestClientApplication(Oauth2TestCase):
         ac = obtain_auth_code(port, auth_uri=auth_request_uri)
         self.assertNotEqual(ac, None)
 
-        result = self.app.acquire_token_with_authorization_code(
+        result = self.app.acquire_token_by_authorization_code(
             ac, CONFIG["scope"], redirect_uri=redirect_uri)
         logging.debug("cache = %s", json.dumps(self.app.token_cache._cache, indent=4))
         self.assertIn(

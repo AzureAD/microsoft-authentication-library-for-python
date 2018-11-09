@@ -146,10 +146,10 @@ class ClientApplication(object):
             scope=decorate_scope(scopes, self.client_id),
             )
 
-    def acquire_token_with_authorization_code(
+    def acquire_token_by_authorization_code(
             self,
             code,
-            scope,  # Syntactically required. STS accepts empty value though.
+            scopes,  # Syntactically required. STS accepts empty value though.
             redirect_uri=None,
                 # REQUIRED, if the "redirect_uri" parameter was included in the
                 # authorization request as described in Section 4.1.1, and their
@@ -158,7 +158,7 @@ class ClientApplication(object):
         """The second half of the Authorization Code Grant.
 
         :param code: The authorization code returned from Authorization Server.
-        :param scope:
+        :param scopes:
 
             If you requested user consent for multiple resources, here you will
             typically want to provide a subset of what you required in AuthCode.
@@ -178,10 +178,10 @@ class ClientApplication(object):
         # So in theory, you can omit scope here when you were working with only
         # one scope. But, MSAL decorates your scope anyway, so they are never
         # really empty.
-        assert isinstance(scope, list), "Invalid parameter type"
-        return self.client.obtain_token_with_authorization_code(
+        assert isinstance(scopes, list), "Invalid parameter type"
+        return self.client.obtain_token_by_authorization_code(
                 code, redirect_uri=redirect_uri,
-                data={"scope": decorate_scope(scope, self.client_id)},
+                data={"scope": decorate_scope(scopes, self.client_id)},
             )
 
     def get_accounts(self):
