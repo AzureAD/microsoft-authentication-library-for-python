@@ -133,7 +133,7 @@ class BaseClient(object):
                     "Token response is not in json format: %s", resp.text)
             raise
 
-    def obtain_token_with_refresh_token(self, refresh_token, scope=None, **kwargs):
+    def obtain_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
         """Obtain an access token via a refresh token.
 
         :param refresh_token: The refresh token issued to the client
@@ -354,7 +354,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                 })
         return resp
 
-    def obtain_token_with_refresh_token(self, token_item, scope=None,
+    def obtain_token_by_refresh_token(self, token_item, scope=None,
             rt_getter=lambda token_item: token_item["refresh_token"],
             **kwargs):
         # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
@@ -369,10 +369,10 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         """
         if isinstance(token_item, str):
             # Satisfy the L of SOLID, although we expect caller uses a dict
-            return super(Client, self).obtain_token_with_refresh_token(
+            return super(Client, self).obtain_token_by_refresh_token(
                     token_item, scope=scope, **kwargs)
         if isinstance(token_item, dict):
-            resp = super(Client, self).obtain_token_with_refresh_token(
+            resp = super(Client, self).obtain_token_by_refresh_token(
                     rt_getter(token_item), scope=scope, **kwargs)
             if resp.get('error') == 'invalid_grant':
                 self.on_removing_rt(token_item)  # Discard old RT
