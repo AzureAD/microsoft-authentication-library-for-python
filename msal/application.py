@@ -245,9 +245,9 @@ class ClientApplication(object):
             logging.debug(
                 "Refresh failed. {error}: {error_description}".format(**response))
 
-    def initiate_device_flow(self, scope=None, **kwargs):
+    def initiate_device_flow(self, scopes=None, **kwargs):
         return self.client.initiate_device_flow(
-            scope=decorate_scope(scope, self.client_id) if scope else None,
+            scope=decorate_scope(scopes or [], self.client_id),
             **kwargs)
 
     def acquire_token_by_device_flow(

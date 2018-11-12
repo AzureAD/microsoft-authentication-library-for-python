@@ -136,7 +136,7 @@ class TestClientApplication(Oauth2TestCase):
         self.assertCacheWorks(result)
 
     def test_device_flow(self):
-        flow = self.app.initiate_device_flow(scope=CONFIG.get("scope"))
+        flow = self.app.initiate_device_flow(scopes=CONFIG.get("scope"))
         logging.warn(flow["message"])
 
         duration = 30
