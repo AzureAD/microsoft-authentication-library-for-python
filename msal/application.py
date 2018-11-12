@@ -198,18 +198,18 @@ class ClientApplication(object):
                 query={"environment": self.authority.instance})
 
     def acquire_token_silent(
-            self, scope,
+            self, scopes,
             account=None,  # one of the account object returned by get_accounts()
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # To force refresh an Access Token (not a RT)
             **kwargs):
-        assert isinstance(scope, list), "Invalid parameter type"
+        assert isinstance(scopes, list), "Invalid parameter type"
         the_authority = Authority(authority) if authority else self.authority
 
         if force_refresh == False:
             matches = self.token_cache.find(
                 self.token_cache.CredentialType.ACCESS_TOKEN,
-                target=scope,
+                target=scopes,
                 query={
                     "client_id": self.client_id,
                     "environment": the_authority.instance,
@@ -228,7 +228,7 @@ class ClientApplication(object):
 
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
-            # target=scope,  # AAD RTs are scope-independent
+            # target=scopes,  # AAD RTs are scope-independent
             query={
                 "client_id": self.client_id,
                 "environment": the_authority.instance,
@@ -237,12 +237,12 @@ class ClientApplication(object):
                 })
         client = self._build_client(self.client_credential, the_authority)
         for entry in matches:
-            response = client.obtain_token_with_refresh_token(
+            response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
-                scope=decorate_scope(scope, self.client_id))
+                scope=decorate_scope(scopes, self.client_id))
             if "error" not in response:
                 return response
-            logging.debug(
+            logger.debug(
                 "Refresh failed. {error}: {error_description}".format(**response))
 
     def initiate_device_flow(self, scopes=None, **kwargs):
