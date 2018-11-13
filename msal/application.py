@@ -184,18 +184,29 @@ class ClientApplication(object):
                 data={"scope": decorate_scope(scopes, self.client_id)},
             )
 
-    def get_accounts(self):
-        """Returns a list of account objects that can later be used to find token.
+    def get_accounts(self, username=None):
+        """Get a list of accounts which previously signed in, i.e. exists in cache.
 
-        Each account object is a dict containing a "username" field (among others)
-        which can use to determine which account to use.
+        An account can later be used in acquire_token_silent() to find its tokens.
+        Each account is a dict. For now, we only document its "username" field.
+        Your app can choose to display those information to end user,
+        and allow them to choose one of them to proceed.
+
+        :param username:
+            Filter accounts with this username only. Case insensitive.
         """
         # The following implementation finds accounts only from saved accounts,
         # but does NOT correlate them with saved RTs. It probably won't matter,
         # because in MSAL universe, there are always Accounts and RTs together.
-        return self.token_cache.find(
-                self.token_cache.CredentialType.ACCOUNT,
-                query={"environment": self.authority.instance})
+        accounts = self.token_cache.find(
+            self.token_cache.CredentialType.ACCOUNT,
+            query={"environment": self.authority.instance})
+        if username:
+            # Federated account["username"] from AAD could contain mixed case
+            lowercase_username = username.lower()
+            accounts = [a for a in accounts
+                if a["username"].lower() == lowercase_username]
+        return accounts
 
     def acquire_token_silent(
             self, scopes,

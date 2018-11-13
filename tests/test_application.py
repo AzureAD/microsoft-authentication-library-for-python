@@ -37,12 +37,13 @@ class Oauth2TestCase(unittest.TestCase):
 
     def assertCacheWorks(self, result_from_wire):
         result = result_from_wire
-        # Going to test acquire_token_silent(...) to locate an AT from cache
-        # In practice, you may want to filter based on its "username" field
-        accounts = self.app.get_accounts()
+        # You can filter by predefined username, or let end user to choose one
+        accounts = self.app.get_accounts(username=CONFIG.get("username"))
         self.assertNotEqual(0, len(accounts))
+        account = accounts[0]
+        # Going to test acquire_token_silent(...) to locate an AT from cache
         result_from_cache = self.app.acquire_token_silent(
-                CONFIG["scope"], account=accounts[0])
+                CONFIG["scope"], account=account)
         self.assertIsNotNone(result_from_cache)
         self.assertEqual(result['access_token'], result_from_cache['access_token'],
                 "We should get a cached AT")
@@ -50,7 +51,7 @@ class Oauth2TestCase(unittest.TestCase):
         # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
         self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
         result_from_cache = self.app.acquire_token_silent(
-                CONFIG["scope"], account=accounts[0])
+                CONFIG["scope"], account=account)
         self.assertIsNotNone(result_from_cache,
                 "We should get a result from acquire_token_silent(...) call")
         self.assertNotEqual(result['access_token'], result_from_cache['access_token'],
