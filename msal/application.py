@@ -279,20 +279,20 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     #     super(PublicClientApplication, self).__init__(client_id, **kwargs)
     #     self.redirect_uri = redirect_uri or self.OUT_OF_BAND
 
-    def acquire_token_with_username_password(
-            self, username, password, scope=None, **kwargs):
+    def acquire_token_by_username_password(
+            self, username, password, scopes=None, **kwargs):
         """Gets a token for a given resource via user credentails."""
-        scope = decorate_scope(scope, self.client_id)
+        scopes = decorate_scope(scopes, self.client_id)
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(username)
             if user_realm_result.get("account_type") == "Federated":
-                return self._acquire_token_with_username_password_federated(
-                    user_realm_result, username, password, scope=scope, **kwargs)
-        return self.client.obtain_token_with_username_password(
-                username, password, scope=scope, **kwargs)
+                return self._acquire_token_by_username_password_federated(
+                    user_realm_result, username, password, scopes=scopes, **kwargs)
+        return self.client.obtain_token_by_username_password(
+                username, password, scope=scopes, **kwargs)
 
-    def _acquire_token_with_username_password_federated(
-            self, user_realm_result, username, password, scope=None, **kwargs):
+    def _acquire_token_by_username_password_federated(
+            self, user_realm_result, username, password, scopes=None, **kwargs):
         wstrust_endpoint = {}
         if user_realm_result.get("federation_metadata_url"):
             wstrust_endpoint = mex.send_request(
@@ -313,9 +313,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         if not grant_type:
             raise RuntimeError(
                 "RSTR returned unknown token type: %s", wstrust_result.get("type"))
-        return self.client.obtain_token_with_assertion(
+        return self.client.obtain_token_by_assertion(
             b64encode(wstrust_result["token"]),
-            grant_type=grant_type, scope=scope, **kwargs)
+            grant_type=grant_type, scope=scopes, **kwargs)
 
     def acquire_token(
             self,

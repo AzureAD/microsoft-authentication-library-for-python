@@ -99,8 +99,8 @@ class TestPublicClientApplication(Oauth2TestCase):
     def test_username_password(self):
         self.app = PublicClientApplication(
                 CONFIG["client_id"], authority=CONFIG["authority"])
-        result = self.app.acquire_token_with_username_password(
-                CONFIG["username"], CONFIG["password"], scope=CONFIG.get("scope"))
+        result = self.app.acquire_token_by_username_password(
+                CONFIG["username"], CONFIG["password"], scopes=CONFIG.get("scope"))
         self.assertLoosely(result)
         self.assertCacheWorks(result)
 
