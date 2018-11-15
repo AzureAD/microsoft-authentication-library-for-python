@@ -282,14 +282,6 @@ class ClientApplication(object):
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
-    ## TBD: what if redirect_uri is not needed in the constructor at all?
-    ##  Device Code flow does not need redirect_uri anyway.
-
-    # OUT_OF_BAND = "urn:ietf:wg:oauth:2.0:oob"
-    # def __init__(self, client_id, redirect_uri=None, **kwargs):
-    #     super(PublicClientApplication, self).__init__(client_id, **kwargs)
-    #     self.redirect_uri = redirect_uri or self.OUT_OF_BAND
-
     def acquire_token_by_username_password(
             self, username, password, scopes=None, **kwargs):
         """Gets a token for a given resource via user credentails."""
@@ -328,20 +320,6 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             b64encode(wstrust_result["token"]),
             grant_type=grant_type, scope=scopes, **kwargs)
 
-    def acquire_token(
-            self,
-            scope,
-            # additional_scope=None,  # See also get_authorization_request_url()
-            login_hint=None,
-            ui_options=None,
-            # user=None,  # TBD: It exists in MSAL-dotnet but not in MSAL-Android
-            policy='',
-            authority=None,  # See get_authorization_request_url()
-            extra_query_params=None,
-            ):
-        # It will handle the TWO round trips of Authorization Code Grant flow.
-        raise NotImplemented()
-
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
@@ -352,7 +330,6 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 scope=scopes,  # This grant flow requires no scope decoration
                 **kwargs)
 
-    def acquire_token_on_behalf_of(
-            self, user_assertion, scope, authority=None, policy=''):
-        pass
+    def acquire_token_on_behalf_of(self, user_assertion, scopes, authority=None):
+        raise NotImplementedError()
 
