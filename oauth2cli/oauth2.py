@@ -381,7 +381,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             return resp
         raise ValueError("token_item should not be a type %s" % type(token_item))
 
-    def obtain_token_with_assertion(
+    def obtain_token_by_assertion(
             self, assertion, grant_type=None, scope=None, **kwargs):
         # type: (str, Union[str, None], Union[str, list, set, tuple]) -> dict
         """This method implements Assertion Framework for OAuth2 (RFC 7521).
