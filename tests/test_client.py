@@ -108,7 +108,7 @@ class TestClient(Oauth2TestCase):
     @unittest.skipUnless(
         "username" in CONFIG and "password" in CONFIG, "username/password missing")
     def test_username_password(self):
-        result = self.client.obtain_token_with_username_password(
+        result = self.client.obtain_token_by_username_password(
             CONFIG["username"], CONFIG["password"],
             data={"resource": CONFIG.get("resource")},  # MSFT AAD V1 only
             scope=CONFIG.get("scope"))

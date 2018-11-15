@@ -299,7 +299,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             data["client_id"] = self.client_id
         return self._obtain_token("authorization_code", data=data, **kwargs)
 
-    def obtain_token_with_username_password(
+    def obtain_token_by_username_password(
             self, username, password, scope=None, **kwargs):
         """The Resource Owner Password Credentials Grant, used by legacy app."""
         data = kwargs.pop("data", {})
