@@ -27,6 +27,9 @@ class BaseClient(object):
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
+            verify=True,  # type: Union[str, True, False, None]
+            proxies=None,  # type: Optional[dict]
+            timeout=None,  # type: Union[tuple, float, None]
             ):
         """Initialize a client object to talk all the OAuth2 grants to the server.
 
@@ -62,16 +65,20 @@ class BaseClient(object):
         self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
-        self.default_headers = default_headers or {}
         self.default_body = default_body or {}
         if client_assertion is not None:  # See https://tools.ietf.org/html/rfc7521#section-4.2
-            TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-            TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
             if client_assertion_type is None:  # RFC7521 defines only 2 profiles
+                TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+                TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
                 client_assertion_type = TYPE_JWT if "." in client_assertion else TYPE_SAML2
             self.default_body["client_assertion"] = client_assertion
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
+        self.session = s = requests.Session()
+        s.headers.update(default_headers or {})
+        s.verify = verify
+        s.proxies = proxies or {}
+        self.timeout = timeout
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -92,6 +99,7 @@ class BaseClient(object):
             params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
+            timeout=None,
             **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
@@ -116,11 +124,12 @@ class BaseClient(object):
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
         _headers = {'Accept': 'application/json'}
-        _headers.update(self.default_headers)
         _headers.update(headers or {})
-        resp = requests.post(
+        resp = self.session.post(
             self.configuration["token_endpoint"],
-            headers=_headers, params=params, data=_data, auth=auth, **kwargs)
+            headers=_headers, params=params, data=_data, auth=auth,
+            timeout=timeout or self.timeout,
+            **kwargs)
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
         try:
@@ -164,7 +173,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     GRANT_TYPE_SAML2 = "urn:ietf:params:oauth:grant-type:saml2-bearer"  # RFC7522
     GRANT_TYPE_JWT = "urn:ietf:params:oauth:grant-type:jwt-bearer"  # RFC7523
 
-    def initiate_device_flow(self, scope=None, **kwargs):
+    def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
         # type: (list, **dict) -> dict
         # The naming of this method is following the wording of this specs
         # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
@@ -182,8 +191,9 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        flow = requests.post(self.configuration[DAE], headers=self.default_headers,
+        flow = self.session.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
+            timeout=timeout or self.timeout,
             **kwargs).json()
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
