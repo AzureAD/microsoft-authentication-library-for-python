@@ -54,7 +54,8 @@ class ClientApplication(object):
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
-            token_cache=None):
+            token_cache=None,
+            verify=True, proxies=None, timeout=None):
         """
         :param client_credential: It can be a string containing client secret,
             or an X509 certificate container in this form:
@@ -71,6 +72,9 @@ class ClientApplication(object):
                 validate_authority)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
+        self.verify = verify
+        self.proxies = proxies
+        self.timeout = timeout
         self.client = self._build_client(client_credential, self.authority)
 
     def _build_client(self, client_credential, authority):
@@ -105,7 +109,7 @@ class ClientApplication(object):
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt,
-            )
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout)
 
     def get_authorization_request_url(
             self,
