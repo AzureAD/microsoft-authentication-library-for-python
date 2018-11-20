@@ -133,7 +133,7 @@ class BaseClient(object):
                     "Token response is not in json format: %s", resp.text)
             raise
 
-    def obtain_token_with_refresh_token(self, refresh_token, scope=None, **kwargs):
+    def obtain_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
         """Obtain an access token via a refresh token.
 
         :param refresh_token: The refresh token issued to the client
@@ -278,7 +278,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             raise ValueError('state mismatch')
         return params
 
-    def obtain_token_with_authorization_code(
+    def obtain_token_by_authorization_code(
             self, code, redirect_uri=None, **kwargs):
         """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
 
@@ -299,18 +299,20 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             data["client_id"] = self.client_id
         return self._obtain_token("authorization_code", data=data, **kwargs)
 
-    def obtain_token_with_username_password(
+    def obtain_token_by_username_password(
             self, username, password, scope=None, **kwargs):
         """The Resource Owner Password Credentials Grant, used by legacy app."""
         data = kwargs.pop("data", {})
         data.update(username=username, password=password, scope=scope)
         return self._obtain_token("password", data=data, **kwargs)
 
-    def obtain_token_with_client_credentials(self, scope=None, **kwargs):
-        """Get token by client credentials. a.k.a. Client Credentials Grant,
-        used by Backend Applications.
+    def obtain_token_for_client(self, scope=None, **kwargs):
+        """Obtain token for this client (rather than for an end user),
+        a.k.a. the Client Credentials Grant, used by Backend Applications.
 
-        You may want to explicitly provide an optional client_secret parameter,
+        We don't name it obtain_token_by_client_credentials(...) because those
+        credentials are typically already provided in class constructor, not here.
+        You can still explicitly provide an optional client_secret parameter,
         or you can provide such extra parameters as `default_body` during the
         class initialization.
         """
@@ -352,7 +354,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                 })
         return resp
 
-    def obtain_token_with_refresh_token(self, token_item, scope=None,
+    def obtain_token_by_refresh_token(self, token_item, scope=None,
             rt_getter=lambda token_item: token_item["refresh_token"],
             **kwargs):
         # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
@@ -367,10 +369,10 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         """
         if isinstance(token_item, str):
             # Satisfy the L of SOLID, although we expect caller uses a dict
-            return super(Client, self).obtain_token_with_refresh_token(
+            return super(Client, self).obtain_token_by_refresh_token(
                     token_item, scope=scope, **kwargs)
         if isinstance(token_item, dict):
-            resp = super(Client, self).obtain_token_with_refresh_token(
+            resp = super(Client, self).obtain_token_by_refresh_token(
                     rt_getter(token_item), scope=scope, **kwargs)
             if resp.get('error') == 'invalid_grant':
                 self.on_removing_rt(token_item)  # Discard old RT
@@ -379,7 +381,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             return resp
         raise ValueError("token_item should not be a type %s" % type(token_item))
 
-    def obtain_token_with_assertion(
+    def obtain_token_by_assertion(
             self, assertion, grant_type=None, scope=None, **kwargs):
         # type: (str, Union[str, None], Union[str, list, set, tuple]) -> dict
         """This method implements Assertion Framework for OAuth2 (RFC 7521).

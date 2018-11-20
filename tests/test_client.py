@@ -102,14 +102,13 @@ class TestClient(Oauth2TestCase):
 
     @unittest.skipUnless("client_secret" in CONFIG, "client_secret missing")
     def test_client_credentials(self):
-        result = self.client.obtain_token_with_client_credentials(
-            CONFIG.get('scope'))
+        result = self.client.obtain_token_for_client(CONFIG.get('scope'))
         self.assertIn('access_token', result)
 
     @unittest.skipUnless(
         "username" in CONFIG and "password" in CONFIG, "username/password missing")
     def test_username_password(self):
-        result = self.client.obtain_token_with_username_password(
+        result = self.client.obtain_token_by_username_password(
             CONFIG["username"], CONFIG["password"],
             data={"resource": CONFIG.get("resource")},  # MSFT AAD V1 only
             scope=CONFIG.get("scope"))
@@ -125,7 +124,7 @@ class TestClient(Oauth2TestCase):
             "code", redirect_uri=redirect_uri, scope=CONFIG.get("scope"))
         ac = obtain_auth_code(port, auth_uri=auth_request_uri)
         self.assertNotEqual(ac, None)
-        result = self.client.obtain_token_with_authorization_code(
+        result = self.client.obtain_token_by_authorization_code(
             ac,
             data={
                 "scope": CONFIG.get("scope"),
