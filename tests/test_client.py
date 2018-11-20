@@ -147,10 +147,8 @@ class TestClient(Oauth2TestCase):
 
         duration = 30
         logger.warn("We will wait up to %d seconds for you to sign in" % duration)
-        result = self.client.obtain_token_by_device_flow(
-            flow,
-            exit_condition=lambda end=time.time() + duration: time.time() > end)
-
+        flow["expires_at"] = time.time() + duration  # Shorten the time for quick test
+        result = self.client.obtain_token_by_device_flow(flow)
         self.assertLoosely(
                 result,
                 assertion=lambda: self.assertIn('access_token', result),
