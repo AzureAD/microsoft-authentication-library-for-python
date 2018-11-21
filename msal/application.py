@@ -10,8 +10,8 @@ import sys
 from oauth2cli import Client
 from .authority import Authority
 from oauth2cli.assertion import JwtSigner
-import mex
-import wstrust_request
+from .mex import send_request as mex_send_request
+from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import SAML_TOKEN_TYPE_V1, SAML_TOKEN_TYPE_V2
 from .token_cache import TokenCache
 
@@ -299,10 +299,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             self, user_realm_result, username, password, scopes=None, **kwargs):
         wstrust_endpoint = {}
         if user_realm_result.get("federation_metadata_url"):
-            wstrust_endpoint = mex.send_request(
+            wstrust_endpoint = mex_send_request(
                 user_realm_result["federation_metadata_url"])
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
-        wstrust_result = wstrust_request.send_request(
+        wstrust_result = wst_send_request(
             username, password, user_realm_result.get("cloud_audience_urn"),
             wstrust_endpoint.get("address",
                 # Fallback to an AAD supplied endpoint
