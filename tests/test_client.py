@@ -47,9 +47,9 @@ def load_conf(filename):
     try:
         with open(filename) as f:
             conf = json.load(f)
-    except:
-        logger.warning("Unable to open/read JSON configuration %s" % filename)
-        raise
+    except FileNotFoundError:
+        raise unittest.SkipTest(
+            "Unable to open/read JSON configuration %s" % filename)
     openid_configuration = {}
     if "oidp" in conf:
         try:
