@@ -43,3 +43,6 @@ docs/source/reference/services
 tests/coverage.xml
 tests/nosetests.xml
 
+# The test configuration file(s) could potentially contain credentials
+tests/config.json
+
