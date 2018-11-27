@@ -49,7 +49,7 @@ def load_conf(filename):
         with open(filename) as f:
             conf = json.load(f)
     except:
-        logger.warn("Unable to open/read JSON configuration %s" % filename)
+        logger.warning("Unable to open/read JSON configuration %s" % filename)
         raise
     openid_configuration = {}
     try:
@@ -59,7 +59,7 @@ def load_conf(filename):
         discovery_uri = conf["oidp"] + '/.well-known/openid-configuration'
         openid_configuration.update(requests.get(discovery_uri).json())
     except:
-        logger.warn("openid-configuration uri not accesible: %s", discovery_uri)
+        logger.warning("openid-configuration uri not accesible: %s", discovery_uri)
     openid_configuration.update(conf.get("openid_configuration", {}))
     if openid_configuration.get("device_authorization_endpoint"):
         # The following urljoin(..., ...) trick allows a "path_name" shorthand
@@ -143,10 +143,10 @@ class TestClient(Oauth2TestCase):
                 "enter the code {user_code} to authenticate.".format(**flow))
         except KeyError:  # Some IdP might not be standard compliant
             msg = flow["message"]  # Not a standard parameter though
-        logger.warn(msg)  # We avoid print(...) b/c its output would be buffered
+        logger.warning(msg)  # Avoid print(...) b/c its output would be buffered
 
         duration = 30
-        logger.warn("We will wait up to %d seconds for you to sign in" % duration)
+        logger.warning("We will wait up to %d seconds for you to sign in" % duration)
         flow["expires_at"] = time.time() + duration  # Shorten the time for quick test
         result = self.client.obtain_token_by_device_flow(flow)
         self.assertLoosely(

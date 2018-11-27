@@ -37,7 +37,7 @@ def obtain_auth_code(listen_port, auth_uri=None):
     :return: Hang indefinitely, until it receives and then return the auth code.
     """
     exit_hint = "Visit http://localhost:{p}?code=exit to abort".format(p=listen_port)
-    logger.warn(exit_hint)
+    logger.warning(exit_hint)
     if auth_uri:
         page = "http://localhost:{p}?{q}".format(p=listen_port, q=urlencode({
             "text": "Open this link to sign in. You may use incognito window",
