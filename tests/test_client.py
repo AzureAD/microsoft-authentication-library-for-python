@@ -9,9 +9,8 @@ import time
 
 import requests
 
-from oauth2cli.oauth2 import Client
-from oauth2cli.authcode import obtain_auth_code
-from oauth2cli.assertion import JwtSigner
+from msal.oauth2cli import Client, JwtSigner
+from msal.oauth2cli.authcode import obtain_auth_code
 from tests import unittest, Oauth2TestCase
 
 
