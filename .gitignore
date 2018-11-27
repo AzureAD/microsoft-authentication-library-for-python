@@ -53,3 +53,6 @@ src/build
 # vim files
 *.swp
 
+# The test configuration file(s) could potentially contain credentials
+tests/config.json
+
