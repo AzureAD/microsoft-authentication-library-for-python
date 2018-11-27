@@ -52,14 +52,16 @@ def load_conf(filename):
         logger.warning("Unable to open/read JSON configuration %s" % filename)
         raise
     openid_configuration = {}
-    try:
-        # The following line may duplicate a '/' at the joining point,
-        # but requests.get(...) would still work.
-        # Besides, standard urljoin(...) is picky on insisting oidp ends with '/'
-        discovery_uri = conf["oidp"] + '/.well-known/openid-configuration'
-        openid_configuration.update(requests.get(discovery_uri).json())
-    except:
-        logger.warning("openid-configuration uri not accesible: %s", discovery_uri)
+    if "oidp" in conf:
+        try:
+            # The following line may duplicate a '/' at the joining point,
+            # but requests.get(...) would still work.
+            # Besides, standard urljoin(...) is picky on insisting oidp ends with '/'
+            discovery_uri = conf["oidp"] + '/.well-known/openid-configuration'
+            openid_configuration.update(requests.get(discovery_uri).json())
+        except:
+            logger.warning(
+                "openid configuration uri not accesible: %s", discovery_uri)
     openid_configuration.update(conf.get("additional_openid_configuration", {}))
     if openid_configuration.get("device_authorization_endpoint"):
         # The following urljoin(..., ...) trick allows a "path_name" shorthand
@@ -100,13 +102,20 @@ class TestClient(Oauth2TestCase):
                 CONFIG["openid_configuration"], CONFIG['client_id'],
                 client_secret=CONFIG.get('client_secret'))
 
-    @unittest.skipUnless("client_secret" in CONFIG, "client_secret missing")
+    @unittest.skipIf(
+        "token_endpoint" not in CONFIG.get("openid_configuration", {}),
+        "token_endpoint missing")
+    @unittest.skipIf("client_secret" not in CONFIG, "client_secret missing")
     def test_client_credentials(self):
         result = self.client.obtain_token_for_client(CONFIG.get('scope'))
         self.assertIn('access_token', result)
 
-    @unittest.skipUnless(
-        "username" in CONFIG and "password" in CONFIG, "username/password missing")
+    @unittest.skipIf(
+        "token_endpoint" not in CONFIG.get("openid_configuration", {}),
+        "token_endpoint missing")
+    @unittest.skipIf(
+        not ("username" in CONFIG and "password" in CONFIG),
+        "username/password missing")
     def test_username_password(self):
         result = self.client.obtain_token_by_username_password(
             CONFIG["username"], CONFIG["password"],
