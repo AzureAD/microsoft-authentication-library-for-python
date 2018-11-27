@@ -7,9 +7,8 @@ import logging
 from base64 import b64encode
 import sys
 
-from oauth2cli import Client
+from .oauth2cli import Client, JwtSigner
 from .authority import Authority
-from oauth2cli.assertion import JwtSigner
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import SAML_TOKEN_TYPE_V1, SAML_TOKEN_TYPE_V2
