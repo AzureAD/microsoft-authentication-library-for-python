@@ -26,7 +26,7 @@ def load_conf(filename):
 
     {
         "Note": "the OpenID Discovery will be updated by following optional content",
-        "openid_configuration": {
+        "additional_openid_configuration": {
             "authorization_endpoint": "https://example.com/tenant/oauth2/authorize",
             "token_endpoint": "https://example.com/tenant/oauth2/token",
             "device_authorization_endpoint": "device_authorization"
@@ -60,7 +60,7 @@ def load_conf(filename):
         openid_configuration.update(requests.get(discovery_uri).json())
     except:
         logger.warning("openid-configuration uri not accesible: %s", discovery_uri)
-    openid_configuration.update(conf.get("openid_configuration", {}))
+    openid_configuration.update(conf.get("additional_openid_configuration", {}))
     if openid_configuration.get("device_authorization_endpoint"):
         # The following urljoin(..., ...) trick allows a "path_name" shorthand
         openid_configuration["device_authorization_endpoint"] = urljoin(
