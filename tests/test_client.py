@@ -6,6 +6,10 @@ try:  # Python 2
 except:  # Python 3
     from urllib.parse import urljoin
 import time
+try:
+    FileNotFoundError  # Python 3
+except NameError:
+    FileNotFoundError = IOError  # Python 2
 
 import requests
 

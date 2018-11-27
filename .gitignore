@@ -48,3 +48,7 @@ src/build
 # Visual Studio Files
 /.vs/*
 /tests/.vs/*
+
+# The test configuration file(s) could potentially contain credentials
+tests/config.json
+
