@@ -6,10 +6,6 @@ try:  # Python 2
 except:  # Python 3
     from urllib.parse import urljoin
 import time
-try:
-    FileNotFoundError  # Python 3
-except NameError:
-    FileNotFoundError = IOError  # Python 2
 
 import requests
 
@@ -48,12 +44,14 @@ def load_conf(filename):
         "placeholder": null
     }
     """
-    try:
+    conf = {}
+    if os.path.exists(filename):
         with open(filename) as f:
             conf = json.load(f)
-    except FileNotFoundError:
-        raise unittest.SkipTest(
-            "Unable to open/read JSON configuration %s" % filename)
+    else:
+        # Do not raise unittest.SkipTest(...) here,
+        # because it would still be considered as Test Error in Python 2
+        logger.warning("Unable to locate JSON configuration %s" % filename)
     openid_configuration = {}
     if "oidp" in conf:
         try:
