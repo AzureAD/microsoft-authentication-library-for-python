@@ -22,10 +22,11 @@ __version__ = "0.1.0"
 logger = logging.getLogger(__name__)
 
 def decorate_scope(
-        scope, client_id,
-        policy=None,  # obsolete
+        scopes, client_id,
         reserved_scope=frozenset(['openid', 'profile', 'offline_access'])):
-    scope_set = set(scope)  # Input scope is typically a list. Copy it to a set.
+    if not isinstance(scopes, (list, set, tuple)):
+        raise ValueError("The input scopes should be a list, tuple, or set")
+    scope_set = set(scopes)  # Input scopes is typically a list. Copy it to a set.
     if scope_set & reserved_scope:
         # These scopes are reserved for the API to provide good experience.
         # We could make the developer pass these and then if they do they will
@@ -53,7 +54,8 @@ class ClientApplication(object):
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
-            token_cache=None):
+            token_cache=None,
+            verify=True, proxies=None, timeout=None):
         """
         :param client_credential: It can be a string containing client secret,
             or an X509 certificate container in this form:
@@ -70,6 +72,9 @@ class ClientApplication(object):
                 validate_authority)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
+        self.verify = verify
+        self.proxies = proxies
+        self.timeout = timeout
         self.client = self._build_client(client_credential, self.authority)
 
     def _build_client(self, client_credential, authority):
@@ -104,13 +109,13 @@ class ClientApplication(object):
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt,
-            )
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout)
 
     def get_authorization_request_url(
             self,
-            scope,
-            additional_scope=frozenset([]),  # Not yet supported
-            login_hint=None,
+            scopes,  # type: list[str]
+            # additional_scope=None,  # type: Optional[list]
+            login_hint=None,  # type: Optional[str]
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
             authority=None,  # By default, it will use self.authority;
@@ -119,15 +124,21 @@ class ClientApplication(object):
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
-        :param scope: Scope refers to the resource that will be used in the
-            resulting token's audience.
+        :param scopes:
+            Scopes requested to access a protected API (a resource).
+        :param str state: Recommended by OAuth2 for CSRF protection.
+        :param login_hint:
+            Identifier of the user. Generally a User Principal Name (UPN).
+        :param redirect_uri:
+            Address to return to upon receiving a response from the authority.
+        """
+        """ # TBD: this would only be meaningful in a new acquire_token_interactive()
         :param additional_scope: Additional scope is a concept only in AAD.
             It refers to other resources you might want to prompt to consent
             for in the same interaction, but for which you won't get back a
             token for in this particular operation.
             (Under the hood, we simply merge scope and additional_scope before
             sending them on the wire.)
-        :param str state: Recommended by OAuth2 for CSRF protection.
         """
         the_authority = Authority(authority) if authority else self.authority
         client = Client(
@@ -136,13 +147,13 @@ class ClientApplication(object):
         return client.build_auth_request_uri(
             response_type="code",  # Using Authorization Code grant
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
-            scope=decorate_scope(scope, self.client_id),
+            scope=decorate_scope(scopes, self.client_id),
             )
 
-    def acquire_token_with_authorization_code(
+    def acquire_token_by_authorization_code(
             self,
             code,
-            scope,  # Syntactically required. STS accepts empty value though.
+            scopes,  # Syntactically required. STS accepts empty value though.
             redirect_uri=None,
                 # REQUIRED, if the "redirect_uri" parameter was included in the
                 # authorization request as described in Section 4.1.1, and their
@@ -151,7 +162,7 @@ class ClientApplication(object):
         """The second half of the Authorization Code Grant.
 
         :param code: The authorization code returned from Authorization Server.
-        :param scope:
+        :param scopes:
 
             If you requested user consent for multiple resources, here you will
             typically want to provide a subset of what you required in AuthCode.
@@ -171,38 +182,49 @@ class ClientApplication(object):
         # So in theory, you can omit scope here when you were working with only
         # one scope. But, MSAL decorates your scope anyway, so they are never
         # really empty.
-        assert isinstance(scope, list), "Invalid parameter type"
-        return self.client.obtain_token_with_authorization_code(
+        assert isinstance(scopes, list), "Invalid parameter type"
+        return self.client.obtain_token_by_authorization_code(
                 code, redirect_uri=redirect_uri,
-                data={"scope": decorate_scope(scope, self.client_id)},
+                data={"scope": decorate_scope(scopes, self.client_id)},
             )
 
-    def get_accounts(self):
-        """Returns a list of account objects that can later be used to find token.
+    def get_accounts(self, username=None):
+        """Get a list of accounts which previously signed in, i.e. exists in cache.
 
-        Each account object is a dict containing a "username" field (among others)
-        which can use to determine which account to use.
+        An account can later be used in acquire_token_silent() to find its tokens.
+        Each account is a dict. For now, we only document its "username" field.
+        Your app can choose to display those information to end user,
+        and allow them to choose one of them to proceed.
+
+        :param username:
+            Filter accounts with this username only. Case insensitive.
         """
         # The following implementation finds accounts only from saved accounts,
         # but does NOT correlate them with saved RTs. It probably won't matter,
         # because in MSAL universe, there are always Accounts and RTs together.
-        return self.token_cache.find(
-                self.token_cache.CredentialType.ACCOUNT,
-                query={"environment": self.authority.instance})
+        accounts = self.token_cache.find(
+            self.token_cache.CredentialType.ACCOUNT,
+            query={"environment": self.authority.instance})
+        if username:
+            # Federated account["username"] from AAD could contain mixed case
+            lowercase_username = username.lower()
+            accounts = [a for a in accounts
+                if a["username"].lower() == lowercase_username]
+        return accounts
 
     def acquire_token_silent(
-            self, scope,
+            self, scopes,
             account=None,  # one of the account object returned by get_accounts()
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # To force refresh an Access Token (not a RT)
             **kwargs):
-        assert isinstance(scope, list), "Invalid parameter type"
+        assert isinstance(scopes, list), "Invalid parameter type"
         the_authority = Authority(authority) if authority else self.authority
 
         if force_refresh == False:
             matches = self.token_cache.find(
                 self.token_cache.CredentialType.ACCESS_TOKEN,
-                target=scope,
+                target=scopes,
                 query={
                     "client_id": self.client_id,
                     "environment": the_authority.instance,
@@ -221,7 +243,7 @@ class ClientApplication(object):
 
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
-            # target=scope,  # AAD RTs are scope-independent
+            # target=scopes,  # AAD RTs are scope-independent
             query={
                 "client_id": self.client_id,
                 "environment": the_authority.instance,
@@ -230,33 +252,30 @@ class ClientApplication(object):
                 })
         client = self._build_client(self.client_credential, the_authority)
         for entry in matches:
-            response = client.obtain_token_with_refresh_token(
+            response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
-                scope=decorate_scope(scope, self.client_id))
+                scope=decorate_scope(scopes, self.client_id))
             if "error" not in response:
                 return response
-            logging.debug(
+            logger.debug(
                 "Refresh failed. {error}: {error_description}".format(**response))
 
-    def initiate_device_flow(self, scope=None, **kwargs):
+    def initiate_device_flow(self, scopes=None, **kwargs):
         return self.client.initiate_device_flow(
-            scope=decorate_scope(scope, self.client_id) if scope else None,
+            scope=decorate_scope(scopes or [], self.client_id),
             **kwargs)
 
-    def acquire_token_by_device_flow(
-            self, flow, exit_condition=lambda: True, **kwargs):
-        """Obtain token by a device flow object, with optional polling effect.
+    def acquire_token_by_device_flow(self, flow, **kwargs):
+        """Obtain token by a device flow object, with customizable polling effect.
 
         Args:
             flow (dict):
-                An object previously generated by initiate_device_flow(...).
-            exit_condition (Callable):
-                This method implements a loop to provide polling effect.
-                The loop's exit condition is calculated by this callback.
-                The default callback makes the loop run only once, i.e. no polling.
+                A dict previously generated by initiate_device_flow(...).
+                You can exit the polling loop early, by changing the value of
+                its "expires_at" key to 0, at any time.
         """
         return self.client.obtain_token_by_device_flow(
-                flow, exit_condition=exit_condition,
+                flow,
                 data={"code": flow["device_code"]},  # 2018-10-4 Hack:
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
@@ -264,28 +283,20 @@ class ClientApplication(object):
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
-    ## TBD: what if redirect_uri is not needed in the constructor at all?
-    ##  Device Code flow does not need redirect_uri anyway.
-
-    # OUT_OF_BAND = "urn:ietf:wg:oauth:2.0:oob"
-    # def __init__(self, client_id, redirect_uri=None, **kwargs):
-    #     super(PublicClientApplication, self).__init__(client_id, **kwargs)
-    #     self.redirect_uri = redirect_uri or self.OUT_OF_BAND
-
-    def acquire_token_with_username_password(
-            self, username, password, scope=None, **kwargs):
+    def acquire_token_by_username_password(
+            self, username, password, scopes=None, **kwargs):
         """Gets a token for a given resource via user credentails."""
-        scope = decorate_scope(scope, self.client_id)
+        scopes = decorate_scope(scopes, self.client_id)
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(username)
             if user_realm_result.get("account_type") == "Federated":
-                return self._acquire_token_with_username_password_federated(
-                    user_realm_result, username, password, scope=scope, **kwargs)
-        return self.client.obtain_token_with_username_password(
-                username, password, scope=scope, **kwargs)
+                return self._acquire_token_by_username_password_federated(
+                    user_realm_result, username, password, scopes=scopes, **kwargs)
+        return self.client.obtain_token_by_username_password(
+                username, password, scope=scopes, **kwargs)
 
-    def _acquire_token_with_username_password_federated(
-            self, user_realm_result, username, password, scope=None, **kwargs):
+    def _acquire_token_by_username_password_federated(
+            self, user_realm_result, username, password, scopes=None, **kwargs):
         wstrust_endpoint = {}
         if user_realm_result.get("federation_metadata_url"):
             wstrust_endpoint = mex.send_request(
@@ -306,42 +317,20 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         if not grant_type:
             raise RuntimeError(
                 "RSTR returned unknown token type: %s", wstrust_result.get("type"))
-        return self.client.obtain_token_with_assertion(
+        return self.client.obtain_token_by_assertion(
             b64encode(wstrust_result["token"]),
-            grant_type=grant_type, scope=scope, **kwargs)
-
-    def acquire_token(
-            self,
-            scope,
-            # additional_scope=None,  # See also get_authorization_request_url()
-            login_hint=None,
-            ui_options=None,
-            # user=None,  # TBD: It exists in MSAL-dotnet but not in MSAL-Android
-            policy='',
-            authority=None,  # See get_authorization_request_url()
-            extra_query_params=None,
-            ):
-        # It will handle the TWO round trips of Authorization Code Grant flow.
-        raise NotImplemented()
+            grant_type=grant_type, scope=scopes, **kwargs)
 
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
-    def acquire_token_for_client(self, scope, force_refresh=False):
-        """Acquires token from the service for the confidential client.
+    def acquire_token_for_client(self, scopes, **kwargs):
+        """Acquires token from the service for the confidential client."""
+        # TBD: force_refresh behavior
+        return self.client.obtain_token_for_client(
+                scope=scopes,  # This grant flow requires no scope decoration
+                **kwargs)
 
-        :param force_refresh:
-            This method attempts to look up valid access token in the cache.
-            If this parameter is set to True,
-            this method will ignore the access token in the cache
-            and attempt to acquire new access token using client credentials
-        """
-        # TODO: force_refresh will be implemented after the cache mechanism is ready
-        return self.client.obtain_token_with_client_credentials(
-                scope=scope,  # This grant flow requires no scope decoration
-                )
-
-    def acquire_token_on_behalf_of(
-            self, user_assertion, scope, authority=None, policy=''):
-        pass
+    def acquire_token_on_behalf_of(self, user_assertion, scopes, authority=None):
+        raise NotImplementedError()
 

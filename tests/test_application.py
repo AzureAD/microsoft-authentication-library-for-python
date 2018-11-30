@@ -37,12 +37,13 @@ class Oauth2TestCase(unittest.TestCase):
 
     def assertCacheWorks(self, result_from_wire):
         result = result_from_wire
-        # Going to test acquire_token_silent(...) to locate an AT from cache
-        # In practice, you may want to filter based on its "username" field
-        accounts = self.app.get_accounts()
+        # You can filter by predefined username, or let end user to choose one
+        accounts = self.app.get_accounts(username=CONFIG.get("username"))
         self.assertNotEqual(0, len(accounts))
+        account = accounts[0]
+        # Going to test acquire_token_silent(...) to locate an AT from cache
         result_from_cache = self.app.acquire_token_silent(
-                CONFIG["scope"], account=accounts[0])
+                CONFIG["scope"], account=account)
         self.assertIsNotNone(result_from_cache)
         self.assertEqual(result['access_token'], result_from_cache['access_token'],
                 "We should get a cached AT")
@@ -50,7 +51,7 @@ class Oauth2TestCase(unittest.TestCase):
         # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
         self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
         result_from_cache = self.app.acquire_token_silent(
-                CONFIG["scope"], account=accounts[0])
+                CONFIG["scope"], account=account)
         self.assertIsNotNone(result_from_cache,
                 "We should get a result from acquire_token_silent(...) call")
         self.assertNotEqual(result['access_token'], result_from_cache['access_token'],
@@ -66,7 +67,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
             result_from_wire['access_token'], result_from_cache['access_token'])
 
     @unittest.skipUnless("client_secret" in CONFIG, "Missing client secret")
-    def test_confidential_client_using_secret(self):
+    def test_client_secret(self):
         app = ConfidentialClientApplication(
             CONFIG["client_id"], client_credential=CONFIG.get("client_secret"),
             authority=CONFIG.get("authority"))
@@ -76,7 +77,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
         self.assertCacheWorks(result, app.acquire_token_silent(scope, account=None))
 
     @unittest.skipUnless("client_certificate" in CONFIG, "Missing client cert")
-    def test_confidential_client_using_certificate(self):
+    def test_client_certificate(self):
         client_certificate = CONFIG["client_certificate"]
         assert ("private_key_path" in client_certificate
                 and "thumbprint" in client_certificate)
@@ -99,8 +100,8 @@ class TestPublicClientApplication(Oauth2TestCase):
     def test_username_password(self):
         self.app = PublicClientApplication(
                 CONFIG["client_id"], authority=CONFIG["authority"])
-        result = self.app.acquire_token_with_username_password(
-                CONFIG["username"], CONFIG["password"], scope=CONFIG.get("scope"))
+        result = self.app.acquire_token_by_username_password(
+                CONFIG["username"], CONFIG["password"], scopes=CONFIG.get("scope"))
         self.assertLoosely(result)
         self.assertCacheWorks(result)
 
@@ -124,7 +125,7 @@ class TestClientApplication(Oauth2TestCase):
         ac = obtain_auth_code(port, auth_uri=auth_request_uri)
         self.assertNotEqual(ac, None)
 
-        result = self.app.acquire_token_with_authorization_code(
+        result = self.app.acquire_token_by_authorization_code(
             ac, CONFIG["scope"], redirect_uri=redirect_uri)
         logging.debug("cache = %s", json.dumps(self.app.token_cache._cache, indent=4))
         self.assertIn(
@@ -136,14 +137,13 @@ class TestClientApplication(Oauth2TestCase):
         self.assertCacheWorks(result)
 
     def test_device_flow(self):
-        flow = self.app.initiate_device_flow(scope=CONFIG.get("scope"))
+        flow = self.app.initiate_device_flow(scopes=CONFIG.get("scope"))
         logging.warn(flow["message"])
 
         duration = 30
         logging.warn("We will wait up to %d seconds for you to sign in" % duration)
-        result = self.app.acquire_token_by_device_flow(
-            flow,
-            exit_condition=lambda end=time.time() + duration: time.time() > end)
+        flow["expires_at"] = time.time() + duration  # Shorten the time for quick test
+        result = self.app.acquire_token_by_device_flow(flow)
         self.assertLoosely(
                 result,
                 assertion=lambda: self.assertIn('access_token', result),
