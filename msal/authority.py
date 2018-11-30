@@ -41,6 +41,18 @@ class Authority(object):
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
+        self.is_adfs = self.tenant.lower() == 'adfs'
+
+    def user_realm_discovery(self, username, **kwargs):
+        resp = requests.get(
+            "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
+                netloc=self.instance, username=username),
+            headers={'Accept':'application/json'}, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
+        # It will typically contain "ver", "account_type",
+        # "federation_protocol", "cloud_audience_urn",
+        # "federation_metadata_url", "federation_active_auth_url", etc.
 
 def canonicalize(url):
     # Returns (canonicalized_url, netloc, tenant). Raises ValueError on errors.
