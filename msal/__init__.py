@@ -25,7 +25,11 @@
 #
 #------------------------------------------------------------------------------
 
-# pylint: disable=wrong-import-position
-
-__version__ = '0.1.0'
+from .application import (
+    __version__,
+    ClientApplication,
+    ConfidentialClientApplication,
+    PublicClientApplication,
+    )
+from .token_cache import TokenCache
 
