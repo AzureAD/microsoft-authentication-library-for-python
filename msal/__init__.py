@@ -31,5 +31,5 @@ from .application import (
     ConfidentialClientApplication,
     PublicClientApplication,
     )
-from .token_cache import TokenCache
+from .token_cache import TokenCache, SerializableTokenCache
 
