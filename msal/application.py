@@ -1,17 +1,31 @@
-from . import oauth2
+from .oauth2 import Client
 from .authority import Authority
 from .request import decorate_scope
-from .client_credential import ClientCredentialRequest
+from .assertion import create_jwt_assertion
 
 
 class ClientApplication(object):
 
     def __init__(
             self, client_id,
-            authority_url="https://login.microsoftonline.com/common/",
+            authority="https://login.microsoftonline.com/common/",
             validate_authority=True):
         self.client_id = client_id
-        self.authority = Authority(authority_url, validate_authority)
+        self.authority = Authority(authority, validate_authority)
+            # Here the self.authority is not the same type as authority in input
+
+    @staticmethod
+    def _build_auth_parameters(client_credential, token_endpoint, client_id):
+        if isinstance(client_credential, dict):
+            type_ = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+            assertion = create_jwt_assertion(
+                client_credential['certificate'],
+                client_credential['thumbprint'],
+                audience=token_endpoint, issuer=client_id)
+            return {
+                'client_assertion_type': type_, 'client_assertion': assertion}
+        else:
+            return {'client_secret': client_credential}
 
     def acquire_token_silent(
             self, scope,
@@ -20,14 +34,17 @@ class ClientApplication(object):
             policy='',
             force_refresh=False,  # To force refresh an Access Token (not a RT)
             **kwargs):
-        a = Authority(authority) if authority else self.authority
-        client = oauth2.Client(self.client_id, token_endpoint=a.token_endpoint)
+        the_authority = Authority(authority) if authority else self.authority
         refresh_token = kwargs.get('refresh_token')  # For testing purpose
-        response = client.get_token_by_refresh_token(
-            refresh_token,
-            scope=decorate_scope(scope, self.client_id, policy),
-            client_secret=getattr(self, 'client_credential'),  # TODO: JWT too
-            query={'policy': policy} if policy else None)
+        response = Client(
+            self.client_id, token_endpoint=the_authority.token_endpoint,
+            default_body=self._build_auth_parameters(
+                self.client_credential,
+                the_authority.token_endpoint, self.client_id)
+            ).acquire_token_with_refresh_token(
+                refresh_token,
+                scope=decorate_scope(scope, self.client_id, policy),
+                query={'p': policy} if policy else None)
         # TODO: refresh the refresh_token
         return response
 
@@ -79,11 +96,15 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         self.user_token_cache = user_token_cache
         self.app_token_cache = None  # TODO
 
-    def acquire_token_for_client(self, scope, policy=''):
-        return ClientCredentialRequest(
-            client_id=self.client_id, client_credential=self.client_credential,
-            scope=scope,  # This grant flow requires no scope decoration
-            policy=policy, authority=self.authority).run()
+    def acquire_token_for_client(self, scope, policy=None):
+        token_endpoint = self.authority.token_endpoint
+        return Client(
+            self.client_id, token_endpoint=token_endpoint,
+            default_body=self._build_auth_parameters(
+                self.client_credential, token_endpoint, self.client_id)
+            ).acquire_token_with_client_credentials(
+                scope=scope,  # This grant flow requires no scope decoration
+                query={'p': policy} if policy else None)
 
     def get_authorization_request_url(
             self,
@@ -109,16 +130,18 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             sending them on the wire.)
         :param str state: Recommended by OAuth2 for CSRF protection.
         """
-        a = Authority(authority) if authority else self.authority
-        grant = oauth2.AuthorizationCodeGrant(
-            self.client_id, authorization_endpoint=a.authorization_endpoint)
-        return grant.authorization_url(
+        the_authority = Authority(authority) if authority else self.authority
+        client = Client(
+            self.client_id,
+            authorization_endpoint=the_authority.authorization_endpoint)
+        return client.authorization_url(
+            response_type="code",  # Using Authorization Code grant
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             scope=decorate_scope(scope, self.client_id, policy),
             policy=policy if policy else None,
             **(extra_query_params or {}))
 
-    def acquire_token_by_authorization_code(
+    def acquire_token_with_authorization_code(
             self,
             code,
             scope,  # Syntactically required. STS accepts empty value though.
@@ -151,13 +174,15 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         # So in theory, you can omit scope here when you were working with only
         # one scope. But, MSAL decorates your scope anyway, so they are never
         # really empty.
-        grant = oauth2.AuthorizationCodeGrant(
-            self.client_id, token_endpoint=self.authority.token_endpoint)
-        return grant.get_token(
-            code, redirect_uri=redirect_uri,
-            scope=decorate_scope(scope, self.client_id, policy),
-            client_secret=self.client_credential,  # TODO: Support certificate
-            query={'policy': policy} if policy else None)
+        return Client(
+            self.client_id, token_endpoint=self.authority.token_endpoint,
+            default_body=self._build_auth_parameters(
+                self.client_credential,
+                self.authority.token_endpoint, self.client_id)
+            ).acquire_token_with_authorization_code(
+                code, redirect_uri=redirect_uri,
+                scope=decorate_scope(scope, self.client_id, policy),
+                query={'p': policy} if policy else None)
 
     def acquire_token_on_behalf_of(
             self, user_assertion, scope, authority=None, policy=''):

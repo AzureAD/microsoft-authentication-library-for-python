@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 
 from msal.application import ConfidentialClientApplication
 from tests import unittest
@@ -11,11 +12,11 @@ THIS_FOLDER = os.path.dirname(__file__)
 CONFIG_FILE = os.path.join(THIS_FOLDER, 'config.json')
 
 
-def acquire_token_by_authorization_code(app, redirect_port, scope):
+def acquire_token_with_authorization_code(app, redirect_port, scope):
     # Note: This func signature does not and should not require client_secret
     fresh_auth_code = AuthCodeReceiver.acquire(
         app.get_authorization_request_url(scope), redirect_port)
-    return app.acquire_token_by_authorization_code(fresh_auth_code, scope)
+    return app.acquire_token_with_authorization_code(fresh_auth_code, scope)
 
 
 # Note: This test case requires human interaction to obtain authorization code
@@ -30,7 +31,7 @@ class TestConfidentialClientApplication(unittest.TestCase):
         cls.config = json.load(open(CONFIG_FILE))
         cls.app = ConfidentialClientApplication(
             cls.config['CLIENT_ID'], cls.config['CLIENT_SECRET'])
-        cls.token = acquire_token_by_authorization_code(
+        cls.token = acquire_token_with_authorization_code(
             # Prepare a token. It will be shared among multiple test cases.
             cls.app, cls.config.get('REDIRECTION_PORT', 8000), cls.scope2)
 
@@ -60,10 +61,14 @@ class TestConfidentialClientApplication(unittest.TestCase):
         # After user consent, your redirect endpoint will be hit like this:
         # http://localhost:8000/?code=blahblah&other_param=foo
 
-    def test_acquire_token_by_authorization_code(self):
+    @classmethod
+    def beautify(cls, json_payload):
+        return json.dumps(json_payload, indent=2)
+
+    def test_acquire_token_with_authorization_code(self):
         # Actually we already obtain a token during this TestCase initialization
         self.assertEqual(self.token.get('error_description'), None)
-        print(self.token)  # It may also contain your refresh token
+        logging.info("Authorization Code Grant: %s", self.beautify(self.token))
 
     def test_acquire_token_silent(self):
         if 'refresh_token' not in self.token:
@@ -71,5 +76,9 @@ class TestConfidentialClientApplication(unittest.TestCase):
         token = self.app.acquire_token_silent(
             self.scope2, refresh_token=self.token['refresh_token'])
         self.assertEqual(token.get('error_description', ""), "")
-        #print(token)
+        if 'refresh_token' in token:
+            logging.warn(
+                "Authorization Server also issues a new Refresh Token: %s",
+                self.beautify(token))
+            self.token = token  # https://tools.ietf.org/html/rfc6749#section-6
 
