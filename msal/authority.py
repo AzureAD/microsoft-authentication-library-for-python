@@ -30,20 +30,20 @@ class Authority(object):
             This parameter only controls whether an instance discovery will be
             performed.
         """
-        canonicalized, host, tenant = canonicalize(authority_url)
+        canonicalized, self.instance, tenant = canonicalize(authority_url)
         tenant_discovery_endpoint = (  # Hard code a V2 pattern as default value
             'https://{}/{}/v2.0/.well-known/openid-configuration'
             .format(WORLD_WIDE, tenant))
-        if validate_authority and host not in WELL_KNOWN_AUTHORITY_HOSTS:
+        if validate_authority and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS:
             tenant_discovery_endpoint = instance_discovery(
                 canonicalized + "/oauth2/v2.0/authorize")
         openid_config = tenant_discovery(tenant_discovery_endpoint)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
-
+        _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
 
 def canonicalize(url):
-    # Returns (canonicalized_url, host, tenant). Raises ValueError on errors.
+    # Returns (canonicalized_url, netloc, tenant). Raises ValueError on errors.
     match_object = re.match("https://([^/]+)/([^/\?#]+)", url.lower())
     if not match_object:
         raise ValueError(
