@@ -33,7 +33,7 @@ import logging
 import requests
 
 from .mex import Mex
-import wstrust_response
+from .wstrust_response import parse_response
 
 
 logger = logging.getLogger(__file__)
@@ -61,7 +61,7 @@ def send_request(
         logger.debug("Unsuccessful WsTrust request receives: %s", resp.text)
     # It turns out ADFS uses 5xx status code even with client-side incorrect password error
     # resp.raise_for_status()
-    return wstrust_response.parse_response(resp.text)
+    return parse_response(resp.text)
 
 def escape_password(password):
     return (password.replace('&', '&amp;').replace('"', '&quot;')

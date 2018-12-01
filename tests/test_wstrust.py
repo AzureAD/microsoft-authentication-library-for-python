@@ -94,5 +94,5 @@ class Test_WsTrustResponse(unittest.TestCase):
             rst_body = f.read()
         result = parse_token_by_re(rst_body)
         self.assertEqual(result.get("type"), SAML_TOKEN_TYPE_V1)
-        self.assertIn("<saml:Assertion", result.get("token", ""))
+        self.assertIn(b"<saml:Assertion", result.get("token", ""))
 
