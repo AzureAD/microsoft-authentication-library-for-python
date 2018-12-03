@@ -16,6 +16,12 @@ def base64decode(raw):  # This can handle a padding-less raw input
 
 
 class TokenCache(object):
+    """This is considered as a base class containing minimal cache behavior.
+
+    Although this class already maintains tokens using unified schema,
+    it does not serialize/persist them. See subclass SerializableTokenCache
+    for more details.
+    """
 
     class CredentialType:
         ACCESS_TOKEN = "AccessToken"
@@ -23,17 +29,9 @@ class TokenCache(object):
         ACCOUNT = "Account"  # Not exactly a credential type, but we put it here
         ID_TOKEN = "IdToken"
 
-    def __init__(self, state=None):
-        """Initialize a token_cache instance, with an optional initial state,
-        which can come from a previous run of token cache instance.
-
-        Although this class already maintains cached tokens using unified schema,
-        it does not actually persist them.
-        The persistence layer would be implemented in a subclass which provides
-        a serialize() and deserialize() wrapping the self._cache internal structure.
-        """
-        self._cache = state or {}
+    def __init__(self):
         self._lock = threading.RLock()
+        self._cache = {}
 
     def find(self, credential_type, target=None, query=None):
         target = target or []
@@ -165,4 +163,48 @@ class TokenCache(object):
         with self._lock:
             rt = self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key]
             rt["secret"] = new_rt
+
+
+class SerializableTokenCache(TokenCache):
+    """This serialization can be a starting point to implement your own persistence.
+
+    This class does NOT actually persist the cache on disk/db/etc..
+    Depends on your need, the following file-based persistence may be sufficient:
+
+        import atexit
+        cache = SerializableTokenCache()
+        cache.deserialize(open("my_cache.bin", "rb").read())
+        atexit.register(lambda:
+            open("my_cache.bin", "wb").write(cache.serialize())
+            # Hint: The following optional line persists only when state changed
+            if cache.has_state_changed else None
+            )
+        app = ClientApplication(..., token_cache=cache)
+        ...
+    """
+    def add(self, event):
+        super(SerializableTokenCache, self).add(event)
+        self.has_state_changed = True
+
+    def remove_rt(self, rt_item):
+        super(SerializableTokenCache, self).remove_rt(rt_item)
+        self.has_state_changed = True
+
+    def update_rt(self, rt_item, new_rt):
+        super(SerializableTokenCache, self).update_rt(rt_item, new_rt)
+        self.has_state_changed = True
+
+    def deserialize(self, state):
+        # type: (Optional[str]) -> None
+        """Deserialize the cache from a state previously obtained by serialize()"""
+        with self._lock:
+            self._cache = json.loads(state) if state else {}
+            self.has_state_changed = False  # reset
+
+    def serialize(self):
+        # type: () -> str
+        """Serialize the current cache state into a string."""
+        with self._lock:
+            self.has_state_changed = False
+            return json.dumps(self._cache)
 
