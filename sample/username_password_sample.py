@@ -5,7 +5,7 @@ The configuration file would look like this:
     "authority": "https://login.microsoftonline.com/organizations",
     "client_id": "your_client_id",
     "username": "your_username@your_tenant.com",
-    "scope": ["https://graph.microsoft.com/.default"],
+    "scope": ["user.read"],
     "password": "This is a sample only. You better NOT persist your password."
 }
 

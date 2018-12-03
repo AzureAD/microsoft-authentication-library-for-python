@@ -4,7 +4,7 @@ The configuration file would look like this:
 {
     "authority": "https://login.microsoftonline.com/organizations",
     "client_id": "your_client_id",
-    "scope": ["https://graph.microsoft.com/.default"]
+    "scope": ["user.read"]
 }
 
 You can then run this sample with a JSON configuration file:
