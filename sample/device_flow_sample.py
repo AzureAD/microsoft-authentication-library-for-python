@@ -24,7 +24,7 @@ import msal
 
 config = json.load(open(sys.argv[1]))
 
-# Create a preferrably long-lived app instance which maintains a token cache.
+# Create a preferably long-lived app instance which maintains a token cache.
 app = msal.PublicClientApplication(
     config["client_id"], authority=config["authority"],
     # token_cache=...  # Default cache is in memory only.
@@ -43,10 +43,10 @@ if accounts:
     print("Pick the account you want to use to proceed:")
     for a in accounts:
         print(a["username"])
-    # Assumeing the end user chose this one
+    # Assuming the end user chose this one
     chosen = accounts[0]
     # Now let's try to find a token in cache for this account
-    result = app.acquire_token_silent(config["scope"], account=accounts[0])
+    result = app.acquire_token_silent(config["scope"], account=chosen)
 
 if not result:
     # So no suitable token exists in cache. Let's get a new one from AAD.

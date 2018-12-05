@@ -25,7 +25,7 @@ import msal
 
 config = json.load(open(sys.argv[1]))
 
-# Create a preferrably long-lived app instance which maintains a token cache.
+# Create a preferably long-lived app instance which maintains a token cache.
 app = msal.ConfidentialClientApplication(
     config["client_id"], authority=config["authority"],
     client_credential=config["secret"],
