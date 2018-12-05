@@ -34,8 +34,8 @@ app = msal.PublicClientApplication(
 # The pattern to acquire a token looks like this.
 result = None
 
-# If your device-flow app does not have any interactive ability,
-# you can completely skip the following cache part. Here we demonstrate it anyway.
+# Note: If your device-flow app does not have any interactive ability, you can
+#   completely skip the following cache part. But here we demonstrate it anyway.
 # We now check the cache to see if we have some end users signed in before.
 accounts = app.get_accounts()
 if accounts:

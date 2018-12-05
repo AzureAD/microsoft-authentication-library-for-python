@@ -38,7 +38,7 @@ result = None
 
 # Firstly, looks up a token from cache
 # Since we are looking for token for the current app, NOT for an end user,
-# notice we give account parameter as None (which is its default value, by the way).
+# notice we give account parameter as None.
 result = app.acquire_token_silent(config["scope"], account=None)
 
 if not result:
