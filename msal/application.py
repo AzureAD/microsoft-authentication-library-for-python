@@ -212,15 +212,32 @@ class ClientApplication(object):
         return accounts
 
     def acquire_token_silent(
-            self, scopes,
-            account=None,  # one of the account object returned by get_accounts()
+            self,
+            scopes,  # type: List[str]
+            account,  # type: Optional[Account]
             authority=None,  # See get_authorization_request_url()
-            force_refresh=False,  # To force refresh an Access Token (not a RT)
+            force_refresh=False,  # type: Optional[boolean]
             **kwargs):
+        """Acquire an access token for given account, without user interaction.
+
+        It is done either by finding a valid access token from cache,
+        or by finding a valid refresh token from cache and then automatically
+        use it to redeem a new access token.
+
+        The return value will be an new or cached access token, or None.
+
+        :param scopes: Scopes, represented as a list of strings
+        :param account:
+            one of the account object returned by get_accounts(),
+            or use None when you want to find an access token for this client.
+        :param force_refresh:
+            If True, it will skip Access Token look-up,
+            and try to find a Refresh Token to obtain a new Access Token.
+        """
         assert isinstance(scopes, list), "Invalid parameter type"
         the_authority = Authority(authority) if authority else self.authority
 
-        if force_refresh == False:
+        if not force_refresh:
             matches = self.token_cache.find(
                 self.token_cache.CredentialType.ACCESS_TOKEN,
                 target=scopes,
