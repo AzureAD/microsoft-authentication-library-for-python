@@ -105,6 +105,24 @@ class TestPublicClientApplication(Oauth2TestCase):
         self.assertLoosely(result)
         self.assertCacheWorks(result)
 
+    def test_device_flow(self):
+        self.app = PublicClientApplication(
+            CONFIG["client_id"], authority=CONFIG["authority"])
+        flow = self.app.initiate_device_flow(scopes=CONFIG.get("scope"))
+        logging.warn(flow["message"])
+
+        duration = 30
+        logging.warn("We will wait up to %d seconds for you to sign in" % duration)
+        flow["expires_at"] = time.time() + duration  # Shorten the time for quick test
+        result = self.app.acquire_token_by_device_flow(flow)
+        self.assertLoosely(
+                result,
+                assertion=lambda: self.assertIn('access_token', result),
+                skippable_errors=self.app.client.DEVICE_FLOW_RETRIABLE_ERRORS)
+
+        if "access_token" in result:
+            self.assertCacheWorks(result)
+
 
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
 class TestClientApplication(Oauth2TestCase):
@@ -135,20 +153,4 @@ class TestClientApplication(Oauth2TestCase):
                 error=result.get("error"),
                 error_description=result.get("error_description")))
         self.assertCacheWorks(result)
-
-    def test_device_flow(self):
-        flow = self.app.initiate_device_flow(scopes=CONFIG.get("scope"))
-        logging.warn(flow["message"])
-
-        duration = 30
-        logging.warn("We will wait up to %d seconds for you to sign in" % duration)
-        flow["expires_at"] = time.time() + duration  # Shorten the time for quick test
-        result = self.app.acquire_token_by_device_flow(flow)
-        self.assertLoosely(
-                result,
-                assertion=lambda: self.assertIn('access_token', result),
-                skippable_errors=self.app.client.DEVICE_FLOW_RETRIABLE_ERRORS)
-
-        if "access_token" in result:
-            self.assertCacheWorks(result)
 

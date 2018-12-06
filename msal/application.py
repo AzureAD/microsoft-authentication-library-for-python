@@ -276,6 +276,15 @@ class ClientApplication(object):
             logger.debug(
                 "Refresh failed. {error}: {error_description}".format(**response))
 
+
+class PublicClientApplication(ClientApplication):  # browser app or mobile app
+
+    def __init__(self, client_id, client_credential=None, **kwargs):
+        if client_credential is not None:
+            raise ValueError("Public Client should not possess credentials")
+        super(PublicClientApplication, self).__init__(
+            client_id, client_credential=None, **kwargs)
+
     def initiate_device_flow(self, scopes=None, **kwargs):
         return self.client.initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
@@ -296,8 +305,6 @@ class ClientApplication(object):
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
                 **kwargs)
-
-class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
     def acquire_token_by_username_password(
             self, username, password, scopes=None, **kwargs):
