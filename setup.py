@@ -26,7 +26,7 @@
 #
 #------------------------------------------------------------------------------
 
-from setuptools import setup
+from setuptools import setup, find_packages
 import re, io
 
 # setup.py shall not import main package
@@ -59,7 +59,7 @@ setup(
         'Programming Language :: Python :: 3.7',
         'License :: OSI Approved :: MIT License',
     ],
-    packages=['msal'],
+    packages=find_packages(),
     install_requires=[
         'requests>=2.0.0',
         'PyJWT[crypto]>=1.0.0',
