@@ -39,6 +39,7 @@ Acquiring tokens with MSAL Python is somewhat different than ADAL Python. You wi
 
 2. The API model in MSAL provides you explicit control on how to utilize token cache.
    This cache part is technically optional, but we highly recommend you to harness the power of MSAL cache.
+   It will automatically handle the token refresh for you.
 
    ```python
    # We now check the cache to see if we have some end users already signed in before.
@@ -76,9 +77,6 @@ You can try [runnable samples in this repo](https://github.com/AzureAD/microsoft
 
 
 ## Samples and Documentation
-We provide a full suite of [sample applications on GitHub](https://github.com/azure-samples?utf8=%E2%9C%93&q=active-directory&type=&language=) to help you get started with learning the Azure Identity system. This includes tutorials for native clients and web applications. We also provide full walkthroughs for authentication flows such as OAuth2, OpenID Connect and for calling APIs such as the Graph API.
-
-You can find the relevant samples by scenarios listed in this [wiki page for acquiring tokens using ADAL Python](https://github.com/AzureAD/azure-activedirectory-library-for-python/wiki/Acquire-tokens#adal-python-apis-for-corresponding-flows).
 
 The generic documents on
 [Auth Scenarios](https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-scenarios)
