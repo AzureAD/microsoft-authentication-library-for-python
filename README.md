@@ -1,0 +1,118 @@
+# Microsoft Authentication Library (MSAL) for Python
+
+The MSAL library for Python gives your app the ability to begin using the [Microsoft Cloud](https://cloud.microsoft.com)
+by supporting [Microsoft Azure Active Directory](https://azure.microsoft.com/en-us/services/active-directory/)
+and [Microsoft Accounts](https://account.microsoft.com) in a converged experience using industry standard OAuth2 and OpenID Connect.
+Soon MSAL Python will also support [Azure AD B2C](https://azure.microsoft.com/services/active-directory-b2c/).
+
+More and more detail about MSAL Python functionality and usage will be documented in the
+[Wiki](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki).
+
+## Installation
+
+1. If you haven't already, [install and/or upgrade the pip](https://pip.pypa.io/en/stable/installing/)
+   of your Python environment to a recent version. We tested with pip 18.1.
+2. For now, you can install from our latest dev branch, by `pip install https://github.com/AzureAD/microsoft-authentication-library-for-python.git@dev`
+
+## Usage
+
+Before using MSAL Python (or any MSAL SDKs, for that matter), you will have to
+[register your application with the AAD 2.0 endpoint](https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-v2-register-an-app).
+
+Acquiring tokens with MSAL Python is somewhat different than ADAL Python. You will need to follow this 3-step pattern.
+
+1. Contrary to ADAL (which proposes the notion of `AuthenticationContext`, which is a connection to Azure AD),
+   MSAL proposes a clean separation between
+   [public client applications, and confidential client applications](https://tools.ietf.org/html/rfc6749#section-2.1).
+   So you will first create either a `PublicClientApplication` or a `ConfidentialClientApplication` instance,
+   and ideally reuse it during the lifecycle of your app. For example:
+
+   ```python
+   from msal import PublicClientApplication
+   app = PublicClientApplication("your_client_id", authority="...")
+   ```
+   
+   Later, each time you would want an access token, you start by:
+   ```python
+   result = None
+   ```
+
+2. The API model in MSAL provides you explicit control on how to utilize token cache.
+   This cache part is technically optional, but we highly recommend you to harness the power of MSAL cache.
+
+   ```python
+   # We now check the cache to see if we have some end users already signed in before.
+   accounts = app.get_accounts()
+   if accounts:
+       # If so, you could then somehow display these accounts and let end user choose
+       print("Pick the account you want to use to proceed:")
+       for a in accounts:
+           print(a["username"])
+       # Assuming the end user chose this one
+       chosen = accounts[0]
+       # Now let's try to find a token in cache for this account
+       result = app.acquire_token_silent(config["scope"], account=chosen)
+   ```
+
+3. Either there is no suitable token in the cache, or you chose to skip the previous step,
+   now it is time to actually send a request to AAD to obtain a token.
+   There are different methods based on your client type. Here we demonstrate the username password flow.
+
+   ```python
+   if not result:
+       # So no suitable token exists in cache. Let's get a new one from AAD.
+       result = app.acquire_token_by_username_password(
+           "johndoe@contoso.com", "fakepassword", scopes=["user.read"])
+   if "access_token" in result:
+       print(result["access_token"])  # Yay!
+   else:
+       print(result.get("error"))
+       print(result.get("error_description"))
+       print(result.get("correlation_id"))  # You may need this when reporting a bug
+   ```
+
+That is it. There will be some variations for different flows.
+You can try [runnable samples in this repo](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample).
+
+
+## Samples and Documentation
+We provide a full suite of [sample applications on GitHub](https://github.com/azure-samples?utf8=%E2%9C%93&q=active-directory&type=&language=) to help you get started with learning the Azure Identity system. This includes tutorials for native clients and web applications. We also provide full walkthroughs for authentication flows such as OAuth2, OpenID Connect and for calling APIs such as the Graph API.
+
+You can find the relevant samples by scenarios listed in this [wiki page for acquiring tokens using ADAL Python](https://github.com/AzureAD/azure-activedirectory-library-for-python/wiki/Acquire-tokens#adal-python-apis-for-corresponding-flows).
+
+The generic documents on
+[Auth Scenarios](https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-scenarios)
+and
+[Auth protocols](https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-protocols)
+are recommended reading.
+
+The API reference of MSAL Python is coming soon.
+
+## Versions
+
+This library follows [Semantic Versioning](http://semver.org/).
+
+You can find the changes for each version under
+[Releases](https://github.com/AzureAD/microsoft-authentication-library-for-python/releases).
+
+## Community Help and Support
+
+We leverage Stack Overflow to work with the community on supporting Azure Active Directory and its SDKs, including this one!
+We highly recommend you ask your questions on Stack Overflow (we're all on there!)
+Also browser existing issues to see if someone has had your question before.
+
+We recommend you use the "msal" tag so we can see it!
+Here is the latest Q&A on Stack Overflow for MSAL:
+[http://stackoverflow.com/questions/tagged/msal](http://stackoverflow.com/questions/tagged/msal)
+
+## Security Reporting
+
+If you find a security issue with our libraries or services please report it to [secure@microsoft.com](mailto:secure@microsoft.com) with as much detail as possible. Your submission may be eligible for a bounty through the [Microsoft Bounty](http://aka.ms/bugbounty) program. Please do not post security issues to GitHub Issues or any other public site. We will contact you shortly upon receiving the information. We encourage you to get notifications of when security incidents occur by visiting [this page](https://technet.microsoft.com/en-us/security/dd252948) and subscribing to Security Advisory Alerts.
+
+## Contributing
+
+All code is licensed under the MIT license and we triage actively on GitHub. We enthusiastically welcome contributions and feedback. Please read the [contributing guide](./contributing.md) before starting.
+
+## We Value and Adhere to the Microsoft Open Source Code of Conduct
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
