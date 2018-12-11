@@ -61,8 +61,8 @@ setup(
     ],
     packages=find_packages(),
     install_requires=[
-        'requests>=2.0.0',
-        'PyJWT[crypto]>=1.0.0',
+        'requests>=2.0.0,<3',
+        'PyJWT[crypto]>=1.0.0,<2',
     ]
 )
 
