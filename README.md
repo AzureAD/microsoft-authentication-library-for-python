@@ -39,7 +39,7 @@ Acquiring tokens with MSAL Python need to follow this 3-step pattern.
 1. MSAL proposes a clean separation between
    [public client applications, and confidential client applications](https://tools.ietf.org/html/rfc6749#section-2.1).
    So you will first create either a `PublicClientApplication` or a `ConfidentialClientApplication` instance,
-   and ideally reuse it during the lifecycle of your app. For example:
+   and ideally reuse it during the lifecycle of your app. The following example shows a `PublicClientApplication`:
 
    ```python
    from msal import PublicClientApplication
@@ -56,7 +56,8 @@ Acquiring tokens with MSAL Python need to follow this 3-step pattern.
    It will automatically handle the token refresh for you.
 
    ```python
-   # We now check the cache to see if we have some end users already signed in before.
+   # We now check the cache to see
+   # whether we already have some accounts that the end user already used to sign in before.
    accounts = app.get_accounts()
    if accounts:
        # If so, you could then somehow display these accounts and let end user choose
@@ -71,13 +72,12 @@ Acquiring tokens with MSAL Python need to follow this 3-step pattern.
 
 3. Either there is no suitable token in the cache, or you chose to skip the previous step,
    now it is time to actually send a request to AAD to obtain a token.
-   There are different methods based on your client type. Here we demonstrate the username password flow.
+   There are different methods based on your client type and scenario. Here we demonstrate a placeholder flow.
 
    ```python
    if not result:
        # So no suitable token exists in cache. Let's get a new one from AAD.
-       result = app.acquire_token_by_username_password(
-           "johndoe@contoso.com", "fakepassword", scopes=["user.read"])
+       result = app.acquire_token_by_one_of_the_actual_method(..., scopes=["user.read"])
    if "access_token" in result:
        print(result["access_token"])  # Yay!
    else:
