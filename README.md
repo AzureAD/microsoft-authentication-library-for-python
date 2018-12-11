@@ -27,7 +27,7 @@ as applications written using a preview version of library may no longer work.
 
 1. If you haven't already, [install and/or upgrade the pip](https://pip.pypa.io/en/stable/installing/)
    of your Python environment to a recent version. We tested with pip 18.1.
-2. For now, you can install from our latest dev branch, by `pip install https://github.com/AzureAD/microsoft-authentication-library-for-python.git@dev`
+2. For now, you can install from our latest dev branch, by `pip install git+https://github.com/AzureAD/microsoft-authentication-library-for-python.git@dev`
 
 ## Usage
 
