@@ -1,6 +1,1 @@
-requests>=2,<3
-
-PyJWT>=1,<2
-#1.1.0 is the first that can be installed on windows
-cryptography>=1.1,<2
-
+.
