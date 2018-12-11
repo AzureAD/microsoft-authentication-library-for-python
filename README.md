@@ -1,12 +1,27 @@
-# Microsoft Authentication Library (MSAL) for Python
+# Microsoft Authentication Library (MSAL) for Python Preview
 
-The MSAL library for Python gives your app the ability to begin using the [Microsoft Cloud](https://cloud.microsoft.com)
-by supporting [Microsoft Azure Active Directory](https://azure.microsoft.com/en-us/services/active-directory/)
-and [Microsoft Accounts](https://account.microsoft.com) in a converged experience using industry standard OAuth2 and OpenID Connect.
+The MSAL library for Python enables your app to access the
+[Microsoft Cloud](https://cloud.microsoft.com)
+by supporting authentication of users with
+[Microsoft Azure Active Directory accounts](https://azure.microsoft.com/en-us/services/active-directory/)
+and [Microsoft Accounts](https://account.microsoft.com) using industry standard OAuth2 and OpenID Connect.
 Soon MSAL Python will also support [Azure AD B2C](https://azure.microsoft.com/services/active-directory-b2c/).
 
 More and more detail about MSAL Python functionality and usage will be documented in the
 [Wiki](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki).
+
+## Important Note about the MSAL Preview
+
+This library is suitable for use in a production environment.
+We provide the same production level support for this library as we do our current production libraries.
+During the preview we may make changes to the API, internal cache format, and other mechanisms of this library,
+which you will be required to take along with bug fixes or feature improvements.
+This may impact your application.
+For instance, a change to the cache format may impact your users, such as requiring them to sign in again.
+An API change may require you to update your code.
+When we provide the General Availability release
+we will require you to update to the General Availability version within six months,
+as applications written using a preview version of library may no longer work.
 
 ## Installation
 
@@ -19,10 +34,9 @@ More and more detail about MSAL Python functionality and usage will be documente
 Before using MSAL Python (or any MSAL SDKs, for that matter), you will have to
 [register your application with the AAD 2.0 endpoint](https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-v2-register-an-app).
 
-Acquiring tokens with MSAL Python is somewhat different than ADAL Python. You will need to follow this 3-step pattern.
+Acquiring tokens with MSAL Python need to follow this 3-step pattern.
 
-1. Contrary to ADAL (which proposes the notion of `AuthenticationContext`, which is a connection to Azure AD),
-   MSAL proposes a clean separation between
+1. MSAL proposes a clean separation between
    [public client applications, and confidential client applications](https://tools.ietf.org/html/rfc6749#section-2.1).
    So you will first create either a `PublicClientApplication` or a `ConfidentialClientApplication` instance,
    and ideally reuse it during the lifecycle of your app. For example:
@@ -34,7 +48,7 @@ Acquiring tokens with MSAL Python is somewhat different than ADAL Python. You wi
    
    Later, each time you would want an access token, you start by:
    ```python
-   result = None
+   result = None  # It is just an initial value. Please follow instructions below.
    ```
 
 2. The API model in MSAL provides you explicit control on how to utilize token cache.
@@ -73,7 +87,6 @@ Acquiring tokens with MSAL Python is somewhat different than ADAL Python. You wi
    ```
 
 That is it. There will be some variations for different flows.
-You can try [runnable samples in this repo](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample).
 
 
 ## Samples and Documentation
@@ -85,6 +98,9 @@ and
 are recommended reading.
 
 The API reference of MSAL Python is coming soon.
+
+You can try [runnable samples in this repo](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample).
+
 
 ## Versions
 
