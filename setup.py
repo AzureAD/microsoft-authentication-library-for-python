@@ -35,19 +35,25 @@ __version__ = re.search(
     io.open('msal/application.py', encoding='utf_8_sig').read()
     ).group(1)
 
+long_description = open('README.md').read()
+
 setup(
     name='msal',
     version=__version__,
-    description=(
-        'The MSAL for Python library makes it easy for python application '
-        'to authenticate to Azure Active Directory v2 '
-        '(which serves Microsoft Account and AAD and B2C).'),
+    description=' '.join(
+        """The Microsoft Authentication Library (MSAL) for Python library
+        enables your app to access the Microsoft Cloud
+        by supporting authentication of users with
+        Microsoft Azure Active Directory accounts (AAD) and Microsoft Accounts (MSA)
+        using industry standard OAuth2 and OpenID Connect.""".split()),
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     license='MIT',
     author='Microsoft Corporation',
     author_email='nugetaad@microsoft.com',
     url='https://github.com/AzureAD/microsoft-authentication-library-for-python',
     classifiers=[
-        'Development Status :: 3 - Alpha',
+        'Development Status :: 4 - Beta',
         'Programming Language :: Python',
         'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 2.7',
@@ -58,6 +64,7 @@ setup(
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'License :: OSI Approved :: MIT License',
+        'Operating System :: OS Independent',
     ],
     packages=find_packages(),
     install_requires=[
