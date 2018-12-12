@@ -4,6 +4,7 @@ __pycache__/
 
 # PTVS analysis
 .ptvs/
+*.pyproj
 
 # Build results
 /bin/
@@ -48,3 +49,10 @@ src/build
 # Visual Studio Files
 /.vs/*
 /tests/.vs/*
+
+# vim files
+*.swp
+
+# The test configuration file(s) could potentially contain credentials
+tests/config.json
+

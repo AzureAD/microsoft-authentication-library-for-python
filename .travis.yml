@@ -1,0 +1,43 @@
+sudo: false
+language: python
+python:
+  - "2.7"
+  - "3.5"
+  - "3.6"
+# Borrowed from https://github.com/travis-ci/travis-ci/issues/9815
+# Enable 3.7 without globally enabling sudo and dist: xenial for other build jobs
+matrix:
+  include:
+    - python: 3.7
+      dist: xenial
+      sudo: true
+
+install:
+  - pip install -r requirements.txt
+script:
+  - python -m unittest discover -s tests
+
+deploy:
+  - # test pypi
+    provider: pypi
+    distributions: "sdist bdist_wheel"
+    server: https://test.pypi.org/legacy/
+    user: "nugetaad"
+    password:
+      secure: KkjKySJujYxx31B15mlAZr2Jo4P99LcrMj3uON/X/WMXAqYVcVsYJ6JSzUvpNnCAgk+1hc24Qp6nibQHV824yiK+eG4qV+lpzkEEedkRx6NOW/h09OkT+pOSVMs0kcIhz7FzqChpl+jf6ZZpb13yJpQg2LoZIA4g8UdYHHFidWt4m5u1FZ9LPCqQ0OT3gnKK4qb0HIDaECfz5GYzrelLLces0PPwj1+X5eb38xUVtbkA1UJKLGKI882D8Rq5eBdbnDGsfDnF6oU+EBnGZ7o6HVQLdBgagDoVdx7yoXyntULeNxTENMTOZJEJbncQwxRgeEqJWXTTEW57O6Jo5uiHEpJA9lAePlRbS+z6BPDlnQogqOdTsYS0XMfOpYE0/r3cbtPUjETOmGYQxjQzfrFBfM7jaWnUquymZRYqCQ66VDo3I/ykNOCoM9qTmWt5L/MFfOZyoxLHnDThZBdJ3GXHfbivg+v+vOfY1gG8e2H2lQY+/LIMIJibF+MS4lJgrB81dcNdBzyxMNByuWQjSL1TY7un0QzcRcZz2NLrFGg8+9d67LQq4mK5ySimc6zdgnanuROU02vGr1EApT6D/qUItiulFgWqInNKrFXE9q74UP/WSooZPoLa3Du8y5s4eKerYYHQy5eSfIC8xKKDU8MSgoZhwQhCUP46G9Nsty0PYQc=
+    on:
+      branch: master
+      tags: false
+      condition: $TRAVIS_PYTHON_VERSION = "2.7"
+
+  - # production pypi
+    provider: pypi
+    distributions: "sdist bdist_wheel"
+    user: "nugetaad"
+    password:
+      secure: KkjKySJujYxx31B15mlAZr2Jo4P99LcrMj3uON/X/WMXAqYVcVsYJ6JSzUvpNnCAgk+1hc24Qp6nibQHV824yiK+eG4qV+lpzkEEedkRx6NOW/h09OkT+pOSVMs0kcIhz7FzqChpl+jf6ZZpb13yJpQg2LoZIA4g8UdYHHFidWt4m5u1FZ9LPCqQ0OT3gnKK4qb0HIDaECfz5GYzrelLLces0PPwj1+X5eb38xUVtbkA1UJKLGKI882D8Rq5eBdbnDGsfDnF6oU+EBnGZ7o6HVQLdBgagDoVdx7yoXyntULeNxTENMTOZJEJbncQwxRgeEqJWXTTEW57O6Jo5uiHEpJA9lAePlRbS+z6BPDlnQogqOdTsYS0XMfOpYE0/r3cbtPUjETOmGYQxjQzfrFBfM7jaWnUquymZRYqCQ66VDo3I/ykNOCoM9qTmWt5L/MFfOZyoxLHnDThZBdJ3GXHfbivg+v+vOfY1gG8e2H2lQY+/LIMIJibF+MS4lJgrB81dcNdBzyxMNByuWQjSL1TY7un0QzcRcZz2NLrFGg8+9d67LQq4mK5ySimc6zdgnanuROU02vGr1EApT6D/qUItiulFgWqInNKrFXE9q74UP/WSooZPoLa3Du8y5s4eKerYYHQy5eSfIC8xKKDU8MSgoZhwQhCUP46G9Nsty0PYQc=
+    on:
+      branch: master
+      tags: true
+      condition: $TRAVIS_PYTHON_VERSION = "2.7"
+
