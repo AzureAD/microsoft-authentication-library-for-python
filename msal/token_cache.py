@@ -182,6 +182,10 @@ class SerializableTokenCache(TokenCache):
             )
         app = ClientApplication(..., token_cache=cache)
         ...
+
+    :var bool has_state_changed:
+        Indicates whether the cache state has changed since last
+        :func:`~serialize` or :func:`~deserialize` call.
     """
     def add(self, event):
         super(SerializableTokenCache, self).add(event)
