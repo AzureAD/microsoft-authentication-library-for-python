@@ -330,6 +330,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         :param list[str] scopes:
             Scopes requested to access a protected API (a resource).
         :return: A dict representing a newly created Device Flow object.
+
+            - A successful response would contain "user_code" key, among others
+            - an error response would contain some other readable key/value pairs.
         """
         return self.client.initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
