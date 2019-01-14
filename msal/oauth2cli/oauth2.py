@@ -70,7 +70,7 @@ class BaseClient(object):
             if client_assertion_type is None:  # RFC7521 defines only 2 profiles
                 TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
                 TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
-                client_assertion_type = TYPE_JWT if "." in client_assertion else TYPE_SAML2
+                client_assertion_type = TYPE_JWT if "." in client_assertion.decode() else TYPE_SAML2
             self.default_body["client_assertion"] = client_assertion
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
