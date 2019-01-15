@@ -18,9 +18,9 @@ def base64decode(raw):  # This can handle a padding-less raw input
 class TokenCache(object):
     """This is considered as a base class containing minimal cache behavior.
 
-    Although this class already maintains tokens using unified schema,
-    it does not serialize/persist them. See subclass SerializableTokenCache
-    for more details.
+    Although it maintains tokens using unified schema across all MSAL libraries,
+    this class does not serialize/persist them.
+    See subclass :class:`SerializableTokenCache` for details on serialization.
     """
 
     class CredentialType:
@@ -169,7 +169,8 @@ class SerializableTokenCache(TokenCache):
     """This serialization can be a starting point to implement your own persistence.
 
     This class does NOT actually persist the cache on disk/db/etc..
-    Depends on your need, the following file-based persistence may be sufficient:
+    Depending on your need,
+    the following simple recipe for file-based persistence may be sufficient::
 
         import atexit
         cache = SerializableTokenCache()
@@ -181,6 +182,10 @@ class SerializableTokenCache(TokenCache):
             )
         app = ClientApplication(..., token_cache=cache)
         ...
+
+    :var bool has_state_changed:
+        Indicates whether the cache state has changed since last
+        :func:`~serialize` or :func:`~deserialize` call.
     """
     def add(self, event):
         super(SerializableTokenCache, self).add(event)

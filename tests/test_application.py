@@ -109,6 +109,7 @@ class TestPublicClientApplication(Oauth2TestCase):
         self.app = PublicClientApplication(
             CONFIG["client_id"], authority=CONFIG["authority"])
         flow = self.app.initiate_device_flow(scopes=CONFIG.get("scope"))
+        assert "user_code" in flow, str(flow)  # Provision or policy might block DF
         logging.warn(flow["message"])
 
         duration = 30
