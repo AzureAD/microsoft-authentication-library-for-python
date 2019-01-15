@@ -24,9 +24,9 @@ copyright = u'2018, Microsoft'
 author = u'Microsoft'
 
 # The short X.Y version
-version = u''
+from msal import __version__ as version
 # The full version, including alpha/beta/rc tags
-release = u'0.1.0'
+release = version
 
 
 # -- General configuration ---------------------------------------------------
