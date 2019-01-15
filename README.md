@@ -97,7 +97,7 @@ and
 [Auth protocols](https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-protocols)
 are recommended reading.
 
-The API reference of MSAL Python is coming soon.
+There is also the [API reference of MSAL Python](https://msal-python.rtfd.io).
 
 You can try [runnable samples in this repo](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample).
 
