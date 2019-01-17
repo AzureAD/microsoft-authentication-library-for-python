@@ -4,7 +4,7 @@ try:  # Python 2
 except:  # Python 3
     from urllib.parse import urljoin
 import logging
-from base64 import b64encode
+from base64 import urlsafe_b64encode
 import sys
 
 from .oauth2cli import Client, JwtSigner
@@ -405,7 +405,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             raise RuntimeError(
                 "RSTR returned unknown token type: %s", wstrust_result.get("type"))
         return self.client.obtain_token_by_assertion(
-            b64encode(wstrust_result["token"]),
+            urlsafe_b64encode(wstrust_result["token"]).strip(b'='),
             grant_type=grant_type, scope=scopes, **kwargs)
 
 
