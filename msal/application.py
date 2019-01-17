@@ -387,17 +387,20 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
     def _acquire_token_by_username_password_federated(
             self, user_realm_result, username, password, scopes=None, **kwargs):
+        verify = kwargs.pop("verify", self.verify)
+        proxies = kwargs.pop("proxies", self.proxies)
         wstrust_endpoint = {}
         if user_realm_result.get("federation_metadata_url"):
             wstrust_endpoint = mex_send_request(
-                user_realm_result["federation_metadata_url"])
+                user_realm_result["federation_metadata_url"],
+                verify=self.verify, proxies=self.proxies)
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
         wstrust_result = wst_send_request(
             username, password, user_realm_result.get("cloud_audience_urn"),
             wstrust_endpoint.get("address",
                 # Fallback to an AAD supplied endpoint
                 user_realm_result.get("federation_active_auth_url")),
-            wstrust_endpoint.get("action"), **kwargs)
+            wstrust_endpoint.get("action"), verify=verify, proxies=proxies)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
         grant_type = {
