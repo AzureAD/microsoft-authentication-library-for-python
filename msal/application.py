@@ -92,14 +92,14 @@ class ClientApplication(object):
         """
         self.client_id = client_id
         self.client_credential = client_credential
-        self.authority = Authority(
-                authority or "https://login.microsoftonline.com/common/",
-                validate_authority)
-            # Here the self.authority is not the same type as authority in input
-        self.token_cache = token_cache or TokenCache()
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
+        self.authority = Authority(
+                authority or "https://login.microsoftonline.com/common/",
+                validate_authority, verify=self.verify, proxies=self.proxies)
+            # Here the self.authority is not the same type as authority in input
+        self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
 
     def _build_client(self, client_credential, authority):
@@ -166,7 +166,9 @@ class ClientApplication(object):
             (Under the hood, we simply merge scope and additional_scope before
             sending them on the wire.)
         """
-        the_authority = Authority(authority) if authority else self.authority
+        the_authority = Authority(
+            authority, verify=self.verify, proxies=self.proxies,
+            ) if authority else self.authority
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id)
@@ -272,7 +274,9 @@ class ClientApplication(object):
             - None when cache lookup does not yield anything.
         """
         assert isinstance(scopes, list), "Invalid parameter type"
-        the_authority = Authority(authority) if authority else self.authority
+        the_authority = Authority(
+            authority, verify=self.verify, proxies=self.proxies,
+            ) if authority else self.authority
 
         if not force_refresh:
             matches = self.token_cache.find(
