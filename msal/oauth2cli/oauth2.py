@@ -23,7 +23,7 @@ class BaseClient(object):
             server_configuration,  # type: dict
             client_id,  # type: str
             client_secret=None,  # type: Optional[str]
-            client_assertion=None,  # type: Optional[str]
+            client_assertion=None,  # type: Optional[bytes]
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
@@ -45,8 +45,10 @@ class BaseClient(object):
                 https://example.com/.../.well-known/openid-configuration
             client_id (str): The client's id, issued by the authorization server
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
-            client_assertion (str):
+            client_assertion (bytes):
                 The client assertion to authenticate this client, per RFC 7521.
+                If it is a SAML assertion, you need to encode it beforehand, by:
+                base64.urlsafe_b64encode(assertion).strip(b'=')
             client_assertion_type (str):
                 The format of the client_assertion.
                 If you leave it as the default None, this method will try to make
@@ -70,7 +72,7 @@ class BaseClient(object):
             if client_assertion_type is None:  # RFC7521 defines only 2 profiles
                 TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
                 TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
-                client_assertion_type = TYPE_JWT if "." in client_assertion else TYPE_SAML2
+                client_assertion_type = TYPE_JWT if b"." in client_assertion else TYPE_SAML2
             self.default_body["client_assertion"] = client_assertion
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
@@ -410,11 +412,13 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
 
     def obtain_token_by_assertion(
             self, assertion, grant_type=None, scope=None, **kwargs):
-        # type: (str, Union[str, None], Union[str, list, set, tuple]) -> dict
+        # type: (bytes, Union[str, None], Union[str, list, set, tuple]) -> dict
         """This method implements Assertion Framework for OAuth2 (RFC 7521).
         See details at https://tools.ietf.org/html/rfc7521#section-4.1
 
-        :param assertion: The assertion string which will be sent on wire as-is
+        :param assertion: The assertion bytes which will be sent on wire as-is.
+            If it is a SAML assertion, you need to encode it beforehand, by:
+            base64.urlsafe_b64encode(assertion).strip(b'=')
         :param grant_type:
             If you leave it as the default None, this method will try to make
             a guess between SAML2 (RFC 7522) and JWT (RFC 7523),
@@ -423,7 +427,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         :param scope: Optional. It must be a subset of previously granted scopes.
         """
         if grant_type is None:
-            grant_type = self.GRANT_TYPE_JWT if "." in assertion else self.GRANT_TYPE_SAML2
+            grant_type = self.GRANT_TYPE_JWT if b"." in assertion else self.GRANT_TYPE_SAML2
         data = kwargs.pop("data", {})
         data.update(scope=scope, assertion=assertion)
         return self._obtain_token(grant_type, data=data, **kwargs)
