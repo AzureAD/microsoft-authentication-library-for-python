@@ -36,7 +36,7 @@ from .mex import Mex
 from .wstrust_response import parse_response
 
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 
 def send_request(
         username, password, cloud_audience_urn, endpoint_address, soap_action,
