@@ -21,7 +21,7 @@ except ImportError:  # Fall back to Python 2
 from .oauth2 import Client
 
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 
 def obtain_auth_code(listen_port, auth_uri=None):
     """This function will start a web server listening on http://localhost:port
