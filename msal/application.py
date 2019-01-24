@@ -4,7 +4,6 @@ try:  # Python 2
 except:  # Python 3
     from urllib.parse import urljoin
 import logging
-from base64 import urlsafe_b64encode
 import sys
 
 from .oauth2cli import Client, JwtSigner
@@ -404,9 +403,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         if not grant_type:
             raise RuntimeError(
                 "RSTR returned unknown token type: %s", wstrust_result.get("type"))
+        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
+            grant_type, self.client.encode_saml_assertion)
         return self.client.obtain_token_by_assertion(
-            urlsafe_b64encode(wstrust_result["token"]).strip(b'='),
-            grant_type=grant_type, scope=scopes, **kwargs)
+            wstrust_result["token"], grant_type, scope=scopes, **kwargs)
 
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
