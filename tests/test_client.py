@@ -98,6 +98,7 @@ class TestClient(Oauth2TestCase):
                         audience=CONFIG["openid_configuration"]["token_endpoint"],
                         issuer=CONFIG["client_id"],
                     ),
+                client_assertion_type=Client.CLIENT_ASSERTION_TYPE_JWT,
                 )
         else:
             cls.client = Client(

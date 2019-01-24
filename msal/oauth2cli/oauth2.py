@@ -9,6 +9,7 @@ except ImportError:
 import logging
 import warnings
 import time
+import base64
 
 import requests
 
@@ -18,6 +19,15 @@ class BaseClient(object):
     # This low-level interface works. Yet you'll find its sub-class
     # more friendly to remind you what parameters are needed in each scenario.
     # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
+
+    @staticmethod
+    def encode_saml_assertion(assertion):
+        return base64.urlsafe_b64encode(assertion).rstrip(b'=')  # Per RFC 7522
+
+    CLIENT_ASSERTION_TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+    CLIENT_ASSERTION_TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
+    client_assertion_encoders = {CLIENT_ASSERTION_TYPE_SAML2: encode_saml_assertion}
+
     def __init__(
             self,
             server_configuration,  # type: dict
@@ -47,14 +57,12 @@ class BaseClient(object):
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (bytes):
                 The client assertion to authenticate this client, per RFC 7521.
-                If it is a SAML assertion, you need to encode it beforehand, by:
-                base64.urlsafe_b64encode(assertion).strip(b'=')
+                It can be a raw SAML2 assertion (this method will encode it for you),
+                or a raw JWT assertion.
             client_assertion_type (str):
-                The format of the client_assertion.
-                If you leave it as the default None, this method will try to make
-                a guess between SAML2 (RFC 7522) and JWT (RFC 7523),
-                the only two profiles defined in RFC 7521.
-                But you can also explicitly provide a value, if needed.
+                The type of your :attr:`client_assertion` parameter.
+                It is typically the value of :attr:`CLIENT_ASSERTION_TYPE_SAML2` or
+                :attr:`CLIENT_ASSERTION_TYPE_JWT`, the only two defined in RFC 7521.
             default_headers (dict):
                 A dict to be sent in each request header.
                 It is not required by OAuth2 specs, but you may use it for telemetry.
@@ -68,12 +76,10 @@ class BaseClient(object):
         self.client_id = client_id
         self.client_secret = client_secret
         self.default_body = default_body or {}
-        if client_assertion is not None:  # See https://tools.ietf.org/html/rfc7521#section-4.2
-            if client_assertion_type is None:  # RFC7521 defines only 2 profiles
-                TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-                TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
-                client_assertion_type = TYPE_JWT if b"." in client_assertion else TYPE_SAML2
-            self.default_body["client_assertion"] = client_assertion
+        if client_assertion is not None and client_assertion_type is not None:
+            # See https://tools.ietf.org/html/rfc7521#section-4.2
+            encoder = self.client_assertion_encoders.get(client_assertion_type, lambda a: a)
+            self.default_body["client_assertion"] = encoder(client_assertion)
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
         self.session = s = requests.Session()
@@ -174,6 +180,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     DEVICE_FLOW_RETRIABLE_ERRORS = ("authorization_pending", "slow_down")
     GRANT_TYPE_SAML2 = "urn:ietf:params:oauth:grant-type:saml2-bearer"  # RFC7522
     GRANT_TYPE_JWT = "urn:ietf:params:oauth:grant-type:jwt-bearer"  # RFC7523
+    grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
+
 
     def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
         # type: (list, **dict) -> dict
@@ -411,24 +419,20 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         raise ValueError("token_item should not be a type %s" % type(token_item))
 
     def obtain_token_by_assertion(
-            self, assertion, grant_type=None, scope=None, **kwargs):
+            self, assertion, grant_type, scope=None, **kwargs):
         # type: (bytes, Union[str, None], Union[str, list, set, tuple]) -> dict
         """This method implements Assertion Framework for OAuth2 (RFC 7521).
         See details at https://tools.ietf.org/html/rfc7521#section-4.1
 
-        :param assertion: The assertion bytes which will be sent on wire as-is.
-            If it is a SAML assertion, you need to encode it beforehand, by:
-            base64.urlsafe_b64encode(assertion).strip(b'=')
+        :param assertion:
+            The assertion bytes can be a raw SAML2 assertion, or a JWT assertion.
         :param grant_type:
-            If you leave it as the default None, this method will try to make
-            a guess between SAML2 (RFC 7522) and JWT (RFC 7523),
-            the only two profiles defined in RFC 7521.
-            But you can also explicitly provide a value, if needed.
+            It is typically either the value of :attr:`GRANT_TYPE_SAML2`,
+            or :attr:`GRANT_TYPE_JWT`, the only two profiles defined in RFC 7521.
         :param scope: Optional. It must be a subset of previously granted scopes.
         """
-        if grant_type is None:
-            grant_type = self.GRANT_TYPE_JWT if b"." in assertion else self.GRANT_TYPE_SAML2
+        encoder = self.grant_assertion_encoders.get(grant_type, lambda a: a)
         data = kwargs.pop("data", {})
-        data.update(scope=scope, assertion=assertion)
+        data.update(scope=scope, assertion=encoder(assertion))
         return self._obtain_token(grant_type, data=data, **kwargs)
 

@@ -7,7 +7,7 @@ import logging
 import jwt
 
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 
 class Signer(object):
     def sign_assertion(
