@@ -7,6 +7,8 @@ import base64
 from .authority import canonicalize
 
 
+logger = logging.getLogger(__name__)
+
 def is_subdict_of(small, big):
     return dict(big, **small) == big
 
@@ -46,7 +48,13 @@ class TokenCache(object):
         # type: (dict) -> None
         # event typically contains: client_id, scope, token_endpoint,
         # resposne, params, data, grant_type
-        logging.debug("event=%s", json.dumps(event, indent=4))
+        for sensitive in ("password", "client_secret"):
+            if sensitive in event.get("data", {}):
+                # Hide them from accidental exposure in logging
+                event["data"][sensitive] = "********"
+        logger.debug("event=%s", json.dumps(event, indent=4, sort_keys=True,
+            default=str,  # A workaround when assertion is in bytes in Python 3
+            ))
         response = event.get("response", {})
         access_token = response.get("access_token", {})
         refresh_token = response.get("refresh_token", {})
