@@ -97,7 +97,7 @@ class ClientApplication(object):
         self.timeout = timeout
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
-                validate_authority, verify=self.verify, proxies=self.proxies)
+                validate_authority, verify=verify, proxies=proxies, timeout=timeout)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
@@ -167,7 +167,8 @@ class ClientApplication(object):
             sending them on the wire.)
         """
         the_authority = Authority(
-            authority, verify=self.verify, proxies=self.proxies,
+            authority,
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
             ) if authority else self.authority
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
@@ -275,7 +276,8 @@ class ClientApplication(object):
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         the_authority = Authority(
-            authority, verify=self.verify, proxies=self.proxies,
+            authority,
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
             ) if authority else self.authority
 
         if not force_refresh:
@@ -393,7 +395,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         if user_realm_result.get("federation_metadata_url"):
             wstrust_endpoint = mex_send_request(
                 user_realm_result["federation_metadata_url"],
-                verify=self.verify, proxies=self.proxies)
+                verify=verify, proxies=proxies)
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
         wstrust_result = wst_send_request(
             username, password, user_realm_result.get("cloud_audience_urn"),
