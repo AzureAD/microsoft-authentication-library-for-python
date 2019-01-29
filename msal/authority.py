@@ -22,7 +22,7 @@ class Authority(object):
     TODO: It will also cache the previously-validated authority instances.
     """
     def __init__(self, authority_url, validate_authority=True,
-            verify=True, proxies=None,
+            verify=True, proxies=None, timeout=None,
             ):
         """Creates an authority instance, and also validates it.
 
@@ -34,6 +34,7 @@ class Authority(object):
         """
         self.verify = verify
         self.proxies = proxies
+        self.timeout = timeout
         canonicalized, self.instance, tenant = canonicalize(authority_url)
         tenant_discovery_endpoint = (  # Hard code a V2 pattern as default value
             'https://{}/{}/v2.0/.well-known/openid-configuration'
@@ -41,9 +42,10 @@ class Authority(object):
         if validate_authority and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS:
             tenant_discovery_endpoint = instance_discovery(
                 canonicalized + "/oauth2/v2.0/authorize",
-                verify=verify, proxies=proxies)
+                verify=verify, proxies=proxies, timeout=timeout)
         openid_config = tenant_discovery(
-            tenant_discovery_endpoint, verify=verify, proxies=proxies)
+            tenant_discovery_endpoint,
+            verify=verify, proxies=proxies, timeout=timeout)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
@@ -54,7 +56,7 @@ class Authority(object):
             "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
                 netloc=self.instance, username=username),
             headers={'Accept':'application/json'},
-            verify=self.verify, proxies=self.proxies)
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()
         # It will typically contain "ver", "account_type",
@@ -71,20 +73,20 @@ def canonicalize(url):
             "https://login.microsoftonline.com/<tenant_name>" % url)
     return match_object.group(0), match_object.group(1), match_object.group(2)
 
-def instance_discovery(url, response=None, verify=True, proxies=None):
+def instance_discovery(url, response=None, **kwargs):
     # Returns tenant discovery endpoint
     resp = requests.get(  # Note: This URL seemingly returns V1 endpoint only
         'https://{}/common/discovery/instance'.format(WORLD_WIDE),
         params={'authorization_endpoint': url, 'api-version': '1.0'},
-        verify=verify, proxies=proxies)
+        **kwargs)
     payload = response or resp.json()
     if 'tenant_discovery_endpoint' not in payload:
         raise MsalServiceError(status_code=resp.status_code, **payload)
     return payload['tenant_discovery_endpoint']
 
-def tenant_discovery(tenant_discovery_endpoint, verify=True, proxies=None):
+def tenant_discovery(tenant_discovery_endpoint, **kwargs):
     # Returns Openid Configuration
-    resp = requests.get(tenant_discovery_endpoint, verify=verify, proxies=proxies)
+    resp = requests.get(tenant_discovery_endpoint, **kwargs)
     payload = resp.json()
     if 'authorization_endpoint' in payload and 'token_endpoint' in payload:
         return payload
