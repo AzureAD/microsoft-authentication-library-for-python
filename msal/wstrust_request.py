@@ -27,7 +27,6 @@
 
 import uuid
 from datetime import datetime, timedelta
-import re
 import logging
 
 import requests
@@ -44,11 +43,9 @@ def send_request(
     if not endpoint_address:
         raise ValueError("WsTrust endpoint address can not be empty")
     if soap_action is None:
-        wstrust2005_regex = r'[/trust]?[2005][/usernamemixed]?'
-        wstrust13_regex = r'[/trust]?[13][/usernamemixed]?'
-        if re.search(wstrust2005_regex, endpoint_address):
+        if '/trust/2005/usernamemixed' in endpoint_address:
             soap_action = Mex.ACTION_2005
-        elif re.search(wstrust13_regex, endpoint_address):
+        elif '/trust/13/usernamemixed' in endpoint_address:
             soap_action = Mex.ACTION_13
     assert soap_action in (Mex.ACTION_13, Mex.ACTION_2005)  # A loose check here
     data = _build_rst(
