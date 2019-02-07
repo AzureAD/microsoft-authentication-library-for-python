@@ -38,11 +38,13 @@ class TokenCache(object):
     def find(self, credential_type, target=None, query=None):
         target = target or []
         assert isinstance(target, list), "Invalid parameter type"
+        target_set = set(target)
         with self._lock:
             return [entry
                 for entry in self._cache.get(credential_type, {}).values()
                 if is_subdict_of(query or {}, entry)
-                and set(target) <= set(entry.get("target", []))]
+                and (target_set <= entry.get("target", set([])) if target else True)
+                ]
 
     def add(self, event):
         # type: (dict) -> None
@@ -86,7 +88,7 @@ class TokenCache(object):
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "client_id": event.get("client_id"),
-                    "target": event.get("scope"),
+                    "target": set(event.get("scope")),
                     "realm": realm,
                     "cached_at": now,
                     "expires_on": now + response.get("expires_in", 3599),
@@ -140,7 +142,7 @@ class TokenCache(object):
                     "environment": environment,
                     "client_id": event.get("client_id"),
                     # Fields below are considered optional
-                    "target": event.get("scope"),
+                    "target": set(event.get("scope")),
                     "client_info": response.get("client_info"),
                     }
                 if "foci" in response:
@@ -211,8 +213,14 @@ class SerializableTokenCache(TokenCache):
     def deserialize(self, state):
         # type: (Optional[str]) -> None
         """Deserialize the cache from a state previously obtained by serialize()"""
+        cache = json.loads(state) if state else {}
+        for cred_type in [  # Convert space-delimited target into a set
+                self.CredentialType.ACCESS_TOKEN, self.CredentialType.REFRESH_TOKEN]:
+            for key, entry in cache.get(cred_type, {}):
+                if "target" in entry:
+                    entry["target"] = set(entry["target"].split())
         with self._lock:
-            self._cache = json.loads(state) if state else {}
+            self._cache = cache
             self.has_state_changed = False  # reset
 
     def serialize(self):
@@ -220,5 +228,7 @@ class SerializableTokenCache(TokenCache):
         """Serialize the current cache state into a string."""
         with self._lock:
             self.has_state_changed = False
-            return json.dumps(self._cache)
+            return json.dumps(
+                self._cache,
+                default=lambda s: " ".join(s))  # Convert the target set to string
 
