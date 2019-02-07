@@ -56,9 +56,9 @@ class TokenCache(object):
             default=str,  # A workaround when assertion is in bytes in Python 3
             ))
         response = event.get("response", {})
-        access_token = response.get("access_token", {})
-        refresh_token = response.get("refresh_token", {})
-        id_token = response.get("id_token", {})
+        access_token = response.get("access_token")
+        refresh_token = response.get("refresh_token")
+        id_token = response.get("id_token")
         client_info = {}
         home_account_id = None
         if "client_info" in response:
@@ -169,7 +169,8 @@ class TokenCache(object):
     def update_rt(self, rt_item, new_rt):
         key = self._build_rt_key(**rt_item)
         with self._lock:
-            rt = self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key]
+            RTs = self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})
+            rt = RTs.get(key, {})  # key usually exists, but we'll survive its absence
             rt["secret"] = new_rt
 
 
