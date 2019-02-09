@@ -38,11 +38,17 @@ class TokenCache(object):
     def find(self, credential_type, target=None, query=None):
         target = target or []
         assert isinstance(target, list), "Invalid parameter type"
+        target_set = set(target)
         with self._lock:
+            # Since the target inside token cache key is (per schema) unsorted,
+            # there is no point to attempt an O(1) key-value search here.
+            # So we always do an O(n) in-memory search.
             return [entry
                 for entry in self._cache.get(credential_type, {}).values()
                 if is_subdict_of(query or {}, entry)
-                and set(target) <= set(entry.get("target", []))]
+                and (target_set <= set(entry.get("target", "").split())
+		    if target else True)
+                ]
 
     def add(self, event):
         # type: (dict) -> None
@@ -67,6 +73,7 @@ class TokenCache(object):
         environment = realm = None
         if "token_endpoint" in event:
             _, environment, realm = canonicalize(event["token_endpoint"])
+        target = ' '.join(event.get("scope", []))  # Per schema, we don't sort it
 
         with self._lock:
 
@@ -77,7 +84,7 @@ class TokenCache(object):
                     self.CredentialType.ACCESS_TOKEN,
                     event.get("client_id", ""),
                     realm or "",
-                    ' '.join(sorted(event.get("scope", []))),
+		    target,
                     ]).lower()
                 now = time.time()
                 self._cache.setdefault(self.CredentialType.ACCESS_TOKEN, {})[key] = {
@@ -86,7 +93,7 @@ class TokenCache(object):
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "client_id": event.get("client_id"),
-                    "target": event.get("scope"),
+                    "target": target,
                     "realm": realm,
                     "cached_at": now,
                     "expires_on": now + response.get("expires_in", 3599),
@@ -132,7 +139,7 @@ class TokenCache(object):
             if refresh_token:
                 key = self._build_rt_key(
                     home_account_id, environment,
-                    event.get("client_id", ""), event.get("scope", []))
+                    event.get("client_id", ""), target)
                 rt = {
                     "credential_type": self.CredentialType.REFRESH_TOKEN,
                     "secret": refresh_token,
@@ -140,7 +147,7 @@ class TokenCache(object):
                     "environment": environment,
                     "client_id": event.get("client_id"),
                     # Fields below are considered optional
-                    "target": event.get("scope"),
+                    "target": target,
                     "client_info": response.get("client_info"),
                     }
                 if "foci" in response:
@@ -158,7 +165,7 @@ class TokenCache(object):
             cls.CredentialType.REFRESH_TOKEN,
             client_id or "",
             "",  # RT is cross-tenant in AAD
-            ' '.join(sorted(target or [])),
+	    target,
             ]).lower()
 
     def remove_rt(self, rt_item):
