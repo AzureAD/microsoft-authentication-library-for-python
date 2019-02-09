@@ -50,7 +50,7 @@ class TokenCache(object):
 		    if target else True)
                 ]
 
-    def add(self, event):
+    def add(self, event, now=None):
         # type: (dict) -> None
         # event typically contains: client_id, scope, token_endpoint,
         # resposne, params, data, grant_type
@@ -86,7 +86,7 @@ class TokenCache(object):
                     realm or "",
 		    target,
                     ]).lower()
-                now = time.time()
+                now = time.time() if now is None else now
                 self._cache.setdefault(self.CredentialType.ACCESS_TOKEN, {})[key] = {
                     "credential_type": self.CredentialType.ACCESS_TOKEN,
                     "secret": access_token,
@@ -202,8 +202,8 @@ class SerializableTokenCache(TokenCache):
         Indicates whether the cache state has changed since last
         :func:`~serialize` or :func:`~deserialize` call.
     """
-    def add(self, event):
-        super(SerializableTokenCache, self).add(event)
+    def add(self, event, **kwargs):
+        super(SerializableTokenCache, self).add(event, **kwargs)
         self.has_state_changed = True
 
     def remove_rt(self, rt_item):
