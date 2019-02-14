@@ -92,14 +92,14 @@ class ClientApplication(object):
         """
         self.client_id = client_id
         self.client_credential = client_credential
-        self.authority = Authority(
-                authority or "https://login.microsoftonline.com/common/",
-                validate_authority)
-            # Here the self.authority is not the same type as authority in input
-        self.token_cache = token_cache or TokenCache()
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
+        self.authority = Authority(
+                authority or "https://login.microsoftonline.com/common/",
+                validate_authority, verify=verify, proxies=proxies, timeout=timeout)
+            # Here the self.authority is not the same type as authority in input
+        self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
 
     def _build_client(self, client_credential, authority):
@@ -166,7 +166,10 @@ class ClientApplication(object):
             (Under the hood, we simply merge scope and additional_scope before
             sending them on the wire.)
         """
-        the_authority = Authority(authority) if authority else self.authority
+        the_authority = Authority(
+            authority,
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+            ) if authority else self.authority
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id)
@@ -272,7 +275,10 @@ class ClientApplication(object):
             - None when cache lookup does not yield anything.
         """
         assert isinstance(scopes, list), "Invalid parameter type"
-        the_authority = Authority(authority) if authority else self.authority
+        the_authority = Authority(
+            authority,
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+            ) if authority else self.authority
 
         if not force_refresh:
             matches = self.token_cache.find(
@@ -383,17 +389,20 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
     def _acquire_token_by_username_password_federated(
             self, user_realm_result, username, password, scopes=None, **kwargs):
+        verify = kwargs.pop("verify", self.verify)
+        proxies = kwargs.pop("proxies", self.proxies)
         wstrust_endpoint = {}
         if user_realm_result.get("federation_metadata_url"):
             wstrust_endpoint = mex_send_request(
-                user_realm_result["federation_metadata_url"])
+                user_realm_result["federation_metadata_url"],
+                verify=verify, proxies=proxies)
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
         wstrust_result = wst_send_request(
             username, password, user_realm_result.get("cloud_audience_urn"),
             wstrust_endpoint.get("address",
                 # Fallback to an AAD supplied endpoint
                 user_realm_result.get("federation_active_auth_url")),
-            wstrust_endpoint.get("action"), **kwargs)
+            wstrust_endpoint.get("action"), verify=verify, proxies=proxies)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
         grant_type = {
