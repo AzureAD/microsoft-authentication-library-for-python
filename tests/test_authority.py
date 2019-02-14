@@ -94,6 +94,6 @@ class TestAuthorityInternalHelperInstanceDiscovery(unittest.TestCase):
     def test_instance_discovery_with_mocked_response(self):
         mock_response = {'tenant_discovery_endpoint': 'http://a.com/t/openid'}
         endpoint = instance_discovery(
-            "https://login.microsoftonline.in/tenant.com", mock_response)
+            "https://login.microsoftonline.in/tenant.com", response=mock_response)
         self.assertEqual(endpoint, mock_response['tenant_discovery_endpoint'])
 
