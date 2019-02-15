@@ -116,6 +116,7 @@ class TokenCache(object):
                         "oid", decoded_id_token.get("sub")),
                     "username": decoded_id_token.get("preferred_username"),
                     "authority_type": "AAD",  # Always AAD?
+                    # "client_info": response.get("client_info"),  # Optional
                     }
 
             if id_token:
@@ -146,9 +147,7 @@ class TokenCache(object):
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "client_id": event.get("client_id"),
-                    # Fields below are considered optional
-                    "target": target,
-                    "client_info": response.get("client_info"),
+                    "target": target,  # Optional per schema though
                     }
                 if "foci" in response:
                     rt["family_id"] = response["foci"]
