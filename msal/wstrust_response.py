@@ -36,6 +36,8 @@ from .mex import Mex
 
 SAML_TOKEN_TYPE_V1 = 'urn:oasis:names:tc:SAML:1.0:assertion'
 SAML_TOKEN_TYPE_V2 = 'urn:oasis:names:tc:SAML:2.0:assertion'
+OasisWssSaml11TokenProfile11 = "http://docs.oasis-open.org/wss/oasis-wss-saml-token-profile-1.1#SAMLV1.1"
+OasisWssSaml2TokenProfile2 = "http://docs.oasis-open.org/wss/oasis-wss-saml-token-profile-1.1#SAMLV2.0"
 
 def parse_response(body):  # Returns {"token": "<saml:assertion ...>", "type": "..."}
     token = parse_token_by_re(body)
@@ -84,6 +86,6 @@ def parse_token_by_re(raw_response):  # Returns the saml:assertion
         token_types = findall_content(rstr, "TokenType")
         tokens = findall_content(rstr, "RequestedSecurityToken")
         if token_types and tokens:
-            assert token_types[0] in (SAML_TOKEN_TYPE_V1, SAML_TOKEN_TYPE_V2)
+            assert token_types[0] in (SAML_TOKEN_TYPE_V1, SAML_TOKEN_TYPE_V2, OasisWssSaml11TokenProfile11, OasisWssSaml2TokenProfile2)
             return {"token": tokens[0].encode('us-ascii'), "type": token_types[0]}
 
