@@ -10,7 +10,7 @@ from .oauth2cli import Client, JwtSigner
 from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
-from .wstrust_response import SAML_TOKEN_TYPE_V1, SAML_TOKEN_TYPE_V2
+from .wstrust_response import *
 from .token_cache import TokenCache
 
 
@@ -405,9 +405,12 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             wstrust_endpoint.get("action"), verify=verify, proxies=proxies)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
+        GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
         grant_type = {
-            SAML_TOKEN_TYPE_V1: 'urn:ietf:params:oauth:grant-type:saml1_1-bearer',
+            SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
             SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
+            WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
+            WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
             }.get(wstrust_result.get("type"))
         if not grant_type:
             raise RuntimeError(
