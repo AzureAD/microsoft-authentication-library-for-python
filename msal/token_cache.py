@@ -115,7 +115,9 @@ class TokenCache(object):
                     "local_account_id": decoded_id_token.get(
                         "oid", decoded_id_token.get("sub")),
                     "username": decoded_id_token.get("preferred_username"),
-                    "authority_type": "AAD",  # Always AAD?
+                    "authority_type":
+                        "ADFS" if realm == "adfs"
+                        else "MSSTS",  # MSSTS means AAD v2 for both AAD & MSA
                     # "client_info": response.get("client_info"),  # Optional
                     }
 
@@ -126,6 +128,7 @@ class TokenCache(object):
                     self.CredentialType.ID_TOKEN,
                     event.get("client_id", ""),
                     realm or "",
+                    ""  # Albeit irrelevant, schema requires an empty scope here
                     ]).lower()
                 self._cache.setdefault(self.CredentialType.ID_TOKEN, {})[key] = {
                     "credential_type": self.CredentialType.ID_TOKEN,
@@ -164,7 +167,7 @@ class TokenCache(object):
             cls.CredentialType.REFRESH_TOKEN,
             client_id or "",
             "",  # RT is cross-tenant in AAD
-	    target,
+	    target or "",  # raw value could be None if deserialized from other SDK
             ]).lower()
 
     def remove_rt(self, rt_item):
