@@ -231,5 +231,5 @@ class SerializableTokenCache(TokenCache):
         """Serialize the current cache state into a string."""
         with self._lock:
             self.has_state_changed = False
-            return json.dumps(self._cache)
+            return json.dumps(self._cache, indent=4)
 
