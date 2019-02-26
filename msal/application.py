@@ -292,12 +292,14 @@ class ClientApplication(object):
                     })
             now = time.time()
             for entry in matches:
-                if entry["expires_on"] - now < 5*60:
+                expires_in = int(entry["expires_on"]) - now
+                if expires_in < 5*60:
                     continue  # Removal is not necessary, it will be overwritten
+                logger.debug("Cache hit an AT")
                 return {  # Mimic a real response
                     "access_token": entry["secret"],
                     "token_type": "Bearer",
-                    "expires_in": entry["expires_on"] - now,
+                    "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
 
         matches = self.token_cache.find(
@@ -311,6 +313,7 @@ class ClientApplication(object):
                 })
         client = self._build_client(self.client_credential, the_authority)
         for entry in matches:
+            logger.debug("Cache hit an RT")
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 scope=decorate_scope(scopes, self.client_id))
