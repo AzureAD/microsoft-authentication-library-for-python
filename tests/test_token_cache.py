@@ -39,12 +39,12 @@ class TokenCacheTestCase(unittest.TestCase):
             }, now=1000)
         self.assertEqual(
             {
-                'cached_at': 1000,
+                'cached_at': "1000",
                 'client_id': 'my_client_id',
                 'credential_type': 'AccessToken',
                 'environment': 'login.example.com',
-                'expires_on': 4600,
-                'extended_expires_on': 1000,
+                'expires_on': "4600",
+                'extended_expires_on': "4600",
                 'home_account_id': "uid.utid",
                 'realm': 'contoso',
                 'secret': 'an access token',

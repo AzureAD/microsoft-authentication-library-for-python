@@ -87,6 +87,7 @@ class TokenCache(object):
 		    target,
                     ]).lower()
                 now = time.time() if now is None else now
+                expires_in = response.get("expires_in", 3599)
                 self._cache.setdefault(self.CredentialType.ACCESS_TOKEN, {})[key] = {
                     "credential_type": self.CredentialType.ACCESS_TOKEN,
                     "secret": access_token,
@@ -95,9 +96,10 @@ class TokenCache(object):
                     "client_id": event.get("client_id"),
                     "target": target,
                     "realm": realm,
-                    "cached_at": now,
-                    "expires_on": now + response.get("expires_in", 3599),
-                    "extended_expires_on": now + response.get("ext_expires_in", 0),
+                    "cached_at": str(int(now)),  # Schema defines it as a string
+                    "expires_on": str(int(now + expires_in)),  # Same here
+                    "extended_expires_on": str(int(  # Same here
+                        now + response.get("ext_expires_in", expires_in))),
                     }
 
             if client_info:
