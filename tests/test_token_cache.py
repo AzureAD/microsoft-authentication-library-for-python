@@ -72,7 +72,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 'realm': 'contoso',
                 'local_account_id': "object1234",
                 'username': "John Doe",
-                'authority_type': "AAD",
+                'authority_type': "MSSTS",
             },
             self.cache._cache["Account"].get('uid.utid-login.example.com-contoso')
             )
@@ -86,7 +86,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 'client_id': 'my_client_id',
             },
             self.cache._cache["IdToken"].get(
-                'uid.utid-login.example.com-idtoken-my_client_id-contoso')
+                'uid.utid-login.example.com-idtoken-my_client_id-contoso-')
             )
 
 
