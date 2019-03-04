@@ -4,7 +4,7 @@ The configuration file would look like this:
 {
     "authority": "https://login.microsoftonline.com/organizations",
     "client_id": "your_client_id",
-    "scope": ["user.read"]
+    "scope": ["User.Read"]
 }
 
 You can then run this sample with a JSON configuration file:
@@ -28,7 +28,8 @@ config = json.load(open(sys.argv[1]))
 app = msal.PublicClientApplication(
     config["client_id"], authority=config["authority"],
     # token_cache=...  # Default cache is in memory only.
-                       # See SerializableTokenCache for more details.
+                       # You can learn how to use SerializableTokenCache from
+                       # https://msal-python.rtfd.io/en/latest/#msal.SerializableTokenCache
     )
 
 # The pattern to acquire a token looks like this.
@@ -39,7 +40,7 @@ result = None
 # We now check the cache to see if we have some end users signed in before.
 accounts = app.get_accounts()
 if accounts:
-    # If so, you could then somehow display these accounts and let end user choose
+    logging.info("Account(s) exists in cache, probably with token too. Let's try.")
     print("Pick the account you want to use to proceed:")
     for a in accounts:
         print(a["username"])
@@ -49,7 +50,7 @@ if accounts:
     result = app.acquire_token_silent(config["scope"], account=chosen)
 
 if not result:
-    # So no suitable token exists in cache. Let's get a new one from AAD.
+    logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
     flow = app.initiate_device_flow(scopes=config["scope"])
     print(flow["message"])
     # Ideally you should wait here, in order to save some unnecessary polling
