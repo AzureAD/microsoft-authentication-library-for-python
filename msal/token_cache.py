@@ -38,13 +38,19 @@ class TokenCache(object):
     def find(self, credential_type, target=None, query=None):
         target = target or []
         assert isinstance(target, list), "Invalid parameter type"
+        target_set = set(target)
         with self._lock:
+            # Since the target inside token cache key is (per schema) unsorted,
+            # there is no point to attempt an O(1) key-value search here.
+            # So we always do an O(n) in-memory search.
             return [entry
                 for entry in self._cache.get(credential_type, {}).values()
                 if is_subdict_of(query or {}, entry)
-                and set(target) <= set(entry.get("target", []))]
+                and (target_set <= set(entry.get("target", "").split())
+		    if target else True)
+                ]
 
-    def add(self, event):
+    def add(self, event, now=None):
         # type: (dict) -> None
         # event typically contains: client_id, scope, token_endpoint,
         # resposne, params, data, grant_type
@@ -56,9 +62,9 @@ class TokenCache(object):
             default=str,  # A workaround when assertion is in bytes in Python 3
             ))
         response = event.get("response", {})
-        access_token = response.get("access_token", {})
-        refresh_token = response.get("refresh_token", {})
-        id_token = response.get("id_token", {})
+        access_token = response.get("access_token")
+        refresh_token = response.get("refresh_token")
+        id_token = response.get("id_token")
         client_info = {}
         home_account_id = None
         if "client_info" in response:
@@ -67,6 +73,7 @@ class TokenCache(object):
         environment = realm = None
         if "token_endpoint" in event:
             _, environment, realm = canonicalize(event["token_endpoint"])
+        target = ' '.join(event.get("scope", []))  # Per schema, we don't sort it
 
         with self._lock:
 
@@ -77,20 +84,22 @@ class TokenCache(object):
                     self.CredentialType.ACCESS_TOKEN,
                     event.get("client_id", ""),
                     realm or "",
-                    ' '.join(sorted(event.get("scope", []))),
+		    target,
                     ]).lower()
-                now = time.time()
+                now = time.time() if now is None else now
+                expires_in = response.get("expires_in", 3599)
                 self._cache.setdefault(self.CredentialType.ACCESS_TOKEN, {})[key] = {
                     "credential_type": self.CredentialType.ACCESS_TOKEN,
                     "secret": access_token,
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "client_id": event.get("client_id"),
-                    "target": event.get("scope"),
+                    "target": target,
                     "realm": realm,
-                    "cached_at": now,
-                    "expires_on": now + response.get("expires_in", 3599),
-                    "extended_expires_on": now + response.get("ext_expires_in", 0),
+                    "cached_at": str(int(now)),  # Schema defines it as a string
+                    "expires_on": str(int(now + expires_in)),  # Same here
+                    "extended_expires_on": str(int(  # Same here
+                        now + response.get("ext_expires_in", expires_in))),
                     }
 
             if client_info:
@@ -108,7 +117,10 @@ class TokenCache(object):
                     "local_account_id": decoded_id_token.get(
                         "oid", decoded_id_token.get("sub")),
                     "username": decoded_id_token.get("preferred_username"),
-                    "authority_type": "AAD",  # Always AAD?
+                    "authority_type":
+                        "ADFS" if realm == "adfs"
+                        else "MSSTS",  # MSSTS means AAD v2 for both AAD & MSA
+                    # "client_info": response.get("client_info"),  # Optional
                     }
 
             if id_token:
@@ -118,6 +130,7 @@ class TokenCache(object):
                     self.CredentialType.ID_TOKEN,
                     event.get("client_id", ""),
                     realm or "",
+                    ""  # Albeit irrelevant, schema requires an empty scope here
                     ]).lower()
                 self._cache.setdefault(self.CredentialType.ID_TOKEN, {})[key] = {
                     "credential_type": self.CredentialType.ID_TOKEN,
@@ -132,16 +145,14 @@ class TokenCache(object):
             if refresh_token:
                 key = self._build_rt_key(
                     home_account_id, environment,
-                    event.get("client_id", ""), event.get("scope", []))
+                    event.get("client_id", ""), target)
                 rt = {
                     "credential_type": self.CredentialType.REFRESH_TOKEN,
                     "secret": refresh_token,
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "client_id": event.get("client_id"),
-                    # Fields below are considered optional
-                    "target": event.get("scope"),
-                    "client_info": response.get("client_info"),
+                    "target": target,  # Optional per schema though
                     }
                 if "foci" in response:
                     rt["family_id"] = response["foci"]
@@ -158,7 +169,7 @@ class TokenCache(object):
             cls.CredentialType.REFRESH_TOKEN,
             client_id or "",
             "",  # RT is cross-tenant in AAD
-            ' '.join(sorted(target or [])),
+	    target or "",  # raw value could be None if deserialized from other SDK
             ]).lower()
 
     def remove_rt(self, rt_item):
@@ -169,7 +180,8 @@ class TokenCache(object):
     def update_rt(self, rt_item, new_rt):
         key = self._build_rt_key(**rt_item)
         with self._lock:
-            rt = self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key]
+            RTs = self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})
+            rt = RTs.get(key, {})  # key usually exists, but we'll survive its absence
             rt["secret"] = new_rt
 
 
@@ -195,8 +207,8 @@ class SerializableTokenCache(TokenCache):
         Indicates whether the cache state has changed since last
         :func:`~serialize` or :func:`~deserialize` call.
     """
-    def add(self, event):
-        super(SerializableTokenCache, self).add(event)
+    def add(self, event, **kwargs):
+        super(SerializableTokenCache, self).add(event, **kwargs)
         self.has_state_changed = True
 
     def remove_rt(self, rt_item):
@@ -219,5 +231,5 @@ class SerializableTokenCache(TokenCache):
         """Serialize the current cache state into a string."""
         with self._lock:
             self.has_state_changed = False
-            return json.dumps(self._cache)
+            return json.dumps(self._cache, indent=4)
 
