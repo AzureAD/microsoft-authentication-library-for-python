@@ -4,19 +4,18 @@ try:  # Python 2
 except:  # Python 3
     from urllib.parse import urljoin
 import logging
-from base64 import b64encode
 import sys
 
 from .oauth2cli import Client, JwtSigner
 from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
-from .wstrust_response import SAML_TOKEN_TYPE_V1, SAML_TOKEN_TYPE_V2
+from .wstrust_response import *
 from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 logger = logging.getLogger(__name__)
 
@@ -55,25 +54,52 @@ class ClientApplication(object):
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
             verify=True, proxies=None, timeout=None):
-        """
-        :param client_credential: It can be a string containing client secret,
-            or an X509 certificate container in this form:
+        """Create an instance of application.
+
+        :param client_id: Your app has a clinet_id after you register it on AAD.
+        :param client_credential:
+            For :class:`PublicClientApplication`, you simply use `None` here.
+            For :class:`ConfidentialClientApplication`,
+            it can be a string containing client secret,
+            or an X509 certificate container in this form::
 
                 {
                     "private_key": "...-----BEGIN PRIVATE KEY-----...",
                     "thumbprint": "A1B2C3D4E5F6...",
                 }
+
+        :param str authority:
+            A URL that identifies a token authority. It should be of the format
+            https://login.microsoftonline.com/your_tenant
+            By default, we will use https://login.microsoftonline.com/common
+        :param bool validate_authority: (optional) Turns authority validation
+            on or off. This parameter default to true.
+        :param TokenCache cache:
+            Sets the token cache used by this ClientApplication instance.
+            By default, an in-memory cache will be created and used.
+        :param verify: (optional)
+            It will be passed to the
+            `verify parameter in the underlying requests library
+            <http://docs.python-requests.org/en/v2.9.1/user/advanced/#ssl-cert-verification>`_
+        :param proxies: (optional)
+            It will be passed to the
+            `proxies parameter in the underlying requests library
+            <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_
+        :param timeout: (optional)
+            It will be passed to the
+            `timeout parameter in the underlying requests library
+            <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
         """
         self.client_id = client_id
         self.client_credential = client_credential
-        self.authority = Authority(
-                authority or "https://login.microsoftonline.com/common/",
-                validate_authority)
-            # Here the self.authority is not the same type as authority in input
-        self.token_cache = token_cache or TokenCache()
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
+        self.authority = Authority(
+                authority or "https://login.microsoftonline.com/common/",
+                validate_authority, verify=verify, proxies=proxies, timeout=timeout)
+            # Here the self.authority is not the same type as authority in input
+        self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
 
     def _build_client(self, client_credential, authority):
@@ -123,13 +149,14 @@ class ClientApplication(object):
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
-        :param scopes:
+        :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
         :param str state: Recommended by OAuth2 for CSRF protection.
-        :param login_hint:
+        :param str login_hint:
             Identifier of the user. Generally a User Principal Name (UPN).
-        :param redirect_uri:
+        :param str redirect_uri:
             Address to return to upon receiving a response from the authority.
+        :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
         :param additional_scope: Additional scope is a concept only in AAD.
@@ -139,7 +166,10 @@ class ClientApplication(object):
             (Under the hood, we simply merge scope and additional_scope before
             sending them on the wire.)
         """
-        the_authority = Authority(authority) if authority else self.authority
+        the_authority = Authority(
+            authority,
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+            ) if authority else self.authority
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id)
@@ -161,7 +191,8 @@ class ClientApplication(object):
         """The second half of the Authorization Code Grant.
 
         :param code: The authorization code returned from Authorization Server.
-        :param scopes:
+        :param list[str] scopes: (Required)
+            Scopes requested to access a protected API (a resource).
 
             If you requested user consent for multiple resources, here you will
             typically want to provide a subset of what you required in AuthCode.
@@ -175,6 +206,11 @@ class ClientApplication(object):
             recipient, called audience.
             So the developer need to specify a scope so that we can restrict the
             token to be issued for the corresponding audience.
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
         """
         # If scope is absent on the wire, STS will give you a token associated
         # to the FIRST scope sent during the authorization request.
@@ -190,13 +226,15 @@ class ClientApplication(object):
     def get_accounts(self, username=None):
         """Get a list of accounts which previously signed in, i.e. exists in cache.
 
-        An account can later be used in acquire_token_silent() to find its tokens.
-        Each account is a dict. For now, we only document its "username" field.
-        Your app can choose to display those information to end user,
-        and allow them to choose one of them to proceed.
+        An account can later be used in :func:`~acquire_token_silent`
+        to find its tokens.
 
         :param username:
             Filter accounts with this username only. Case insensitive.
+        :return: A list of account objects.
+            Each account is a dict. For now, we only document its "username" field.
+            Your app can choose to display those information to end user,
+            and allow user to choose one of his/her accounts to proceed.
         """
         # The following implementation finds accounts only from saved accounts,
         # but does NOT correlate them with saved RTs. It probably won't matter,
@@ -224,18 +262,23 @@ class ClientApplication(object):
         or by finding a valid refresh token from cache and then automatically
         use it to redeem a new access token.
 
-        The return value will be an new or cached access token, or None.
-
-        :param scopes: Scopes, represented as a list of strings
+        :param list[str] scopes: (Required)
+            Scopes requested to access a protected API (a resource).
         :param account:
-            one of the account object returned by get_accounts(),
+            one of the account object returned by :func:`~get_accounts`,
             or use None when you want to find an access token for this client.
         :param force_refresh:
             If True, it will skip Access Token look-up,
             and try to find a Refresh Token to obtain a new Access Token.
+        :return:
+            - A dict containing "access_token" key, when cache lookup succeeds.
+            - None when cache lookup does not yield anything.
         """
         assert isinstance(scopes, list), "Invalid parameter type"
-        the_authority = Authority(authority) if authority else self.authority
+        the_authority = Authority(
+            authority,
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+            ) if authority else self.authority
 
         if not force_refresh:
             matches = self.token_cache.find(
@@ -249,12 +292,14 @@ class ClientApplication(object):
                     })
             now = time.time()
             for entry in matches:
-                if entry["expires_on"] - now < 5*60:
+                expires_in = int(entry["expires_on"]) - now
+                if expires_in < 5*60:
                     continue  # Removal is not necessary, it will be overwritten
+                logger.debug("Cache hit an AT")
                 return {  # Mimic a real response
                     "access_token": entry["secret"],
                     "token_type": "Bearer",
-                    "expires_in": entry["expires_on"] - now,
+                    "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
 
         matches = self.token_cache.find(
@@ -268,6 +313,7 @@ class ClientApplication(object):
                 })
         client = self._build_client(self.client_credential, the_authority)
         for entry in matches:
+            logger.debug("Cache hit an RT")
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 scope=decorate_scope(scopes, self.client_id))
@@ -286,6 +332,16 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             client_id, client_credential=None, **kwargs)
 
     def initiate_device_flow(self, scopes=None, **kwargs):
+        """Initiate a Device Flow instance,
+        which will be used in :func:`~acquire_token_by_device_flow`.
+
+        :param list[str] scopes:
+            Scopes requested to access a protected API (a resource).
+        :return: A dict representing a newly created Device Flow object.
+
+            - A successful response would contain "user_code" key, among others
+            - an error response would contain some other readable key/value pairs.
+        """
         return self.client.initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
             **kwargs)
@@ -293,11 +349,16 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     def acquire_token_by_device_flow(self, flow, **kwargs):
         """Obtain token by a device flow object, with customizable polling effect.
 
-        Args:
-            flow (dict):
-                A dict previously generated by initiate_device_flow(...).
-                You can exit the polling loop early, by changing the value of
-                its "expires_at" key to 0, at any time.
+        :param dict flow:
+            A dict previously generated by :func:`~initiate_device_flow`.
+            By default, this method's polling effect  will block current thread.
+            You can abort the polling loop at any time,
+            by changing the value of the flow's "expires_at" key to 0.
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
         """
         return self.client.obtain_token_by_device_flow(
                 flow,
@@ -308,7 +369,18 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
     def acquire_token_by_username_password(
             self, username, password, scopes=None, **kwargs):
-        """Gets a token for a given resource via user credentails."""
+        """Gets a token for a given resource via user credentails.
+
+        :param str username: Typically a UPN in the form of an email address.
+        :param str password: The password.
+        :param list[str] scopes:
+            Scopes requested to access a protected API (a resource).
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
+        """
         scopes = decorate_scope(scopes, self.client_id)
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(username)
@@ -320,35 +392,51 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
     def _acquire_token_by_username_password_federated(
             self, user_realm_result, username, password, scopes=None, **kwargs):
+        verify = kwargs.pop("verify", self.verify)
+        proxies = kwargs.pop("proxies", self.proxies)
         wstrust_endpoint = {}
         if user_realm_result.get("federation_metadata_url"):
             wstrust_endpoint = mex_send_request(
-                user_realm_result["federation_metadata_url"])
+                user_realm_result["federation_metadata_url"],
+                verify=verify, proxies=proxies)
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
         wstrust_result = wst_send_request(
             username, password, user_realm_result.get("cloud_audience_urn"),
             wstrust_endpoint.get("address",
                 # Fallback to an AAD supplied endpoint
                 user_realm_result.get("federation_active_auth_url")),
-            wstrust_endpoint.get("action"), **kwargs)
+            wstrust_endpoint.get("action"), verify=verify, proxies=proxies)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
+        GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
         grant_type = {
-            SAML_TOKEN_TYPE_V1: 'urn:ietf:params:oauth:grant-type:saml1_1-bearer',
+            SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
             SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
+            WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
+            WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
             }.get(wstrust_result.get("type"))
         if not grant_type:
             raise RuntimeError(
                 "RSTR returned unknown token type: %s", wstrust_result.get("type"))
+        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
+            grant_type, self.client.encode_saml_assertion)
         return self.client.obtain_token_by_assertion(
-            b64encode(wstrust_result["token"]),
-            grant_type=grant_type, scope=scopes, **kwargs)
+            wstrust_result["token"], grant_type, scope=scopes, **kwargs)
 
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
     def acquire_token_for_client(self, scopes, **kwargs):
-        """Acquires token from the service for the confidential client."""
+        """Acquires token from the service for the confidential client.
+
+        :param list[str] scopes: (Required)
+            Scopes requested to access a protected API (a resource).
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
+        """
         # TBD: force_refresh behavior
         return self.client.obtain_token_for_client(
                 scope=scopes,  # This grant flow requires no scope decoration
