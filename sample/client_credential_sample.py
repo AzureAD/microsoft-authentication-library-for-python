@@ -30,7 +30,8 @@ app = msal.ConfidentialClientApplication(
     config["client_id"], authority=config["authority"],
     client_credential=config["secret"],
     # token_cache=...  # Default cache is in memory only.
-                       # See SerializableTokenCache for more details.
+                       # You can learn how to use SerializableTokenCache from
+                       # https://msal-python.rtfd.io/en/latest/#msal.SerializableTokenCache
     )
 
 # The pattern to acquire a token looks like this.
@@ -42,7 +43,7 @@ result = None
 result = app.acquire_token_silent(config["scope"], account=None)
 
 if not result:
-    # So no suitable token exists in cache. Let's get a new one from AAD.
+    logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
     result = app.acquire_token_for_client(scopes=config["scope"])
 
 if "access_token" in result:
