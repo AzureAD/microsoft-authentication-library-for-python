@@ -192,15 +192,15 @@ class SerializableTokenCache(TokenCache):
     Depending on your need,
     the following simple recipe for file-based persistence may be sufficient::
 
-        import atexit
-        cache = SerializableTokenCache()
+        import atexit, msal
+        cache = msal.SerializableTokenCache()
         cache.deserialize(open("my_cache.bin", "rb").read())
         atexit.register(lambda:
             open("my_cache.bin", "wb").write(cache.serialize())
             # Hint: The following optional line persists only when state changed
             if cache.has_state_changed else None
             )
-        app = ClientApplication(..., token_cache=cache)
+        app = msal.ClientApplication(..., token_cache=cache)
         ...
 
     :var bool has_state_changed:
