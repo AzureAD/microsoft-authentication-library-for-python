@@ -106,6 +106,12 @@ class SerializableTokenCacheTestCase(TokenCacheTestCase):
             }
             """)
 
+    def test_has_state_changed(self):
+        cache = SerializableTokenCache()
+        self.assertFalse(cache.has_state_changed)
+        cache.add({})  # An NO-OP add() still counts as a state change. Good enough.
+        self.assertTrue(cache.has_state_changed)
+
     def tearDown(self):
         state = self.cache.serialize()
         logger.debug("serialize() = %s", state)
