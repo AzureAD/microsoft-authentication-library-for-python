@@ -207,6 +207,8 @@ class SerializableTokenCache(TokenCache):
         Indicates whether the cache state has changed since last
         :func:`~serialize` or :func:`~deserialize` call.
     """
+    has_state_changed = False
+
     def add(self, event, **kwargs):
         super(SerializableTokenCache, self).add(event, **kwargs)
         self.has_state_changed = True
