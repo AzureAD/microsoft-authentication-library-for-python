@@ -192,11 +192,12 @@ class SerializableTokenCache(TokenCache):
     Depending on your need,
     the following simple recipe for file-based persistence may be sufficient::
 
-        import atexit, msal
+        import os, atexit, msal
         cache = msal.SerializableTokenCache()
-        cache.deserialize(open("my_cache.bin", "rb").read())
+        if os.path.exists("my_cache.bin"):
+            cache.deserialize(open("my_cache.bin", "r").read())
         atexit.register(lambda:
-            open("my_cache.bin", "wb").write(cache.serialize())
+            open("my_cache.bin", "w").write(cache.serialize())
             # Hint: The following optional line persists only when state changed
             if cache.has_state_changed else None
             )
