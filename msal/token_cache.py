@@ -2,6 +2,8 @@
 import threading
 import time
 import logging
+import os
+import atexit
 
 from .authority import canonicalize
 from .oauth2cli.oidc import base64decode, decode_id_token
@@ -283,4 +285,32 @@ class SerializableTokenCache(TokenCache):
         with self._lock:
             self.has_state_changed = False
             return json.dumps(self._cache, indent=4)
+
+
+class FileBasedTokenCache(SerializableTokenCache):
+    """Experimental: This helper will read cache from a file once at the beginning,
+    and persist token cache into same file.
+
+    It does not handle locking in the case of concurrent access by many processes.
+    We also recommend you to use encryption whenever possible.
+
+        import msal
+        app = msal.ClientApplication(...,
+            token_cache=msal.FileBasedTokenCache("my_cache.bin"))
+        ...
+
+    """
+    def __init__(self, filename):
+        super(FileBasedTokenCache, self).__init__()
+        if os.path.exists(filename):
+            with open(filename, "r") as f:
+                self.deserialize(f.read())
+        self.filename = filename
+        atexit.register(self.flush)
+
+    def flush(self):
+        """Overwrite the cache file with latest content"""
+        if self.has_state_changed:
+            with open(self.filename, "w") as f:
+                f.write(self.serialize())
 

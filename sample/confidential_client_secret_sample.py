@@ -36,8 +36,8 @@ app = msal.ConfidentialClientApplication(
     config["client_id"], authority=config["authority"],
     client_credential=config["secret"],
     # token_cache=...  # Default cache is in memory only.
-                       # You can learn how to use SerializableTokenCache from
-                       # https://msal-python.rtfd.io/en/latest/#msal.SerializableTokenCache
+                       # You can learn how to use File-based Token Cache from
+                       # https://msal-python.rtfd.io/en/latest/#msal.FileBasedTokenCache
     )
 
 # The pattern to acquire a token looks like this.
