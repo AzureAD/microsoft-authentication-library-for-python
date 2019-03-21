@@ -236,17 +236,21 @@ class ClientApplication(object):
             Your app can choose to display those information to end user,
             and allow user to choose one of his/her accounts to proceed.
         """
-        # The following implementation finds accounts only from saved accounts,
-        # but does NOT correlate them with saved RTs. It probably won't matter,
-        # because in MSAL universe, there are always Accounts and RTs together.
-        accounts = self.token_cache.find(
+        accounts = [a for a in self.token_cache.find(  # Find all useful accounts
             self.token_cache.CredentialType.ACCOUNT,
             query={"environment": self.authority.instance})
+            if a["authority_type"] in (
+                TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
         if username:
             # Federated account["username"] from AAD could contain mixed case
             lowercase_username = username.lower()
             accounts = [a for a in accounts
                 if a["username"].lower() == lowercase_username]
+        # Does not further filter by existing RTs here. It probably won't matter.
+        # Because in most cases Accounts and RTs co-exist.
+        # Even in the rare case when an RT is revoked and then removed,
+        # acquire_token_silent() would then yield no result,
+        # apps would fall back to other acquire methods. This is the standard pattern.
         return accounts
 
     def acquire_token_silent(

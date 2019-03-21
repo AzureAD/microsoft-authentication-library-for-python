@@ -31,6 +31,10 @@ class TokenCache(object):
         ACCOUNT = "Account"  # Not exactly a credential type, but we put it here
         ID_TOKEN = "IdToken"
 
+    class AuthorityType:
+        ADFS = "ADFS"
+        MSSTS = "MSSTS"  # MSSTS means AAD v2 for both AAD & MSA
+
     def __init__(self):
         self._lock = threading.RLock()
         self._cache = {}
@@ -118,8 +122,8 @@ class TokenCache(object):
                         "oid", decoded_id_token.get("sub")),
                     "username": decoded_id_token.get("preferred_username"),
                     "authority_type":
-                        "ADFS" if realm == "adfs"
-                        else "MSSTS",  # MSSTS means AAD v2 for both AAD & MSA
+                        self.AuthorityType.ADFS if realm == "adfs"
+                        else self.AuthorityType.MSSTS,
                     # "client_info": response.get("client_info"),  # Optional
                     }
 
