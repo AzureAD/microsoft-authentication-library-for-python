@@ -110,10 +110,10 @@ class TestPublicClientApplication(Oauth2TestCase):
             CONFIG["client_id"], authority=CONFIG["authority"])
         flow = self.app.initiate_device_flow(scopes=CONFIG.get("scope"))
         assert "user_code" in flow, str(flow)  # Provision or policy might block DF
-        logging.warn(flow["message"])
+        logging.warning(flow["message"])
 
         duration = 30
-        logging.warn("We will wait up to %d seconds for you to sign in" % duration)
+        logging.warning("We will wait up to %d seconds for you to sign in" % duration)
         flow["expires_at"] = time.time() + duration  # Shorten the time for quick test
         result = self.app.acquire_token_by_device_flow(flow)
         self.assertLoosely(
@@ -136,7 +136,7 @@ class TestClientApplication(Oauth2TestCase):
 
     @unittest.skipUnless("scope" in CONFIG, "Missing scope")
     def test_auth_code(self):
-        from oauth2cli.authcode import obtain_auth_code
+        from msal.oauth2cli.authcode import obtain_auth_code
         port = CONFIG.get("listen_port", 44331)
         redirect_uri = "http://localhost:%s" % port
         auth_request_uri = self.app.get_authorization_request_url(
