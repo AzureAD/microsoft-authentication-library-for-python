@@ -35,10 +35,10 @@ class Authority(object):
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
-        canonicalized, self.instance, tenant = canonicalize(authority_url)
+        canonicalized, self.instance, self.tenant = canonicalize(authority_url)
         tenant_discovery_endpoint = (  # Hard code a V2 pattern as default value
             'https://{}/{}/v2.0/.well-known/openid-configuration'
-            .format(WORLD_WIDE, tenant))
+            .format(WORLD_WIDE, self.tenant))
         if validate_authority and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS:
             tenant_discovery_endpoint = instance_discovery(
                 canonicalized + "/oauth2/v2.0/authorize",

@@ -4,8 +4,6 @@ import time
 import logging
 import base64
 
-import requests
-
 from .authority import canonicalize
 
 
@@ -47,26 +45,10 @@ class TokenCache(object):
             # So we always do an O(n) in-memory search.
             return [entry
                 for entry in self._cache.get(credential_type, {}).values()
-                if self.authority_migration(query)
-                #if is_subdict_of(query or {}, entry)
+                if is_subdict_of(query or {}, entry)
                 and (target_set <= set(entry.get("target", "").split())
 		    if target else True)
                 ]
-
-    def authority_migration(self, query):
-        if query['environment'] is "login.microsoftonline.com":
-            return True
-        resp = requests.get(
-            "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-            headers={'Accept': 'application/json'})
-        resp.raise_for_status()
-        resp = resp.json()
-        metadata = resp['metadata']
-        for entry in metadata:
-            aliases = entry['aliases']
-            if query['environment'] in aliases:
-                return True
-        return False
 
     def add(self, event, now=None):
         # type: (dict) -> None

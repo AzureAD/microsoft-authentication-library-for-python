@@ -1,4 +1,7 @@
 import time
+
+from sphinx.util import requests
+
 try:  # Python 2
     from urlparse import urljoin
 except:  # Python 3
@@ -101,6 +104,19 @@ class ClientApplication(object):
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
+        self.aliases = self._get_aliases()
+
+    def _get_aliases(self):
+        resp = requests.get(
+            "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
+            headers={'Accept': 'application/json'})
+        resp.raise_for_status()
+        resp = resp.json()
+        aliases= []
+        for entry in resp['metadata']:
+            for alias in entry['aliases']:
+                aliases.append(alias)
+        return aliases
 
     def _build_client(self, client_credential, authority):
         client_assertion = None
@@ -240,8 +256,13 @@ class ClientApplication(object):
         # but does NOT correlate them with saved RTs. It probably won't matter,
         # because in MSAL universe, there are always Accounts and RTs together.
         accounts = self.token_cache.find(
-            self.token_cache.CredentialType.ACCOUNT,
-            query={"environment": self.authority.instance})
+            self.token_cache.CredentialType.ACCOUNT, query={"environment": self.authority.instance})
+        if not accounts:
+            for authority in self.aliases:
+                accounts = self.token_cache.find(
+                    self.token_cache.CredentialType.ACCOUNT, query={"environment": authority})
+                if accounts:
+                    break
         if username:
             # Federated account["username"] from AAD could contain mixed case
             lowercase_username = username.lower()
@@ -274,11 +295,30 @@ class ClientApplication(object):
             - A dict containing "access_token" key, when cache lookup succeeds.
             - None when cache lookup does not yield anything.
         """
-        assert isinstance(scopes, list), "Invalid parameter type"
         the_authority = Authority(
             authority,
             verify=self.verify, proxies=self.proxies, timeout=self.timeout,
-            ) if authority else self.authority
+        ) if authority else self.authority
+        result = self._acquire_token_silent(scopes, account, the_authority)
+        if result:
+            return result
+        for authority in self.aliases:
+            the_authority = Authority(
+                "https://" + authority + "/" + self.authority.tenant,
+                verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+            )
+            result = self._acquire_token_silent(scopes, account, the_authority )
+            if result:
+                return result
+
+    def _acquire_token_silent(
+            self,
+            scopes,  # type: List[str]
+            account,  # type: Optional[Account]
+            authority,  # See get_authorization_request_url()
+            force_refresh=False,  # type: Optional[boolean]
+            **kwargs):
+        assert isinstance(scopes, list), "Invalid parameter type"
 
         if not force_refresh:
             matches = self.token_cache.find(
@@ -286,8 +326,8 @@ class ClientApplication(object):
                 target=scopes,
                 query={
                     "client_id": self.client_id,
-                    "environment": the_authority.instance,
-                    "realm": the_authority.tenant,
+                    "environment": authority.instance,
+                    "realm": authority.tenant,
                     "home_account_id": (account or {}).get("home_account_id"),
                     })
             now = time.time()
@@ -307,11 +347,11 @@ class ClientApplication(object):
             # target=scopes,  # AAD RTs are scope-independent
             query={
                 "client_id": self.client_id,
-                "environment": the_authority.instance,
+                "environment": authority.instance,
                 "home_account_id": (account or {}).get("home_account_id"),
                 # "realm": the_authority.tenant,  # AAD RTs are tenant-independent
                 })
-        client = self._build_client(self.client_credential, the_authority)
+        client = self._build_client(self.client_credential, authority)
         for entry in matches:
             logger.debug("Cache hit an RT")
             response = client.obtain_token_by_refresh_token(
