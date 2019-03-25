@@ -304,10 +304,10 @@ class ClientApplication(object):
             return result
         for authority in self.aliases:
             the_authority = Authority(
-                "https://" + authority + "/" + self.authority.tenant,
+                "https://" + authority + "/" + self.authority.tenant, validate_authority=False,
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout,
             )
-            result = self._acquire_token_silent(scopes, account, the_authority )
+            result = self._acquire_token_silent(scopes, account, the_authority)
             if result:
                 return result
 
