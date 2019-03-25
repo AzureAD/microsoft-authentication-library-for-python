@@ -1,6 +1,6 @@
 import time
 
-from sphinx.util import requests
+import requests
 
 try:  # Python 2
     from urlparse import urljoin
