@@ -37,18 +37,20 @@ class TokenCache(object):
 
     def find(self, credential_type, target=None, query=None):
         target = target or []
+        target = [item.lower() for item in target]
         assert isinstance(target, list), "Invalid parameter type"
         target_set = set(target)
         with self._lock:
             # Since the target inside token cache key is (per schema) unsorted,
             # there is no point to attempt an O(1) key-value search here.
             # So we always do an O(n) in-memory search.
-            return [entry
-                for entry in self._cache.get(credential_type, {}).values()
-                if is_subdict_of(query or {}, entry)
-                and (target_set <= set(entry.get("target", "").split())
-		    if target else True)
-                ]
+            cache_entries = []
+            for entry in self._cache.get(credential_type, {}).values():
+                target_cmp = entry.get("target", "").lower()
+                if is_subdict_of(query or {}, entry) and (target_set <= set(target_cmp.split())
+                if target else True):
+                    cache_entries.append(entry)
+            return cache_entries
 
     def add(self, event, now=None):
         # type: (dict) -> None
