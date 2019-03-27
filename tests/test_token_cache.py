@@ -89,6 +89,41 @@ class TokenCacheTestCase(unittest.TestCase):
                 'uid.utid-login.example.com-idtoken-my_client_id-contoso-')
             )
 
+    def testFindCaseInsensitiveTarget(self):
+        client_info = base64.b64encode(b'''
+                            {"uid": "uid", "utid": "utid"}
+                            ''').decode('utf-8')
+        id_token = "header.%s.signature" % base64.b64encode(b'''{
+                            "sub": "subject",
+                            "oid": "object1234",
+                            "preferred_username": "John Doe"
+                            }''').decode('utf-8')
+        self.cache.add({
+            "client_id": "my_client_id",
+            "scope": ["s2", "s1", "s3"],  # Not in particular order
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "response": {
+                "access_token": "an access token",
+                "token_type": "some type",
+                "expires_in": 3600,
+                "refresh_token": "a refresh token",
+                "client_info": client_info,
+                "id_token": id_token,
+            },
+        }, now=1000)
+
+        self.assertEqual([self.cache._cache["AccessToken"].get(
+                'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s2 s1 s3')],
+        self.cache.find(
+            "AccessToken",
+            target=["S2", "S1", "s3"],
+            query={
+                "client_id": "my_client_id",
+                "environment": "login.example.com",
+                "realm": "contoso",
+                "home_account_id": "uid.utid",
+            }))
+
 
 class SerializableTokenCacheTestCase(TokenCacheTestCase):
     # Run all inherited test methods, and have extra check in tearDown()
