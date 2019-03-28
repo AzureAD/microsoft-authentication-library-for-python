@@ -108,6 +108,9 @@ class BaseClient(object):
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
             timeout=None,
+            post=None,  # A callable to replace requests.post(), for testing.
+                        # Such as: lambda url, **kwargs:
+                        #   Mock(status_code=200, json=Mock(return_value={}))
             **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
@@ -133,7 +136,7 @@ class BaseClient(object):
             raise ValueError("token_endpoint not found in configuration")
         _headers = {'Accept': 'application/json'}
         _headers.update(headers or {})
-        resp = self.session.post(
+        resp = (post or self.session.post)(
             self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data, auth=auth,
             timeout=timeout or self.timeout,
