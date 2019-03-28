@@ -305,26 +305,71 @@ class ClientApplication(object):
                     "token_type": "Bearer",
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
+        return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
+                the_authority, decorate_scope(scopes, self.client_id), account,
+                **kwargs)
 
+    def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
+            self, authority, scopes, account, **kwargs):
+        query = {
+            "environment": authority.instance,
+            "home_account_id": (account or {}).get("home_account_id"),
+            # "realm": authority.tenant,  # AAD RTs are tenant-independent
+            }
+        apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
+            TokenCache.CredentialType.APP_METADATA, query={
+                "environment": authority.instance, "client_id": self.client_id})
+        app_metadata = apps[0] if apps else {}
+        if not app_metadata:  # Meaning this app is now used for the first time.
+            # When/if we have a way to directly detect current app's family,
+            # we'll rewrite this block, to support multiple families.
+            # For now, we try existing RTs (*). If it works, we are in that family.
+            # (*) RTs of a different app/family are not supposed to be
+            # shared with or accessible by us in the first place.
+            at = self._acquire_token_silent_by_finding_specific_refresh_token(
+                authority, scopes,
+                dict(query, family_id="1"),  # A hack, we have only 1 family for now
+                rt_remover=lambda rt_item: None,  # NO-OP b/c RTs are likely not mine
+                break_condition=lambda response:  # Break loop when app not in family
+                    # Based on an AAD-only behavior mentioned in internal doc here
+                    # https://msazure.visualstudio.com/One/_git/ESTS-Docs/pullrequest/1138595
+                    "client_mismatch" in response.get("error_additional_info", []),
+                **kwargs)
+            if at:
+                return at
+        if app_metadata.get("family_id"):  # Meaning this app belongs to this family
+            at = self._acquire_token_silent_by_finding_specific_refresh_token(
+                authority, scopes, dict(query, family_id=app_metadata["family_id"]),
+                **kwargs)
+            if at:
+                return at
+        # Either this app is an orphan, so we will naturally use its own RT;
+        # or all attempts above have failed, so we fall back to non-foci behavior.
+        return self._acquire_token_silent_by_finding_specific_refresh_token(
+            authority, scopes, dict(query, client_id=self.client_id), **kwargs)
+
+    def _acquire_token_silent_by_finding_specific_refresh_token(
+            self, authority, scopes, query,
+            rt_remover=None, break_condition=lambda response: False, **kwargs):
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
-            query={
-                "client_id": self.client_id,
-                "environment": the_authority.instance,
-                "home_account_id": (account or {}).get("home_account_id"),
-                # "realm": the_authority.tenant,  # AAD RTs are tenant-independent
-                })
-        client = self._build_client(self.client_credential, the_authority)
+            query=query)
+        logger.debug("Found %d RTs matching %s", len(matches), query)
+        client = self._build_client(self.client_credential, authority)
         for entry in matches:
-            logger.debug("Cache hit an RT")
+            logger.debug("Cache attempts an RT")
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
-                scope=decorate_scope(scopes, self.client_id))
+                on_removing_rt=rt_remover or self.token_cache.remove_rt,
+                scope=scopes,
+                **kwargs)
             if "error" not in response:
                 return response
             logger.debug(
                 "Refresh failed. {error}: {error_description}".format(**response))
+            if break_condition(response):
+                break
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
