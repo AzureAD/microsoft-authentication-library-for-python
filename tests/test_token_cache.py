@@ -88,6 +88,15 @@ class TokenCacheTestCase(unittest.TestCase):
             self.cache._cache["IdToken"].get(
                 'uid.utid-login.example.com-idtoken-my_client_id-contoso-')
             )
+        self.assertEqual(
+            {
+                "client_id": "my_client_id",
+                'environment': 'login.example.com',
+                "family_id": None,
+            },
+            self.cache._cache.get("AppMetadata", {}).get(
+                "appmetadata-login.example.com-my_client_id")
+            )
 
 
 class SerializableTokenCacheTestCase(TokenCacheTestCase):
