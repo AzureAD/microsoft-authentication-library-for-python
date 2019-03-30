@@ -30,6 +30,7 @@ class TokenCache(object):
         REFRESH_TOKEN = "RefreshToken"
         ACCOUNT = "Account"  # Not exactly a credential type, but we put it here
         ID_TOKEN = "IdToken"
+        APP_METADATA = "AppMetadata"
 
     class AuthorityType:
         ADFS = "ADFS"
@@ -161,6 +162,17 @@ class TokenCache(object):
                 if "foci" in response:
                     rt["family_id"] = response["foci"]
                 self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key] = rt
+
+            key = self._build_appmetadata_key(environment, event.get("client_id"))
+            self._cache.setdefault(self.CredentialType.APP_METADATA, {})[key] = {
+                "client_id": event.get("client_id"),
+                "environment": environment,
+                "family_id": response.get("foci"),  # None is also valid
+                }
+
+    @staticmethod
+    def _build_appmetadata_key(environment, client_id):
+        return "appmetadata-{}-{}".format(environment or "", client_id or "")
 
     @classmethod
     def _build_rt_key(
