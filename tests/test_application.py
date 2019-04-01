@@ -1,8 +1,6 @@
-import base64
 import os
 import json
 import logging
-from unittest.mock import Mock
 
 try:
     from unittest.mock import *  # Python 3
@@ -163,7 +161,6 @@ class TestClientApplication(Oauth2TestCase):
                 error=result.get("error"),
                 error_description=result.get("error_description")))
         self.assertCacheWorks(result)
-
 
 
 class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):

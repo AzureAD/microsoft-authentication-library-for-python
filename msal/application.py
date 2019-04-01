@@ -114,8 +114,7 @@ class ClientApplication(object):
         resp = resp.json()
         aliases= []
         for entry in resp['metadata']:
-            for alias in entry['aliases']:
-                aliases.append(alias)
+            aliases.append(set(entry['aliases']))
         return aliases
 
     def _build_client(self, client_credential, authority):
@@ -262,14 +261,16 @@ class ClientApplication(object):
                 TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
 
         if not accounts:
-            for authority in self.aliases:
-                accounts = [a for a in self.token_cache.find(
-                    self.token_cache.CredentialType.ACCOUNT,
-                    query={"environment": authority})
-                    if a["authority_type"] in (
-                        TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
-                if accounts:
-                    break
+            for authority_set in self.aliases:
+                if self.authority.instance in authority_set:
+                    for authority in authority_set:
+                        accounts = [a for a in self.token_cache.find(
+                            self.token_cache.CredentialType.ACCOUNT,
+                            query={"environment": authority})
+                            if a["authority_type"] in (
+                                TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
+                        if accounts:
+                            break
         if username:
             # Federated account["username"] from AAD could contain mixed case
             lowercase_username = username.lower()
@@ -307,21 +308,24 @@ class ClientApplication(object):
             - A dict containing "access_token" key, when cache lookup succeeds.
             - None when cache lookup does not yield anything.
         """
+        assert isinstance(scopes, list), "Invalid parameter type"
         the_authority = Authority(
             authority,
             verify=self.verify, proxies=self.proxies, timeout=self.timeout,
-        ) if authority else self.authority
-        result = self._acquire_token_silent(scopes, account, the_authority)
+            ) if authority else self.authority
+        result = self._acquire_token_silent(scopes, account, the_authority, **kwargs)
         if result:
             return result
-        for authority in self.aliases:
-            the_authority = Authority(
-                "https://" + authority + "/" + self.authority.tenant, validate_authority=False,
-                verify=self.verify, proxies=self.proxies, timeout=self.timeout,
-            )
-            result = self._acquire_token_silent(scopes, account, the_authority)
-            if result:
-                return result
+        for authority_set in self.aliases:
+            if self.authority.instance in authority_set:
+                for authority in authority_set:
+                    the_authority = Authority(
+                        "https://" + authority + "/" + self.authority.tenant, validate_authority=False,
+                        verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+                    )
+                    result = self._acquire_token_silent(scopes, account, the_authority, **kwargs)
+                    if result:
+                        return result
 
     def _acquire_token_silent(
             self,
@@ -339,7 +343,7 @@ class ClientApplication(object):
                 query={
                     "client_id": self.client_id,
                     "environment": authority.instance,
-                    "realm": account.get("realm"),
+                    "realm": authority.tenant,
                     "home_account_id": (account or {}).get("home_account_id"),
                     })
             now = time.time()
@@ -354,7 +358,7 @@ class ClientApplication(object):
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-                the_authority, decorate_scope(scopes, self.client_id), account,
+                authority, decorate_scope(scopes, self.client_id), account,
                 **kwargs)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
