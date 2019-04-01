@@ -251,15 +251,11 @@ class ClientApplication(object):
             Your app can choose to display those information to end user,
             and allow user to choose one of his/her accounts to proceed.
         """
-        # The following implementation finds accounts only from saved accounts,
-        # but does NOT correlate them with saved RTs. It probably won't matter,
-        # because in MSAL universe, there are always Accounts and RTs together.
         accounts = [a for a in self.token_cache.find(
             self.token_cache.CredentialType.ACCOUNT,
             query={"environment": self.authority.instance})
             if a["authority_type"] in (
                 TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
-
         if not accounts:
             for authority_set in self.aliases:
                 if self.authority.instance in authority_set:
@@ -320,8 +316,10 @@ class ClientApplication(object):
             if self.authority.instance in authority_set:
                 for authority in authority_set:
                     the_authority = Authority(
-                        "https://" + authority + "/" + self.authority.tenant, validate_authority=False,
-                        verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+                        "https://" + authority + "/" + self.authority.tenant,
+                        validate_authority=False,
+                        verify=self.verify, proxies=self.proxies,
+                        timeout=self.timeout,
                     )
                     result = self._acquire_token_silent(scopes, account, the_authority, **kwargs)
                     if result:
@@ -334,8 +332,6 @@ class ClientApplication(object):
             authority,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
             **kwargs):
-        assert isinstance(scopes, list), "Invalid parameter type"
-
         if not force_refresh:
             matches = self.token_cache.find(
                 self.token_cache.CredentialType.ACCESS_TOKEN,
