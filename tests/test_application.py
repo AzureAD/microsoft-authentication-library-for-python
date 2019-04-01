@@ -1,6 +1,8 @@
+import base64
 import os
 import json
 import logging
+from unittest.mock import Mock
 
 try:
     from unittest.mock import *  # Python 3
@@ -163,6 +165,7 @@ class TestClientApplication(Oauth2TestCase):
         self.assertCacheWorks(result)
 
 
+
 class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     def setUp(self):
@@ -238,4 +241,45 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
     # Known family app will simply use FRT, which is largely the same as this one
 
     # Will not test scenario of app leaving family. Per specs, it won't happen.
+
+class TestClientApplicationforAuthorityMigration(unittest.TestCase):
+
+    @classmethod
+    def setUp(self):
+        self.authority_url = "https://sts.windows.net/common"
+        self.scopes = ["s1", "s2"]
+        self.uid = "uid"
+        self.utid = "utid"
+        self.account = {"home_account_id": "{}.{}".format(self.uid, self.utid)}
+        self.access_token = "access_token"
+        self.refresh_token = "refresh_token"
+        self.cache = msal.SerializableTokenCache()
+        self.cache.add({
+            "client_id": "my_client_id",
+            "scope": self.scopes,
+            "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
+            "response": TokenCacheTestCase.build_response(
+                uid=self.uid, utid=self.utid, access_token=self.access_token, refresh_token=self.refresh_token),
+
+        })  # The add(...) helper populates correct home_account_id for future searching
+
+    def test_get_accounts(self):
+        app = PublicClientApplication(
+            "my_client_id", authority="https://login.microsoftonline.com/common",
+            token_cache=self.cache)
+
+        accounts = app.get_accounts()
+        self.assertEqual({'home_account_id': 'uid.utid',
+                          'environment': 'sts.windows.net',
+                          'realm': 'common',
+                          'local_account_id': None,
+                          'username': None,
+                          'authority_type': 'MSSTS'}, accounts[0])
+
+    def test_acquire_token_silent(self):
+        app = PublicClientApplication(
+            "my_client_id", authority="https://login.microsoftonline.com/common",
+            token_cache=self.cache)
+        a = app.acquire_token_silent(["s1", "s2"], self.account)
+        self.assertEqual(a.get('access_token'), 'access_token')
 

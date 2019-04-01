@@ -339,7 +339,7 @@ class ClientApplication(object):
                 query={
                     "client_id": self.client_id,
                     "environment": authority.instance,
-                    "realm": authority.tenant,
+                    "realm": account.get("realm"),
                     "home_account_id": (account or {}).get("home_account_id"),
                     })
             now = time.time()
