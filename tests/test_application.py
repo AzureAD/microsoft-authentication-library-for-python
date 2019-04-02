@@ -239,44 +239,43 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     # Will not test scenario of app leaving family. Per specs, it won't happen.
 
-class TestClientApplicationforAuthorityMigration(unittest.TestCase):
+class TestClientApplicationForAuthorityMigration(unittest.TestCase):
 
     @classmethod
     def setUp(self):
-        self.authority_url = "https://sts.windows.net/common"
+        self.environment_in_cache = "sts.windows.net"
+        self.authority_url_in_app = "https://login.microsoftonline.com/common"
         self.scopes = ["s1", "s2"]
-        self.uid = "uid"
-        self.utid = "utid"
-        self.account = {"home_account_id": "{}.{}".format(self.uid, self.utid)}
-        self.access_token = "access_token"
-        self.refresh_token = "refresh_token"
+        uid = "uid"
+        utid = "utid"
+        self.account = {"home_account_id": "{}.{}".format(uid, utid)}
+        self.client_id = "my_app"
+        self.access_token = "access token for testing authority aliases"
         self.cache = msal.SerializableTokenCache()
         self.cache.add({
-            "client_id": "my_client_id",
+            "client_id": self.client_id,
             "scope": self.scopes,
-            "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
+            "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(
+                self.environment_in_cache),
             "response": TokenCacheTestCase.build_response(
-                uid=self.uid, utid=self.utid, access_token=self.access_token, refresh_token=self.refresh_token),
-
+                uid=uid, utid=utid,
+                access_token=self.access_token, refresh_token="some refresh token"),
         })  # The add(...) helper populates correct home_account_id for future searching
 
     def test_get_accounts(self):
-        app = PublicClientApplication(
-            "my_client_id", authority="https://login.microsoftonline.com/common",
-            token_cache=self.cache)
-
+        app = ClientApplication(
+            self.client_id,
+            authority=self.authority_url_in_app, token_cache=self.cache)
         accounts = app.get_accounts()
-        self.assertEqual({'home_account_id': 'uid.utid',
-                          'environment': 'sts.windows.net',
-                          'realm': 'common',
-                          'local_account_id': None,
-                          'username': None,
-                          'authority_type': 'MSSTS'}, accounts[0])
+        self.assertNotEqual([], accounts)
+        self.assertEqual(self.environment_in_cache, accounts[0].get("environment"),
+            "We should be able to find an account under an authority alias")
 
     def test_acquire_token_silent(self):
-        app = PublicClientApplication(
-            "my_client_id", authority="https://login.microsoftonline.com/common",
-            token_cache=self.cache)
-        a = app.acquire_token_silent(["s1", "s2"], self.account)
-        self.assertEqual(a.get('access_token'), 'access_token')
+        app = ClientApplication(
+            self.client_id,
+            authority=self.authority_url_in_app, token_cache=self.cache)
+        at = app.acquire_token_silent(self.scopes, self.account)
+        self.assertNotEqual(None, at)
+        self.assertEqual(self.access_token, at.get('access_token'))
 
