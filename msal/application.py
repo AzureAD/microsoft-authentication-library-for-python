@@ -5,6 +5,9 @@ except:  # Python 3
     from urllib.parse import urljoin
 import logging
 import sys
+import warnings
+
+import requests
 
 from .oauth2cli import Client, JwtSigner
 from .authority import Authority
@@ -101,6 +104,14 @@ class ClientApplication(object):
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
+        self.authority_groups = self._get_authority_aliases()
+
+    def _get_authority_aliases(self):
+        resp = requests.get(
+            "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
+            headers={'Accept': 'application/json'})
+        resp.raise_for_status()
+        return [set(group['aliases']) for group in resp.json()['metadata']]
 
     def _build_client(self, client_credential, authority):
         client_assertion = None
@@ -236,11 +247,15 @@ class ClientApplication(object):
             Your app can choose to display those information to end user,
             and allow user to choose one of his/her accounts to proceed.
         """
-        accounts = [a for a in self.token_cache.find(  # Find all useful accounts
-            self.token_cache.CredentialType.ACCOUNT,
-            query={"environment": self.authority.instance})
-            if a["authority_type"] in (
-                TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
+        accounts = self._find_msal_accounts(environment=self.authority.instance)
+        if not accounts:  # Now try other aliases of this authority instance
+            for group in self.authority_groups:
+                if self.authority.instance in group:
+                    for alias in group:
+                        if alias != self.authority.instance:
+                            accounts = self._find_msal_accounts(environment=alias)
+                            if accounts:
+                                break
         if username:
             # Federated account["username"] from AAD could contain mixed case
             lowercase_username = username.lower()
@@ -252,6 +267,12 @@ class ClientApplication(object):
         # acquire_token_silent() would then yield no result,
         # apps would fall back to other acquire methods. This is the standard pattern.
         return accounts
+
+    def _find_msal_accounts(self, environment):
+        return [a for a in self.token_cache.find(
+            TokenCache.CredentialType.ACCOUNT, query={"environment": environment})
+            if a["authority_type"] in (
+                TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
 
     def acquire_token_silent(
             self,
@@ -279,19 +300,44 @@ class ClientApplication(object):
             - None when cache lookup does not yield anything.
         """
         assert isinstance(scopes, list), "Invalid parameter type"
-        the_authority = Authority(
-            authority,
-            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
-            ) if authority else self.authority
+        if authority:
+            warnings.warn("We haven't decided how/if this method will accept authority parameter")
+        # the_authority = Authority(
+        #     authority,
+        #     verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+        #     ) if authority else self.authority
+        result = self._acquire_token_silent(scopes, account, self.authority, **kwargs)
+        if result:
+            return result
+        for group in self.authority_groups:
+            if self.authority.instance in group:
+                for alias in group:
+                    if alias != self.authority.instance:
+                        the_authority = Authority(
+                            "https://" + alias + "/" + self.authority.tenant,
+                            validate_authority=False,
+                            verify=self.verify, proxies=self.proxies,
+                            timeout=self.timeout,)
+                        result = self._acquire_token_silent(
+                            scopes, account, the_authority, **kwargs)
+                        if result:
+                            return result
 
+    def _acquire_token_silent(
+            self,
+            scopes,  # type: List[str]
+            account,  # type: Optional[Account]
+            authority,  # This can be different than self.authority
+            force_refresh=False,  # type: Optional[boolean]
+            **kwargs):
         if not force_refresh:
             matches = self.token_cache.find(
                 self.token_cache.CredentialType.ACCESS_TOKEN,
                 target=scopes,
                 query={
                     "client_id": self.client_id,
-                    "environment": the_authority.instance,
-                    "realm": the_authority.tenant,
+                    "environment": authority.instance,
+                    "realm": authority.tenant,
                     "home_account_id": (account or {}).get("home_account_id"),
                     })
             now = time.time()
@@ -306,7 +352,7 @@ class ClientApplication(object):
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-                the_authority, decorate_scope(scopes, self.client_id), account,
+                authority, decorate_scope(scopes, self.client_id), account,
                 **kwargs)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(

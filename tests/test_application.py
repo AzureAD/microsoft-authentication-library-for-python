@@ -239,3 +239,43 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     # Will not test scenario of app leaving family. Per specs, it won't happen.
 
+class TestClientApplicationForAuthorityMigration(unittest.TestCase):
+
+    @classmethod
+    def setUp(self):
+        self.environment_in_cache = "sts.windows.net"
+        self.authority_url_in_app = "https://login.microsoftonline.com/common"
+        self.scopes = ["s1", "s2"]
+        uid = "uid"
+        utid = "utid"
+        self.account = {"home_account_id": "{}.{}".format(uid, utid)}
+        self.client_id = "my_app"
+        self.access_token = "access token for testing authority aliases"
+        self.cache = msal.SerializableTokenCache()
+        self.cache.add({
+            "client_id": self.client_id,
+            "scope": self.scopes,
+            "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(
+                self.environment_in_cache),
+            "response": TokenCacheTestCase.build_response(
+                uid=uid, utid=utid,
+                access_token=self.access_token, refresh_token="some refresh token"),
+        })  # The add(...) helper populates correct home_account_id for future searching
+
+    def test_get_accounts(self):
+        app = ClientApplication(
+            self.client_id,
+            authority=self.authority_url_in_app, token_cache=self.cache)
+        accounts = app.get_accounts()
+        self.assertNotEqual([], accounts)
+        self.assertEqual(self.environment_in_cache, accounts[0].get("environment"),
+            "We should be able to find an account under an authority alias")
+
+    def test_acquire_token_silent(self):
+        app = ClientApplication(
+            self.client_id,
+            authority=self.authority_url_in_app, token_cache=self.cache)
+        at = app.acquire_token_silent(self.scopes, self.account)
+        self.assertNotEqual(None, at)
+        self.assertEqual(self.access_token, at.get('access_token'))
+
