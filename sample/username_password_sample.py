@@ -57,4 +57,6 @@ else:
     print(result.get("error"))
     print(result.get("error_description"))
     print(result.get("correlation_id"))  # You may need this when reporting a bug
-
+    if 65001 in result.get("error_codes", []):  # Not mean to be coded programatically, but...
+        # AAD requires user consent for U/P flow
+        print("Visit this to consent:", app.get_authorization_request_url(scope))

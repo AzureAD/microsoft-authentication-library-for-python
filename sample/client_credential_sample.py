@@ -4,8 +4,8 @@ The configuration file would look like this:
 {
     "authority": "https://login.microsoftonline.com/organizations",
     "client_id": "your_client_id",
+    "scope": ["https://graph.microsoft.com/.default"],
     "secret": "This is a sample only. You better NOT persist your password."
-    "scope": ["https://graph.microsoft.com/.default"]
 }
 
 You can then run this sample with a JSON configuration file:
