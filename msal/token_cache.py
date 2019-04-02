@@ -30,6 +30,11 @@ class TokenCache(object):
         REFRESH_TOKEN = "RefreshToken"
         ACCOUNT = "Account"  # Not exactly a credential type, but we put it here
         ID_TOKEN = "IdToken"
+        APP_METADATA = "AppMetadata"
+
+    class AuthorityType:
+        ADFS = "ADFS"
+        MSSTS = "MSSTS"  # MSSTS means AAD v2 for both AAD & MSA
 
     def __init__(self):
         self._lock = threading.RLock()
@@ -118,8 +123,8 @@ class TokenCache(object):
                         "oid", decoded_id_token.get("sub")),
                     "username": decoded_id_token.get("preferred_username"),
                     "authority_type":
-                        "ADFS" if realm == "adfs"
-                        else "MSSTS",  # MSSTS means AAD v2 for both AAD & MSA
+                        self.AuthorityType.ADFS if realm == "adfs"
+                        else self.AuthorityType.MSSTS,
                     # "client_info": response.get("client_info"),  # Optional
                     }
 
@@ -158,6 +163,17 @@ class TokenCache(object):
                     rt["family_id"] = response["foci"]
                 self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key] = rt
 
+            key = self._build_appmetadata_key(environment, event.get("client_id"))
+            self._cache.setdefault(self.CredentialType.APP_METADATA, {})[key] = {
+                "client_id": event.get("client_id"),
+                "environment": environment,
+                "family_id": response.get("foci"),  # None is also valid
+                }
+
+    @staticmethod
+    def _build_appmetadata_key(environment, client_id):
+        return "appmetadata-{}-{}".format(environment or "", client_id or "")
+
     @classmethod
     def _build_rt_key(
             cls,
@@ -192,21 +208,24 @@ class SerializableTokenCache(TokenCache):
     Depending on your need,
     the following simple recipe for file-based persistence may be sufficient::
 
-        import atexit
-        cache = SerializableTokenCache()
-        cache.deserialize(open("my_cache.bin", "rb").read())
+        import os, atexit, msal
+        cache = msal.SerializableTokenCache()
+        if os.path.exists("my_cache.bin"):
+            cache.deserialize(open("my_cache.bin", "r").read())
         atexit.register(lambda:
-            open("my_cache.bin", "wb").write(cache.serialize())
+            open("my_cache.bin", "w").write(cache.serialize())
             # Hint: The following optional line persists only when state changed
             if cache.has_state_changed else None
             )
-        app = ClientApplication(..., token_cache=cache)
+        app = msal.ClientApplication(..., token_cache=cache)
         ...
 
     :var bool has_state_changed:
         Indicates whether the cache state has changed since last
         :func:`~serialize` or :func:`~deserialize` call.
     """
+    has_state_changed = False
+
     def add(self, event, **kwargs):
         super(SerializableTokenCache, self).add(event, **kwargs)
         self.has_state_changed = True

@@ -2,8 +2,15 @@ import os
 import json
 import logging
 
+try:
+    from unittest.mock import *  # Python 3
+except:
+    from mock import *  # Need an external mock package
+
 from msal.application import *
+import msal
 from tests import unittest
+from tests.test_token_cache import TokenCacheTestCase
 
 
 THIS_FOLDER = os.path.dirname(__file__)
@@ -110,10 +117,10 @@ class TestPublicClientApplication(Oauth2TestCase):
             CONFIG["client_id"], authority=CONFIG["authority"])
         flow = self.app.initiate_device_flow(scopes=CONFIG.get("scope"))
         assert "user_code" in flow, str(flow)  # Provision or policy might block DF
-        logging.warn(flow["message"])
+        logging.warning(flow["message"])
 
         duration = 30
-        logging.warn("We will wait up to %d seconds for you to sign in" % duration)
+        logging.warning("We will wait up to %d seconds for you to sign in" % duration)
         flow["expires_at"] = time.time() + duration  # Shorten the time for quick test
         result = self.app.acquire_token_by_device_flow(flow)
         self.assertLoosely(
@@ -136,7 +143,7 @@ class TestClientApplication(Oauth2TestCase):
 
     @unittest.skipUnless("scope" in CONFIG, "Missing scope")
     def test_auth_code(self):
-        from oauth2cli.authcode import obtain_auth_code
+        from msal.oauth2cli.authcode import obtain_auth_code
         port = CONFIG.get("listen_port", 44331)
         redirect_uri = "http://localhost:%s" % port
         auth_request_uri = self.app.get_authorization_request_url(
@@ -154,4 +161,121 @@ class TestClientApplication(Oauth2TestCase):
                 error=result.get("error"),
                 error_description=result.get("error_description")))
         self.assertCacheWorks(result)
+
+
+class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
+
+    def setUp(self):
+        self.authority_url = "https://login.microsoftonline.com/common"
+        self.authority = msal.authority.Authority(self.authority_url)
+        self.scopes = ["s1", "s2"]
+        self.uid = "my_uid"
+        self.utid = "my_utid"
+        self.account = {"home_account_id": "{}.{}".format(self.uid, self.utid)}
+        self.frt = "what the frt"
+        self.cache = msal.SerializableTokenCache()
+        self.cache.add({  # Pre-populate a FRT
+            "client_id": "preexisting_family_app",
+            "scope": self.scopes,
+            "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
+            "response": TokenCacheTestCase.build_response(
+                uid=self.uid, utid=self.utid, refresh_token=self.frt, foci="1"),
+            })  # The add(...) helper populates correct home_account_id for future searching
+
+    def test_unknown_orphan_app_will_attempt_frt_and_not_remove_it(self):
+        app = ClientApplication(
+            "unknown_orphan", authority=self.authority_url, token_cache=self.cache)
+        logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
+        def tester(url, data=None, **kwargs):
+            self.assertEqual(self.frt, data.get("refresh_token"), "Should attempt the FRT")
+            return Mock(status_code=200, json=Mock(return_value={
+                "error": "invalid_grant",
+                "error_description": "Was issued to another client"}))
+        app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
+            self.authority, self.scopes, self.account, post=tester)
+        self.assertNotEqual([], app.token_cache.find(
+            msal.TokenCache.CredentialType.REFRESH_TOKEN, query={"secret": self.frt}),
+            "The FRT should not be removed from the cache")
+
+    def test_known_orphan_app_will_skip_frt_and_only_use_its_own_rt(self):
+        app = ClientApplication(
+            "known_orphan", authority=self.authority_url, token_cache=self.cache)
+        rt = "RT for this orphan app. We will check it being used by this test case."
+        self.cache.add({  # Populate its RT and AppMetadata, so it becomes a known orphan app
+            "client_id": app.client_id,
+            "scope": self.scopes,
+            "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
+            "response": TokenCacheTestCase.build_response(
+                uid=self.uid, utid=self.utid, refresh_token=rt),
+            })
+        logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
+        def tester(url, data=None, **kwargs):
+            self.assertEqual(rt, data.get("refresh_token"), "Should attempt the RT")
+            return Mock(status_code=200, json=Mock(return_value={}))
+        app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
+            self.authority, self.scopes, self.account, post=tester)
+
+    def test_unknown_family_app_will_attempt_frt_and_join_family(self):
+        def tester(url, data=None, **kwargs):
+            self.assertEqual(
+                self.frt, data.get("refresh_token"), "Should attempt the FRT")
+            return Mock(
+                status_code=200,
+                json=Mock(return_value=TokenCacheTestCase.build_response(
+                    uid=self.uid, utid=self.utid, foci="1", access_token="at")))
+        app = ClientApplication(
+            "unknown_family_app", authority=self.authority_url, token_cache=self.cache)
+        at = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
+            self.authority, self.scopes, self.account, post=tester)
+        logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
+        self.assertEqual("at", at.get("access_token"), "New app should get a new AT")
+        app_metadata = app.token_cache.find(
+            msal.TokenCache.CredentialType.APP_METADATA,
+            query={"client_id": app.client_id})
+        self.assertNotEqual([], app_metadata, "Should record new app's metadata")
+        self.assertEqual("1", app_metadata[0].get("family_id"),
+            "The new family app should be recorded as in the same family")
+    # Known family app will simply use FRT, which is largely the same as this one
+
+    # Will not test scenario of app leaving family. Per specs, it won't happen.
+
+class TestClientApplicationForAuthorityMigration(unittest.TestCase):
+
+    @classmethod
+    def setUp(self):
+        self.environment_in_cache = "sts.windows.net"
+        self.authority_url_in_app = "https://login.microsoftonline.com/common"
+        self.scopes = ["s1", "s2"]
+        uid = "uid"
+        utid = "utid"
+        self.account = {"home_account_id": "{}.{}".format(uid, utid)}
+        self.client_id = "my_app"
+        self.access_token = "access token for testing authority aliases"
+        self.cache = msal.SerializableTokenCache()
+        self.cache.add({
+            "client_id": self.client_id,
+            "scope": self.scopes,
+            "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(
+                self.environment_in_cache),
+            "response": TokenCacheTestCase.build_response(
+                uid=uid, utid=utid,
+                access_token=self.access_token, refresh_token="some refresh token"),
+        })  # The add(...) helper populates correct home_account_id for future searching
+
+    def test_get_accounts(self):
+        app = ClientApplication(
+            self.client_id,
+            authority=self.authority_url_in_app, token_cache=self.cache)
+        accounts = app.get_accounts()
+        self.assertNotEqual([], accounts)
+        self.assertEqual(self.environment_in_cache, accounts[0].get("environment"),
+            "We should be able to find an account under an authority alias")
+
+    def test_acquire_token_silent(self):
+        app = ClientApplication(
+            self.client_id,
+            authority=self.authority_url_in_app, token_cache=self.cache)
+        at = app.acquire_token_silent(self.scopes, self.account)
+        self.assertNotEqual(None, at)
+        self.assertEqual(self.access_token, at.get('access_token'))
 

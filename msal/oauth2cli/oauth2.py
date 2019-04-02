@@ -108,6 +108,9 @@ class BaseClient(object):
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
             timeout=None,
+            post=None,  # A callable to replace requests.post(), for testing.
+                        # Such as: lambda url, **kwargs:
+                        #   Mock(status_code=200, json=Mock(return_value={}))
             **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
@@ -133,7 +136,7 @@ class BaseClient(object):
             raise ValueError("token_endpoint not found in configuration")
         _headers = {'Accept': 'application/json'}
         _headers.update(headers or {})
-        resp = self.session.post(
+        resp = (post or self.session.post)(
             self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data, auth=auth,
             timeout=timeout or self.timeout,
@@ -393,16 +396,18 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
 
     def obtain_token_by_refresh_token(self, token_item, scope=None,
             rt_getter=lambda token_item: token_item["refresh_token"],
+            on_removing_rt=None,
             **kwargs):
         # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
         """This is an "overload" which accepts a refresh token item as a dict,
         therefore this method can relay refresh_token item to event listeners.
 
-        :param refresh_token_item: A refresh token item came from storage
+        :param token_item: A refresh token item came from storage
         :param scope: If omitted, is treated as equal to the scope originally
             granted by the resource ownser,
             according to https://tools.ietf.org/html/rfc6749#section-6
         :param rt_getter: A callable used to extract the RT from token_item
+        :param on_removing_rt: If absent, fall back to the one defined in initialization
         """
         if isinstance(token_item, str):
             # Satisfy the L of SOLID, although we expect caller uses a dict
@@ -412,7 +417,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             resp = super(Client, self).obtain_token_by_refresh_token(
                     rt_getter(token_item), scope=scope, **kwargs)
             if resp.get('error') == 'invalid_grant':
-                self.on_removing_rt(token_item)  # Discard old RT
+                (on_removing_rt or self.on_removing_rt)(token_item)  # Discard old RT
             if 'refresh_token' in resp:
                 self.on_updating_rt(token_item, resp['refresh_token'])
             return resp
