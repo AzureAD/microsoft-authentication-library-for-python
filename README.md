@@ -7,8 +7,8 @@ by supporting authentication of users with
 and [Microsoft Accounts](https://account.microsoft.com) using industry standard OAuth2 and OpenID Connect.
 Soon MSAL Python will also support [Azure AD B2C](https://azure.microsoft.com/services/active-directory-b2c/).
 
-More and more detail about MSAL Python functionality and usage will be documented in the
-[Wiki](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki).
+Not sure whether this is the SDK you are looking for? There are other Microsoft Identity SDKs
+[here](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Microsoft-Authentication-Client-Libraries).
 
 ## Important Note about the MSAL Preview
 
@@ -29,7 +29,7 @@ as applications written using a preview version of library may no longer work.
    of your Python environment to a recent version. We tested with pip 18.1.
 2. As usual, just run `pip install msal`.
 
-## Usage
+## Usage and Samples
 
 Before using MSAL Python (or any MSAL SDKs, for that matter), you will have to
 [register your application with the AAD 2.0 endpoint](https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-v2-register-an-app).
@@ -86,10 +86,11 @@ Acquiring tokens with MSAL Python need to follow this 3-step pattern.
        print(result.get("correlation_id"))  # You may need this when reporting a bug
    ```
 
-That is it. There will be some variations for different flows.
+That is the high level pattern. There will be some variations for different flows. They are demonstrated in
+[samples hosted right in this repo](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample).
 
 
-## Samples and Documentation
+## Documentation
 
 The generic documents on
 [Auth Scenarios](https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-scenarios)
@@ -97,9 +98,11 @@ and
 [Auth protocols](https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-protocols)
 are recommended reading.
 
-There is also the [API reference of MSAL Python](https://msal-python.rtfd.io).
+There is the [API reference of MSAL Python](https://msal-python.rtfd.io) which documents every parameter of each public method.
 
-You can try [runnable samples in this repo](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample).
+More and more detail about MSAL Python functionality and usage will be documented in the
+[Wiki](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki).
+
 
 
 ## Versions
