@@ -77,7 +77,7 @@ Acquiring tokens with MSAL Python need to follow this 3-step pattern.
    ```python
    if not result:
        # So no suitable token exists in cache. Let's get a new one from AAD.
-       result = app.acquire_token_by_one_of_the_actual_method(..., scopes=["user.read"])
+       result = app.acquire_token_by_one_of_the_actual_method(..., scopes=["User.Read"])
    if "access_token" in result:
        print(result["access_token"])  # Yay!
    else:
