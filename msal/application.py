@@ -466,6 +466,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             self, username, password, scopes=None, **kwargs):
         """Gets a token for a given resource via user credentails.
 
+        See this page for constraints of Username Password Flow.
+        https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
+
         :param str username: Typically a UPN in the form of an email address.
         :param str password: The password.
         :param list[str] scopes:
@@ -494,6 +497,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             wstrust_endpoint = mex_send_request(
                 user_realm_result["federation_metadata_url"],
                 verify=verify, proxies=proxies)
+            if wstrust_endpoint is None:
+                raise ValueError("Unable to find wstrust endpoint from MEX. "
+                    "This typically happens when attempting MSA accounts. "
+                    "More details available here. "
+                    "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
         wstrust_result = wst_send_request(
             username, password, user_realm_result.get("cloud_audience_urn"),
