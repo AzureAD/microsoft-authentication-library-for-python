@@ -104,14 +104,7 @@ class ClientApplication(object):
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
-        self.authority_groups = self._get_authority_aliases()
-
-    def _get_authority_aliases(self):
-        resp = requests.get(
-            "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-            headers={'Accept': 'application/json'})
-        resp.raise_for_status()
-        return [set(group['aliases']) for group in resp.json()['metadata']]
+        self.authority_groups = None
 
     def _build_client(self, client_credential, authority):
         client_assertion = None
@@ -249,13 +242,10 @@ class ClientApplication(object):
         """
         accounts = self._find_msal_accounts(environment=self.authority.instance)
         if not accounts:  # Now try other aliases of this authority instance
-            for group in self.authority_groups:
-                if self.authority.instance in group:
-                    for alias in group:
-                        if alias != self.authority.instance:
-                            accounts = self._find_msal_accounts(environment=alias)
-                            if accounts:
-                                break
+            for alias in self._get_authority_aliases(self.authority.instance):
+                accounts = self._find_msal_accounts(environment=alias)
+                if accounts:
+                    break
         if username:
             # Federated account["username"] from AAD could contain mixed case
             lowercase_username = username.lower()
@@ -273,6 +263,19 @@ class ClientApplication(object):
             TokenCache.CredentialType.ACCOUNT, query={"environment": environment})
             if a["authority_type"] in (
                 TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
+
+    def _get_authority_aliases(self, instance):
+        if not self.authority_groups:
+            resp = requests.get(
+                "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
+                headers={'Accept': 'application/json'})
+            resp.raise_for_status()
+            self.authority_groups = [
+                set(group['aliases']) for group in resp.json()['metadata']]
+        for group in self.authority_groups:
+            if instance in group:
+                return [alias for alias in group if alias != instance]
+        return []
 
     def acquire_token_silent(
             self,
@@ -309,19 +312,15 @@ class ClientApplication(object):
         result = self._acquire_token_silent(scopes, account, self.authority, **kwargs)
         if result:
             return result
-        for group in self.authority_groups:
-            if self.authority.instance in group:
-                for alias in group:
-                    if alias != self.authority.instance:
-                        the_authority = Authority(
-                            "https://" + alias + "/" + self.authority.tenant,
-                            validate_authority=False,
-                            verify=self.verify, proxies=self.proxies,
-                            timeout=self.timeout,)
-                        result = self._acquire_token_silent(
-                            scopes, account, the_authority, **kwargs)
-                        if result:
-                            return result
+        for alias in self._get_authority_aliases(self.authority.instance):
+            the_authority = Authority(
+                "https://" + alias + "/" + self.authority.tenant,
+                validate_authority=False,
+                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+            result = self._acquire_token_silent(
+                scopes, account, the_authority, **kwargs)
+            if result:
+                return result
 
     def _acquire_token_silent(
             self,
