@@ -45,6 +45,8 @@ if accounts:
 
 if not result:
     logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
+    # See this page for constraints of Username Password Flow.
+    # https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
     result = app.acquire_token_by_username_password(
         config["username"], config["password"], scopes=config["scope"])
 
