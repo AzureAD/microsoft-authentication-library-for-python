@@ -115,6 +115,7 @@ class ClientApplication(object):
 
     def _build_client(self, client_credential, authority):
         client_assertion = None
+        client_assertion_type = None
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
@@ -124,6 +125,7 @@ class ClientApplication(object):
                 sha1_thumbprint=client_credential.get("thumbprint"))
             client_assertion = signer.sign_assertion(
                 audience=authority.token_endpoint, issuer=self.client_id)
+            client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
         else:
             default_body['client_secret'] = client_credential
         server_configuration = {
@@ -142,6 +144,7 @@ class ClientApplication(object):
                 },
             default_body=default_body,
             client_assertion=client_assertion,
+            client_assertion_type=client_assertion_type,
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt,
