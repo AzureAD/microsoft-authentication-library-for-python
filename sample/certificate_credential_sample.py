@@ -8,7 +8,10 @@ The configuration file would look like this:
     "thumbprint": "790E20ED5C5BF7F44..."
     "private_key_file": "filename.pem"
 }
-For mor information about generating thumbprint and private key file, refer to:
+For more information about scopes, refer:
+https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-client-creds-grant-flow#second-case-access-token-request-with-a-certificate
+
+For more information about generating thumbprint and private key file, refer:
 https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Client-credentials
 
 You can then run this sample with a JSON configuration file:
