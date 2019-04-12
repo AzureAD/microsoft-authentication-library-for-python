@@ -5,9 +5,11 @@ The configuration file would look like this:
     "authority": "https://login.microsoftonline.com/organizations",
     "client_id": "your_client_id",
     "scope": ["https://graph.microsoft.com/.default"],
-    "thumbprint": ""
-    "privateKeyFile": ""
+    "thumbprint": "790E20ED5C5BF7F44..."
+    "private_key_file": "filename.pem"
 }
+For mor information about generating thumbprint and private key file, refer to:
+https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Client-credentials
 
 You can then run this sample with a JSON configuration file:
 
@@ -24,18 +26,12 @@ import msal
 # Optional logging
 # logging.basicConfig(level=logging.DEBUG)
 
-def get_private_key(filename):
-    with open(filename, 'r') as pem_file:
-        private_pem = pem_file.read()
-    return private_pem
-
-
 config = json.load(open(sys.argv[1]))
 
 # Create a preferably long-lived app instance which maintains a token cache.
 app = msal.ConfidentialClientApplication(
     config["client_id"], authority=config["authority"],
-    client_credential={"thumbprint": config["thumbprint"], "private_key": get_private_key(config['privateKeyFile'])}
+    client_credential={"thumbprint": config["thumbprint"], "private_key": open(config['private_key_file']).read()}
     # token_cache=...  # Default cache is in memory only.
                        # You can learn how to use SerializableTokenCache from
                        # https://msal-python.rtfd.io/en/latest/#msal.SerializableTokenCache
