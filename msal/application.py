@@ -18,7 +18,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 logger = logging.getLogger(__name__)
 
@@ -104,17 +104,11 @@ class ClientApplication(object):
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
-        self.authority_groups = self._get_authority_aliases()
-
-    def _get_authority_aliases(self):
-        resp = requests.get(
-            "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-            headers={'Accept': 'application/json'})
-        resp.raise_for_status()
-        return [set(group['aliases']) for group in resp.json()['metadata']]
+        self.authority_groups = None
 
     def _build_client(self, client_credential, authority):
         client_assertion = None
+        client_assertion_type = None
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
@@ -124,6 +118,7 @@ class ClientApplication(object):
                 sha1_thumbprint=client_credential.get("thumbprint"))
             client_assertion = signer.sign_assertion(
                 audience=authority.token_endpoint, issuer=self.client_id)
+            client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
         else:
             default_body['client_secret'] = client_credential
         server_configuration = {
@@ -142,6 +137,7 @@ class ClientApplication(object):
                 },
             default_body=default_body,
             client_assertion=client_assertion,
+            client_assertion_type=client_assertion_type,
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt,
@@ -249,13 +245,10 @@ class ClientApplication(object):
         """
         accounts = self._find_msal_accounts(environment=self.authority.instance)
         if not accounts:  # Now try other aliases of this authority instance
-            for group in self.authority_groups:
-                if self.authority.instance in group:
-                    for alias in group:
-                        if alias != self.authority.instance:
-                            accounts = self._find_msal_accounts(environment=alias)
-                            if accounts:
-                                break
+            for alias in self._get_authority_aliases(self.authority.instance):
+                accounts = self._find_msal_accounts(environment=alias)
+                if accounts:
+                    break
         if username:
             # Federated account["username"] from AAD could contain mixed case
             lowercase_username = username.lower()
@@ -273,6 +266,19 @@ class ClientApplication(object):
             TokenCache.CredentialType.ACCOUNT, query={"environment": environment})
             if a["authority_type"] in (
                 TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
+
+    def _get_authority_aliases(self, instance):
+        if not self.authority_groups:
+            resp = requests.get(
+                "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
+                headers={'Accept': 'application/json'})
+            resp.raise_for_status()
+            self.authority_groups = [
+                set(group['aliases']) for group in resp.json()['metadata']]
+        for group in self.authority_groups:
+            if instance in group:
+                return [alias for alias in group if alias != instance]
+        return []
 
     def acquire_token_silent(
             self,
@@ -309,19 +315,15 @@ class ClientApplication(object):
         result = self._acquire_token_silent(scopes, account, self.authority, **kwargs)
         if result:
             return result
-        for group in self.authority_groups:
-            if self.authority.instance in group:
-                for alias in group:
-                    if alias != self.authority.instance:
-                        the_authority = Authority(
-                            "https://" + alias + "/" + self.authority.tenant,
-                            validate_authority=False,
-                            verify=self.verify, proxies=self.proxies,
-                            timeout=self.timeout,)
-                        result = self._acquire_token_silent(
-                            scopes, account, the_authority, **kwargs)
-                        if result:
-                            return result
+        for alias in self._get_authority_aliases(self.authority.instance):
+            the_authority = Authority(
+                "https://" + alias + "/" + self.authority.tenant,
+                validate_authority=False,
+                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+            result = self._acquire_token_silent(
+                scopes, account, the_authority, **kwargs)
+            if result:
+                return result
 
     def _acquire_token_silent(
             self,
@@ -466,6 +468,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             self, username, password, scopes=None, **kwargs):
         """Gets a token for a given resource via user credentails.
 
+        See this page for constraints of Username Password Flow.
+        https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
+
         :param str username: Typically a UPN in the form of an email address.
         :param str password: The password.
         :param list[str] scopes:
@@ -494,6 +499,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             wstrust_endpoint = mex_send_request(
                 user_realm_result["federation_metadata_url"],
                 verify=verify, proxies=proxies)
+            if wstrust_endpoint is None:
+                raise ValueError("Unable to find wstrust endpoint from MEX. "
+                    "This typically happens when attempting MSA accounts. "
+                    "More details available here. "
+                    "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
         wstrust_result = wst_send_request(
             username, password, user_realm_result.get("cloud_audience_urn"),

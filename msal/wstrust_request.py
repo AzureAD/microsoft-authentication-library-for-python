@@ -47,7 +47,8 @@ def send_request(
             soap_action = Mex.ACTION_2005
         elif '/trust/13/usernamemixed' in endpoint_address:
             soap_action = Mex.ACTION_13
-    assert soap_action in (Mex.ACTION_13, Mex.ACTION_2005)  # A loose check here
+    assert soap_action in (Mex.ACTION_13, Mex.ACTION_2005), (  # A loose check here
+        "Unsupported soap action: %s" % soap_action)
     data = _build_rst(
         username, password, cloud_audience_urn, endpoint_address, soap_action)
     resp = requests.post(endpoint_address, data=data, headers={
