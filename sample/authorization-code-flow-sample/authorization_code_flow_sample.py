@@ -4,7 +4,9 @@ The configuration file would look like this:
 {
     "authority": "https://login.microsoftonline.com/organizations",
     "client_id": "your_client_id",
-    "scope": ["https://graph.microsoft.com/.default"]
+    "scope": ["https://graph.microsoft.com/.default"],
+    "redirect_uri": "http://localhost:5000/getAToken",
+        // Configure this redirect uri for this sample
     "client_secret": "yoursecret"
 }
 
@@ -60,6 +62,8 @@ def login():
     return resp
 
 
+# Our configured redirect uri is http://localhost:8000/getAToken.
+# This is where it comes back after getting back auth code from AAD
 @app.route("/getAToken")
 def main_logic():
     code = flask.request.args['code']
