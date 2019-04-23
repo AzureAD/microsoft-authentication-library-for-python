@@ -71,11 +71,7 @@ def main_logic():
     if state != flask.session['state']:
         raise ValueError("State does not match")
 
-    result = application.acquire_token_silent(config["scope"], account=None)
-
-    if not result:
-        logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
-        result = application.acquire_token_by_authorization_code(code, scopes=config["scope"],
+    result = application.acquire_token_by_authorization_code(code, scopes=config["scope"],
                                                                  redirect_uri=config['redirect_uri'])
     return flask.render_template('display.html', auth_result=result)
 
