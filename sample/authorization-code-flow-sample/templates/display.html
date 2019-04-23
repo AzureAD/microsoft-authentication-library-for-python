@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Here is the data from Microsoft Graph !!</title>
+    <title>Acquire Token Result </title>
 </head>
 <body>
 <p1><b>User Data:</b> </p1>
 <table>
-{% for key, value in graph_data.items() %}
+{% for key, value in auth_result.items() %}
    <tr>
         <th> {{ key }} </th>
         <td> {{ value }} </td>

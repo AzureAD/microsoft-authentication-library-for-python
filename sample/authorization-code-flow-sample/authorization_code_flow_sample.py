@@ -73,7 +73,7 @@ def main_logic():
         logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
         result = application.acquire_token_by_authorization_code(code, scopes=config["scope"],
                                                                  redirect_uri=config['redirect_uri'])
-    return flask.render_template('display.html', graph_data=result)
+    return flask.render_template('display.html', auth_result=result)
 
 
 if __name__ == "__main__":
