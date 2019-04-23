@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Here is the data from Microsoft Graph !!</title>
+</head>
+<body>
+<p1><b>User Data:</b> </p1>
+<table>
+{% for key, value in graph_data.items() %}
+   <tr>
+        <th> {{ key }} </th>
+        <td> {{ value }} </td>
+   </tr>
+{% endfor %}
+</table>
+
+</body>
+</html>
