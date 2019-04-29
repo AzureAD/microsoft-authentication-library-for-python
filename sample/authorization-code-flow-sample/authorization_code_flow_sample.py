@@ -11,8 +11,9 @@ The configuration file would look like this:
 }
 
 You can then run this sample with a JSON configuration file:
-
     python sample.py parameters.json
+    On the browser open http://localhost:5000/
+
 """
 
 import sys  # For simplicity, we'll read config file from 1st CLI param sys.argv[1]
@@ -20,7 +21,7 @@ import json
 import logging
 import uuid
 
-import flask as flask
+import flask
 
 import msal
 
@@ -45,9 +46,8 @@ application = msal.ConfidentialClientApplication(
 
 @app.route("/")
 def main():
-    login_url = 'http://localhost:5000/login'
     resp = flask.Response(status=307)
-    resp.headers['location'] = login_url
+    resp.headers['location'] = '/login'
     return resp
 
 
@@ -62,8 +62,6 @@ def login():
     return resp
 
 
-# Our configured redirect uri is http://localhost:8000/getAToken.
-# This is where it comes back after getting back auth code from AAD
 @app.route("/getAToken")
 def main_logic():
     code = flask.request.args['code']
