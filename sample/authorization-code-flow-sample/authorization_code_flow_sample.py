@@ -7,6 +7,8 @@ The configuration file would look like this:
     "scope": ["https://graph.microsoft.com/.default"],
     "redirect_uri": "http://localhost:5000/getAToken",
         // Configure this redirect uri for this sample
+        // redirect_uri should match what you've configured in here
+        // https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-configure-app-access-web-apis#add-redirect-uris-to-your-application
     "client_secret": "yoursecret"
 }
 
