@@ -280,6 +280,37 @@ class ClientApplication(object):
                 return [alias for alias in group if alias != instance]
         return []
 
+    def sign_out(self, account):
+        """Remove all relevant RTs and ATs from token cache"""
+        owned_by_account = {
+            "environment": account["environment"],
+            "home_account_id": (account or {}).get("home_account_id"),}
+
+        owned_by_account_and_app = dict(owned_by_account, client=self.client_id)
+        for rt in self.token_cache.find(  # Remove RTs
+                TokenCache.CredentialType.REFRESH_TOKEN,
+                query=owned_by_account_and_app):
+            self.token_cache.remove_rt(rt)
+        for at in self.token_cache.find(  # Remove ATs
+                TokenCache.CredentialType.ACCESS_TOKEN,
+                query=owned_by_account_and_app):  # regardless of realm
+            self.token_cache.remove_at(at)  # TODO
+
+        app_metadata = self._get_app_metadata(account["environment"])
+        if app_metadata.get("family_id"):  # Now let's settle family business
+            for rt in self.token_cache.find(  # Remove FRTs
+                    TokenCache.CredentialType.REFRESH_TOKEN, query=dict(
+                        owned_by_account,
+                        family_id=app_metadata["family_id"])):
+                self.token_cache.remove_rt(rt)
+            for sibling_app in self.token_cache.find(  # Remove siblings' ATs
+                    TokenCache.CredentialType.APP_METADATA,
+                    query={"family_id": app_metadata.get["family_id"]}):
+                for at in self.token_cache.find(  # Remove ATs, regardless of realm
+                        TokenCache.CredentialType.ACCESS_TOKEN, query=dict(
+                            owned_by_account, client_id=sibling_app["client_id"])):
+                    self.token_cache.remove_at(at)  # TODO
+
     def acquire_token_silent(
             self,
             scopes,  # type: List[str]
@@ -364,10 +395,7 @@ class ClientApplication(object):
             "home_account_id": (account or {}).get("home_account_id"),
             # "realm": authority.tenant,  # AAD RTs are tenant-independent
             }
-        apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
-            TokenCache.CredentialType.APP_METADATA, query={
-                "environment": authority.instance, "client_id": self.client_id})
-        app_metadata = apps[0] if apps else {}
+        app_metadata = self._get_app_metadata(authority.instance)
         if not app_metadata:  # Meaning this app is now used for the first time.
             # When/if we have a way to directly detect current app's family,
             # we'll rewrite this block, to support multiple families.
@@ -395,6 +423,12 @@ class ClientApplication(object):
         # or all attempts above have failed, so we fall back to non-foci behavior.
         return self._acquire_token_silent_by_finding_specific_refresh_token(
             authority, scopes, dict(query, client_id=self.client_id), **kwargs)
+
+    def _get_app_metadata(self, environment):
+        apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
+            TokenCache.CredentialType.APP_METADATA, query={
+                "environment": environment, "client_id": self.client_id})
+        return apps[0] if apps else {}
 
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
