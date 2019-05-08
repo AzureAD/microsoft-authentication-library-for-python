@@ -280,36 +280,23 @@ class ClientApplication(object):
                 return [alias for alias in group if alias != instance]
         return []
 
-    def sign_out(self, account):
+    def remove_account(self, home_account):
         """Remove all relevant RTs and ATs from token cache"""
         owned_by_account = {
-            "environment": account["environment"],
-            "home_account_id": (account or {}).get("home_account_id"),}
-
-        owned_by_account_and_app = dict(owned_by_account, client=self.client_id)
-        for rt in self.token_cache.find(  # Remove RTs
-                TokenCache.CredentialType.REFRESH_TOKEN,
-                query=owned_by_account_and_app):
+            "environment": home_account["environment"],
+            "home_account_id": home_account["home_account_id"],}  # realm-independent
+        for rt in self.token_cache.find(  # Remove RTs, and RTs are realm-independent
+                TokenCache.CredentialType.REFRESH_TOKEN, query=owned_by_account):
             self.token_cache.remove_rt(rt)
-        for at in self.token_cache.find(  # Remove ATs
-                TokenCache.CredentialType.ACCESS_TOKEN,
-                query=owned_by_account_and_app):  # regardless of realm
-            self.token_cache.remove_at(at)  # TODO
-
-        app_metadata = self._get_app_metadata(account["environment"])
-        if app_metadata.get("family_id"):  # Now let's settle family business
-            for rt in self.token_cache.find(  # Remove FRTs
-                    TokenCache.CredentialType.REFRESH_TOKEN, query=dict(
-                        owned_by_account,
-                        family_id=app_metadata["family_id"])):
-                self.token_cache.remove_rt(rt)
-            for sibling_app in self.token_cache.find(  # Remove siblings' ATs
-                    TokenCache.CredentialType.APP_METADATA,
-                    query={"family_id": app_metadata.get["family_id"]}):
-                for at in self.token_cache.find(  # Remove ATs, regardless of realm
-                        TokenCache.CredentialType.ACCESS_TOKEN, query=dict(
-                            owned_by_account, client_id=sibling_app["client_id"])):
-                    self.token_cache.remove_at(at)  # TODO
+        for at in self.token_cache.find(  # Remove ATs, regardless of realm
+                TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_account):
+            self.token_cache.remove_at(at)
+        for idt in self.token_cache.find(  # Remove IDTs, regardless of realm
+                TokenCache.CredentialType.ID_TOKEN, query=owned_by_account):
+            self.token_cache.remove_idt(idt)
+        for a in self.token_cache.find(  # Remove Accounts, regardless of realm
+                TokenCache.CredentialType.ACCOUNT, query=owned_by_account):
+            self.token_cache.remove_account(a)
 
     def acquire_token_silent(
             self,

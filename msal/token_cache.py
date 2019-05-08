@@ -83,14 +83,9 @@ class TokenCache(object):
         with self._lock:
 
             if access_token:
-                key = "-".join([
-                    home_account_id or "",
-                    environment or "",
-                    self.CredentialType.ACCESS_TOKEN,
-                    event.get("client_id", ""),
-                    realm or "",
-		    target,
-                    ]).lower()
+                key = self._build_at_key(
+                    home_account_id, environment, event.get("client_id", ""),
+                    realm, target)
                 now = time.time() if now is None else now
                 expires_in = response.get("expires_in", 3599)
                 self._cache.setdefault(self.CredentialType.ACCESS_TOKEN, {})[key] = {
@@ -110,11 +105,7 @@ class TokenCache(object):
             if client_info:
                 decoded_id_token = json.loads(
                     base64decode(id_token.split('.')[1])) if id_token else {}
-                key = "-".join([
-                    home_account_id or "",
-                    environment or "",
-                    realm or "",
-                    ]).lower()
+                key = self._build_account_key(home_account_id, environment, realm)
                 self._cache.setdefault(self.CredentialType.ACCOUNT, {})[key] = {
                     "home_account_id": home_account_id,
                     "environment": environment,
@@ -129,14 +120,8 @@ class TokenCache(object):
                     }
 
             if id_token:
-                key = "-".join([
-                    home_account_id or "",
-                    environment or "",
-                    self.CredentialType.ID_TOKEN,
-                    event.get("client_id", ""),
-                    realm or "",
-                    ""  # Albeit irrelevant, schema requires an empty scope here
-                    ]).lower()
+                key = self._build_idt_key(
+                    home_account_id, environment, event.get("client_id", ""), realm)
                 self._cache.setdefault(self.CredentialType.ID_TOKEN, {})[key] = {
                     "credential_type": self.CredentialType.ID_TOKEN,
                     "secret": id_token,
@@ -178,7 +163,7 @@ class TokenCache(object):
     def _build_rt_key(
             cls,
             home_account_id=None, environment=None, client_id=None, target=None,
-            **ignored):
+            **ignored_payload_from_a_real_token):
         return "-".join([
             home_account_id or "",
             environment or "",
@@ -189,16 +174,72 @@ class TokenCache(object):
             ]).lower()
 
     def remove_rt(self, rt_item):
+        assert rt_item.get("credential_type") == self.CredentialType.REFRESH_TOKEN
         key = self._build_rt_key(**rt_item)
         with self._lock:
             self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {}).pop(key, None)
 
     def update_rt(self, rt_item, new_rt):
+        assert rt_item.get("credential_type") == self.CredentialType.REFRESH_TOKEN
         key = self._build_rt_key(**rt_item)
         with self._lock:
             RTs = self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})
             rt = RTs.get(key, {})  # key usually exists, but we'll survive its absence
             rt["secret"] = new_rt
+
+    @classmethod
+    def _build_at_key(cls,
+            home_account_id=None, environment=None, client_id=None,
+            realm=None, target=None, **ignored_payload_from_a_real_token):
+        return "-".join([
+            home_account_id or "",
+            environment or "",
+            cls.CredentialType.ACCESS_TOKEN,
+            client_id,
+            realm or "",
+            target or "",
+            ]).lower()
+
+    def remove_at(self, at_item):
+        assert at_item.get("credential_type") == self.CredentialType.ACCESS_TOKEN
+        key = self._build_at_key(**at_item)
+        with self._lock:
+            self._cache.setdefault(self.CredentialType.ACCESS_TOKEN, {}).pop(key, None)
+
+    @classmethod
+    def _build_idt_key(cls,
+            home_account_id=None, environment=None, client_id=None, realm=None,
+            **ignored_payload_from_a_real_token):
+        return "-".join([
+            home_account_id or "",
+            environment or "",
+            cls.CredentialType.ID_TOKEN,
+            client_id or "",
+            realm or "",
+            ""  # Albeit irrelevant, schema requires an empty scope here
+            ]).lower()
+
+    def remove_idt(self, idt_item):
+        assert idt_item.get("credential_type") == self.CredentialType.ID_TOKEN
+        key = self._build_idt_key(**idt_item)
+        with self._lock:
+            self._cache.setdefault(self.CredentialType.ID_TOKEN, {}).pop(key, None)
+
+    @classmethod
+    def _build_account_key(cls,
+            home_account_id=None, environment=None, realm=None,
+            **ignored_payload_from_a_real_entry):
+        return "-".join([
+            home_account_id or "",
+            environment or "",
+            realm or "",
+            ]).lower()
+
+    def remove_account(self, account_item):
+        assert "authority_type" in account_item
+        key = self._build_account_key(**account_item)
+        with self._lock:
+            self._cache.setdefault(self.CredentialType.ACCOUNT, {}).pop(key, None)
 
 
 class SerializableTokenCache(TokenCache):
