@@ -179,6 +179,8 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             "scope": self.scopes,
             "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
             "response": TokenCacheTestCase.build_response(
+                access_token="Siblings won't share AT. test_remove_account() will.",
+                id_token=TokenCacheTestCase.build_id_token(),
                 uid=self.uid, utid=self.utid, refresh_token=self.frt, foci="1"),
             })  # The add(...) helper populates correct home_account_id for future searching
 
@@ -238,6 +240,34 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
     # Known family app will simply use FRT, which is largely the same as this one
 
     # Will not test scenario of app leaving family. Per specs, it won't happen.
+
+    def test_get_remove_account(self):
+        logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
+        app = ClientApplication(
+            "family_app_2", authority=self.authority_url, token_cache=self.cache)
+        account = app.get_accounts()[0]
+        mine = {"home_account_id": account["home_account_id"]}
+
+        self.assertNotEqual([], self.cache.find(
+            self.cache.CredentialType.ACCESS_TOKEN, query=mine))
+        self.assertNotEqual([], self.cache.find(
+            self.cache.CredentialType.REFRESH_TOKEN, query=mine))
+        self.assertNotEqual([], self.cache.find(
+            self.cache.CredentialType.ID_TOKEN, query=mine))
+        self.assertNotEqual([], self.cache.find(
+            self.cache.CredentialType.ACCOUNT, query=mine))
+
+        app.remove_account(account)
+
+        self.assertEqual([], self.cache.find(
+            self.cache.CredentialType.ACCESS_TOKEN, query=mine))
+        self.assertEqual([], self.cache.find(
+            self.cache.CredentialType.REFRESH_TOKEN, query=mine))
+        self.assertEqual([], self.cache.find(
+            self.cache.CredentialType.ID_TOKEN, query=mine))
+        self.assertEqual([], self.cache.find(
+            self.cache.CredentialType.ACCOUNT, query=mine))
+
 
 class TestClientApplicationForAuthorityMigration(unittest.TestCase):
 
