@@ -174,8 +174,9 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         self.account = {"home_account_id": "{}.{}".format(self.uid, self.utid)}
         self.frt = "what the frt"
         self.cache = msal.SerializableTokenCache()
+        self.preexisting_family_app_id = "preexisting_family_app"
         self.cache.add({  # Pre-populate a FRT
-            "client_id": "preexisting_family_app",
+            "client_id": self.preexisting_family_app_id,
             "scope": self.scopes,
             "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
             "response": TokenCacheTestCase.build_response(
@@ -241,10 +242,11 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     # Will not test scenario of app leaving family. Per specs, it won't happen.
 
-    def test_get_remove_account(self):
+    def test_family_app_remove_account(self):
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         app = ClientApplication(
-            "family_app_2", authority=self.authority_url, token_cache=self.cache)
+            self.preexisting_family_app_id,
+            authority=self.authority_url, token_cache=self.cache)
         account = app.get_accounts()[0]
         mine = {"home_account_id": account["home_account_id"]}
 
