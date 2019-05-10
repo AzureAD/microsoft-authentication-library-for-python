@@ -280,22 +280,47 @@ class ClientApplication(object):
                 return [alias for alias in group if alias != instance]
         return []
 
-    def remove_account(self, home_account):
-        """Remove all relevant RTs and ATs from token cache"""
-        owned_by_account = {
+    def remove_account(self, account):
+        """Sign me out and forget me from token cache"""
+        self._forget_me(account)
+
+    def _sign_out(self, home_account):
+        # Remove all relevant RTs and ATs from token cache
+        owned_by_home_account = {
             "environment": home_account["environment"],
             "home_account_id": home_account["home_account_id"],}  # realm-independent
-        for rt in self.token_cache.find(  # Remove RTs, and RTs are realm-independent
-                TokenCache.CredentialType.REFRESH_TOKEN, query=owned_by_account):
+        app_metadata = self._get_app_metadata(home_account["environment"])
+        # Remove RTs/FRTs, and they are realm-independent
+        for rt in [rt for rt in self.token_cache.find(
+                TokenCache.CredentialType.REFRESH_TOKEN, query=owned_by_home_account)
+                # Do RT's app ownership check as a precaution, in case family apps
+                # and 3rd-party apps share same token cache, although they should not.
+                if rt["client_id"] == self.client_id or (
+                    app_metadata.get("family_id")  # Now let's settle family business
+                    and rt.get("family_id") == app_metadata["family_id"])
+                ]:
             self.token_cache.remove_rt(rt)
-        for at in self.token_cache.find(  # Remove ATs, regardless of realm
-                TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_account):
+        for at in self.token_cache.find(  # Remove ATs
+                # Regardless of realm, b/c we've removed realm-independent RTs anyway
+                TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_home_account):
+            # To avoid the complexity of locating sibling family app's AT,
+            # we skip AT's app ownership check.
+            # It means ATs for other apps will also be removed, it is OK because:
+            # * non-family apps are not supposed to share token cache to begin with;
+            # * Even if it happens, we keep other app's RT already, so SSO still works
             self.token_cache.remove_at(at)
+
+    def _forget_me(self, home_account):
+        # It implies signout, and then also remove all relevant accounts and IDTs
+        self._sign_out(home_account)
+        owned_by_home_account = {
+            "environment": home_account["environment"],
+            "home_account_id": home_account["home_account_id"],}  # realm-independent
         for idt in self.token_cache.find(  # Remove IDTs, regardless of realm
-                TokenCache.CredentialType.ID_TOKEN, query=owned_by_account):
+                TokenCache.CredentialType.ID_TOKEN, query=owned_by_home_account):
             self.token_cache.remove_idt(idt)
         for a in self.token_cache.find(  # Remove Accounts, regardless of realm
-                TokenCache.CredentialType.ACCOUNT, query=owned_by_account):
+                TokenCache.CredentialType.ACCOUNT, query=owned_by_home_account):
             self.token_cache.remove_account(a)
 
     def acquire_token_silent(
