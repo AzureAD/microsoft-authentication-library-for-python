@@ -39,6 +39,12 @@ class TokenCache(object):
     def __init__(self):
         self._lock = threading.RLock()
         self._cache = {}
+        self.key_makers = {
+            self.CredentialType.REFRESH_TOKEN: self._build_rt_key,
+            self.CredentialType.ACCESS_TOKEN: self._build_at_key,
+            self.CredentialType.ID_TOKEN: self._build_idt_key,
+            self.CredentialType.ACCOUNT: self._build_account_key,
+            }
 
     def find(self, credential_type, target=None, query=None):
         target = target or []
@@ -155,6 +161,24 @@ class TokenCache(object):
                 "family_id": response.get("foci"),  # None is also valid
                 }
 
+    def modify(self, credential_type, old_entry, new_key_value_pairs=None):
+        # Modify the specified old_entry with new_key_value_pairs,
+        # or remove the old_entry if the new_key_value_pairs is None.
+
+        # This helper exists to consolidate all token modify/remove behaviors,
+        # so that the sub-classes will have only one method to work on,
+        # instead of patching a pair of update_xx() and remove_xx() per type.
+        # You can monkeypatch self.key_makers to support more types on-the-fly.
+        key = self.key_makers[credential_type](**old_entry)
+        with self._lock:
+            if new_key_value_pairs:  # Update with them
+                entries = self._cache.setdefault(credential_type, {})
+                entry = entries.get(key, {})  # key usually exists, but we'll survive its absence
+                entry.update(new_key_value_pairs)
+            else:  # Remove old_entry
+                self._cache.setdefault(credential_type, {}).pop(key, None)
+
+
     @staticmethod
     def _build_appmetadata_key(environment, client_id):
         return "appmetadata-{}-{}".format(environment or "", client_id or "")
@@ -175,17 +199,12 @@ class TokenCache(object):
 
     def remove_rt(self, rt_item):
         assert rt_item.get("credential_type") == self.CredentialType.REFRESH_TOKEN
-        key = self._build_rt_key(**rt_item)
-        with self._lock:
-            self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {}).pop(key, None)
+        return self.modify(self.CredentialType.REFRESH_TOKEN, rt_item)
 
     def update_rt(self, rt_item, new_rt):
         assert rt_item.get("credential_type") == self.CredentialType.REFRESH_TOKEN
-        key = self._build_rt_key(**rt_item)
-        with self._lock:
-            RTs = self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})
-            rt = RTs.get(key, {})  # key usually exists, but we'll survive its absence
-            rt["secret"] = new_rt
+        return self.modify(
+            self.CredentialType.REFRESH_TOKEN, rt_item, {"secret": new_rt})
 
     @classmethod
     def _build_at_key(cls,
@@ -202,9 +221,7 @@ class TokenCache(object):
 
     def remove_at(self, at_item):
         assert at_item.get("credential_type") == self.CredentialType.ACCESS_TOKEN
-        key = self._build_at_key(**at_item)
-        with self._lock:
-            self._cache.setdefault(self.CredentialType.ACCESS_TOKEN, {}).pop(key, None)
+        return self.modify(self.CredentialType.ACCESS_TOKEN, at_item)
 
     @classmethod
     def _build_idt_key(cls,
@@ -221,9 +238,7 @@ class TokenCache(object):
 
     def remove_idt(self, idt_item):
         assert idt_item.get("credential_type") == self.CredentialType.ID_TOKEN
-        key = self._build_idt_key(**idt_item)
-        with self._lock:
-            self._cache.setdefault(self.CredentialType.ID_TOKEN, {}).pop(key, None)
+        return self.modify(self.CredentialType.ID_TOKEN, idt_item)
 
     @classmethod
     def _build_account_key(cls,
@@ -237,9 +252,7 @@ class TokenCache(object):
 
     def remove_account(self, account_item):
         assert "authority_type" in account_item
-        key = self._build_account_key(**account_item)
-        with self._lock:
-            self._cache.setdefault(self.CredentialType.ACCOUNT, {}).pop(key, None)
+        return self.modify(self.CredentialType.ACCOUNT, account_item)
 
 
 class SerializableTokenCache(TokenCache):
@@ -262,7 +275,7 @@ class SerializableTokenCache(TokenCache):
         ...
 
     :var bool has_state_changed:
-        Indicates whether the cache state has changed since last
+        Indicates whether the cache state in the memory has changed since last
         :func:`~serialize` or :func:`~deserialize` call.
     """
     has_state_changed = False
@@ -271,12 +284,9 @@ class SerializableTokenCache(TokenCache):
         super(SerializableTokenCache, self).add(event, **kwargs)
         self.has_state_changed = True
 
-    def remove_rt(self, rt_item):
-        super(SerializableTokenCache, self).remove_rt(rt_item)
-        self.has_state_changed = True
-
-    def update_rt(self, rt_item, new_rt):
-        super(SerializableTokenCache, self).update_rt(rt_item, new_rt)
+    def modify(self, credential_type, old_entry, new_key_value_pairs=None):
+        super(SerializableTokenCache, self).modify(
+            credential_type, old_entry, new_key_value_pairs)
         self.has_state_changed = True
 
     def deserialize(self, state):
