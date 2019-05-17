@@ -259,7 +259,7 @@ class SerializableTokenCache(TokenCache):
     """This serialization can be a starting point to implement your own persistence.
 
     This class does NOT actually persist the cache on disk/db/etc..
-    Depending on your need,
+    If your app would not share token cache file with other apps during runtime,
     the following simple recipe for file-based persistence may be sufficient::
 
         import os, atexit, msal
@@ -269,37 +269,38 @@ class SerializableTokenCache(TokenCache):
         atexit.register(lambda:
             open("my_cache.bin", "w").write(cache.serialize())
             # Hint: The following optional line persists only when state changed
-            if cache.has_state_changed else None
+            if cache.has_memory_state_changed else None
             )
         app = msal.ClientApplication(..., token_cache=cache)
         ...
 
-    :var bool has_state_changed:
+    :var bool has_memory_state_changed:
         Indicates whether the cache state in the memory has changed since last
         :func:`~serialize` or :func:`~deserialize` call.
     """
-    has_state_changed = False
+    has_state_changed = False  # Obsolete. For backward compatibility only.
+    has_memory_state_changed = False
 
     def add(self, event, **kwargs):
         super(SerializableTokenCache, self).add(event, **kwargs)
-        self.has_state_changed = True
+        self.has_state_changed = self.has_memory_state_changed = True
 
     def modify(self, credential_type, old_entry, new_key_value_pairs=None):
         super(SerializableTokenCache, self).modify(
             credential_type, old_entry, new_key_value_pairs)
-        self.has_state_changed = True
+        self.has_state_changed = self.has_memory_state_changed = True
 
     def deserialize(self, state):
         # type: (Optional[str]) -> None
         """Deserialize the cache from a state previously obtained by serialize()"""
         with self._lock:
             self._cache = json.loads(state) if state else {}
-            self.has_state_changed = False  # reset
+            self.has_state_changed = self.has_memory_state_changed = False  # reset
 
     def serialize(self):
         # type: () -> str
         """Serialize the current cache state into a string."""
         with self._lock:
-            self.has_state_changed = False
+            self.has_state_changed = self.has_memory_state_changed = False
             return json.dumps(self._cache, indent=4)
 
