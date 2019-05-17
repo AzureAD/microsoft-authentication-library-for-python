@@ -142,11 +142,13 @@ class SerializableTokenCacheTestCase(TokenCacheTestCase):
             }
             """)
 
-    def test_has_state_changed(self):
+    def test_has_memory_state_changed(self):
         cache = SerializableTokenCache()
-        self.assertFalse(cache.has_state_changed)
+        self.assertFalse(cache.has_memory_state_changed)
+        self.assertFalse(cache.has_state_changed)  # For backward compatibility
         cache.add({})  # An NO-OP add() still counts as a state change. Good enough.
-        self.assertTrue(cache.has_state_changed)
+        self.assertTrue(cache.has_memory_state_changed)
+        self.assertTrue(cache.has_state_changed)  # For backward compatibility
 
     def tearDown(self):
         state = self.cache.serialize()
