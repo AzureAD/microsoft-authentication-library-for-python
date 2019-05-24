@@ -65,7 +65,7 @@ class Authority(object):
 
 def canonicalize(url):
     # Returns (canonicalized_url, netloc, tenant). Raises ValueError on errors.
-    match_object = re.match(r'https://([^/]+)/([^/?#\\]+)', url.lower())
+    match_object = re.match(r'https://([^/]+)/([^/?#]+)', url.lower())
     if not match_object:
         raise ValueError(
             "Your given address (%s) should consist of "
