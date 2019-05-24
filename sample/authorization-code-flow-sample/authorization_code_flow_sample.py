@@ -29,7 +29,7 @@ import msal
 
 app = flask.Flask(__name__)
 app.debug = True
-app.secret_key = 'development'
+app.secret_key = sys.argv[2]  # In this demo, we expect a secret from 2nd CLI param
 
 
 # Optional logging
