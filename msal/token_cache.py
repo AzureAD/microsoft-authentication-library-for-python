@@ -69,7 +69,10 @@ class TokenCache(object):
             if sensitive in event.get("data", {}):
                 # Hide them from accidental exposure in logging
                 event["data"][sensitive] = "********"
-        logger.debug("event=%s", json.dumps(event, indent=4, sort_keys=True,
+        logger.debug("event=%s", json.dumps(
+            # We examined and concluded that this log won't have Log Injection risk,
+            # because the event payload is already in JSON so CR/LF will be escaped.
+            event, indent=4, sort_keys=True,
             default=str,  # A workaround when assertion is in bytes in Python 3
             ))
         response = event.get("response", {})
