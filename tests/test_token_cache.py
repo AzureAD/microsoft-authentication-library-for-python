@@ -119,7 +119,6 @@ class TokenCacheTestCase(unittest.TestCase):
             {
                 "client_id": "my_client_id",
                 'environment': 'login.example.com',
-                "family_id": None,
             },
             self.cache._cache.get("AppMetadata", {}).get(
                 "appmetadata-login.example.com-my_client_id")
