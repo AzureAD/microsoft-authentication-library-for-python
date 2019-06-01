@@ -158,11 +158,13 @@ class TokenCache(object):
                 self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key] = rt
 
             key = self._build_appmetadata_key(environment, event.get("client_id"))
-            self._cache.setdefault(self.CredentialType.APP_METADATA, {})[key] = {
+            app_metadata = {
                 "client_id": event.get("client_id"),
                 "environment": environment,
-                "family_id": response.get("foci"),  # None is also valid
                 }
+            if "foci" in response:
+                app_metadata["family_id"] = response.get("foci")
+            self._cache.setdefault(self.CredentialType.APP_METADATA, {})[key] = app_metadata
 
     def modify(self, credential_type, old_entry, new_key_value_pairs=None):
         # Modify the specified old_entry with new_key_value_pairs,
