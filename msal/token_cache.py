@@ -2,19 +2,15 @@
 import threading
 import time
 import logging
-import base64
 
 from .authority import canonicalize
+from .oauth2cli.oidc import base64decode, decode_id_token
 
 
 logger = logging.getLogger(__name__)
 
 def is_subdict_of(small, big):
     return dict(big, **small) == big
-
-def base64decode(raw):  # This can handle a padding-less raw input
-    raw += '=' * (-len(raw) % 4)  # https://stackoverflow.com/a/32517907/728675
-    return base64.b64decode(raw).decode("utf-8")
 
 
 class TokenCache(object):
@@ -112,8 +108,8 @@ class TokenCache(object):
                     }
 
             if client_info:
-                decoded_id_token = json.loads(
-                    base64decode(id_token.split('.')[1])) if id_token else {}
+                decoded_id_token = decode_id_token(
+                    id_token, client_id=event["client_id"]) if id_token else {}
                 key = self._build_account_key(home_account_id, environment, realm)
                 self._cache.setdefault(self.CredentialType.ACCOUNT, {})[key] = {
                     "home_account_id": home_account_id,

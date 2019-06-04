@@ -181,7 +181,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
             "response": TokenCacheTestCase.build_response(
                 access_token="Siblings won't share AT. test_remove_account() will.",
-                id_token=TokenCacheTestCase.build_id_token(),
+                id_token=TokenCacheTestCase.build_id_token(aud=self.preexisting_family_app_id),
                 uid=self.uid, utid=self.utid, refresh_token=self.frt, foci="1"),
             })  # The add(...) helper populates correct home_account_id for future searching
 
