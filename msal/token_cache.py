@@ -36,10 +36,50 @@ class TokenCache(object):
         self._lock = threading.RLock()
         self._cache = {}
         self.key_makers = {
-            self.CredentialType.REFRESH_TOKEN: self._build_rt_key,
-            self.CredentialType.ACCESS_TOKEN: self._build_at_key,
-            self.CredentialType.ID_TOKEN: self._build_idt_key,
-            self.CredentialType.ACCOUNT: self._build_account_key,
+            self.CredentialType.REFRESH_TOKEN:
+                lambda home_account_id=None, environment=None, client_id=None,
+                        target=None, **ignored_payload_from_a_real_token:
+                    "-".join([
+                        home_account_id or "",
+                        environment or "",
+                        self.CredentialType.REFRESH_TOKEN,
+                        client_id or "",
+                        "",  # RT is cross-tenant in AAD
+                        target or "",  # raw value could be None if deserialized from other SDK
+                        ]).lower(),
+            self.CredentialType.ACCESS_TOKEN:
+                lambda home_account_id=None, environment=None, client_id=None,
+                        realm=None, target=None, **ignored_payload_from_a_real_token:
+                    "-".join([
+                        home_account_id or "",
+                        environment or "",
+                        self.CredentialType.ACCESS_TOKEN,
+                        client_id,
+                        realm or "",
+                        target or "",
+                        ]).lower(),
+            self.CredentialType.ID_TOKEN:
+                lambda home_account_id=None, environment=None, client_id=None,
+                        realm=None, **ignored_payload_from_a_real_token:
+                    "-".join([
+                        home_account_id or "",
+                        environment or "",
+                        self.CredentialType.ID_TOKEN,
+                        client_id or "",
+                        realm or "",
+                        ""  # Albeit irrelevant, schema requires an empty scope here
+                        ]).lower(),
+            self.CredentialType.ACCOUNT:
+                lambda home_account_id=None, environment=None, realm=None,
+                        **ignored_payload_from_a_real_entry:
+                    "-".join([
+                        home_account_id or "",
+                        environment or "",
+                        realm or "",
+                        ]).lower(),
+            self.CredentialType.APP_METADATA:
+                lambda environment=None, client_id=None, **kwargs:
+                    "appmetadata-{}-{}".format(environment or "", client_id or ""),
             }
 
     def find(self, credential_type, target=None, query=None):
@@ -88,12 +128,9 @@ class TokenCache(object):
         with self._lock:
 
             if access_token:
-                key = self._build_at_key(
-                    home_account_id, environment, event.get("client_id", ""),
-                    realm, target)
                 now = time.time() if now is None else now
                 expires_in = response.get("expires_in", 3599)
-                self._cache.setdefault(self.CredentialType.ACCESS_TOKEN, {})[key] = {
+                at = {
                     "credential_type": self.CredentialType.ACCESS_TOKEN,
                     "secret": access_token,
                     "home_account_id": home_account_id,
@@ -106,12 +143,12 @@ class TokenCache(object):
                     "extended_expires_on": str(int(  # Same here
                         now + response.get("ext_expires_in", expires_in))),
                     }
+                self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
             if client_info:
                 decoded_id_token = decode_id_token(
                     id_token, client_id=event["client_id"]) if id_token else {}
-                key = self._build_account_key(home_account_id, environment, realm)
-                self._cache.setdefault(self.CredentialType.ACCOUNT, {})[key] = {
+                account = {
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "realm": realm,
@@ -123,11 +160,10 @@ class TokenCache(object):
                         else self.AuthorityType.MSSTS,
                     # "client_info": response.get("client_info"),  # Optional
                     }
+                self.modify(self.CredentialType.ACCOUNT, account, account)
 
             if id_token:
-                key = self._build_idt_key(
-                    home_account_id, environment, event.get("client_id", ""), realm)
-                self._cache.setdefault(self.CredentialType.ID_TOKEN, {})[key] = {
+                idt = {
                     "credential_type": self.CredentialType.ID_TOKEN,
                     "secret": id_token,
                     "home_account_id": home_account_id,
@@ -136,11 +172,9 @@ class TokenCache(object):
                     "client_id": event.get("client_id"),
                     # "authority": "it is optional",
                     }
+                self.modify(self.CredentialType.ID_TOKEN, idt, idt)
 
             if refresh_token:
-                key = self._build_rt_key(
-                    home_account_id, environment,
-                    event.get("client_id", ""), target)
                 rt = {
                     "credential_type": self.CredentialType.REFRESH_TOKEN,
                     "secret": refresh_token,
@@ -151,22 +185,21 @@ class TokenCache(object):
                     }
                 if "foci" in response:
                     rt["family_id"] = response["foci"]
-                self._cache.setdefault(self.CredentialType.REFRESH_TOKEN, {})[key] = rt
+                self.modify(self.CredentialType.REFRESH_TOKEN, rt, rt)
 
-            key = self._build_appmetadata_key(environment, event.get("client_id"))
             app_metadata = {
                 "client_id": event.get("client_id"),
                 "environment": environment,
                 }
             if "foci" in response:
                 app_metadata["family_id"] = response.get("foci")
-            self._cache.setdefault(self.CredentialType.APP_METADATA, {})[key] = app_metadata
+            self.modify(self.CredentialType.APP_METADATA, app_metadata, app_metadata)
 
     def modify(self, credential_type, old_entry, new_key_value_pairs=None):
         # Modify the specified old_entry with new_key_value_pairs,
         # or remove the old_entry if the new_key_value_pairs is None.
 
-        # This helper exists to consolidate all token modify/remove behaviors,
+        # This helper exists to consolidate all token add/modify/remove behaviors,
         # so that the sub-classes will have only one method to work on,
         # instead of patching a pair of update_xx() and remove_xx() per type.
         # You can monkeypatch self.key_makers to support more types on-the-fly.
@@ -174,29 +207,10 @@ class TokenCache(object):
         with self._lock:
             if new_key_value_pairs:  # Update with them
                 entries = self._cache.setdefault(credential_type, {})
-                entry = entries.get(key, {})  # key usually exists, but we'll survive its absence
+                entry = entries.setdefault(key, {})  # Create it if not yet exist
                 entry.update(new_key_value_pairs)
             else:  # Remove old_entry
                 self._cache.setdefault(credential_type, {}).pop(key, None)
-
-
-    @staticmethod
-    def _build_appmetadata_key(environment, client_id):
-        return "appmetadata-{}-{}".format(environment or "", client_id or "")
-
-    @classmethod
-    def _build_rt_key(
-            cls,
-            home_account_id=None, environment=None, client_id=None, target=None,
-            **ignored_payload_from_a_real_token):
-        return "-".join([
-            home_account_id or "",
-            environment or "",
-            cls.CredentialType.REFRESH_TOKEN,
-            client_id or "",
-            "",  # RT is cross-tenant in AAD
-	    target or "",  # raw value could be None if deserialized from other SDK
-            ]).lower()
 
     def remove_rt(self, rt_item):
         assert rt_item.get("credential_type") == self.CredentialType.REFRESH_TOKEN
@@ -207,49 +221,13 @@ class TokenCache(object):
         return self.modify(
             self.CredentialType.REFRESH_TOKEN, rt_item, {"secret": new_rt})
 
-    @classmethod
-    def _build_at_key(cls,
-            home_account_id=None, environment=None, client_id=None,
-            realm=None, target=None, **ignored_payload_from_a_real_token):
-        return "-".join([
-            home_account_id or "",
-            environment or "",
-            cls.CredentialType.ACCESS_TOKEN,
-            client_id,
-            realm or "",
-            target or "",
-            ]).lower()
-
     def remove_at(self, at_item):
         assert at_item.get("credential_type") == self.CredentialType.ACCESS_TOKEN
         return self.modify(self.CredentialType.ACCESS_TOKEN, at_item)
 
-    @classmethod
-    def _build_idt_key(cls,
-            home_account_id=None, environment=None, client_id=None, realm=None,
-            **ignored_payload_from_a_real_token):
-        return "-".join([
-            home_account_id or "",
-            environment or "",
-            cls.CredentialType.ID_TOKEN,
-            client_id or "",
-            realm or "",
-            ""  # Albeit irrelevant, schema requires an empty scope here
-            ]).lower()
-
     def remove_idt(self, idt_item):
         assert idt_item.get("credential_type") == self.CredentialType.ID_TOKEN
         return self.modify(self.CredentialType.ID_TOKEN, idt_item)
-
-    @classmethod
-    def _build_account_key(cls,
-            home_account_id=None, environment=None, realm=None,
-            **ignored_payload_from_a_real_entry):
-        return "-".join([
-            home_account_id or "",
-            environment or "",
-            realm or "",
-            ]).lower()
 
     def remove_account(self, account_item):
         assert "authority_type" in account_item
