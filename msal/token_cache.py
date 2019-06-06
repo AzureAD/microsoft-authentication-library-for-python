@@ -1,4 +1,4 @@
-import json
+﻿import json
 import threading
 import time
 import logging
@@ -54,7 +54,7 @@ class TokenCache(object):
                         home_account_id or "",
                         environment or "",
                         self.CredentialType.ACCESS_TOKEN,
-                        client_id,
+                        client_id or "",
                         realm or "",
                         target or "",
                         ]).lower(),
