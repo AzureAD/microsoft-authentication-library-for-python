@@ -128,9 +128,11 @@ class TokenCache(object):
         with self._lock:
 
             if access_token:
-                now = int(time.time()) if now is None else int(now)
-                expires_in = int(response.get("expires_in", 3599))
-                ext_expires_in = int(response.get("ext_expires_in", expires_in))
+                now = int(time.time() if now is None else now)
+                expires_in = int(  # AADv1-like endpoint returns a string
+			response.get("expires_in", 3599))
+                ext_expires_in = int(  # AADv1-like endpoint returns a string
+			response.get("ext_expires_in", expires_in))
                 at = {
                     "credential_type": self.CredentialType.ACCESS_TOKEN,
                     "secret": access_token,
