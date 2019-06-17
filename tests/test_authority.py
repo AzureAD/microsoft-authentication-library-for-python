@@ -4,24 +4,16 @@ from tests import unittest
 
 
 class TestAuthority(unittest.TestCase):
-    COMMON_AUTH_ENDPOINT = \
-        'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
-    COMMON_TOKEN_ENDPOINT = \
-        'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 
     def test_wellknown_host_and_tenant(self):
-        # Test one specific sample in straightforward way, for readability
-        a = Authority('https://login.microsoftonline.com/common')
-        self.assertEqual(a.authorization_endpoint, self.COMMON_AUTH_ENDPOINT)
-        self.assertEqual(a.token_endpoint, self.COMMON_TOKEN_ENDPOINT)
-
-        # Test all well known authority hosts, using same real "common" tenant
+        # Assert all well known authority hosts are using their own "common" tenant
         for host in WELL_KNOWN_AUTHORITY_HOSTS:
             a = Authority('https://{}/common'.format(host))
-            # Note: this "common" tenant endpoints always point to its real host
             self.assertEqual(
-                a.authorization_endpoint, self.COMMON_AUTH_ENDPOINT)
-            self.assertEqual(a.token_endpoint, self.COMMON_TOKEN_ENDPOINT)
+                a.authorization_endpoint,
+                'https://%s/common/oauth2/v2.0/authorize' % host)
+            self.assertEqual(
+                a.token_endpoint, 'https://%s/common/oauth2/v2.0/token' % host)
 
     @unittest.skip("As of Jan 2017, the server no longer returns V1 endpoint")
     def test_lessknown_host_will_return_a_set_of_v1_endpoints(self):
@@ -33,20 +25,12 @@ class TestAuthority(unittest.TestCase):
         self.assertEqual(a.token_endpoint, v1_token_endpoint)
         self.assertNotIn('v2.0', a.token_endpoint)
 
-    def test_unknown_host(self):
+    def test_unknown_host_wont_pass_instance_discovery(self):
         with self.assertRaisesRegexp(MsalServiceError, "invalid_instance"):
             Authority('https://unknown.host/tenant_doesnt_matter_in_this_case')
 
-    def test_unknown_host_valid_tenant_and_skip_host_validation(self):
-        # When skipping host (a.k.a. instance) validation,
-        # the Tenant Discovery will always use WORLD_WIDE service as instance,
-        # so, if the tenant happens to exist there, it will find some endpoints.
-        a = Authority('https://incorrect.host/common', validate_authority=False)
-        self.assertEqual(a.authorization_endpoint, self.COMMON_AUTH_ENDPOINT)
-        self.assertEqual(a.token_endpoint, self.COMMON_TOKEN_ENDPOINT)
-
-    def test_unknown_host_unknown_tenant_and_skip_host_validation(self):
-        with self.assertRaisesRegexp(MsalServiceError, "invalid_tenant"):
+    def test_invalid_host_skipping_validation_meets_connection_error_down_the_road(self):
+        with self.assertRaises(requests.exceptions.RequestException):
             Authority('https://unknown.host/invalid', validate_authority=False)
 
 
