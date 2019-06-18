@@ -1,10 +1,12 @@
 import re
+import logging
 
 import requests
 
 from .exceptions import MsalServiceError
 
 
+logger = logging.getLogger(__name__)
 WORLD_WIDE = 'login.microsoftonline.com'  # There was an alias login.windows.net
 WELL_KNOWN_AUTHORITY_HOSTS = set([
     WORLD_WIDE,
@@ -38,7 +40,7 @@ class Authority(object):
         canonicalized, self.instance, tenant = canonicalize(authority_url)
         tenant_discovery_endpoint = (  # Hard code a V2 pattern as default value
             'https://{}/{}/v2.0/.well-known/openid-configuration'
-            .format(WORLD_WIDE, tenant))
+            .format(self.instance, tenant))
         if validate_authority and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS:
             tenant_discovery_endpoint = instance_discovery(
                 canonicalized + "/oauth2/v2.0/authorize",
@@ -46,6 +48,7 @@ class Authority(object):
         openid_config = tenant_discovery(
             tenant_discovery_endpoint,
             verify=verify, proxies=proxies, timeout=timeout)
+        logger.debug("openid_config = %s", openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
@@ -65,7 +68,7 @@ class Authority(object):
 
 def canonicalize(url):
     # Returns (canonicalized_url, netloc, tenant). Raises ValueError on errors.
-    match_object = re.match("https://([^/]+)/([^/\?#]+)", url.lower())
+    match_object = re.match(r'https://([^/]+)/([^/?#]+)', url.lower())
     if not match_object:
         raise ValueError(
             "Your given address (%s) should consist of "
@@ -76,7 +79,11 @@ def canonicalize(url):
 def instance_discovery(url, response=None, **kwargs):
     # Returns tenant discovery endpoint
     resp = requests.get(  # Note: This URL seemingly returns V1 endpoint only
-        'https://{}/common/discovery/instance'.format(WORLD_WIDE),
+        'https://{}/common/discovery/instance'.format(
+            WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
+                # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
+                # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
+            ),
         params={'authorization_endpoint': url, 'api-version': '1.0'},
         **kwargs)
     payload = response or resp.json()

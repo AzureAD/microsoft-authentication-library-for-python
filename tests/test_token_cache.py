@@ -1,6 +1,7 @@
 import logging
 import base64
 import json
+import time
 
 from msal.token_cache import *
 from tests import unittest
@@ -13,12 +14,17 @@ logging.basicConfig(level=logging.DEBUG)
 class TokenCacheTestCase(unittest.TestCase):
 
     @staticmethod
-    def build_id_token(sub="sub", oid="oid", preferred_username="me", **kwargs):
+    def build_id_token(
+            iss="issuer", sub="subject", aud="my_client_id", exp=None, iat=None,
+            preferred_username="me", **claims):
         return "header.%s.signature" % base64.b64encode(json.dumps(dict({
+            "iss": iss,
             "sub": sub,
-            "oid": oid,
+            "aud": aud,
+            "exp": exp or (time.time() + 100),
+            "iat": iat or time.time(),
             "preferred_username": preferred_username,
-            }, **kwargs)).encode()).decode('utf-8')
+            }, **claims)).encode()).decode('utf-8')
 
     @staticmethod
     def build_response(  # simulate a response from AAD
@@ -54,9 +60,11 @@ class TokenCacheTestCase(unittest.TestCase):
         self.cache = TokenCache()
 
     def testAdd(self):
-        id_token = self.build_id_token(oid="object1234", preferred_username="John Doe")
+        client_id = "my_client_id"
+        id_token = self.build_id_token(
+            oid="object1234", preferred_username="John Doe", aud=client_id)
         self.cache.add({
-            "client_id": "my_client_id",
+            "client_id": client_id,
             "scope": ["s2", "s1", "s3"],  # Not in particular order
             "token_endpoint": "https://login.example.com/contoso/v2/token",
             "response": self.build_response(
@@ -119,7 +127,6 @@ class TokenCacheTestCase(unittest.TestCase):
             {
                 "client_id": "my_client_id",
                 'environment': 'login.example.com',
-                "family_id": None,
             },
             self.cache._cache.get("AppMetadata", {}).get(
                 "appmetadata-login.example.com-my_client_id")

@@ -1,5 +1,5 @@
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
-from .oauth2 import Client
+from .oidc import Client
 from .assertion import JwtSigner
 
