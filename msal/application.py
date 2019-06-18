@@ -18,7 +18,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +271,8 @@ class ClientApplication(object):
         if not self.authority_groups:
             resp = requests.get(
                 "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-                headers={'Accept': 'application/json'})
+                headers={'Accept': 'application/json'},
+                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
             resp.raise_for_status()
             self.authority_groups = [
                 set(group['aliases']) for group in resp.json()['metadata']]
@@ -511,7 +512,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 **kwargs)
 
     def acquire_token_by_username_password(
-            self, username, password, scopes=None, **kwargs):
+            self, username, password, scopes, **kwargs):
         """Gets a token for a given resource via user credentails.
 
         See this page for constraints of Username Password Flow.

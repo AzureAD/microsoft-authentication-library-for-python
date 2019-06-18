@@ -13,8 +13,10 @@ The configuration file would look like this:
 }
 
 You can then run this sample with a JSON configuration file:
-    python sample.py parameters.json
-    On the browser open http://localhost:5000/
+
+    python sample.py parameters.json your_flask_session_secret_here
+
+And the on the browser open http://localhost:5000/
 
 """
 
@@ -29,7 +31,7 @@ import msal
 
 app = flask.Flask(__name__)
 app.debug = True
-app.secret_key = 'development'
+app.secret_key = sys.argv[2]  # In this demo, we expect a secret from 2nd CLI param
 
 
 # Optional logging
