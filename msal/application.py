@@ -271,7 +271,8 @@ class ClientApplication(object):
         if not self.authority_groups:
             resp = requests.get(
                 "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-                headers={'Accept': 'application/json'})
+                headers={'Accept': 'application/json'},
+                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
             resp.raise_for_status()
             self.authority_groups = [
                 set(group['aliases']) for group in resp.json()['metadata']]
