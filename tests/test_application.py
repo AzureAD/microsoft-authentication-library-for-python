@@ -20,7 +20,7 @@ if os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE) as conf:
         CONFIG = json.load(conf)
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 
