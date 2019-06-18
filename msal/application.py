@@ -512,7 +512,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 **kwargs)
 
     def acquire_token_by_username_password(
-            self, username, password, scopes=None, **kwargs):
+            self, username, password, scopes, **kwargs):
         """Gets a token for a given resource via user credentails.
 
         See this page for constraints of Username Password Flow.
