@@ -56,7 +56,8 @@ class ClientApplication(object):
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
-            verify=True, proxies=None, timeout=None):
+            verify=True, proxies=None, timeout=None,
+            client_claims=None):
         """Create an instance of application.
 
         :param client_id: Your app has a clinet_id after you register it on AAD.
@@ -69,6 +70,21 @@ class ClientApplication(object):
                 {
                     "private_key": "...-----BEGIN PRIVATE KEY-----...",
                     "thumbprint": "A1B2C3D4E5F6...",
+                }
+
+        :param dict client_claims:
+            It is a dictionary of extra claims that would be signed by
+            by this :class:`ConfidentialClientApplication` 's private key.
+            For example, you can use {"client_ip": "x.x.x.x"}.
+            You may also override any of the following default claims:
+
+                {
+                    "aud": the_token_endpoint,
+                    "iss": self.client_id,
+                    "sub": same_as_issuer,
+                    "exp": now + 10_min,
+                    "iat": now,
+                    "jti": a_random_uuid
                 }
 
         :param str authority:
@@ -95,6 +111,7 @@ class ClientApplication(object):
         """
         self.client_id = client_id
         self.client_credential = client_credential
+        self.client_claims = client_claims
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
@@ -117,7 +134,8 @@ class ClientApplication(object):
                 client_credential["private_key"], algorithm="RS256",
                 sha1_thumbprint=client_credential.get("thumbprint"))
             client_assertion = signer.sign_assertion(
-                audience=authority.token_endpoint, issuer=self.client_id)
+                audience=authority.token_endpoint, issuer=self.client_id,
+                additional_claims=self.client_claims or {})
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
         else:
             default_body['client_secret'] = client_credential
