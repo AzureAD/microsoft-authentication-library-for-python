@@ -18,7 +18,7 @@ class Signer(object):
 
 
 class JwtSigner(Signer):
-    def __init__(self, key, algorithm, sha1_thumbprint=None, headers=None, public_certificate= None):
+    def __init__(self, key, algorithm, sha1_thumbprint=None, headers=None):
         """Create a signer.
 
         Args:
@@ -36,8 +36,6 @@ class JwtSigner(Signer):
         if sha1_thumbprint:  # https://tools.ietf.org/html/rfc7515#section-4.1.7
             self.headers["x5t"] = base64.urlsafe_b64encode(
                 binascii.a2b_hex(sha1_thumbprint)).decode()
-        if public_certificate:
-            self.headers['x5c'] = public_certificate
 
     def sign_assertion(
             self, audience, issuer, subject=None, expires_at=None,
