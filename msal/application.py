@@ -110,22 +110,17 @@ class ClientApplication(object):
         client_assertion = None
         client_assertion_type = None
         default_body = {"client_info": 1}
+        headers = {}
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
                     and "thumbprint" in client_credential)
             if 'public_certificate' in client_credential:
-                if isinstance(client_credential['public_certificate'], list):
-                    public_certificate = client_credential['public_certificate']
-                else:
-                    public_certificate = [client_credential['public_certificate']]
-                signer = JwtSigner(
-                    client_credential["private_key"], algorithm="RS256",
-                    sha1_thumbprint=client_credential.get("thumbprint"),
-                    headers={"x5c": public_certificate})
-            else:
-                signer = JwtSigner(
-                    client_credential["private_key"], algorithm="RS256",
-                    sha1_thumbprint=client_credential.get("thumbprint"))
+                headers["x5c"] = client_credential['public_certificate'] \
+                    if isinstance(client_credential['public_certificate'], list) \
+                    else [client_credential['public_certificate']]  # We send x5c as a list of strings
+            signer = JwtSigner(
+                client_credential["private_key"], algorithm="RS256",
+                sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
             client_assertion = signer.sign_assertion(
                 audience=authority.token_endpoint, issuer=self.client_id)
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
