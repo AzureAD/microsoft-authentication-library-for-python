@@ -59,7 +59,7 @@ class ClientApplication(object):
             verify=True, proxies=None, timeout=None):
         """Create an instance of application.
 
-        :param client_id: Your app has a clinet_id after you register it on AAD.
+        :param client_id: Your app has a client_id after you register it on AAD.
         :param client_credential:
             For :class:`PublicClientApplication`, you simply use `None` here.
             For :class:`ConfidentialClientApplication`,
@@ -69,8 +69,11 @@ class ClientApplication(object):
                 {
                     "private_key": "...-----BEGIN PRIVATE KEY-----...",
                     "thumbprint": "A1B2C3D4E5F6...",
+                    "public_certificate": "...-----BEGIN CERTIFICATE-----..." (Only to be sent when using Subject Name Issuer Authentication)
                 }
 
+            public_certificate (optional) can be a public key certificate or certificate chain which is sent through
+            'x5c' JWT header only for subject name and issuer based authentication to support cert auto rolls
         :param str authority:
             A URL that identifies a token authority. It should be of the format
             https://login.microsoftonline.com/your_tenant
@@ -115,9 +118,10 @@ class ClientApplication(object):
             assert ("private_key" in client_credential
                     and "thumbprint" in client_credential)
             if 'public_certificate' in client_credential:
-                headers["x5c"] = client_credential['public_certificate'] \
-                    if isinstance(client_credential['public_certificate'], list) \
-                    else [client_credential['public_certificate']]  # We send x5c as a list of strings
+                public_certificates = re.findall(
+                    r'\-+BEGIN CERTIFICATE.+\-+(?P<cert_value>[^-]+)\-+END CERTIFICATE.+\-+',
+                    client_credential['public_certificate'], re.I)  # We send x5c as list of strings
+                headers["x5c"] = [cert.strip() for cert in public_certificates]
             signer = JwtSigner(
                 client_credential["private_key"], algorithm="RS256",
                 sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
