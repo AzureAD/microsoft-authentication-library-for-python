@@ -99,6 +99,76 @@ class TestConfidentialClientApplication(unittest.TestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorks(result, app.acquire_token_silent(scope, account=None))
 
+    @unittest.skipUnless("public_certificate" in CONFIG, "Missing Public cert")
+    def test_subject_name_issuer_authentication_input_with_begin_certificate_and_end_certificate_single(self):
+        assert ("private_key_file" in CONFIG
+                and "thumbprint" in CONFIG and "public_certificate" in CONFIG)
+        key_path = os.path.join(THIS_FOLDER, CONFIG['private_key_file'])
+        public_certificate = os.path.join(THIS_FOLDER, CONFIG['public_certificate'])
+        with open(key_path) as f:
+            pem = f.read()
+        with open(public_certificate) as f:
+            public_certificate = f.read()
+        app = ConfidentialClientApplication(
+            CONFIG['client_id'],
+            client_credential={"private_key": pem, "thumbprint": CONFIG["thumbprint"],
+                               "public_certificate": public_certificate})
+        x5c = app._extract_x5c_value()
+        self.assertIsInstance(x5c, list)
+        self.assertEquals(len(x5c), 1)
+
+    @unittest.skipUnless("public_certificate" in CONFIG, "Missing Public cert")
+    def test_subject_name_issuer_authentication_input_with_begin_certificate_and_end_certificate_multiple(self):
+        assert ("private_key_file" in CONFIG
+                and "thumbprint" in CONFIG and "public_certificate" in CONFIG)
+        key_path = os.path.join(THIS_FOLDER, CONFIG['private_key_file'])
+        public_certificate = os.path.join(THIS_FOLDER, CONFIG['public_certificate'])
+        with open(key_path) as f:
+            pem = f.read()
+        with open(public_certificate) as f:
+            public_certificate = f.read()
+        app = ConfidentialClientApplication(
+            CONFIG['client_id'],
+            {"private_key": pem, "thumbprint": CONFIG["thumbprint"], "public_certificate": public_certificate})
+        x5c = app._extract_x5c_value()
+        self.assertIsInstance(x5c, list)
+        self.assertGreater(len(x5c), 1)
+
+    @unittest.skipUnless("public_certificate" in CONFIG, "Missing Public cert")
+    def test_subject_name_issuer_authentication_input_without_begin_certificate_and_end_certificate(self):
+        assert ("private_key_file" in CONFIG
+                and "thumbprint" in CONFIG and "public_certificate" in CONFIG)
+        key_path = os.path.join(THIS_FOLDER, CONFIG['private_key_file'])
+        public_certificate = os.path.join(THIS_FOLDER, CONFIG['public_certificate'])
+        with open(key_path) as f:
+            pem = f.read()
+        with open(public_certificate) as f:
+            public_certificate = f.read()
+        app = ConfidentialClientApplication(
+            CONFIG['client_id'],
+            {"private_key": pem, "thumbprint": CONFIG["thumbprint"], "public_certificate": public_certificate})
+        x5c = app._extract_x5c_value()
+        self.assertIsInstance(x5c, list)
+        self.assertEquals(len(x5c), 1)
+
+    @unittest.skipUnless("public_certificate" in CONFIG, "Missing Public cert")
+    def test_subject_name_issuer_authentication(self):
+        assert ("private_key_file" in CONFIG
+                and "thumbprint" in CONFIG and "public_certificate" in CONFIG)
+        key_path = os.path.join(THIS_FOLDER, CONFIG['private_key_file'])
+        public_certificate = os.path.join(THIS_FOLDER, CONFIG['public_certificate'])
+        with open(key_path) as f:
+            pem = f.read()
+        with open(public_certificate) as f:
+            public_certificate = f.read()
+        app = ConfidentialClientApplication(
+            CONFIG['client_id'], authority=CONFIG["authority"],
+            client_credential={"private_key": pem, "thumbprint": CONFIG["thumbprint"],
+                               "public_certificate": public_certificate})
+        scope = CONFIG.get("scope", [])
+        result = app.acquire_token_for_client(scope)
+        self.assertIn('access_token', result)
+        self.assertCacheWorks(result, app.acquire_token_silent(scope, account=None))
 
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
 class TestPublicClientApplication(Oauth2TestCase):

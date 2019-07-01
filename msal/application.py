@@ -50,6 +50,7 @@ def decorate_scope(
     return list(decorated)
 
 
+
 class ClientApplication(object):
 
     def __init__(
@@ -109,6 +110,14 @@ class ClientApplication(object):
         self.client = self._build_client(client_credential, self.authority)
         self.authority_groups = None
 
+    def _extract_x5c_value(self):
+        public_certificates = re.findall(
+            r'\-+BEGIN CERTIFICATE.+\-+(?P<cert_value>[^-]+)\-+END CERTIFICATE.+\-+',
+            self.client_credential['public_certificate'], re.I)  # We send x5c as list of strings
+        if len(public_certificates):
+            return [cert.strip() for cert in public_certificates]
+        return [self.client_credential['public_certificate'].strip()]
+
     def _build_client(self, client_credential, authority):
         client_assertion = None
         client_assertion_type = None
@@ -118,10 +127,7 @@ class ClientApplication(object):
             assert ("private_key" in client_credential
                     and "thumbprint" in client_credential)
             if 'public_certificate' in client_credential:
-                public_certificates = re.findall(
-                    r'\-+BEGIN CERTIFICATE.+\-+(?P<cert_value>[^-]+)\-+END CERTIFICATE.+\-+',
-                    client_credential['public_certificate'], re.I)  # We send x5c as list of strings
-                headers["x5c"] = [cert.strip() for cert in public_certificates]
+                headers["x5c"] = self._extract_x5c_value()
             signer = JwtSigner(
                 client_credential["private_key"], algorithm="RS256",
                 sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
