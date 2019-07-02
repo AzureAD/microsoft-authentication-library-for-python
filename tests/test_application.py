@@ -99,67 +99,37 @@ class TestConfidentialClientApplication(unittest.TestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorks(result, app.acquire_token_silent(scope, account=None))
 
-    @unittest.skipUnless("public_certificate" in CONFIG, "Missing Public cert")
-    def test_subject_name_issuer_authentication_input_with_begin_certificate_and_end_certificate_single(self):
-        assert ("private_key_file" in CONFIG
-                and "thumbprint" in CONFIG and "public_certificate" in CONFIG)
-        key_path = os.path.join(THIS_FOLDER, CONFIG['private_key_file'])
-        public_certificate = os.path.join(THIS_FOLDER, CONFIG['public_certificate'])
-        with open(key_path) as f:
-            pem = f.read()
-        with open(public_certificate) as f:
-            public_certificate = f.read()
-        app = ConfidentialClientApplication(
-            CONFIG['client_id'],
-            client_credential={"private_key": pem, "thumbprint": CONFIG["thumbprint"],
-                               "public_certificate": public_certificate})
-        x5c = app._extract_x5c_value()
-        self.assertIsInstance(x5c, list)
-        self.assertEquals(len(x5c), 1)
+    def test_extract_a_tag_less_public_cert(self):
+        pem = "my_cert"
+        self.assertEqual(["my_cert"], extract_certs(pem))
 
-    @unittest.skipUnless("public_certificate" in CONFIG, "Missing Public cert")
-    def test_subject_name_issuer_authentication_input_with_begin_certificate_and_end_certificate_multiple(self):
-        assert ("private_key_file" in CONFIG
-                and "thumbprint" in CONFIG and "public_certificate" in CONFIG)
-        key_path = os.path.join(THIS_FOLDER, CONFIG['private_key_file'])
-        public_certificate = os.path.join(THIS_FOLDER, CONFIG['public_certificate'])
-        with open(key_path) as f:
-            pem = f.read()
-        with open(public_certificate) as f:
-            public_certificate = f.read()
-        app = ConfidentialClientApplication(
-            CONFIG['client_id'],
-            {"private_key": pem, "thumbprint": CONFIG["thumbprint"], "public_certificate": public_certificate})
-        x5c = app._extract_x5c_value()
-        self.assertIsInstance(x5c, list)
-        self.assertGreater(len(x5c), 1)
+    def test_extract_a_tag_enclosed_cert(self):
+        pem = """
+        -----BEGIN CERTIFICATE-----
+        my_cert
+        -----END CERTIFICATE-----
+        """
+        self.assertEqual(["my_cert"], extract_certs(pem))
 
-    @unittest.skipUnless("public_certificate" in CONFIG, "Missing Public cert")
-    def test_subject_name_issuer_authentication_input_without_begin_certificate_and_end_certificate(self):
-        assert ("private_key_file" in CONFIG
-                and "thumbprint" in CONFIG and "public_certificate" in CONFIG)
-        key_path = os.path.join(THIS_FOLDER, CONFIG['private_key_file'])
-        public_certificate = os.path.join(THIS_FOLDER, CONFIG['public_certificate'])
-        with open(key_path) as f:
-            pem = f.read()
-        with open(public_certificate) as f:
-            public_certificate = f.read()
-        app = ConfidentialClientApplication(
-            CONFIG['client_id'],
-            {"private_key": pem, "thumbprint": CONFIG["thumbprint"], "public_certificate": public_certificate})
-        x5c = app._extract_x5c_value()
-        self.assertIsInstance(x5c, list)
-        self.assertEquals(len(x5c), 1)
+    def test_extract_multiple_tag_enclosed_certs(self):
+        pem = """
+        -----BEGIN CERTIFICATE-----
+        my_cert1
+        -----END CERTIFICATE-----
+        
+        -----BEGIN CERTIFICATE-----
+        my_cert2
+        -----END CERTIFICATE-----
+        """
+        self.assertEqual(["my_cert1", "my_cert2"], extract_certs(pem))
 
     @unittest.skipUnless("public_certificate" in CONFIG, "Missing Public cert")
     def test_subject_name_issuer_authentication(self):
         assert ("private_key_file" in CONFIG
                 and "thumbprint" in CONFIG and "public_certificate" in CONFIG)
-        key_path = os.path.join(THIS_FOLDER, CONFIG['private_key_file'])
-        public_certificate = os.path.join(THIS_FOLDER, CONFIG['public_certificate'])
-        with open(key_path) as f:
+        with open(os.path.join(THIS_FOLDER, CONFIG['private_key_file'])) as f:
             pem = f.read()
-        with open(public_certificate) as f:
+        with open(os.path.join(THIS_FOLDER, CONFIG['public_certificate'])) as f:
             public_certificate = f.read()
         app = ConfidentialClientApplication(
             CONFIG['client_id'], authority=CONFIG["authority"],
