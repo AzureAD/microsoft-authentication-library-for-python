@@ -54,10 +54,15 @@ def extract_certs(public_cert_content):
     # Parses raw public certificate file contents and returns a list of strings
     # Usage: headers = {"x5c": extract_certs(open("my_cert.pem").read())}
     public_certificates = re.findall(
-        r'\-+BEGIN CERTIFICATE.+\-+(?P<cert_value>[^-]+)\-+END CERTIFICATE.+\-+',
+        r'-----BEGIN CERTIFICATE-----(?P<cert_value>[^-]+)-----END CERTIFICATE-----',
         public_cert_content, re.I)
-    if len(public_certificates):
+    if public_certificates:
         return [cert.strip() for cert in public_certificates]
+    # The public cert tags are not found in the input,
+    # let's make best effort to exclude a private key pem file.
+    if "PRIVATE KEY" in public_cert_content:
+        raise ValueError(
+            "We expect your public key but detect a private key instead")
     return [public_cert_content.strip()]
 
 
