@@ -50,6 +50,22 @@ def decorate_scope(
     return list(decorated)
 
 
+def extract_certs(public_cert_content):
+    # Parses raw public certificate file contents and returns a list of strings
+    # Usage: headers = {"x5c": extract_certs(open("my_cert.pem").read())}
+    public_certificates = re.findall(
+        r'-----BEGIN CERTIFICATE-----(?P<cert_value>[^-]+)-----END CERTIFICATE-----',
+        public_cert_content, re.I)
+    if public_certificates:
+        return [cert.strip() for cert in public_certificates]
+    # The public cert tags are not found in the input,
+    # let's make best effort to exclude a private key pem file.
+    if "PRIVATE KEY" in public_cert_content:
+        raise ValueError(
+            "We expect your public key but detect a private key instead")
+    return [public_cert_content.strip()]
+
+
 class ClientApplication(object):
 
     def __init__(
@@ -60,7 +76,7 @@ class ClientApplication(object):
             client_claims=None):
         """Create an instance of application.
 
-        :param client_id: Your app has a clinet_id after you register it on AAD.
+        :param client_id: Your app has a client_id after you register it on AAD.
         :param client_credential:
             For :class:`PublicClientApplication`, you simply use `None` here.
             For :class:`ConfidentialClientApplication`,
@@ -70,7 +86,12 @@ class ClientApplication(object):
                 {
                     "private_key": "...-----BEGIN PRIVATE KEY-----...",
                     "thumbprint": "A1B2C3D4E5F6...",
+                    "public_certificate": "...-----BEGIN CERTIFICATE-----..." (Optional. See below.)
                 }
+
+            public_certificate (optional) is public key certificate which is
+            sent through 'x5c' JWT header only for
+            subject name and issuer authentication to support cert auto rolls
 
         :param dict client_claims:
             It is a dictionary of extra claims that would be signed by
@@ -130,9 +151,12 @@ class ClientApplication(object):
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
                     and "thumbprint" in client_credential)
+            headers = {}
+            if 'public_certificate' in client_credential:
+                headers["x5c"] = extract_certs(client_credential['public_certificate'])
             signer = JwtSigner(
                 client_credential["private_key"], algorithm="RS256",
-                sha1_thumbprint=client_credential.get("thumbprint"))
+                sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
             client_assertion = signer.sign_assertion(
                 audience=authority.token_endpoint, issuer=self.client_id,
                 additional_claims=self.client_claims or {})
