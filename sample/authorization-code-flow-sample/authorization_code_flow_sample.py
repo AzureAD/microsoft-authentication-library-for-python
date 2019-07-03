@@ -24,6 +24,7 @@ import sys  # For simplicity, we'll read config file from 1st CLI param sys.argv
 import json
 import logging
 import uuid
+import os
 
 import flask
 
@@ -31,7 +32,8 @@ import msal
 
 app = flask.Flask(__name__)
 app.debug = True
-app.secret_key = sys.argv[2]  # In this demo, we expect a secret from 2nd CLI param
+app.secret_key = os.environ.get("FLASK_SECRET")
+assert app.secret_key, "This sample requires a FLASK_SECRET env var to enable session"
 
 
 # Optional logging
