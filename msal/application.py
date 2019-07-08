@@ -97,7 +97,7 @@ class ClientApplication(object):
             It is a dictionary of extra claims that would be signed by
             by this :class:`ConfidentialClientApplication` 's private key.
             For example, you can use {"client_ip": "x.x.x.x"}.
-            You may also override any of the following default claims:
+            You may also override any of the following default claims::
 
                 {
                     "aud": the_token_endpoint,
