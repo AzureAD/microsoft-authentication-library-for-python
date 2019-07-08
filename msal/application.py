@@ -89,11 +89,13 @@ class ClientApplication(object):
                     "public_certificate": "...-----BEGIN CERTIFICATE-----..." (Optional. See below.)
                 }
 
-            public_certificate (optional) is public key certificate which is
-            sent through 'x5c' JWT header only for
-            subject name and issuer authentication to support cert auto rolls
+            *Added in version 0.5.0*:
+            public_certificate (optional) is public key certificate
+            which will be sent through 'x5c' JWT header only for
+            subject name and issuer authentication to support cert auto rolls.
 
         :param dict client_claims:
+            *Added in version 0.5.0*:
             It is a dictionary of extra claims that would be signed by
             by this :class:`ConfidentialClientApplication` 's private key.
             For example, you can use {"client_ip": "x.x.x.x"}.
