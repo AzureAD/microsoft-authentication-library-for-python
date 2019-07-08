@@ -9,17 +9,57 @@ import jwt
 
 logger = logging.getLogger(__name__)
 
-class Signer(object):
-    def sign_assertion(
-            self, audience, issuer, subject, expires_at,
+class AssertionCreator(object):
+    def create_normal_assertion(
+            self, audience, issuer, subject, expires_at=None, expires_in=600,
             issued_at=None, assertion_id=None, **kwargs):
-        # Names are defined in https://tools.ietf.org/html/rfc7521#section-5
+        """Create an assertion in bytes, based on the provided claims.
+
+        All parameter names are defined in https://tools.ietf.org/html/rfc7521#section-5
+        except the expires_in is defined here as lifetime-in-seconds,
+        which will be automatically translated into expires_at in UTC.
+        """
         raise NotImplementedError("Will be implemented by sub-class")
 
+    def create_regenerative_assertion(
+            self, audience, issuer, subject=None, expires_in=600, **kwargs):
+        """Create an assertion as a callable,
+        which will then compute the assertion later when necessary.
 
-class JwtSigner(Signer):
+        This is a useful optimization to reuse the client assertion.
+        """
+        return AutoRefresher(  # Returns a callable
+            lambda a=audience, i=issuer, s=subject, e=expires_in, kwargs=kwargs:
+                self.create_normal_assertion(a, i, s, expires_in=e, **kwargs),
+            expires_in=max(expires_in-60, 0))
+
+
+class AutoRefresher(object):
+    """Cache the output of a factory, and auto-refresh it when necessary. Usage::
+
+        r = AutoRefresher(time.time, expires_in=5)
+        for i in range(15):
+            print(r())  # the timestamp change only after every 5 seconds
+            time.sleep(1)
+    """
+    def __init__(self, factory, expires_in=540):
+        self._factory = factory
+        self._expires_in = expires_in
+        self._buf = {}
+    def __call__(self):
+        EXPIRES_AT, VALUE = "expires_at", "value"
+        now = time.time()
+        if self._buf.get(EXPIRES_AT, 0) <= now:
+            logger.debug("Regenerating new assertion")
+            self._buf = {VALUE: self._factory(), EXPIRES_AT: now + self._expires_in}
+        else:
+            logger.debug("Reusing still valid assertion")
+        return self._buf.get(VALUE)
+
+
+class JwtAssertionCreator(AssertionCreator):
     def __init__(self, key, algorithm, sha1_thumbprint=None, headers=None):
-        """Create a signer.
+        """Construct a Jwt assertion creator.
 
         Args:
 
@@ -37,11 +77,11 @@ class JwtSigner(Signer):
             self.headers["x5t"] = base64.urlsafe_b64encode(
                 binascii.a2b_hex(sha1_thumbprint)).decode()
 
-    def sign_assertion(
-            self, audience, issuer, subject=None, expires_at=None,
+    def create_normal_assertion(
+            self, audience, issuer, subject=None, expires_at=None, expires_in=600,
             issued_at=None, assertion_id=None, not_before=None,
             additional_claims=None, **kwargs):
-        """Sign a JWT Assertion.
+        """Create a JWT Assertion.
 
         Parameters are defined in https://tools.ietf.org/html/rfc7523#section-3
         Key-value pairs in additional_claims will be added into payload as-is.
@@ -51,7 +91,7 @@ class JwtSigner(Signer):
             'aud': audience,
             'iss': issuer,
             'sub': subject or issuer,
-            'exp': expires_at or (now + 10*60),  # 10 minutes
+            'exp': expires_at or (now + expires_in),
             'iat': issued_at or now,
             'jti': assertion_id or str(uuid.uuid4()),
             }
@@ -67,4 +107,10 @@ class JwtSigner(Signer):
                     'Some algorithms requires "pip install cryptography". '
                     'See https://pyjwt.readthedocs.io/en/latest/installation.html#cryptographic-dependencies-optional')
             raise
+
+
+# Obsolete. For backward compatibility. They will be removed in future versions.
+Signer = AssertionCreator  # For backward compatibility
+JwtSigner = JwtAssertionCreator  # For backward compatibility
+JwtSigner.sign_assertion = JwtAssertionCreator.create_normal_assertion  # For backward compatibility
 
