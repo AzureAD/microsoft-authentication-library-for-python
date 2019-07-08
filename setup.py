@@ -66,7 +66,8 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
     ],
-    packages=find_packages(),
+    packages=find_packages(exclude=["tests"]),
+    data_files=[('', ['LICENSE'])],
     install_requires=[
         'requests>=2.0.0,<3',
         'PyJWT[crypto]>=1.0.0,<2',
