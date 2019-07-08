@@ -56,6 +56,10 @@ if not result:
     # Ideally you should wait here, in order to save some unnecessary polling
     # input("Press Enter after you successfully login from another device...")
     result = app.acquire_token_by_device_flow(flow)  # By default it will block
+        # You can follow this instruction to shorten the block time
+        #    https://msal-python.readthedocs.io/en/latest/#msal.PublicClientApplication.acquire_token_by_device_flow
+        # or you may even turn off the blocking behavior,
+        # and then keep calling acquire_token_by_device_flow(flow) in your own customized loop.
 
 if "access_token" in result:
     print(result["access_token"])

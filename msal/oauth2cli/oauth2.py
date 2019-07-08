@@ -33,7 +33,7 @@ class BaseClient(object):
             server_configuration,  # type: dict
             client_id,  # type: str
             client_secret=None,  # type: Optional[str]
-            client_assertion=None,  # type: Optional[bytes]
+            client_assertion=None,  # type: Union[bytes, callable, None]
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
@@ -55,10 +55,12 @@ class BaseClient(object):
                 https://example.com/.../.well-known/openid-configuration
             client_id (str): The client's id, issued by the authorization server
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
-            client_assertion (bytes):
+            client_assertion (bytes, callable):
                 The client assertion to authenticate this client, per RFC 7521.
                 It can be a raw SAML2 assertion (this method will encode it for you),
                 or a raw JWT assertion.
+                It can also be a callable (recommended),
+                so that we will do lazy creation of an assertion.
             client_assertion_type (str):
                 The type of your :attr:`client_assertion` parameter.
                 It is typically the value of :attr:`CLIENT_ASSERTION_TYPE_SAML2` or
@@ -75,11 +77,9 @@ class BaseClient(object):
         self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
+        self.client_assertion = client_assertion
         self.default_body = default_body or {}
-        if client_assertion is not None and client_assertion_type is not None:
-            # See https://tools.ietf.org/html/rfc7521#section-4.2
-            encoder = self.client_assertion_encoders.get(client_assertion_type, lambda a: a)
-            self.default_body["client_assertion"] = encoder(client_assertion)
+        if client_assertion_type is not None:
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
         self.session = s = requests.Session()
@@ -114,6 +114,15 @@ class BaseClient(object):
             **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
+
+        if self.default_body.get("client_assertion_type") and self.client_assertion:
+            # See https://tools.ietf.org/html/rfc7521#section-4.2
+            encoder = self.client_assertion_encoders.get(
+                    self.default_body["client_assertion_type"], lambda a: a)
+            _data["client_assertion"] = encoder(
+                self.client_assertion()  # Do lazy on-the-fly computation
+                if callable(self.client_assertion) else self.client_assertion)
+
         _data.update(self.default_body)  # It may contain authen parameters
         _data.update(data or {})  # So the content in data param prevails
         # We don't have to clean up None values here, because requests lib will.

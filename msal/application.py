@@ -9,7 +9,7 @@ import warnings
 
 import requests
 
-from .oauth2cli import Client, JwtSigner
+from .oauth2cli import Client, JwtAssertionCreator
 from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
@@ -18,7 +18,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +50,33 @@ def decorate_scope(
     return list(decorated)
 
 
+def extract_certs(public_cert_content):
+    # Parses raw public certificate file contents and returns a list of strings
+    # Usage: headers = {"x5c": extract_certs(open("my_cert.pem").read())}
+    public_certificates = re.findall(
+        r'-----BEGIN CERTIFICATE-----(?P<cert_value>[^-]+)-----END CERTIFICATE-----',
+        public_cert_content, re.I)
+    if public_certificates:
+        return [cert.strip() for cert in public_certificates]
+    # The public cert tags are not found in the input,
+    # let's make best effort to exclude a private key pem file.
+    if "PRIVATE KEY" in public_cert_content:
+        raise ValueError(
+            "We expect your public key but detect a private key instead")
+    return [public_cert_content.strip()]
+
+
 class ClientApplication(object):
 
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
-            verify=True, proxies=None, timeout=None):
+            verify=True, proxies=None, timeout=None,
+            client_claims=None):
         """Create an instance of application.
 
-        :param client_id: Your app has a clinet_id after you register it on AAD.
+        :param client_id: Your app has a client_id after you register it on AAD.
         :param client_credential:
             For :class:`PublicClientApplication`, you simply use `None` here.
             For :class:`ConfidentialClientApplication`,
@@ -69,6 +86,28 @@ class ClientApplication(object):
                 {
                     "private_key": "...-----BEGIN PRIVATE KEY-----...",
                     "thumbprint": "A1B2C3D4E5F6...",
+                    "public_certificate": "...-----BEGIN CERTIFICATE-----..." (Optional. See below.)
+                }
+
+            *Added in version 0.5.0*:
+            public_certificate (optional) is public key certificate
+            which will be sent through 'x5c' JWT header only for
+            subject name and issuer authentication to support cert auto rolls.
+
+        :param dict client_claims:
+            *Added in version 0.5.0*:
+            It is a dictionary of extra claims that would be signed by
+            by this :class:`ConfidentialClientApplication` 's private key.
+            For example, you can use {"client_ip": "x.x.x.x"}.
+            You may also override any of the following default claims::
+
+                {
+                    "aud": the_token_endpoint,
+                    "iss": self.client_id,
+                    "sub": same_as_issuer,
+                    "exp": now + 10_min,
+                    "iat": now,
+                    "jti": a_random_uuid
                 }
 
         :param str authority:
@@ -95,6 +134,7 @@ class ClientApplication(object):
         """
         self.client_id = client_id
         self.client_credential = client_credential
+        self.client_claims = client_claims
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
@@ -113,11 +153,15 @@ class ClientApplication(object):
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
                     and "thumbprint" in client_credential)
-            signer = JwtSigner(
+            headers = {}
+            if 'public_certificate' in client_credential:
+                headers["x5c"] = extract_certs(client_credential['public_certificate'])
+            assertion = JwtAssertionCreator(
                 client_credential["private_key"], algorithm="RS256",
-                sha1_thumbprint=client_credential.get("thumbprint"))
-            client_assertion = signer.sign_assertion(
-                audience=authority.token_endpoint, issuer=self.client_id)
+                sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
+            client_assertion = assertion.create_regenerative_assertion(
+                audience=authority.token_endpoint, issuer=self.client_id,
+                additional_claims=self.client_claims or {})
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
         else:
             default_body['client_secret'] = client_credential
