@@ -9,7 +9,7 @@ import warnings
 
 import requests
 
-from .oauth2cli import Client, JwtSigner
+from .oauth2cli import Client, JwtAssertionCreator
 from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
@@ -154,10 +154,10 @@ class ClientApplication(object):
             headers = {}
             if 'public_certificate' in client_credential:
                 headers["x5c"] = extract_certs(client_credential['public_certificate'])
-            signer = JwtSigner(
+            assertion = JwtAssertionCreator(
                 client_credential["private_key"], algorithm="RS256",
                 sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
-            client_assertion = signer.sign_assertion(
+            client_assertion = assertion.create_regenerative_assertion(
                 audience=authority.token_endpoint, issuer=self.client_id,
                 additional_claims=self.client_claims or {})
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
