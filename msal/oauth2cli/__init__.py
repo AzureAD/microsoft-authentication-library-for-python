@@ -1,5 +1,6 @@
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .oidc import Client
-from .assertion import JwtSigner
+from .assertion import JwtAssertionCreator
+from .assertion import JwtSigner  # Obsolete. For backward compatibility.
 
