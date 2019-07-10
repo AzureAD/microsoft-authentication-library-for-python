@@ -67,7 +67,7 @@ setup(
         'Operating System :: OS Independent',
     ],
     packages=find_packages(exclude=["tests"]),
-    data_files=[('', ['LICENSE'])],
+    package_data={'': ['LICENSE']},  # Do not use data_files=[...]. See https://stackoverflow.com/questions/14211575
     install_requires=[
         'requests>=2.0.0,<3',
         'PyJWT[crypto]>=1.0.0,<2',
