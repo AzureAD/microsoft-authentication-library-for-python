@@ -67,7 +67,10 @@ setup(
         'Operating System :: OS Independent',
     ],
     packages=find_packages(exclude=["tests"]),
-    data_files=[('', ['LICENSE'])],
+    package_data={'': ['LICENSE']},  # Do not use data_files=[...],
+        # which would cause the LICENSE being copied to /usr/local,
+        # and tend to fail because of insufficient permission.
+        # See https://stackoverflow.com/a/14211600/728675 for more detail
     install_requires=[
         'requests>=2.0.0,<3',
         'PyJWT[crypto]>=1.0.0,<2',
