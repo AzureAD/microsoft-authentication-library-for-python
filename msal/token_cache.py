@@ -111,18 +111,25 @@ class TokenCache(object):
             event, indent=4, sort_keys=True,
             default=str,  # A workaround when assertion is in bytes in Python 3
             ))
+        environment = realm = None
+        if "token_endpoint" in event:
+            _, environment, realm = canonicalize(event["token_endpoint"])
         response = event.get("response", {})
         access_token = response.get("access_token")
         refresh_token = response.get("refresh_token")
         id_token = response.get("id_token")
-        client_info = {}
-        home_account_id = None
-        if "client_info" in response:
-            client_info = json.loads(base64decode(response["client_info"]))
-            home_account_id = "{uid}.{utid}".format(**client_info)
-        environment = realm = None
-        if "token_endpoint" in event:
-            _, environment, realm = canonicalize(event["token_endpoint"])
+        id_token_claims = (
+            decode_id_token(id_token, client_id=event["client_id"])
+            if id_token else {})
+        client_info = (
+            json.loads(base64decode(response["client_info"]))
+            if "client_info" in response
+            else {  # ADFS scenario
+                "uid": id_token_claims.get("sub"),
+                "utid": realm,  # which, in ADFS scenario, would typically be "adfs"
+                }
+            )
+        home_account_id = "{uid}.{utid}".format(**client_info)
         target = ' '.join(event.get("scope", []))  # Per schema, we don't sort it
 
         with self._lock:
@@ -148,15 +155,15 @@ class TokenCache(object):
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
             if client_info:
-                decoded_id_token = decode_id_token(
-                    id_token, client_id=event["client_id"]) if id_token else {}
                 account = {
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "realm": realm,
-                    "local_account_id": decoded_id_token.get(
-                        "oid", decoded_id_token.get("sub")),
-                    "username": decoded_id_token.get("preferred_username"),
+                    "local_account_id": id_token_claims.get(
+                        "oid", id_token_claims.get("sub")),
+                    "username": id_token_claims.get("preferred_username")  # AAD
+                        or id_token_claims.get("upn")  # ADFS 2019
+                        or "",  # The schema does not like null
                     "authority_type":
                         self.AuthorityType.ADFS if realm == "adfs"
                         else self.AuthorityType.MSSTS,
