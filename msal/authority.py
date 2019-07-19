@@ -45,6 +45,9 @@ class Authority(object):
             tenant_discovery_endpoint = instance_discovery(
                 canonicalized + "/oauth2/v2.0/authorize",
                 verify=verify, proxies=proxies, timeout=timeout)
+        if tenant.lower() == "adfs":
+            tenant_discovery_endpoint = ("https://{}/adfs/.well-known/openid-configuration"
+                                         .format(self.instance))
         openid_config = tenant_discovery(
             tenant_discovery_endpoint,
             verify=verify, proxies=proxies, timeout=timeout)
