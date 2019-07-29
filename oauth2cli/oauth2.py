@@ -380,26 +380,34 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         self.on_removing_rt = on_removing_rt
         self.on_updating_rt = on_updating_rt
 
-    def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
+    def _obtain_token(self, grant_type, params=None, data=None,
+            rt_getter=lambda token_item: token_item["refresh_token"],
+            *args, **kwargs):
+        RT = "refresh_token"
+        _data = data.copy()  # to prevent side effect
+        refresh_token = _data.get(RT)
+        if grant_type == RT and isinstance(refresh_token, dict):
+            _data[RT] = rt_getter(refresh_token)  # Put raw RT in _data
         resp = super(Client, self)._obtain_token(
-            grant_type, params, data, *args, **kwargs)
+            grant_type, params, _data, *args, **kwargs)
         if "error" not in resp:
             _resp = resp.copy()
-            if grant_type == "refresh_token" and "refresh_token" in _resp:
-                _resp.pop("refresh_token")  # We'll handle this in its own method
+            if grant_type == RT and RT in _resp and isinstance(refresh_token, dict):
+                _resp.pop(RT)  # So we skip it in on_obtaining_tokens(); it will
+                               # be handled in self.obtain_token_by_refresh_token()
             if "scope" in _resp:
                 scope = _resp["scope"].split()  # It is conceptually a set,
                     # but we represent it as a list which can be persisted to JSON
             else:
                 # TODO: Deal with absent scope in authorization grant
-                scope = data.get("scope")
+                scope = _data.get("scope")
             self.on_obtaining_tokens({
                 "client_id": self.client_id,
                 "scope": scope,
                 "token_endpoint": self.configuration["token_endpoint"],
                 "grant_type": grant_type,  # can be used to know an IdToken-less
                                            # response is for an app or for a user
-                "response": _resp, "params": params, "data": data,
+                "response": _resp, "params": params, "data": _data,
                 })
         return resp
 
@@ -411,26 +419,29 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         """This is an "overload" which accepts a refresh token item as a dict,
         therefore this method can relay refresh_token item to event listeners.
 
-        :param token_item: A refresh token item came from storage
+        :param token_item:
+            A refresh token item as a dict, came from the cache managed by this lib.
+
+            Alternatively, you can still use a refresh token (RT) as a string,
+            supposedly came from a token cache managed by a different library,
+            then this library will store the new RT (if Authority Server issued one)
+            into this lib's cache. This is a way to migrate from other lib to us.
         :param scope: If omitted, is treated as equal to the scope originally
             granted by the resource ownser,
             according to https://tools.ietf.org/html/rfc6749#section-6
         :param rt_getter: A callable used to extract the RT from token_item
         :param on_removing_rt: If absent, fall back to the one defined in initialization
         """
-        if isinstance(token_item, str):
-            # Satisfy the L of SOLID, although we expect caller uses a dict
-            return super(Client, self).obtain_token_by_refresh_token(
-                    token_item, scope=scope, **kwargs)
+        resp = super(Client, self).obtain_token_by_refresh_token(
+            token_item, scope=scope,
+            rt_getter=rt_getter,  # Wire up this for _obtain_token()
+            **kwargs)
         if isinstance(token_item, dict):
-            resp = super(Client, self).obtain_token_by_refresh_token(
-                    rt_getter(token_item), scope=scope, **kwargs)
             if resp.get('error') == 'invalid_grant':
                 (on_removing_rt or self.on_removing_rt)(token_item)  # Discard old RT
             if 'refresh_token' in resp:
                 self.on_updating_rt(token_item, resp['refresh_token'])
-            return resp
-        raise ValueError("token_item should not be a type %s" % type(token_item))
+        return resp
 
     def obtain_token_by_assertion(
             self, assertion, grant_type, scope=None, **kwargs):
