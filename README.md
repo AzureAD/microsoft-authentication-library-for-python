@@ -1,3 +1,12 @@
+---
+page_type: sample
+languages:
+  - python
+products:
+  - azure
+  - azure-active-directory  
+---
+
 # Microsoft Authentication Library (MSAL) for Python Preview
 
 The MSAL library for Python enables your app to access the
