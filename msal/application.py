@@ -400,7 +400,8 @@ class ClientApplication(object):
         #     authority,
         #     verify=self.verify, proxies=self.proxies, timeout=self.timeout,
         #     ) if authority else self.authority
-        result = self._acquire_token_silent(scopes, account, self.authority, **kwargs)
+        result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
+            scopes, account, self.authority, **kwargs)
         if result:
             return result
         for alias in self._get_authority_aliases(self.authority.instance):
@@ -408,12 +409,12 @@ class ClientApplication(object):
                 "https://" + alias + "/" + self.authority.tenant,
                 validate_authority=False,
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
-            result = self._acquire_token_silent(
+            result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, **kwargs)
             if result:
                 return result
 
-    def _acquire_token_silent(
+    def _acquire_token_silent_from_cache_and_possibly_refresh_it(
             self,
             scopes,  # type: List[str]
             account,  # type: Optional[Account]
