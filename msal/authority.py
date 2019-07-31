@@ -38,10 +38,14 @@ class Authority(object):
         self.proxies = proxies
         self.timeout = timeout
         canonicalized, self.instance, tenant = canonicalize(authority_url)
-        tenant_discovery_endpoint = (  # Hard code a V2 pattern as default value
-            'https://{}/{}/v2.0/.well-known/openid-configuration'
-            .format(self.instance, tenant))
-        if validate_authority and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS:
+        tenant_discovery_endpoint = (
+            'https://{}/{}{}/.well-known/openid-configuration'.format(
+                self.instance,
+                tenant,
+                "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
+                ))
+        if (tenant != "adfs" and validate_authority
+                and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             tenant_discovery_endpoint = instance_discovery(
                 canonicalized + "/oauth2/v2.0/authorize",
                 verify=verify, proxies=proxies, timeout=timeout)
