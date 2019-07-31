@@ -122,17 +122,13 @@ class TokenCache(object):
             decode_id_token(id_token, client_id=event["client_id"])
             if id_token else {})
         client_info = {}
+        home_account_id = None  # It would remain None in client_credentials flow
         if "client_info" in response:  # We asked for it, and AAD will provide it
             client_info = json.loads(base64decode(response["client_info"]))
-            home_account_id = (
-            # It would remain None in client_credentials flow
-                "{uid}.{utid}".format(**client_info) if client_info else None)
+            home_account_id = "{uid}.{utid}".format(**client_info)
         elif id_token_claims:  # This would be an end user on ADFS-direct scenario
-            client_info = {
-                "uid": id_token_claims.get("sub"),
-                }
-            home_account_id = (
-                "{uid}".format(**client_info))
+            client_info["uid"] = id_token_claims.get("sub")
+            home_account_id = id_token_claims.get("sub")
 
         target = ' '.join(event.get("scope", []))  # Per schema, we don't sort it
 
