@@ -151,48 +151,48 @@ class TokenCacheTestCase(unittest.TestCase):
                 'environment': 'fs.msidlab8.com',
                 'expires_on': "4600",
                 'extended_expires_on': "4600",
-                'home_account_id': "subject.adfs",
+                'home_account_id': "subject",
                 'realm': 'adfs',
                 'secret': 'an access token',
                 'target': 's2 s1 s3',
             },
             self.cache._cache["AccessToken"].get(
-                'subject.adfs-fs.msidlab8.com-accesstoken-my_client_id-adfs-s2 s1 s3')
+                'subject-fs.msidlab8.com-accesstoken-my_client_id-adfs-s2 s1 s3')
             )
         self.assertEqual(
             {
                 'client_id': 'my_client_id',
                 'credential_type': 'RefreshToken',
                 'environment': 'fs.msidlab8.com',
-                'home_account_id': "subject.adfs",
+                'home_account_id': "subject",
                 'secret': 'a refresh token',
                 'target': 's2 s1 s3',
             },
             self.cache._cache["RefreshToken"].get(
-                'subject.adfs-fs.msidlab8.com-refreshtoken-my_client_id--s2 s1 s3')
+                'subject-fs.msidlab8.com-refreshtoken-my_client_id--s2 s1 s3')
             )
         self.assertEqual(
             {
-                'home_account_id': "subject.adfs",
+                'home_account_id': "subject",
                 'environment': 'fs.msidlab8.com',
                 'realm': 'adfs',
                 'local_account_id': "subject",
                 'username': "JaneDoe@example.com",
                 'authority_type': "ADFS",
             },
-            self.cache._cache["Account"].get('subject.adfs-fs.msidlab8.com-adfs')
+            self.cache._cache["Account"].get('subject-fs.msidlab8.com-adfs')
             )
         self.assertEqual(
             {
                 'credential_type': 'IdToken',
                 'secret': id_token,
-                'home_account_id': "subject.adfs",
+                'home_account_id': "subject",
                 'environment': 'fs.msidlab8.com',
                 'realm': 'adfs',
                 'client_id': 'my_client_id',
             },
             self.cache._cache["IdToken"].get(
-                'subject.adfs-fs.msidlab8.com-idtoken-my_client_id-adfs-')
+                'subject-fs.msidlab8.com-idtoken-my_client_id-adfs-')
             )
         self.assertEqual(
             {
