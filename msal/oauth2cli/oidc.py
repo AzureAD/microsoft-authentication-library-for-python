@@ -8,7 +8,7 @@ from . import oauth2
 def base64decode(raw):
     """A helper can handle a padding-less raw input"""
     raw += '=' * (-len(raw) % 4)  # https://stackoverflow.com/a/32517907/728675
-    return base64.b64decode(raw).decode("utf-8")
+    return base64.urlsafe_b64decode(raw).decode("utf-8")
 
 
 def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None):
