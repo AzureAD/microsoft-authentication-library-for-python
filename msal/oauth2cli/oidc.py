@@ -8,6 +8,9 @@ from . import oauth2
 def base64decode(raw):
     """A helper can handle a padding-less raw input"""
     raw += '=' * (-len(raw) % 4)  # https://stackoverflow.com/a/32517907/728675
+    # On Python 2.7, argument of urlsafe_b64decode must be str, not unicode.
+    # This is not required on Python 3.
+    raw = str(raw)
     return base64.urlsafe_b64decode(raw).decode("utf-8")
 
 
