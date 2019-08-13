@@ -4,7 +4,7 @@ import time
 import logging
 
 from .authority import canonicalize
-from .oauth2cli.oidc import base64decode, decode_id_token
+from .oauth2cli.oidc import decode_part, decode_id_token
 
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,7 @@ class TokenCache(object):
         client_info = {}
         home_account_id = None  # It would remain None in client_credentials flow
         if "client_info" in response:  # We asked for it, and AAD will provide it
-            client_info = json.loads(base64decode(response["client_info"]))
+            client_info = json.loads(decode_part(response["client_info"]))
             home_account_id = "{uid}.{utid}".format(**client_info)
         elif id_token_claims:  # This would be an end user on ADFS-direct scenario
             client_info["uid"] = id_token_claims.get("sub")
