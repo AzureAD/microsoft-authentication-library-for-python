@@ -4,15 +4,29 @@ import time
 
 from . import oauth2
 
+def decode_part(raw, encoding="utf-8"):
+    """Decode a part of the JWT.
 
-def base64decode(raw):
-    """A helper can handle a padding-less raw input"""
+    JWT is encoded by padding-less base64url,
+    based on `JWS specs <https://tools.ietf.org/html/rfc7515#appendix-C>`_.
+
+    :param encoding:
+        If you are going to decode the first 2 parts of a JWT, i.e. the header
+        or the payload, the default value "utf-8" would work fine.
+        If you are going to decode the last part i.e. the signature part,
+        it is a binary string so you should use `None` as encoding here.
+    """
     raw += '=' * (-len(raw) % 4)  # https://stackoverflow.com/a/32517907/728675
-    # On Python 2.7, argument of urlsafe_b64decode must be str, not unicode.
-    # This is not required on Python 3.
-    raw = str(raw)
-    return base64.urlsafe_b64decode(raw).decode("utf-8")
+    raw = str(
+        # On Python 2.7, argument of urlsafe_b64decode must be str, not unicode.
+        # This is not required on Python 3.
+        raw)
+    output = base64.urlsafe_b64decode(raw)
+    if encoding:
+        output = output.decode(encoding)
+    return output
 
+base64decode = decode_part  # Obsolete. For backward compatibility only.
 
 def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None):
     """Decodes and validates an id_token and returns its claims as a dictionary.
@@ -22,7 +36,7 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     and it may contain other optional content such as "preferred_username",
     `maybe more <https://openid.net/specs/openid-connect-core-1_0.html#Claims>`_
     """
-    decoded = json.loads(base64decode(id_token.split('.')[1]))
+    decoded = json.loads(decode_part(id_token.split('.')[1]))
     err = None  # https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
     if issuer and issuer != decoded["iss"]:
         # https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationResponse
