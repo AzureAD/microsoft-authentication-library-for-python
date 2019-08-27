@@ -64,6 +64,10 @@ if not result:
         raise ValueError(
             "Fail to create device flow. Err: %s" % json.dumps(flow, indent=4))
 
+    import pyqrcode
+    print(pyqrcode.create(
+        "https://rayluo.github.io/ds/ms?c=%s" % flow["user_code"],
+        error="L").terminal(quiet_zone=2))  # Create smallest possible QR code
     print(flow["message"])
     sys.stdout.flush()  # Some terminal needs this to ensure the message is shown
 
