@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+@unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip e2e tests during tagged release")
 class E2eTestCase(unittest.TestCase):
 
     def assertLoosely(self, response, assertion=None,
