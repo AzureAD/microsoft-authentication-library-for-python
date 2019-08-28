@@ -99,18 +99,30 @@ class TokenCache(object):
 
     def add(self, event, now=None):
         # type: (dict) -> None
-        # event typically contains: client_id, scope, token_endpoint,
-        # resposne, params, data, grant_type
-        for sensitive in ("password", "client_secret"):
-            if sensitive in event.get("data", {}):
-                # Hide them from accidental exposure in logging
-                event["data"][sensitive] = "********"
-        logger.debug("event=%s", json.dumps(
+        """Handle a token obtaining event, and add tokens into cache.
+
+        Known side effects: This function modifies the input event in place.
+        """
+        def wipe(dictionary, sensitive_fields):  # Masks sensitive info
+            for sensitive in sensitive_fields:
+                if sensitive in dictionary:
+                    dictionary[sensitive] = "********"
+        wipe(event.get("data", {}),
+            ("password", "client_secret", "refresh_token", "assertion"))
+        try:
+            return self.__add(event, now=now)
+        finally:
+            wipe(event.get("response", {}), ("access_token", "refresh_token"))
+            logger.debug("event=%s", json.dumps(
             # We examined and concluded that this log won't have Log Injection risk,
             # because the event payload is already in JSON so CR/LF will be escaped.
-            event, indent=4, sort_keys=True,
-            default=str,  # A workaround when assertion is in bytes in Python 3
-            ))
+                event, indent=4, sort_keys=True,
+                default=str,  # A workaround when assertion is in bytes in Python 3
+                ))
+
+    def __add(self, event, now=None):
+        # event typically contains: client_id, scope, token_endpoint,
+        # response, params, data, grant_type
         environment = realm = None
         if "token_endpoint" in event:
             _, environment, realm = canonicalize(event["token_endpoint"])
