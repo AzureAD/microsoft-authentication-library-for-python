@@ -2,7 +2,7 @@
 The configuration file would look like this:
 
 {
-    "authority": "https://login.microsoftonline.com/organizations",
+    "authority": "https://login.microsoftonline.com/common",
     "client_id": "your_client_id",
     "scope": ["User.Read"]
 }
