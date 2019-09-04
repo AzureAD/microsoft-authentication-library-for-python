@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import time
 
 import requests
 
@@ -31,8 +32,7 @@ class E2eTestCase(unittest.TestCase):
                         error_description=response.get("error_description")))
             assertion()
 
-    def assertCacheWorks(self, result_from_wire, username, scope):
-        result = result_from_wire
+    def assertCacheWorksForUser(self, result_from_wire, scope, username=None):
         # You can filter by predefined username, or let end user to choose one
         accounts = self.app.get_accounts(username=username)
         self.assertNotEqual(0, len(accounts))
@@ -40,16 +40,26 @@ class E2eTestCase(unittest.TestCase):
         # Going to test acquire_token_silent(...) to locate an AT from cache
         result_from_cache = self.app.acquire_token_silent(scope, account=account)
         self.assertIsNotNone(result_from_cache)
-        self.assertEqual(result['access_token'], result_from_cache['access_token'],
-                "We should get a cached AT")
+        self.assertEqual(
+            result_from_wire['access_token'], result_from_cache['access_token'],
+            "We should get a cached AT")
 
         # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
         self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
         result_from_cache = self.app.acquire_token_silent(scope, account=account)
         self.assertIsNotNone(result_from_cache,
                 "We should get a result from acquire_token_silent(...) call")
-        self.assertNotEqual(result['access_token'], result_from_cache['access_token'],
-                "We should get a fresh AT (via RT)")
+        self.assertNotEqual(
+            result_from_wire['access_token'], result_from_cache['access_token'],
+            "We should get a fresh AT (via RT)")
+
+    def assertCacheWorksForApp(self, result_from_wire, scope):
+        # Going to test acquire_token_silent(...) to locate an AT from cache
+        result_from_cache = self.app.acquire_token_silent(scope, account=None)
+        self.assertIsNotNone(result_from_cache)
+        self.assertEqual(
+            result_from_wire['access_token'], result_from_cache['access_token'],
+            "We should get a cached AT")
 
     def _test_username_password(self,
             authority=None, client_id=None, username=None, password=None, scope=None,
@@ -60,18 +70,136 @@ class E2eTestCase(unittest.TestCase):
             username, password, scopes=scope)
         self.assertLoosely(result)
         # self.assertEqual(None, result.get("error"), str(result))
-        self.assertCacheWorks(result, username, scope)
+        self.assertCacheWorksForUser(result, scope, username=username)
 
 
-CONFIG = os.path.join(os.path.dirname(__file__), "config.json")
-@unittest.skipIf(not os.path.exists(CONFIG), "Optional %s not found" % CONFIG)
+THIS_FOLDER = os.path.dirname(__file__)
+CONFIG = os.path.join(THIS_FOLDER, "config.json")
+@unittest.skipUnless(os.path.exists(CONFIG), "Optional %s not found" % CONFIG)
 class FileBasedTestCase(E2eTestCase):
-    def setUp(self):
+    # This covers scenarios that are not currently available for test automation.
+    # So they mean to be run on maintainer's machine for semi-automated tests.
+
+    @classmethod
+    def setUpClass(cls):
         with open(CONFIG) as f:
-            self.config = json.load(f)
+            cls.config = json.load(f)
+
+    def skipUnlessWithConfig(self, fields):
+        for field in fields:
+            if field not in self.config:
+                self.skipTest('Skipping due to lack of configuration "%s"' % field)
 
     def test_username_password(self):
+        self.skipUnlessWithConfig(["client_id", "username", "password", "scope"])
         self._test_username_password(**self.config)
+
+    def test_auth_code(self):
+        self.skipUnlessWithConfig(["client_id", "scope"])
+        from msal.oauth2cli.authcode import obtain_auth_code
+        self.app = msal.ClientApplication(
+            self.config["client_id"],
+            client_credential=self.config.get("client_secret"),
+            authority=self.config.get("authority"))
+        port = self.config.get("listen_port", 44331)
+        redirect_uri = "http://localhost:%s" % port
+        auth_request_uri = self.app.get_authorization_request_url(
+            self.config["scope"], redirect_uri=redirect_uri)
+        ac = obtain_auth_code(port, auth_uri=auth_request_uri)
+        self.assertNotEqual(ac, None)
+
+        result = self.app.acquire_token_by_authorization_code(
+            ac, self.config["scope"], redirect_uri=redirect_uri)
+        logger.debug("%s.cache = %s",
+            self.id(), json.dumps(self.app.token_cache._cache, indent=4))
+        self.assertIn(
+            "access_token", result,
+            "{error}: {error_description}".format(
+                # Note: No interpolation here, cause error won't always present
+                error=result.get("error"),
+                error_description=result.get("error_description")))
+        self.assertCacheWorksForUser(result, self.config["scope"], username=None)
+
+    def test_client_secret(self):
+        self.skipUnlessWithConfig(["client_id", "client_secret"])
+        self.app = msal.ConfidentialClientApplication(
+            self.config["client_id"],
+            client_credential=self.config.get("client_secret"),
+            authority=self.config.get("authority"))
+        scope = self.config.get("scope", [])
+        result = self.app.acquire_token_for_client(scope)
+        self.assertIn('access_token', result)
+        self.assertCacheWorksForApp(result, scope)
+
+    def test_client_certificate(self):
+        self.skipUnlessWithConfig(["client_id", "client_certificate"])
+        client_cert = self.config["client_certificate"]
+        assert "private_key_path" in client_cert and "thumbprint" in client_cert
+        with open(os.path.join(THIS_FOLDER, client_cert['private_key_path'])) as f:
+            private_key = f.read()  # Should be in PEM format
+        self.app = msal.ConfidentialClientApplication(
+            self.config['client_id'],
+            {"private_key": private_key, "thumbprint": client_cert["thumbprint"]})
+        scope = self.config.get("scope", [])
+        result = self.app.acquire_token_for_client(scope)
+        self.assertIn('access_token', result)
+        self.assertCacheWorksForApp(result, scope)
+
+    def test_subject_name_issuer_authentication(self):
+        self.skipUnlessWithConfig(["client_id", "client_certificate"])
+        client_cert = self.config["client_certificate"]
+        assert "private_key_path" in client_cert and "thumbprint" in client_cert
+        if not "public_certificate" in client_cert:
+            self.skipTest("Skipping SNI test due to lack of public_certificate")
+        with open(os.path.join(THIS_FOLDER, client_cert['private_key_path'])) as f:
+            private_key = f.read()  # Should be in PEM format
+        with open(os.path.join(THIS_FOLDER, client_cert['public_certificate'])) as f:
+            public_certificate = f.read()
+        self.app = msal.ConfidentialClientApplication(
+            self.config['client_id'], authority=self.config["authority"],
+            client_credential={
+                "private_key": private_key,
+                "thumbprint": self.config["thumbprint"],
+                "public_certificate": public_certificate,
+                })
+        scope = self.config.get("scope", [])
+        result = self.app.acquire_token_for_client(scope)
+        self.assertIn('access_token', result)
+        self.assertCacheWorksForApp(result, scope)
+
+
+@unittest.skipUnless(os.path.exists(CONFIG), "Optional %s not found" % CONFIG)
+class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
+    @classmethod
+    def setUpClass(cls):
+        with open(CONFIG) as f:
+            cls.config = json.load(f)
+
+    def test_device_flow(self):
+        scopes = self.config["scope"]
+        self.app = msal.PublicClientApplication(
+            self.config['client_id'], authority=self.config["authority"])
+        flow = self.app.initiate_device_flow(scopes=scopes)
+        assert "user_code" in flow, "DF does not seem to be provisioned: %s".format(
+            json.dumps(flow, indent=4))
+        logger.info(flow["message"])
+
+        duration = 60
+        logger.info("We will wait up to %d seconds for you to sign in" % duration)
+        flow["expires_at"] = min(  # Shorten the time for quick test
+            flow["expires_at"], time.time() + duration)
+        result = self.app.acquire_token_by_device_flow(flow)
+        self.assertLoosely(  # It will skip this test if there is no user interaction
+            result,
+            assertion=lambda: self.assertIn('access_token', result),
+            skippable_errors=self.app.client.DEVICE_FLOW_RETRIABLE_ERRORS)
+        if "access_token" not in result:
+            self.skip("End user did not complete Device Flow in time")
+        self.assertCacheWorksForUser(result, scopes, username=None)
+        result["access_token"] = result["refresh_token"] = "************"
+        logger.info(
+            "%s obtained tokens: %s", self.id(), json.dumps(result, indent=4))
+
 
 def get_lab_user(mam=False, mfa=False, isFederated=False, federationProvider=None):
     # Based on https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/LAB.aspx
