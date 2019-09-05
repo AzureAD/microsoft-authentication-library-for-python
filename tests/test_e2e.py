@@ -327,3 +327,33 @@ class LabBasedTestCase(E2eTestCase):
         self._test_username_password(
             password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
 
+    @unittest.skipUnless(
+        os.getenv("OBO_CLIENT_SECRET"),
+        "Need OBO_CLIENT_SECRET from https://buildautomation.vault.azure.net/secrets/IdentityDivisionDotNetOBOServiceSecret")
+    def test_acquire_token_obo(self):  # It hardcodes many pre-defined resources
+        obo_client_id = "23c64cd8-21e4-41dd-9756-ab9e2c23f58c"
+        obo_scopes = ["https://graph.microsoft.com/User.Read"]
+        config = get_lab_user(isFederated=False)
+        pca = msal.PublicClientApplication(
+            "be9b0186-7dfd-448a-a944-f771029105bf", authority=config.get("authority"))
+        pca_result = pca.acquire_token_by_username_password(
+            config["username"],
+            self.get_lab_user_secret(config["lab"]["labname"]),
+            scopes=["%s/access_as_user" % obo_client_id],  # Need setup beforehand
+            )
+        self.assertNotEqual(None, pca_result.get("access_token"), "PCA should work")
+
+        cca = msal.ConfidentialClientApplication(
+            obo_client_id,
+            client_credential=os.getenv("OBO_CLIENT_SECRET"),
+            authority=config.get("authority"))
+        cca_result = cca.acquire_token_on_behalf_of(
+            pca_result['access_token'], obo_scopes)
+        self.assertNotEqual(None, cca_result.get("access_token"), str(cca_result))
+
+        # Cache would also work, with the one-cache-per-user caveat.
+        if len(cca.get_accounts()) == 1:
+            account = cca.get_accounts()[0]  # This test involves only 1 account
+            result = cca.acquire_token_silent(obo_scopes, account)
+            self.assertEqual(cca_result["access_token"], result["access_token"])
+
