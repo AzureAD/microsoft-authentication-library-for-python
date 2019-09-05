@@ -624,7 +624,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
     def acquire_token_for_client(self, scopes, **kwargs):
-        """Acquires token from the service for the confidential client.
+        """Acquires token for the current confidential client, not for an end user.
 
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
@@ -639,17 +639,26 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 scope=scopes,  # This grant flow requires no scope decoration
                 **kwargs)
 
-    def acquire_token_on_behalf_of(
-            self, user_assertion, scope, authority=None, policy=''):
-        the_authority = Authority(authority) if authority else self.authority
-        return oauth2.Client(
-            self.client_id, token_endpoint=the_authority.token_endpoint,
-            default_body=self._build_auth_parameters(
-                self.client_credential, the_authority.token_endpoint,
-                self.client_id)
-            )._get_token(  # TODO: Avoid using internal methods
-                "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                assertion=user_assertion, requested_token_use='on_behalf_of',
-                scope=scope,  # This grant flow requires no scope decoration???
-                query={'p': policy} if policy else None)
+    def acquire_token_on_behalf_of(self, user_assertion, scopes, **kwargs):
+        """Acquires token using on-behalf-of (OBO) flow.
+
+        The current app is a middle-tier service which already receives a token
+        representing an end user.
+        The current app can use such token (a.k.a. a user assertion) to request
+        another token to access downstream service, on behalf of that user.
+
+        The current middle-tier app has no user interaction to obtain consent.
+        See how to gain consent upfront for your middle-tier app from this article.
+        https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-on-behalf-of-flow#gaining-consent-for-the-middle-tier-application
+        """
+        # The implementation is NOT based on Token Exchange
+        # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
+        return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
+            user_assertion,
+            self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
+            scope=scopes,  # Without decorate_scope(...), it still gets an AT.
+                # As of 2019, AAD would even issue RT, and ClientInfo i.e. account.
+                # No IDT will be issued. OBO app probably does not need one anyway.
+            data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of"),
+            **kwargs)
 
