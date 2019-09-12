@@ -656,9 +656,12 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
-            scope=scopes,  # Without decorate_scope(...), it still gets an AT.
-                # As of 2019, AAD would even issue RT, and ClientInfo i.e. account.
-                # No IDT will be issued. OBO app probably does not need one anyway.
+            scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
+                # 1. Explicitly requesting an RT, without relying on AAD default
+                #    behavior, even though it currently still issues an RT.
+                # 2. Requesting an IDT (which would otherwise be unavailable)
+                #    so that the calling app could use id_token_claims to implement
+                #    their own cache mapping, which is likely needed in web apps.
             data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of"),
             **kwargs)
 
