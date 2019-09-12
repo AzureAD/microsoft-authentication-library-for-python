@@ -78,6 +78,7 @@ CONFIG = load_conf(os.path.join(THIS_FOLDER, CONFIG_FILENAME)) or {}
 
 # Since the OAuth2 specs uses snake_case, this test config also uses snake_case
 @unittest.skipUnless("client_id" in CONFIG, "client_id missing")
+@unittest.skipUnless(CONFIG.get("openid_configuration"), "openid_configuration missing")
 class TestClient(Oauth2TestCase):
 
     @classmethod
