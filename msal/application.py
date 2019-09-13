@@ -646,10 +646,19 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         representing an end user.
         The current app can use such token (a.k.a. a user assertion) to request
         another token to access downstream service, on behalf of that user.
+        See `detail docs here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-on-behalf-of-flow>`_ .
 
         The current middle-tier app has no user interaction to obtain consent.
         See how to gain consent upfront for your middle-tier app from this article.
         https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-on-behalf-of-flow#gaining-consent-for-the-middle-tier-application
+
+        :param str user_assertion: The incoming token already received by this app
+        :param list[str] scopes: Scopes required by downstream API (a resource).
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
         """
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
