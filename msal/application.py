@@ -238,7 +238,7 @@ class ClientApplication(object):
                 # REQUIRED, if the "redirect_uri" parameter was included in the
                 # authorization request as described in Section 4.1.1, and their
                 # values MUST be identical.
-            ):
+            **kwargs):
         """The second half of the Authorization Code Grant.
 
         :param code: The authorization code returned from Authorization Server.
@@ -270,9 +270,11 @@ class ClientApplication(object):
         # really empty.
         assert isinstance(scopes, list), "Invalid parameter type"
         return self.client.obtain_token_by_authorization_code(
-                code, redirect_uri=redirect_uri,
-                data={"scope": decorate_scope(scopes, self.client_id)},
-            )
+            code, redirect_uri=redirect_uri,
+            data=dict(
+                kwargs.pop("data", {}),
+                scope=decorate_scope(scopes, self.client_id)),
+            **kwargs)
 
     def get_accounts(self, username=None):
         """Get a list of accounts which previously signed in, i.e. exists in cache.
@@ -551,7 +553,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         """
         return self.client.obtain_token_by_device_flow(
                 flow,
-                data={"code": flow["device_code"]},  # 2018-10-4 Hack:
+                data=dict(kwargs.pop("data", {}), code=flow["device_code"]),
+                    # 2018-10-4 Hack:
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
                 **kwargs)
