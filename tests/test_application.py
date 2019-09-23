@@ -173,10 +173,8 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
             "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(
                 self.environment_in_cache),
             "response": TokenCacheTestCase.build_response(
-                uid=uid, 
-                utid=utid,
-                access_token=self.access_token, 
-                refresh_token="some refresh token"),
+                uid=uid, utid=utid,
+                access_token=self.access_token, refresh_token="some refresh token"),
         })  # The add(...) helper populates correct home_account_id for future searching
 
     def test_get_accounts(self):
@@ -195,3 +193,4 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
         at = app.acquire_token_silent(self.scopes, self.account)
         self.assertNotEqual(None, at)
         self.assertEqual(self.access_token, at.get('access_token'))
+
