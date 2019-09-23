@@ -176,7 +176,6 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
                 uid=uid, 
                 utid=utid,
                 access_token=self.access_token, 
-                token_type=self.token_type,
                 refresh_token="some refresh token"),
         })  # The add(...) helper populates correct home_account_id for future searching
 
