@@ -160,11 +160,11 @@ class TokenCache(object):
                     "client_id": event.get("client_id"),
                     "target": target,
                     "realm": realm,
-                    "token_type": response.get("token_type") or "Bearer",
+                    "token_type": response.get("token_type", "Bearer"),
                     "cached_at": str(now),  # Schema defines it as a string
                     "expires_on": str(now + expires_in),  # Same here
-                    "extended_expires_on": str(now + ext_expires_in)  # Same here                
-                    }           
+                    "extended_expires_on": str(now + ext_expires_in)  # Same here
+                    }
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
             if client_info:
