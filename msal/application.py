@@ -441,7 +441,7 @@ class ClientApplication(object):
                 logger.debug("Cache hit an AT")
                 return {  # Mimic a real response
                     "access_token": entry["secret"],
-                    "token_type": "Bearer",
+                    "token_type": entry["token_type"] or "Bearer",
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
