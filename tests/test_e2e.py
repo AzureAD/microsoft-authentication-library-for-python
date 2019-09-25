@@ -327,3 +327,49 @@ class LabBasedTestCase(E2eTestCase):
         self._test_username_password(
             password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
 
+    @unittest.skipUnless(
+        os.getenv("OBO_CLIENT_SECRET"),
+        "Need OBO_CLIENT_SECRET from https://buildautomation.vault.azure.net/secrets/IdentityDivisionDotNetOBOServiceSecret")
+    def test_acquire_token_obo(self):
+        # Some hardcoded, pre-defined settings
+        obo_client_id = "23c64cd8-21e4-41dd-9756-ab9e2c23f58c"
+        downstream_scopes = ["https://graph.microsoft.com/User.Read"]
+        config = get_lab_user(isFederated=False)
+
+        # 1. An app obtains a token representing a user, for our mid-tier service
+        pca = msal.PublicClientApplication(
+            "be9b0186-7dfd-448a-a944-f771029105bf", authority=config.get("authority"))
+        pca_result = pca.acquire_token_by_username_password(
+            config["username"],
+            self.get_lab_user_secret(config["lab"]["labname"]),
+            scopes=[  # The OBO app's scope. Yours might be different.
+                "%s/access_as_user" % obo_client_id],
+            )
+        self.assertIsNotNone(pca_result.get("access_token"), "PCA should work")
+
+        # 2. Our mid-tier service uses OBO to obtain a token for downstream service
+        cca = msal.ConfidentialClientApplication(
+            obo_client_id,
+            client_credential=os.getenv("OBO_CLIENT_SECRET"),
+            authority=config.get("authority"),
+            # token_cache= ...,  # Default token cache is all-tokens-store-in-memory.
+                # That's fine if OBO app uses short-lived msal instance per session.
+                # Otherwise, the OBO app need to implement a one-cache-per-user setup.
+            )
+        cca_result = cca.acquire_token_on_behalf_of(
+            pca_result['access_token'], downstream_scopes)
+        self.assertNotEqual(None, cca_result.get("access_token"), str(cca_result))
+
+        # 3. Now the OBO app can simply store downstream token(s) in same session.
+        #    Alternatively, if you want to persist the downstream AT, and possibly
+        #    the RT (if any) for prolonged access even after your own AT expires,
+        #    now it is the time to persist current cache state for current user.
+        #    Assuming you already did that (which is not shown in this test case),
+        #    the following part shows one of the ways to obtain an AT from cache.
+        username = cca_result.get("id_token_claims", {}).get("preferred_username")
+        self.assertEqual(config["username"], username)
+        if username:  # A precaution so that we won't use other user's token
+            account = cca.get_accounts(username=username)[0]
+            result = cca.acquire_token_silent(downstream_scopes, account)
+            self.assertEqual(cca_result["access_token"], result["access_token"])
+
