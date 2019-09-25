@@ -83,6 +83,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 'realm': 'contoso',
                 'secret': 'an access token',
                 'target': 's2 s1 s3',
+                'token_type': 'some type',
             },
             self.cache._cache["AccessToken"].get(
                 'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s2 s1 s3')
@@ -155,6 +156,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 'realm': 'adfs',
                 'secret': 'an access token',
                 'target': 's2 s1 s3',
+                'token_type': 'some type',
             },
             self.cache._cache["AccessToken"].get(
                 'subject-fs.msidlab8.com-accesstoken-my_client_id-adfs-s2 s1 s3')

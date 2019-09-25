@@ -18,7 +18,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +238,7 @@ class ClientApplication(object):
                 # REQUIRED, if the "redirect_uri" parameter was included in the
                 # authorization request as described in Section 4.1.1, and their
                 # values MUST be identical.
-            ):
+            **kwargs):
         """The second half of the Authorization Code Grant.
 
         :param code: The authorization code returned from Authorization Server.
@@ -270,9 +270,11 @@ class ClientApplication(object):
         # really empty.
         assert isinstance(scopes, list), "Invalid parameter type"
         return self.client.obtain_token_by_authorization_code(
-                code, redirect_uri=redirect_uri,
-                data={"scope": decorate_scope(scopes, self.client_id)},
-            )
+            code, redirect_uri=redirect_uri,
+            data=dict(
+                kwargs.pop("data", {}),
+                scope=decorate_scope(scopes, self.client_id)),
+            **kwargs)
 
     def get_accounts(self, username=None):
         """Get a list of accounts which previously signed in, i.e. exists in cache.
@@ -439,7 +441,7 @@ class ClientApplication(object):
                 logger.debug("Cache hit an AT")
                 return {  # Mimic a real response
                     "access_token": entry["secret"],
-                    "token_type": "Bearer",
+                    "token_type": entry.get("token_type", "Bearer"),
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
@@ -551,7 +553,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         """
         return self.client.obtain_token_by_device_flow(
                 flow,
-                data={"code": flow["device_code"]},  # 2018-10-4 Hack:
+                data=dict(kwargs.pop("data", {}), code=flow["device_code"]),
+                    # 2018-10-4 Hack:
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
                 **kwargs)
@@ -624,7 +627,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
     def acquire_token_for_client(self, scopes, **kwargs):
-        """Acquires token from the service for the confidential client.
+        """Acquires token for the current confidential client, not for an end user.
 
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
@@ -639,6 +642,38 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 scope=scopes,  # This grant flow requires no scope decoration
                 **kwargs)
 
-    def acquire_token_on_behalf_of(self, user_assertion, scopes, authority=None):
-        raise NotImplementedError()
+    def acquire_token_on_behalf_of(self, user_assertion, scopes, **kwargs):
+        """Acquires token using on-behalf-of (OBO) flow.
+
+        The current app is a middle-tier service which was called with a token
+        representing an end user.
+        The current app can use such token (a.k.a. a user assertion) to request
+        another token to access downstream web API, on behalf of that user.
+        See `detail docs here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-on-behalf-of-flow>`_ .
+
+        The current middle-tier app has no user interaction to obtain consent.
+        See how to gain consent upfront for your middle-tier app from this article.
+        https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-on-behalf-of-flow#gaining-consent-for-the-middle-tier-application
+
+        :param str user_assertion: The incoming token already received by this app
+        :param list[str] scopes: Scopes required by downstream API (a resource).
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
+        """
+        # The implementation is NOT based on Token Exchange
+        # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
+        return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
+            user_assertion,
+            self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
+            scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
+                # 1. Explicitly requesting an RT, without relying on AAD default
+                #    behavior, even though it currently still issues an RT.
+                # 2. Requesting an IDT (which would otherwise be unavailable)
+                #    so that the calling app could use id_token_claims to implement
+                #    their own cache mapping, which is likely needed in web apps.
+            data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of"),
+            **kwargs)
 
