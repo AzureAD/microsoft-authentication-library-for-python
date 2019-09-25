@@ -642,10 +642,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
     def acquire_token_on_behalf_of(self, user_assertion, scopes, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
 
-        The current app is a middle-tier service which already receives a token
+        The current app is a middle-tier service which was called with a token
         representing an end user.
         The current app can use such token (a.k.a. a user assertion) to request
-        another token to access downstream service, on behalf of that user.
+        another token to access downstream web API, on behalf of that user.
         See `detail docs here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-on-behalf-of-flow>`_ .
 
         The current middle-tier app has no user interaction to obtain consent.
