@@ -142,15 +142,9 @@ class FileBasedTestCase(E2eTestCase):
         result = self.app.acquire_token_by_authorization_code(
             ac, self.config["scope"], redirect_uri=redirect_uri, data=data1,
             params=ssh_test_slice)
-
         self.assertEqual("ssh-cert", result["token_type"])
         logger.debug("%s.cache = %s",
             self.id(), json.dumps(self.app.token_cache._cache, indent=4))
-
-        accessTokens = self.app.token_cache._cache.get("AccessToken")
-        self.assertEqual(len(accessTokens), 1)
-        singleAccessToken = next(iter(accessTokens.values()))
-        self.assertEqual(singleAccessToken.get("key_id"), "key1", "The AT should be bound to the key")
 
         # acquire_token_silent() needs to be passed the same key to work
         account = self.app.get_accounts()[0]
