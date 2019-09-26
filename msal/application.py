@@ -269,6 +269,7 @@ class ClientApplication(object):
         # one scope. But, MSAL decorates your scope anyway, so they are never
         # really empty.
         assert isinstance(scopes, list), "Invalid parameter type"
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         return self.client.obtain_token_by_authorization_code(
             code, redirect_uri=redirect_uri,
             data=dict(
@@ -396,6 +397,7 @@ class ClientApplication(object):
             - None when cache lookup does not yield anything.
         """
         assert isinstance(scopes, list), "Invalid parameter type"
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
@@ -520,6 +522,20 @@ class ClientApplication(object):
                 "Refresh failed. {error}: {error_description}".format(**response))
             if break_condition(response):
                 break
+
+    def _validate_ssh_cert_input_data(self, data):
+        if data.get("token_type") == "ssh-cert":
+            if not data.get("req_cnf"):
+                raise ValueError(
+                    "When requesting an SSH certificate, "
+                    "you must include a string parameter named 'req_cnf' "
+                    "containing the public key in JWK format "
+                    "(https://tools.ietf.org/html/rfc7517).")
+            if not data.get("key_id"):
+                raise ValueError(
+                    "When requesting an SSH certificate, "
+                    "you must include a string parameter named 'key_id' "
+                    "which identifies the key in the 'req_cnf' argument.")
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
