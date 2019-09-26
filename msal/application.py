@@ -429,9 +429,12 @@ class ClientApplication(object):
                     "environment": authority.instance,
                     "realm": authority.tenant,
                     "home_account_id": (account or {}).get("home_account_id"),    
-                     # Some token types (SSH-certs, POP) are bound to a key
-                    "key_id":  kwargs.get("data", {}).get("key_id", None)                     
+                     # Some token types (SSH-certs, POP) are bound to a key                                      
                     }
+            
+            key_id =  kwargs.get("data", {}).get("key_id", None)   
+            if (key_id):
+                query["key_id"] = key_id
                        
             matches = self.token_cache.find(
                 self.token_cache.CredentialType.ACCESS_TOKEN,
