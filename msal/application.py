@@ -430,19 +430,15 @@ class ClientApplication(object):
                     "client_id": self.client_id,
                     "environment": authority.instance,
                     "realm": authority.tenant,
-                    "home_account_id": (account or {}).get("home_account_id"),    
-                     # Some token types (SSH-certs, POP) are bound to a key                                      
+                    "home_account_id": (account or {}).get("home_account_id"),
                     }
-            
-            key_id =  kwargs.get("data", {}).get("key_id", None)   
-            if (key_id):
+            key_id =  kwargs.get("data", {}).get("key_id")
+            if key_id:  # Some token types (SSH-certs, POP) are bound to a key
                 query["key_id"] = key_id
-                       
             matches = self.token_cache.find(
                 self.token_cache.CredentialType.ACCESS_TOKEN,
                 target=scopes,
-                query = query)
-               
+                query=query)
             now = time.time()
             for entry in matches:
                 expires_in = int(entry["expires_on"]) - now
