@@ -385,6 +385,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             *args, **kwargs):
         RT = "refresh_token"
         _data = data.copy()  # to prevent side effect
+        self._validateSSHCertRequestParams(_data)    
+
         refresh_token = _data.get(RT)
         if grant_type == RT and isinstance(refresh_token, dict):
             _data[RT] = rt_getter(refresh_token)  # Put raw RT in _data
@@ -461,3 +463,19 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         data.update(scope=scope, assertion=encoder(assertion))
         return self._obtain_token(grant_type, data=data, **kwargs)
 
+    def _validateSSHCertRequestParams(self, requestParameters):
+        if (requestParameters.get("token_type")):
+            if ("ssh-cert".casefold() == requestParameters.get("token_type").casefold()):                
+
+                if (not requestParameters.get("req_cnf")): 
+                    raise ValueError(
+                """When requesting an SSH certificate, you must include a string parameter named 'req_cnf' containing
+                the public key in JWK format (https://tools.ietf.org/html/rfc7517).""")
+
+                if (not requestParameters.get("key_id")):
+                    raise ValueError(
+                """When requesting an SSH certificate, you must include a string parameter named 'key_id' 
+                which identifies the key in the 'req_cnf' argument""")     
+
+            else:
+                raise ValueError("The token_type value of %s is not recognized" % requestParameters.get("token_type"))            

@@ -96,17 +96,8 @@ class FileBasedTestCase(E2eTestCase):
 
     def test_auth_code(self):
         self.skipUnlessWithConfig(["client_id", "scope"])
-        from msal.oauth2cli.authcode import obtain_auth_code
-        self.app = msal.ClientApplication(
-            self.config["client_id"],
-            client_credential=self.config.get("client_secret"),
-            authority=self.config.get("authority"))
-        port = self.config.get("listen_port", 44331)
-        redirect_uri = "http://localhost:%s" % port
-        auth_request_uri = self.app.get_authorization_request_url(
-            self.config["scope"], redirect_uri=redirect_uri)
-        ac = obtain_auth_code(port, auth_uri=auth_request_uri)
-        self.assertNotEqual(ac, None)
+
+        (ac, redirect_uri) = self._acquire_auth_code()
 
         result = self.app.acquire_token_by_authorization_code(
             ac, self.config["scope"], redirect_uri=redirect_uri)
@@ -119,6 +110,71 @@ class FileBasedTestCase(E2eTestCase):
                 error=result.get("error"),
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, self.config["scope"], username=None)
+
+
+    def test_ssh_cert(self):
+        self.skipUnlessWithConfig(["client_id", "scope"])
+
+        JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
+        JWK2 = """{"kty":"RSA", "n":"72u07mew8rw-ssw3tUs9clKstGO2lvD7ZNxJU7OPNKz5PGYx3gjkhUmtNah4I4FP0DuF1ogb_qSS5eD86w10Wb1ftjWcoY8zjNO9V3ph-Q2tMQWdDW5kLdeU3-EDzc0HQeou9E0udqmfQoPbuXFQcOkdcbh3eeYejs8sWn3TQprXRwGh_TRYi-CAurXXLxQ8rp-pltUVRIr1B63fXmXhMeCAGwCPEFX9FRRs-YHUszUJl9F9-E0nmdOitiAkKfCC9LhwB9_xKtjmHUM9VaEC9jWOcdvXZutwEoW2XPMOg0Ky-s197F9rfpgHle2gBrXsbvVMvS0D-wXg6vsq6BAHzQ", "e":"AQAB"}"""
+
+        (ac, redirect_uri) = self._acquire_auth_code()
+
+        result = self.app.acquire_token_by_authorization_code(
+            ac, self.config["scope"], redirect_uri=redirect_uri, 
+            data={ "token_type": "ssh-cert", "key_id": "key1", "req_cnf": JWK1 }, 
+            params = self._get_ssh_test_slice())
+
+        self.assertEqual(result["token_type"], "ssh-cert")
+        logger.debug("%s.cache = %s",
+            self.id(), json.dumps(self.app.token_cache._cache, indent=4))
+
+        accessTokens = self.app.token_cache._cache.get("AccessToken")
+        self.assertEqual(len(accessTokens), 1)
+        singleAccessToken = next(iter(accessTokens.values()))
+        self.assertEqual(singleAccessToken.get("key_id"), "key1", "The AT should be bound to the key")
+            
+        # AcquireTokenSilent needs to be passed the same key to work
+        account = self.app.get_accounts()[0]            
+        result_from_cache = self.app.acquire_token_silent(
+            self.config["scope"], 
+            account=account, 
+            data={ "token_type": "ssh-cert", "key_id": "key1", "req_cnf": JWK1  })
+
+        self.assertIsNotNone(result_from_cache)
+        self.assertEqual(result['access_token'], result_from_cache['access_token'], "We should get the cached SSH-cert")
+
+        # refresh_token grant can fetch an ssh-cert bound to a different key
+        refreshed_ssh_cert = self.app.acquire_token_silent(
+            self.config["scope"], 
+            account=account, 
+            data={ "token_type": "ssh-cert", "key_id": "key2", "req_cnf": JWK2  }, 
+            params = self._get_ssh_test_slice())
+        self.assertIsNotNone(refreshed_ssh_cert)
+        self.assertEqual(refreshed_ssh_cert["token_type"], "ssh-cert")
+        self.assertNotEqual(refreshed_ssh_cert['access_token'], result_from_cache['access_token'])
+
+    def _get_ssh_test_slice(self):
+        return  {
+                "dc": "prod-wst-test1",
+                "slice": "test" ,
+                "sshcrt": "true" 
+                }
+
+    def _acquire_auth_code(self):
+        from msal.oauth2cli.authcode import obtain_auth_code
+        self.app = msal.ClientApplication(
+            self.config["client_id"],
+            client_credential=self.config.get("client_secret"),
+            authority=self.config.get("authority"))
+        port = self.config.get("listen_port", 44331)
+        redirect_uri = "http://localhost:%s" % port
+        auth_request_uri = self.app.get_authorization_request_url(
+            self.config["scope"], redirect_uri=redirect_uri)
+        ac = obtain_auth_code(port, auth_uri=auth_request_uri)
+        self.assertNotEqual(ac, None)
+
+        return (ac, redirect_uri)
 
     def test_client_secret(self):
         self.skipUnlessWithConfig(["client_id", "client_secret"])
