@@ -166,10 +166,8 @@ class TokenCache(object):
                     "expires_on": str(now + expires_in),  # Same here
                     "extended_expires_on": str(now + ext_expires_in)  # Same here
                     }
-
-                if (at.get("token_type").casefold() == "ssh-cert"):
+                if at.get("token_type") == "ssh-cert":
                     at["key_id"] = data.get("key_id")
-
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
             if client_info:
