@@ -45,7 +45,7 @@ def decorate_scope(
             # access_token.
             raise ValueError("Client Id can only be provided as a single scope")
         decorated = set(reserved_scope)  # Make a writable copy
-bogavril/ssh3    else:
+    else:
         decorated = scope_set | reserved_scope
     return list(decorated)
 
