@@ -45,7 +45,7 @@ def decorate_scope(
             # access_token.
             raise ValueError("Client Id can only be provided as a single scope")
         decorated = set(reserved_scope)  # Make a writable copy
-    else:
+bogavril/ssh3    else:
         decorated = scope_set | reserved_scope
     return list(decorated)
 
@@ -432,7 +432,7 @@ class ClientApplication(object):
                     "realm": authority.tenant,
                     "home_account_id": (account or {}).get("home_account_id"),
                     }
-            key_id =  kwargs.get("data", {}).get("key_id")
+            key_id = kwargs.get("data", {}).get("key_id")
             if key_id:  # Some token types (SSH-certs, POP) are bound to a key
                 query["key_id"] = key_id
             matches = self.token_cache.find(
