@@ -58,11 +58,11 @@ class Authority(object):
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
         self.is_adfs = self.tenant.lower() == 'adfs'
 
-    def user_realm_discovery(self, username):
+    def user_realm_discovery(self, username, headers):
         resp = requests.get(
             "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
                 netloc=self.instance, username=username),
-            headers={'Accept':'application/json'},
+            headers=headers.update({'Accept': 'application/json'}),
             verify=self.verify, proxies=self.proxies, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()

@@ -194,9 +194,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     GRANT_TYPE_JWT = "urn:ietf:params:oauth:grant-type:jwt-bearer"  # RFC7523
     grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
 
-
-    def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
-        # type: (list, **dict) -> dict
+    def initiate_device_flow(self, headers, scope=None, timeout=None, **kwargs):
+        # type: (dict, list, **dict) -> dict
         # The naming of this method is following the wording of this specs
         # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
         """Initiate a device flow.
@@ -214,9 +213,10 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
         flow = self.session.post(self.configuration[DAE],
-            data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-            timeout=timeout or self.timeout,
-            **kwargs).json()
+                                 data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
+                                 headers=headers,
+                                 timeout=timeout or self.timeout,
+                                 **kwargs).json()
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
         flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
