@@ -286,7 +286,7 @@ class ClientApplication(object):
             data=dict(
                 kwargs.pop("data", {}),
                 scope=decorate_scope(scopes, self.client_id)),
-            headers={'client-request-id', self.get_new_correlation_id(),
+            headers={'client-request-id', self._get_new_correlation_id(),
                      'x-client-current-telemetry', self._build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)},
             **kwargs)
@@ -525,7 +525,7 @@ class ClientApplication(object):
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 on_removing_rt=rt_remover or self.token_cache.remove_rt,
                 scope=scopes,
-                headers={'client-request-id': self.get_new_correlation_id(),
+                headers={'client-request-id': self._get_new_correlation_id(),
                          'x-client-current-telemetry': self._build_current_telemetry_request_header(
                             self.ACQUIRE_TOKEN_SILENT_ID, force_refresh)},
 
@@ -578,7 +578,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain some other readable key/value pairs.
         """
         return self.client.initiate_device_flow(
-            {'client-request-id': self.get_new_correlation_id(),
+            {'client-request-id': self._get_new_correlation_id(),
              'x-client-current-telemetry': self._build_current_telemetry_request_header(self.INITIATE_DEVICE_FLOW)},
             scope=decorate_scope(scopes or [], self.client_id),
             **kwargs)
@@ -603,7 +603,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     # 2018-10-4 Hack:
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
-                headers={'client-request-id': self.get_new_correlation_id(),
+                headers={'client-request-id': self._get_new_correlation_id(),
                          'x-client-current-telemetry': self._build_current_telemetry_request_header(
                              self.ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID)},
                 **kwargs)
@@ -626,7 +626,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain "error" and usually "error_description".
         """
         scopes = decorate_scope(scopes, self.client_id)
-        headers = {'client-request-id': self.get_new_correlation_id(),
+        headers = {'client-request-id': self._get_new_correlation_id(),
                    'x-client-current-telemetry': self._build_current_telemetry_request_header(
                        self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)}
         if not self.authority.is_adfs:
@@ -694,7 +694,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         # TBD: force_refresh behavior
         return self.client.obtain_token_for_client(
                 scope=scopes,  # This grant flow requires no scope decoration
-                headers={'client-request-id': self.get_new_correlation_id(),
+                headers={'client-request-id': self._get_new_correlation_id(),
                          'x-client-current-telemetry': self._build_current_telemetry_request_header(
                             self.ACQUIRE_TOKEN_FOR_CLIENT_ID)},
                 **kwargs)
@@ -732,7 +732,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 #    so that the calling app could use id_token_claims to implement
                 #    their own cache mapping, which is likely needed in web apps.
             data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of"),
-            headers={'client-request-id': self.get_new_correlation_id(),
+            headers={'client-request-id': self._get_new_correlation_id(),
                      'x-client-current-telemetry': self._build_current_telemetry_request_header(
                         self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID)},
             **kwargs)
