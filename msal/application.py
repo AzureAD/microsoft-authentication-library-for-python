@@ -551,7 +551,7 @@ class ClientApplication(object):
                     "you must include a string parameter named 'key_id' "
                     "which identifies the key in the 'req_cnf' argument.")
 
-    def get_new_correlation_id(self):
+    def _get_new_correlation_id(self):
         return str(uuid.uuid4())
 
     def _build_current_telemetry_request_header(self, public_api_id, force_refresh=False):
