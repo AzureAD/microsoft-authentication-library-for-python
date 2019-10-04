@@ -1,4 +1,7 @@
-import re
+try:
+    from urllib.parse import urlparse
+except ImportError:  # Fall back to Python 2
+    from urlparse import urlparse
 import logging
 
 import requests
@@ -39,17 +42,13 @@ class Authority(object):
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
-        canonicalized, self.instance, tenant = canonicalize(authority_url)
-        tenant_discovery_endpoint = (
-            'https://{}/{}{}/.well-known/openid-configuration'.format(
-                self.instance,
-                tenant,
-                "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
-                ))
-        if (tenant != "adfs" and validate_authority
+        authority, self.instance, tenant = canonicalize(authority_url)
+        is_b2c = self.instance.endswith(".b2clogin.com")
+        if (tenant != "adfs" and (not is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
-                canonicalized + "/oauth2/v2.0/authorize",
+                "https://{}{}/oauth2/v2.0/authorize".format(
+                    self.instance, authority.path),
                 verify=verify, proxies=proxies, timeout=timeout)
             if payload.get("error") == "invalid_instance":
                 raise ValueError(
@@ -60,6 +59,13 @@ class Authority(object):
                     "validate_authority=False"
                     % authority_url)
             tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
+        else:
+            tenant_discovery_endpoint = (
+                'https://{}{}{}/.well-known/openid-configuration'.format(
+                    self.instance,
+                    authority.path,  # In B2C scenario, it is "/tenant/policy"
+                    "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
+                    ))
         openid_config = tenant_discovery(
             tenant_discovery_endpoint,
             verify=verify, proxies=proxies, timeout=timeout)
@@ -85,15 +91,18 @@ class Authority(object):
             self.__class__._domains_without_user_realm_discovery.add(self.instance)
         return {}  # This can guide the caller to fall back normal ROPC flow
 
-def canonicalize(url):
-    # Returns (canonicalized_url, netloc, tenant). Raises ValueError on errors.
-    match_object = re.match(r'https://([^/]+)/([^/?#]+)', url.lower())
-    if not match_object:
+
+def canonicalize(authority_url):
+    authority = urlparse(authority_url)
+    parts = authority.path.split("/")
+    if authority.scheme != "https" or len(parts) < 2 or not parts[1]:
         raise ValueError(
             "Your given address (%s) should consist of "
             "an https url with a minimum of one segment in a path: e.g. "
-            "https://login.microsoftonline.com/<tenant_name>" % url)
-    return match_object.group(0), match_object.group(1), match_object.group(2)
+            "https://login.microsoftonline.com/<tenant> "
+            "or https://<tenant_name>.b2clogin.com/<tenant_name>.onmicrosoft.com/policy"
+            % authority_url)
+    return authority, authority.netloc, parts[1]
 
 def instance_discovery(url, **kwargs):
     return requests.get(  # Note: This URL seemingly returns V1 endpoint only

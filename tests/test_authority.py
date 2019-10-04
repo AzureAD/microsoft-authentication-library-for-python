@@ -40,19 +40,19 @@ class TestAuthority(unittest.TestCase):
 class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
 
     def test_canonicalize_tenant_followed_by_extra_paths(self):
-        self.assertEqual(
-            canonicalize("https://example.com/tenant/subpath?foo=bar#fragment"),
-            ("https://example.com/tenant", "example.com", "tenant"))
+        _, i, t = canonicalize("https://example.com/tenant/subpath?foo=bar#fragment")
+        self.assertEqual("example.com", i)
+        self.assertEqual("tenant", t)
 
     def test_canonicalize_tenant_followed_by_extra_query(self):
-        self.assertEqual(
-            canonicalize("https://example.com/tenant?foo=bar#fragment"),
-            ("https://example.com/tenant", "example.com", "tenant"))
+        _, i, t = canonicalize("https://example.com/tenant?foo=bar#fragment")
+        self.assertEqual("example.com", i)
+        self.assertEqual("tenant", t)
 
     def test_canonicalize_tenant_followed_by_extra_fragment(self):
-        self.assertEqual(
-            canonicalize("https://example.com/tenant#fragment"),
-            ("https://example.com/tenant", "example.com", "tenant"))
+        _, i, t = canonicalize("https://example.com/tenant#fragment")
+        self.assertEqual("example.com", i)
+        self.assertEqual("tenant", t)
 
     def test_canonicalize_rejects_non_https(self):
         with self.assertRaises(ValueError):
