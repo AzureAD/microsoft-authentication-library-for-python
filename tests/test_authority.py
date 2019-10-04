@@ -1,8 +1,11 @@
+import os
+
 from msal.authority import *
 from msal.exceptions import MsalServiceError
 from tests import unittest
 
 
+@unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip network io during tagged release")
 class TestAuthority(unittest.TestCase):
 
     def test_wellknown_host_and_tenant(self):
@@ -26,7 +29,7 @@ class TestAuthority(unittest.TestCase):
         self.assertNotIn('v2.0', a.token_endpoint)
 
     def test_unknown_host_wont_pass_instance_discovery(self):
-        with self.assertRaisesRegexp(MsalServiceError, "invalid_instance"):
+        with self.assertRaisesRegexp(ValueError, "invalid_instance"):
             Authority('https://unknown.host/tenant_doesnt_matter_in_this_case')
 
     def test_invalid_host_skipping_validation_meets_connection_error_down_the_road(self):
@@ -62,22 +65,4 @@ class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
     def test_canonicalize_rejects_tenantless_host_with_trailing_slash(self):
         with self.assertRaises(ValueError):
             canonicalize("https://no.tenant.example.com/")
-
-
-class TestAuthorityInternalHelperInstanceDiscovery(unittest.TestCase):
-
-    def test_instance_discovery_happy_case(self):
-        self.assertEqual(
-            instance_discovery("https://login.windows.net/tenant"),
-            "https://login.windows.net/tenant/.well-known/openid-configuration")
-
-    def test_instance_discovery_with_unknown_instance(self):
-        with self.assertRaisesRegexp(MsalServiceError, "invalid_instance"):
-            instance_discovery('https://unknown.host/tenant_doesnt_matter_here')
-
-    def test_instance_discovery_with_mocked_response(self):
-        mock_response = {'tenant_discovery_endpoint': 'http://a.com/t/openid'}
-        endpoint = instance_discovery(
-            "https://login.microsoftonline.in/tenant.com", response=mock_response)
-        self.assertEqual(endpoint, mock_response['tenant_discovery_endpoint'])
 

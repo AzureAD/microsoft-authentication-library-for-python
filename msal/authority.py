@@ -46,9 +46,18 @@ class Authority(object):
                 ))
         if (tenant != "adfs" and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
-            tenant_discovery_endpoint = instance_discovery(
+            payload = instance_discovery(
                 canonicalized + "/oauth2/v2.0/authorize",
                 verify=verify, proxies=proxies, timeout=timeout)
+            if payload.get("error") == "invalid_instance":
+                raise ValueError(
+                    "invalid_instance: "
+                    "The authority you provided, %s, is not whitelisted. "
+                    "If it is indeed your legit customized domain name, "
+                    "you can turn off this check by passing in "
+                    "validate_authority=False"
+                    % authority_url)
+            tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         openid_config = tenant_discovery(
             tenant_discovery_endpoint,
             verify=verify, proxies=proxies, timeout=timeout)
@@ -80,20 +89,15 @@ def canonicalize(url):
             "https://login.microsoftonline.com/<tenant_name>" % url)
     return match_object.group(0), match_object.group(1), match_object.group(2)
 
-def instance_discovery(url, response=None, **kwargs):
-    # Returns tenant discovery endpoint
-    resp = requests.get(  # Note: This URL seemingly returns V1 endpoint only
+def instance_discovery(url, **kwargs):
+    return requests.get(  # Note: This URL seemingly returns V1 endpoint only
         'https://{}/common/discovery/instance'.format(
             WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
                 # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
                 # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
             ),
         params={'authorization_endpoint': url, 'api-version': '1.0'},
-        **kwargs)
-    payload = response or resp.json()
-    if 'tenant_discovery_endpoint' not in payload:
-        raise MsalServiceError(status_code=resp.status_code, **payload)
-    return payload['tenant_discovery_endpoint']
+        **kwargs).json()
 
 def tenant_discovery(tenant_discovery_endpoint, **kwargs):
     # Returns Openid Configuration
