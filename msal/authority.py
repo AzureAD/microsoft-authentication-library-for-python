@@ -23,6 +23,8 @@ class Authority(object):
     Once constructed, it contains members named "*_endpoint" for this instance.
     TODO: It will also cache the previously-validated authority instances.
     """
+    _domains_without_user_realm_discovery = set([])
+
     def __init__(self, authority_url, validate_authority=True,
             verify=True, proxies=None, timeout=None,
             ):
@@ -67,17 +69,21 @@ class Authority(object):
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
         self.is_adfs = self.tenant.lower() == 'adfs'
 
-    def user_realm_discovery(self, username):
-        resp = requests.get(
-            "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
-                netloc=self.instance, username=username),
-            headers={'Accept':'application/json'},
-            verify=self.verify, proxies=self.proxies, timeout=self.timeout)
-        resp.raise_for_status()
-        return resp.json()
-        # It will typically contain "ver", "account_type",
+    def user_realm_discovery(self, username, response=None):
+        # It will typically return a dict containing "ver", "account_type",
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
+        if self.instance not in self.__class__._domains_without_user_realm_discovery:
+            resp = response or requests.get(
+                "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
+                    netloc=self.instance, username=username),
+                headers={'Accept':'application/json'},
+                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+            if resp.status_code != 404:
+                resp.raise_for_status()
+                return resp.json()
+            self.__class__._domains_without_user_realm_discovery.add(self.instance)
+        return {}  # This can guide the caller to fall back normal ROPC flow
 
 def canonicalize(url):
     # Returns (canonicalized_url, netloc, tenant). Raises ValueError on errors.
