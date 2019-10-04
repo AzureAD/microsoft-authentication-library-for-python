@@ -66,3 +66,23 @@ class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
         with self.assertRaises(ValueError):
             canonicalize("https://no.tenant.example.com/")
 
+
+@unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip network io during tagged release")
+class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
+    def test_memorize(self):
+        # We use a real authority so the constructor can finish tenant discovery
+        authority = "https://login.microsoftonline.com/common"
+        self.assertNotIn(authority, Authority._domains_without_user_realm_discovery)
+        a = Authority(authority, validate_authority=False)
+
+        # We now pretend this authority supports no User Realm Discovery
+        class MockResponse(object):
+            status_code = 404
+        a.user_realm_discovery("john.doe@example.com", response=MockResponse())
+        self.assertIn(
+            "login.microsoftonline.com",
+            Authority._domains_without_user_realm_discovery,
+            "user_realm_discovery() should memorize domains not supporting URD")
+        a.user_realm_discovery("john.doe@example.com",
+            response="This would cause exception if memorization did not work")
+
