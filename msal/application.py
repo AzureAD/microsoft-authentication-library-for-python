@@ -194,8 +194,6 @@ class ClientApplication(object):
             login_hint=None,  # type: Optional[str]
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
-            authority=None,  # By default, it will use self.authority;
-                             # Multi-tenant app can use new authority on demand
             response_type="code",  # Can be "token" if you use Implicit Grant
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
@@ -217,10 +215,17 @@ class ClientApplication(object):
             (Under the hood, we simply merge scope and additional_scope before
             sending them on the wire.)
         """
+        authority = kwargs.pop("authority", None)  # Historically we support this
+        if authority:
+            warnings.warn(
+                "We haven't decided if this method will accept authority parameter")
+        # The previous implementation is, it will use self.authority by default.
+        # Multi-tenant app can use new authority on demand
         the_authority = Authority(
             authority,
             verify=self.verify, proxies=self.proxies, timeout=self.timeout,
             ) if authority else self.authority
+
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id)
