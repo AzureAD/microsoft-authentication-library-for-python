@@ -18,7 +18,7 @@ def _get_app_and_auth_code(
         client_secret=None,
         authority="https://login.microsoftonline.com/common",
         port=44331,
-        scopes=["https://graph.windows.net/.default"],
+        scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
         ):
     from msal.oauth2cli.authcode import obtain_auth_code
     app = msal.ClientApplication(client_id, client_secret, authority=authority)
