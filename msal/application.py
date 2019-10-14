@@ -73,7 +73,7 @@ class ClientApplication(object):
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
             verify=True, proxies=None, timeout=None,
-            client_claims=None):
+            client_claims=None, is_b2c=False):
         """Create an instance of application.
 
         :param client_id: Your app has a client_id after you register it on AAD.
@@ -140,7 +140,7 @@ class ClientApplication(object):
         self.timeout = timeout
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
-                validate_authority, verify=verify, proxies=proxies, timeout=timeout)
+                validate_authority, verify=verify, proxies=proxies, timeout=timeout, is_b2c=is_b2c)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
