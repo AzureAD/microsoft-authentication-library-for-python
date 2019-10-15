@@ -18,7 +18,12 @@ WELL_KNOWN_AUTHORITY_HOSTS = set([
     'login.microsoftonline.us',
     'login.microsoftonline.de',
     ])
-
+WELL_KNOWN_B2C_HOSTS = [
+    "b2clogin.com",
+    "b2clogin.cn",
+    "b2clogin.us",
+    "b2clogin.de",
+    ]
 
 class Authority(object):
     """This class represents an (already-validated) authority.
@@ -43,7 +48,7 @@ class Authority(object):
         self.proxies = proxies
         self.timeout = timeout
         authority, self.instance, tenant = canonicalize(authority_url)
-        is_b2c = self.instance.endswith(".b2clogin.com")
+        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS)
         if (tenant != "adfs" and (not is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
