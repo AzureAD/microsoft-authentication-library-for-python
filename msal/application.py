@@ -205,6 +205,9 @@ class ClientApplication(object):
             Identifier of the user. Generally a User Principal Name (UPN).
         :param str redirect_uri:
             Address to return to upon receiving a response from the authority.
+        :param str response_type:
+            Default value is "code" for an OAuth2 Authorization Code grant.
+            You can use other content such as "id_token".
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -230,7 +233,7 @@ class ClientApplication(object):
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id)
         return client.build_auth_request_uri(
-            response_type="code",  # Using Authorization Code grant
+            response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             scope=decorate_scope(scopes, self.client_id),
             )
