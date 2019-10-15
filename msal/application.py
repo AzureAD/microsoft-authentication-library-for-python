@@ -18,7 +18,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 logger = logging.getLogger(__name__)
 
@@ -194,8 +194,6 @@ class ClientApplication(object):
             login_hint=None,  # type: Optional[str]
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
-            authority=None,  # By default, it will use self.authority;
-                             # Multi-tenant app can use new authority on demand
             response_type="code",  # Can be "token" if you use Implicit Grant
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
@@ -207,6 +205,9 @@ class ClientApplication(object):
             Identifier of the user. Generally a User Principal Name (UPN).
         :param str redirect_uri:
             Address to return to upon receiving a response from the authority.
+        :param str response_type:
+            Default value is "code" for an OAuth2 Authorization Code grant.
+            You can use other content such as "id_token".
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -217,15 +218,22 @@ class ClientApplication(object):
             (Under the hood, we simply merge scope and additional_scope before
             sending them on the wire.)
         """
+        authority = kwargs.pop("authority", None)  # Historically we support this
+        if authority:
+            warnings.warn(
+                "We haven't decided if this method will accept authority parameter")
+        # The previous implementation is, it will use self.authority by default.
+        # Multi-tenant app can use new authority on demand
         the_authority = Authority(
             authority,
             verify=self.verify, proxies=self.proxies, timeout=self.timeout,
             ) if authority else self.authority
+
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id)
         return client.build_auth_request_uri(
-            response_type="code",  # Using Authorization Code grant
+            response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             scope=decorate_scope(scopes, self.client_id),
             )
@@ -238,7 +246,7 @@ class ClientApplication(object):
                 # REQUIRED, if the "redirect_uri" parameter was included in the
                 # authorization request as described in Section 4.1.1, and their
                 # values MUST be identical.
-            ):
+            **kwargs):
         """The second half of the Authorization Code Grant.
 
         :param code: The authorization code returned from Authorization Server.
@@ -269,10 +277,13 @@ class ClientApplication(object):
         # one scope. But, MSAL decorates your scope anyway, so they are never
         # really empty.
         assert isinstance(scopes, list), "Invalid parameter type"
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         return self.client.obtain_token_by_authorization_code(
-                code, redirect_uri=redirect_uri,
-                data={"scope": decorate_scope(scopes, self.client_id)},
-            )
+            code, redirect_uri=redirect_uri,
+            data=dict(
+                kwargs.pop("data", {}),
+                scope=decorate_scope(scopes, self.client_id)),
+            **kwargs)
 
     def get_accounts(self, username=None):
         """Get a list of accounts which previously signed in, i.e. exists in cache.
@@ -394,6 +405,7 @@ class ClientApplication(object):
             - None when cache lookup does not yield anything.
         """
         assert isinstance(scopes, list), "Invalid parameter type"
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
@@ -410,7 +422,7 @@ class ClientApplication(object):
                 validate_authority=False,
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-                scopes, account, the_authority, **kwargs)
+                scopes, account, the_authority, force_refresh=force_refresh, **kwargs)
             if result:
                 return result
 
@@ -422,15 +434,19 @@ class ClientApplication(object):
             force_refresh=False,  # type: Optional[boolean]
             **kwargs):
         if not force_refresh:
-            matches = self.token_cache.find(
-                self.token_cache.CredentialType.ACCESS_TOKEN,
-                target=scopes,
-                query={
+            query={
                     "client_id": self.client_id,
                     "environment": authority.instance,
                     "realm": authority.tenant,
                     "home_account_id": (account or {}).get("home_account_id"),
-                    })
+                    }
+            key_id = kwargs.get("data", {}).get("key_id")
+            if key_id:  # Some token types (SSH-certs, POP) are bound to a key
+                query["key_id"] = key_id
+            matches = self.token_cache.find(
+                self.token_cache.CredentialType.ACCESS_TOKEN,
+                target=scopes,
+                query=query)
             now = time.time()
             for entry in matches:
                 expires_in = int(entry["expires_on"]) - now
@@ -439,7 +455,7 @@ class ClientApplication(object):
                 logger.debug("Cache hit an AT")
                 return {  # Mimic a real response
                     "access_token": entry["secret"],
-                    "token_type": "Bearer",
+                    "token_type": entry.get("token_type", "Bearer"),
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
@@ -511,6 +527,20 @@ class ClientApplication(object):
             if break_condition(response):
                 break
 
+    def _validate_ssh_cert_input_data(self, data):
+        if data.get("token_type") == "ssh-cert":
+            if not data.get("req_cnf"):
+                raise ValueError(
+                    "When requesting an SSH certificate, "
+                    "you must include a string parameter named 'req_cnf' "
+                    "containing the public key in JWK format "
+                    "(https://tools.ietf.org/html/rfc7517).")
+            if not data.get("key_id"):
+                raise ValueError(
+                    "When requesting an SSH certificate, "
+                    "you must include a string parameter named 'key_id' "
+                    "which identifies the key in the 'req_cnf' argument.")
+
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
@@ -551,7 +581,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         """
         return self.client.obtain_token_by_device_flow(
                 flow,
-                data={"code": flow["device_code"]},  # 2018-10-4 Hack:
+                data=dict(kwargs.pop("data", {}), code=flow["device_code"]),
+                    # 2018-10-4 Hack:
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
                 **kwargs)
@@ -624,7 +655,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
     def acquire_token_for_client(self, scopes, **kwargs):
-        """Acquires token from the service for the confidential client.
+        """Acquires token for the current confidential client, not for an end user.
 
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
@@ -639,6 +670,38 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 scope=scopes,  # This grant flow requires no scope decoration
                 **kwargs)
 
-    def acquire_token_on_behalf_of(self, user_assertion, scopes, authority=None):
-        raise NotImplementedError()
+    def acquire_token_on_behalf_of(self, user_assertion, scopes, **kwargs):
+        """Acquires token using on-behalf-of (OBO) flow.
+
+        The current app is a middle-tier service which was called with a token
+        representing an end user.
+        The current app can use such token (a.k.a. a user assertion) to request
+        another token to access downstream web API, on behalf of that user.
+        See `detail docs here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-on-behalf-of-flow>`_ .
+
+        The current middle-tier app has no user interaction to obtain consent.
+        See how to gain consent upfront for your middle-tier app from this article.
+        https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-on-behalf-of-flow#gaining-consent-for-the-middle-tier-application
+
+        :param str user_assertion: The incoming token already received by this app
+        :param list[str] scopes: Scopes required by downstream API (a resource).
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
+        """
+        # The implementation is NOT based on Token Exchange
+        # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
+        return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
+            user_assertion,
+            self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
+            scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
+                # 1. Explicitly requesting an RT, without relying on AAD default
+                #    behavior, even though it currently still issues an RT.
+                # 2. Requesting an IDT (which would otherwise be unavailable)
+                #    so that the calling app could use id_token_claims to implement
+                #    their own cache mapping, which is likely needed in web apps.
+            data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of"),
+            **kwargs)
 

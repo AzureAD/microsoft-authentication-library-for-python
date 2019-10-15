@@ -83,6 +83,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 'realm': 'contoso',
                 'secret': 'an access token',
                 'target': 's2 s1 s3',
+                'token_type': 'some type',
             },
             self.cache._cache["AccessToken"].get(
                 'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s2 s1 s3')
@@ -155,6 +156,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 'realm': 'adfs',
                 'secret': 'an access token',
                 'target': 's2 s1 s3',
+                'token_type': 'some type',
             },
             self.cache._cache["AccessToken"].get(
                 'subject-fs.msidlab8.com-accesstoken-my_client_id-adfs-s2 s1 s3')
@@ -202,6 +204,23 @@ class TokenCacheTestCase(unittest.TestCase):
             self.cache._cache.get("AppMetadata", {}).get(
                 "appmetadata-fs.msidlab8.com-my_client_id")
             )
+
+    def test_key_id_is_also_recorded(self):
+        my_key_id = "some_key_id_123"
+        self.cache.add({
+            "data": {"key_id": my_key_id},
+            "client_id": "my_client_id",
+            "scope": ["s2", "s1", "s3"],  # Not in particular order
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "response": self.build_response(
+                uid="uid", utid="utid",  # client_info
+                expires_in=3600, access_token="an access token",
+                refresh_token="a refresh token"),
+            }, now=1000)
+        cached_key_id = self.cache._cache["AccessToken"].get(
+            'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s2 s1 s3',
+            {}).get("key_id")
+        self.assertEqual(my_key_id, cached_key_id, "AT should be bound to the key")
 
 
 class SerializableTokenCacheTestCase(TokenCacheTestCase):

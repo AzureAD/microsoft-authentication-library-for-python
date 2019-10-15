@@ -127,6 +127,7 @@ class TokenCache(object):
         if "token_endpoint" in event:
             _, environment, realm = canonicalize(event["token_endpoint"])
         response = event.get("response", {})
+        data = event.get("data", {})
         access_token = response.get("access_token")
         refresh_token = response.get("refresh_token")
         id_token = response.get("id_token")
@@ -160,10 +161,13 @@ class TokenCache(object):
                     "client_id": event.get("client_id"),
                     "target": target,
                     "realm": realm,
+                    "token_type": response.get("token_type", "Bearer"),
                     "cached_at": str(now),  # Schema defines it as a string
                     "expires_on": str(now + expires_in),  # Same here
                     "extended_expires_on": str(now + ext_expires_in)  # Same here
                     }
+                if data.get("key_id"):  # It happens in SSH-cert or POP scenario
+                    at["key_id"] = data.get("key_id")
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
             if client_info:

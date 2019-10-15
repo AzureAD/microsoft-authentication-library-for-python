@@ -13,6 +13,21 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+def _get_app_and_auth_code(
+        client_id,
+        client_secret=None,
+        authority="https://login.microsoftonline.com/common",
+        port=44331,
+        scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
+        ):
+    from msal.oauth2cli.authcode import obtain_auth_code
+    app = msal.ClientApplication(client_id, client_secret, authority=authority)
+    redirect_uri = "http://localhost:%d" % port
+    ac = obtain_auth_code(port, auth_uri=app.get_authorization_request_url(
+        scopes, redirect_uri=redirect_uri))
+    assert ac is not None
+    return (app, ac, redirect_uri)
+
 @unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip e2e tests during tagged release")
 class E2eTestCase(unittest.TestCase):
 
@@ -49,9 +64,15 @@ class E2eTestCase(unittest.TestCase):
         result_from_cache = self.app.acquire_token_silent(scope, account=account)
         self.assertIsNotNone(result_from_cache,
                 "We should get a result from acquire_token_silent(...) call")
-        self.assertNotEqual(
-            result_from_wire['access_token'], result_from_cache['access_token'],
-            "We should get a fresh AT (via RT)")
+        self.assertIsNotNone(
+            # We used to assert it this way:
+            #   result_from_wire['access_token'] != result_from_cache['access_token']
+            # but ROPC in B2C tends to return the same AT we obtained seconds ago.
+            # Now looking back, "refresh_token grant would return a brand new AT"
+            # was just an empirical observation but never a committment in specs,
+            # so we adjust our way to assert here.
+            (result_from_cache or {}).get("access_token"),
+            "We should get an AT from acquire_token_silent(...) call")
 
     def assertCacheWorksForApp(self, result_from_wire, scope):
         # Going to test acquire_token_silent(...) to locate an AT from cache
@@ -70,7 +91,10 @@ class E2eTestCase(unittest.TestCase):
             username, password, scopes=scope)
         self.assertLoosely(result)
         # self.assertEqual(None, result.get("error"), str(result))
-        self.assertCacheWorksForUser(result, scope, username=username)
+        self.assertCacheWorksForUser(
+            result, scope,
+            username=username if ".b2clogin.com" not in authority else None,
+            )
 
 
 THIS_FOLDER = os.path.dirname(__file__)
@@ -94,20 +118,18 @@ class FileBasedTestCase(E2eTestCase):
         self.skipUnlessWithConfig(["client_id", "username", "password", "scope"])
         self._test_username_password(**self.config)
 
+    def _get_app_and_auth_code(self):
+        return _get_app_and_auth_code(
+            self.config["client_id"],
+            client_secret=self.config.get("client_secret"),
+            authority=self.config.get("authority"),
+            port=self.config.get("listen_port", 44331),
+            scopes=self.config["scope"],
+            )
+
     def test_auth_code(self):
         self.skipUnlessWithConfig(["client_id", "scope"])
-        from msal.oauth2cli.authcode import obtain_auth_code
-        self.app = msal.ClientApplication(
-            self.config["client_id"],
-            client_credential=self.config.get("client_secret"),
-            authority=self.config.get("authority"))
-        port = self.config.get("listen_port", 44331)
-        redirect_uri = "http://localhost:%s" % port
-        auth_request_uri = self.app.get_authorization_request_url(
-            self.config["scope"], redirect_uri=redirect_uri)
-        ac = obtain_auth_code(port, auth_uri=auth_request_uri)
-        self.assertNotEqual(ac, None)
-
+        (self.app, ac, redirect_uri) = self._get_app_and_auth_code()
         result = self.app.acquire_token_by_authorization_code(
             ac, self.config["scope"], redirect_uri=redirect_uri)
         logger.debug("%s.cache = %s",
@@ -119,6 +141,46 @@ class FileBasedTestCase(E2eTestCase):
                 error=result.get("error"),
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, self.config["scope"], username=None)
+
+
+    def test_ssh_cert(self):
+        self.skipUnlessWithConfig(["client_id", "scope"])
+
+        JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
+        JWK2 = """{"kty":"RSA", "n":"72u07mew8rw-ssw3tUs9clKstGO2lvD7ZNxJU7OPNKz5PGYx3gjkhUmtNah4I4FP0DuF1ogb_qSS5eD86w10Wb1ftjWcoY8zjNO9V3ph-Q2tMQWdDW5kLdeU3-EDzc0HQeou9E0udqmfQoPbuXFQcOkdcbh3eeYejs8sWn3TQprXRwGh_TRYi-CAurXXLxQ8rp-pltUVRIr1B63fXmXhMeCAGwCPEFX9FRRs-YHUszUJl9F9-E0nmdOitiAkKfCC9LhwB9_xKtjmHUM9VaEC9jWOcdvXZutwEoW2XPMOg0Ky-s197F9rfpgHle2gBrXsbvVMvS0D-wXg6vsq6BAHzQ", "e":"AQAB"}"""
+        data1 = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": JWK1}
+        ssh_test_slice = {
+            "dc": "prod-wst-test1",
+            "slice": "test",
+            "sshcrt": "true",
+            }
+
+        (self.app, ac, redirect_uri) = self._get_app_and_auth_code()
+
+        result = self.app.acquire_token_by_authorization_code(
+            ac, self.config["scope"], redirect_uri=redirect_uri, data=data1,
+            params=ssh_test_slice)
+        self.assertEqual("ssh-cert", result["token_type"])
+        logger.debug("%s.cache = %s",
+            self.id(), json.dumps(self.app.token_cache._cache, indent=4))
+
+        # acquire_token_silent() needs to be passed the same key to work
+        account = self.app.get_accounts()[0]
+        result_from_cache = self.app.acquire_token_silent(
+            self.config["scope"], account=account, data=data1)
+        self.assertIsNotNone(result_from_cache)
+        self.assertEqual(
+            result['access_token'], result_from_cache['access_token'],
+            "We should get the cached SSH-cert")
+
+        # refresh_token grant can fetch an ssh-cert bound to a different key
+        refreshed_ssh_cert = self.app.acquire_token_silent(
+            self.config["scope"], account=account, params=ssh_test_slice,
+            data={"token_type": "ssh-cert", "key_id": "key2", "req_cnf": JWK2})
+        self.assertIsNotNone(refreshed_ssh_cert)
+        self.assertEqual(refreshed_ssh_cert["token_type"], "ssh-cert")
+        self.assertNotEqual(result["access_token"], refreshed_ssh_cert['access_token'])
+
 
     def test_client_secret(self):
         self.skipUnlessWithConfig(["client_id", "client_secret"])
@@ -270,7 +332,7 @@ class LabBasedTestCase(E2eTestCase):
         lab_name = lab_name.lower()
         if lab_name not in cls._secrets:
             logger.info("Querying lab user password for %s", lab_name)
-            # Note: Short link won't work "https://aka.ms/GetLabUserSecret?Secret=%s"
+            # Short link only works in browser "https://aka.ms/GetLabUserSecret?Secret=%s"
             # So we use the official link written in here
             # https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API%27s.aspx
             url = ("https://request.msidlab.com/api/GetLabUserSecret?code=KpY5uCcoKo0aW8VOL/CUO3wnu9UF2XbSnLFGk56BDnmQiwD80MQ7HA==&Secret=%s"
@@ -326,4 +388,96 @@ class LabBasedTestCase(E2eTestCase):
         config = get_lab_user(isFederated=True, federationProvider="ADFSv2019")
         self._test_username_password(
             password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
+
+    @unittest.skipUnless(
+        os.getenv("OBO_CLIENT_SECRET"),
+        "Need OBO_CLIENT_SECRET from https://buildautomation.vault.azure.net/secrets/IdentityDivisionDotNetOBOServiceSecret")
+    def test_acquire_token_obo(self):
+        # Some hardcoded, pre-defined settings
+        obo_client_id = "23c64cd8-21e4-41dd-9756-ab9e2c23f58c"
+        downstream_scopes = ["https://graph.microsoft.com/User.Read"]
+        config = get_lab_user(isFederated=False)
+
+        # 1. An app obtains a token representing a user, for our mid-tier service
+        pca = msal.PublicClientApplication(
+            "be9b0186-7dfd-448a-a944-f771029105bf", authority=config.get("authority"))
+        pca_result = pca.acquire_token_by_username_password(
+            config["username"],
+            self.get_lab_user_secret(config["lab"]["labname"]),
+            scopes=[  # The OBO app's scope. Yours might be different.
+                "%s/access_as_user" % obo_client_id],
+            )
+        self.assertIsNotNone(pca_result.get("access_token"), "PCA should work")
+
+        # 2. Our mid-tier service uses OBO to obtain a token for downstream service
+        cca = msal.ConfidentialClientApplication(
+            obo_client_id,
+            client_credential=os.getenv("OBO_CLIENT_SECRET"),
+            authority=config.get("authority"),
+            # token_cache= ...,  # Default token cache is all-tokens-store-in-memory.
+                # That's fine if OBO app uses short-lived msal instance per session.
+                # Otherwise, the OBO app need to implement a one-cache-per-user setup.
+            )
+        cca_result = cca.acquire_token_on_behalf_of(
+            pca_result['access_token'], downstream_scopes)
+        self.assertNotEqual(None, cca_result.get("access_token"), str(cca_result))
+
+        # 3. Now the OBO app can simply store downstream token(s) in same session.
+        #    Alternatively, if you want to persist the downstream AT, and possibly
+        #    the RT (if any) for prolonged access even after your own AT expires,
+        #    now it is the time to persist current cache state for current user.
+        #    Assuming you already did that (which is not shown in this test case),
+        #    the following part shows one of the ways to obtain an AT from cache.
+        username = cca_result.get("id_token_claims", {}).get("preferred_username")
+        self.assertEqual(config["username"], username)
+        if username:  # A precaution so that we won't use other user's token
+            account = cca.get_accounts(username=username)[0]
+            result = cca.acquire_token_silent(downstream_scopes, account)
+            self.assertEqual(cca_result["access_token"], result["access_token"])
+
+    def _build_b2c_authority(self, policy):
+        base = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com"
+        return base + "/" + policy  # We do not support base + "?p=" + policy
+
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    def test_b2c_acquire_token_by_auth_code(self):
+        """
+        When prompted, you can manually login using this account:
+
+            username="b2clocal@msidlabb2c.onmicrosoft.com"
+                # This won't work https://msidlab.com/api/user?usertype=b2c
+            password="***"  # From https://aka.ms/GetLabUserSecret?Secret=msidlabb2c
+        """
+        scopes = ["https://msidlabb2c.onmicrosoft.com/msaapp/user_impersonation"]
+        (self.app, ac, redirect_uri) = _get_app_and_auth_code(
+            "b876a048-55a5-4fc5-9403-f5d90cb1c852",
+            client_secret=self.get_lab_user_secret("MSIDLABB2C-MSAapp-AppSecret"),
+            authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
+            port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
+            scopes=scopes,
+            )
+        result = self.app.acquire_token_by_authorization_code(
+            ac, scopes, redirect_uri=redirect_uri)
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result.get("id_token_claims"), indent=4),
+            )
+        self.assertIn(
+            "access_token", result,
+            "{error}: {error_description}".format(
+                # Note: No interpolation here, cause error won't always present
+                error=result.get("error"),
+                error_description=result.get("error_description")))
+        self.assertCacheWorksForUser(result, scopes, username=None)
+
+    def test_b2c_acquire_token_by_ropc(self):
+        self._test_username_password(
+            authority=self._build_b2c_authority("B2C_1_ROPC_Auth"),
+            client_id="e3b9ad76-9763-4827-b088-80c7a7888f79",
+            username="b2clocal@msidlabb2c.onmicrosoft.com",
+            password=self.get_lab_user_secret("msidlabb2c"),
+            scope=["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"],
+            )
 
