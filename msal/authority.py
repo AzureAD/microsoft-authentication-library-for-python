@@ -18,12 +18,6 @@ WELL_KNOWN_AUTHORITY_HOSTS = set([
     'login.microsoftonline.us',
     'login.microsoftonline.de',
     ])
-WELL_KNOWN_B2C_HOSTS = [
-    "b2clogin.com",
-    "b2clogin.cn",
-    "b2clogin.us",
-    "b2clogin.de",
-    ]
 
 class Authority(object):
     """This class represents an (already-validated) authority.
@@ -34,7 +28,7 @@ class Authority(object):
     _domains_without_user_realm_discovery = set([])
 
     def __init__(self, authority_url, validate_authority=True,
-            verify=True, proxies=None, timeout=None,
+            verify=True, proxies=None, timeout=None, trust_framework_policy=None
             ):
         """Creates an authority instance, and also validates it.
 
@@ -48,8 +42,8 @@ class Authority(object):
         self.proxies = proxies
         self.timeout = timeout
         authority, self.instance, tenant = canonicalize(authority_url)
-        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS)
-        if (tenant != "adfs" and (not is_b2c) and validate_authority
+        self.is_b2c = True if trust_framework_policy else False
+        if (tenant != "adfs" and (not self.is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
@@ -66,9 +60,10 @@ class Authority(object):
             tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
             tenant_discovery_endpoint = (
-                'https://{}{}{}/.well-known/openid-configuration'.format(
+                'https://{}{}/{}{}/.well-known/openid-configuration'.format(
                     self.instance,
                     authority.path,  # In B2C scenario, it is "/tenant/policy"
+                    trust_framework_policy,
                     "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
         openid_config = tenant_discovery(
