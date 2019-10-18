@@ -42,6 +42,7 @@ class Authority(object):
         self.proxies = proxies
         self.timeout = timeout
         authority, self.instance, tenant = canonicalize(authority_url)
+        self.policy = trust_framework_policy
         self.is_b2c = True if trust_framework_policy else False
         if (tenant != "adfs" and (not self.is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
@@ -49,21 +50,13 @@ class Authority(object):
                 "https://{}{}/oauth2/v2.0/authorize".format(
                     self.instance, authority.path),
                 verify=verify, proxies=proxies, timeout=timeout)
-            if payload.get("error") == "invalid_instance":
-                raise ValueError(
-                    "invalid_instance: "
-                    "The authority you provided, %s, is not whitelisted. "
-                    "If it is indeed your legit customized domain name, "
-                    "you can turn off this check by passing in "
-                    "validate_authority=False"
-                    % authority_url)
             tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
             tenant_discovery_endpoint = (
                 'https://{}{}{}{}/.well-known/openid-configuration'.format(
                     self.instance,
                     authority.path,  # In B2C scenario, it is "/tenant/policy"
-                    "/"+trust_framework_policy if self.is_b2c else "",
+                    "/"+ self.policy if self.is_b2c else "",
                     "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
         openid_config = tenant_discovery(

@@ -83,10 +83,10 @@ class E2eTestCase(unittest.TestCase):
             "We should get a cached AT")
 
     def _test_username_password(self,
-            authority=None, client_id=None, username=None, password=None, scope=None,
+            authority=None, client_id=None, username=None, password=None, scope=None, trust_framework_policy=None
             **ignored):
         assert authority and client_id and username and password and scope
-        self.app = msal.PublicClientApplication(client_id, authority=authority)
+        self.app = msal.PublicClientApplication(client_id, authority=authority, trust_framework_policy= trust_framework_policy)
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
         self.assertLoosely(result)
@@ -474,7 +474,8 @@ class LabBasedTestCase(E2eTestCase):
 
     def test_b2c_acquire_token_by_ropc(self):
         self._test_username_password(
-            authority=self._build_b2c_authority("B2C_1_ROPC_Auth"),
+            authority = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com",
+            trust_framework_policy = "B2C_1_ROPC_Auth",
             client_id="e3b9ad76-9763-4827-b088-80c7a7888f79",
             username="b2clocal@msidlabb2c.onmicrosoft.com",
             password=self.get_lab_user_secret("msidlabb2c"),
