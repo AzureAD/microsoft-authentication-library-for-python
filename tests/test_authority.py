@@ -29,7 +29,7 @@ class TestAuthority(unittest.TestCase):
         self.assertNotIn('v2.0', a.token_endpoint)
 
     def test_unknown_host_wont_pass_instance_discovery(self):
-        with self.assertRaisesRegexp(ValueError, "invalid_instance"):
+        with self.assertRaisesRegexp(MsalServiceError, "invalid_instance"):
             Authority('https://unknown.host/tenant_doesnt_matter_in_this_case')
 
     def test_invalid_host_skipping_validation_meets_connection_error_down_the_road(self):

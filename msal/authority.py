@@ -46,11 +46,10 @@ class Authority(object):
         self.is_b2c = True if trust_framework_policy else False
         if (tenant != "adfs" and (not self.is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
-            payload = instance_discovery(
+            tenant_discovery_endpoint = instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
                     self.instance, authority.path),
                 verify=verify, proxies=proxies, timeout=timeout)
-            tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
             tenant_discovery_endpoint = (
                 'https://{}{}{}{}/.well-known/openid-configuration'.format(
@@ -97,15 +96,19 @@ def canonicalize(authority_url):
             % authority_url)
     return authority, authority.netloc, parts[1]
 
-def instance_discovery(url, **kwargs):
-    return requests.get(  # Note: This URL seemingly returns V1 endpoint only
+def instance_discovery(url, response=None, **kwargs):
+    resp = requests.get(  # Note: This URL seemingly returns V1 endpoint only
         'https://{}/common/discovery/instance'.format(
             WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
                 # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
                 # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
             ),
         params={'authorization_endpoint': url, 'api-version': '1.0'},
-        **kwargs).json()
+        **kwargs)
+    payload = response or resp.json()
+    if 'tenant_discovery_endpoint' not in payload:
+        raise MsalServiceError(status_code=resp.status_code, **payload)
+    return payload['tenant_discovery_endpoint']
 
 def tenant_discovery(tenant_discovery_endpoint, **kwargs):
     # Returns Openid Configuration

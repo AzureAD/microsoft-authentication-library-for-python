@@ -83,7 +83,7 @@ class E2eTestCase(unittest.TestCase):
             "We should get a cached AT")
 
     def _test_username_password(self,
-            authority=None, client_id=None, username=None, password=None, scope=None, trust_framework_policy=None
+            authority=None, client_id=None, username=None, password=None, scope=None, trust_framework_policy=None,
             **ignored):
         assert authority and client_id and username and password and scope
         self.app = msal.PublicClientApplication(client_id, authority=authority, trust_framework_policy= trust_framework_policy)
