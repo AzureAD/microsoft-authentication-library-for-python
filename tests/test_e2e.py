@@ -17,11 +17,12 @@ def _get_app_and_auth_code(
         client_id,
         client_secret=None,
         authority="https://login.microsoftonline.com/common",
+        trust_framework_policy=None,
         port=44331,
         scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
         ):
     from msal.oauth2cli.authcode import obtain_auth_code
-    app = msal.ClientApplication(client_id, client_secret, authority=authority)
+    app = msal.ClientApplication(client_id, client_secret, authority=authority, trust_framework_policy=trust_framework_policy)
     redirect_uri = "http://localhost:%d" % port
     ac = obtain_auth_code(port, auth_uri=app.get_authorization_request_url(
         scopes, redirect_uri=redirect_uri))
@@ -86,7 +87,7 @@ class E2eTestCase(unittest.TestCase):
             authority=None, client_id=None, username=None, password=None, scope=None, trust_framework_policy=None,
             **ignored):
         assert authority and client_id and username and password and scope
-        self.app = msal.PublicClientApplication(client_id, authority=authority, trust_framework_policy= trust_framework_policy)
+        self.app = msal.PublicClientApplication(client_id, authority=authority, trust_framework_policy=trust_framework_policy)
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
         self.assertLoosely(result)
@@ -435,10 +436,6 @@ class LabBasedTestCase(E2eTestCase):
             result = cca.acquire_token_silent(downstream_scopes, account)
             self.assertEqual(cca_result["access_token"], result["access_token"])
 
-    def _build_b2c_authority(self, policy):
-        base = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com"
-        return base + "/" + policy  # We do not support base + "?p=" + policy
-
     @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_b2c_acquire_token_by_auth_code(self):
         """
@@ -452,7 +449,8 @@ class LabBasedTestCase(E2eTestCase):
         (self.app, ac, redirect_uri) = _get_app_and_auth_code(
             "b876a048-55a5-4fc5-9403-f5d90cb1c852",
             client_secret=self.get_lab_user_secret("MSIDLABB2C-MSAapp-AppSecret"),
-            authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
+            authority="https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com",
+            trust_framework_policy="B2C_1_SignInPolicy",
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
             scopes=scopes,
             )
