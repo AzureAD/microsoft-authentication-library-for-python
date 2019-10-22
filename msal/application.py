@@ -413,7 +413,7 @@ class ClientApplication(object):
         #     verify=self.verify, proxies=self.proxies, timeout=self.timeout,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-            scopes, account, self.authority, **kwargs)
+            scopes, account, self.authority, force_refresh, **kwargs)
         if result:
             return result
         for alias in self._get_authority_aliases(self.authority.instance):
