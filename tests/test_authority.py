@@ -1,8 +1,11 @@
+import os
+
 from msal.authority import *
 from msal.exceptions import MsalServiceError
 from tests import unittest
 
 
+@unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip network io during tagged release")
 class TestAuthority(unittest.TestCase):
 
     def test_wellknown_host_and_tenant(self):
@@ -26,7 +29,7 @@ class TestAuthority(unittest.TestCase):
         self.assertNotIn('v2.0', a.token_endpoint)
 
     def test_unknown_host_wont_pass_instance_discovery(self):
-        with self.assertRaisesRegexp(MsalServiceError, "invalid_instance"):
+        with self.assertRaisesRegexp(ValueError, "invalid_instance"):
             Authority('https://unknown.host/tenant_doesnt_matter_in_this_case')
 
     def test_invalid_host_skipping_validation_meets_connection_error_down_the_road(self):
@@ -37,19 +40,19 @@ class TestAuthority(unittest.TestCase):
 class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
 
     def test_canonicalize_tenant_followed_by_extra_paths(self):
-        self.assertEqual(
-            canonicalize("https://example.com/tenant/subpath?foo=bar#fragment"),
-            ("https://example.com/tenant", "example.com", "tenant"))
+        _, i, t = canonicalize("https://example.com/tenant/subpath?foo=bar#fragment")
+        self.assertEqual("example.com", i)
+        self.assertEqual("tenant", t)
 
     def test_canonicalize_tenant_followed_by_extra_query(self):
-        self.assertEqual(
-            canonicalize("https://example.com/tenant?foo=bar#fragment"),
-            ("https://example.com/tenant", "example.com", "tenant"))
+        _, i, t = canonicalize("https://example.com/tenant?foo=bar#fragment")
+        self.assertEqual("example.com", i)
+        self.assertEqual("tenant", t)
 
     def test_canonicalize_tenant_followed_by_extra_fragment(self):
-        self.assertEqual(
-            canonicalize("https://example.com/tenant#fragment"),
-            ("https://example.com/tenant", "example.com", "tenant"))
+        _, i, t = canonicalize("https://example.com/tenant#fragment")
+        self.assertEqual("example.com", i)
+        self.assertEqual("tenant", t)
 
     def test_canonicalize_rejects_non_https(self):
         with self.assertRaises(ValueError):
@@ -64,20 +67,22 @@ class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
             canonicalize("https://no.tenant.example.com/")
 
 
-class TestAuthorityInternalHelperInstanceDiscovery(unittest.TestCase):
+@unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip network io during tagged release")
+class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
+    def test_memorize(self):
+        # We use a real authority so the constructor can finish tenant discovery
+        authority = "https://login.microsoftonline.com/common"
+        self.assertNotIn(authority, Authority._domains_without_user_realm_discovery)
+        a = Authority(authority, validate_authority=False)
 
-    def test_instance_discovery_happy_case(self):
-        self.assertEqual(
-            instance_discovery("https://login.windows.net/tenant"),
-            "https://login.windows.net/tenant/.well-known/openid-configuration")
-
-    def test_instance_discovery_with_unknown_instance(self):
-        with self.assertRaisesRegexp(MsalServiceError, "invalid_instance"):
-            instance_discovery('https://unknown.host/tenant_doesnt_matter_here')
-
-    def test_instance_discovery_with_mocked_response(self):
-        mock_response = {'tenant_discovery_endpoint': 'http://a.com/t/openid'}
-        endpoint = instance_discovery(
-            "https://login.microsoftonline.in/tenant.com", response=mock_response)
-        self.assertEqual(endpoint, mock_response['tenant_discovery_endpoint'])
+        # We now pretend this authority supports no User Realm Discovery
+        class MockResponse(object):
+            status_code = 404
+        a.user_realm_discovery("john.doe@example.com", response=MockResponse())
+        self.assertIn(
+            "login.microsoftonline.com",
+            Authority._domains_without_user_realm_discovery,
+            "user_realm_discovery() should memorize domains not supporting URD")
+        a.user_realm_discovery("john.doe@example.com",
+            response="This would cause exception if memorization did not work")
 

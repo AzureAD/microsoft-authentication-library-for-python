@@ -19,7 +19,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 logger = logging.getLogger(__name__)
 
@@ -205,8 +205,6 @@ class ClientApplication(object):
             login_hint=None,  # type: Optional[str]
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
-            authority=None,  # By default, it will use self.authority;
-                             # Multi-tenant app can use new authority on demand
             response_type="code",  # Can be "token" if you use Implicit Grant
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
@@ -218,6 +216,9 @@ class ClientApplication(object):
             Identifier of the user. Generally a User Principal Name (UPN).
         :param str redirect_uri:
             Address to return to upon receiving a response from the authority.
+        :param str response_type:
+            Default value is "code" for an OAuth2 Authorization Code grant.
+            You can use other content such as "id_token".
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -228,15 +229,22 @@ class ClientApplication(object):
             (Under the hood, we simply merge scope and additional_scope before
             sending them on the wire.)
         """
+        authority = kwargs.pop("authority", None)  # Historically we support this
+        if authority:
+            warnings.warn(
+                "We haven't decided if this method will accept authority parameter")
+        # The previous implementation is, it will use self.authority by default.
+        # Multi-tenant app can use new authority on demand
         the_authority = Authority(
             authority,
             verify=self.verify, proxies=self.proxies, timeout=self.timeout,
             ) if authority else self.authority
+
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id)
         return client.build_auth_request_uri(
-            response_type="code",  # Using Authorization Code grant
+            response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             scope=decorate_scope(scopes, self.client_id),
             )
@@ -428,7 +436,7 @@ class ClientApplication(object):
                 validate_authority=False,
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-                scopes, account, the_authority, **kwargs)
+                scopes, account, the_authority, force_refresh=force_refresh, **kwargs)
             if result:
                 return result
 
