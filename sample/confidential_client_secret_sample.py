@@ -12,6 +12,8 @@ The configuration file would look like this (sans those // comments):
         // For information about generating client secret, refer:
         // https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Client-Credentials#registering-client-secrets-using-the-application-registration-portal
 
+    "endpoint": "https://graph.microsoft.com/v1.0/users"
+
 }
 
 You can then run this sample with a JSON configuration file:
@@ -23,6 +25,7 @@ import sys  # For simplicity, we'll read config file from 1st CLI param sys.argv
 import json
 import logging
 
+import requests
 import msal
 
 
@@ -53,10 +56,11 @@ if not result:
     result = app.acquire_token_for_client(scopes=config["scope"])
 
 if "access_token" in result:
-    print(result["access_token"])
-    print(result["token_type"])
-    print(result["expires_in"])  # You don't normally need to care about this.
-                                 # It will be good for at least 5 minutes.
+    # Calling graph using the access token
+    graph_data = requests.get(  # Use token to call downstream service
+        "https://graph.microsoft.com/v1.0/users",
+        headers={'Authorization': 'Bearer ' + result['access_token']},).json()
+    print("Users from graph: " + str(graph_data))
 else:
     print(result.get("error"))
     print(result.get("error_description"))
