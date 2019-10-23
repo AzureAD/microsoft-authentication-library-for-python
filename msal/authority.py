@@ -18,12 +18,6 @@ WELL_KNOWN_AUTHORITY_HOSTS = set([
     'login.microsoftonline.us',
     'login.microsoftonline.de',
     ])
-WELL_KNOWN_B2C_HOSTS = [
-    "b2clogin.com",
-    "b2clogin.cn",
-    "b2clogin.us",
-    "b2clogin.de",
-    ]
 
 class Authority(object):
     """This class represents an (already-validated) authority.
