@@ -51,6 +51,14 @@ def decorate_scope(
     return list(decorated)
 
 
+def _get_new_correlation_id():
+        return str(uuid.uuid4())
+
+
+def _build_current_telemetry_request_header(public_api_id, force_refresh=False):
+        return "1|{},{}|".format(public_api_id, "1" if force_refresh else "0")
+
+
 def extract_certs(public_cert_content):
     # Parses raw public certificate file contents and returns a list of strings
     # Usage: headers = {"x5c": extract_certs(open("my_cert.pem").read())}
@@ -294,8 +302,8 @@ class ClientApplication(object):
             data=dict(
                 kwargs.pop("data", {}),
                 scope=decorate_scope(scopes, self.client_id)),
-            headers={'client-request-id', self._get_new_correlation_id(),
-                     'x-client-current-telemetry', self._build_current_telemetry_request_header(
+            headers={'client-request-id': _get_new_correlation_id(),
+                     'x-client-current-telemetry': _build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)},
             **kwargs)
 
@@ -474,7 +482,7 @@ class ClientApplication(object):
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, decorate_scope(scopes, self.client_id), account,
-                **kwargs)
+                force_refresh=force_refresh, **kwargs)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self, authority, scopes, account, **kwargs):
@@ -520,7 +528,8 @@ class ClientApplication(object):
 
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
-            rt_remover=None, break_condition=lambda response: False, force_refresh=False, **kwargs):
+            rt_remover=None, break_condition=lambda response: False,
+            force_refresh=False, **kwargs):
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
@@ -533,10 +542,9 @@ class ClientApplication(object):
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 on_removing_rt=rt_remover or self.token_cache.remove_rt,
                 scope=scopes,
-                headers={'client-request-id': self._get_new_correlation_id(),
-                         'x-client-current-telemetry': self._build_current_telemetry_request_header(
+                headers={'client-request-id': _get_new_correlation_id(),
+                         'x-client-current-telemetry': _build_current_telemetry_request_header(
                             self.ACQUIRE_TOKEN_SILENT_ID, force_refresh)},
-
                 **kwargs)
             if "error" not in response:
                 return response
@@ -559,12 +567,6 @@ class ClientApplication(object):
                     "you must include a string parameter named 'key_id' "
                     "which identifies the key in the 'req_cnf' argument.")
 
-    def _get_new_correlation_id(self):
-        return str(uuid.uuid4())
-
-    def _build_current_telemetry_request_header(self, public_api_id, force_refresh=False):
-        return "1|{},{}|".format(public_api_id, "1" if force_refresh else "0")
-
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
@@ -586,8 +588,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain some other readable key/value pairs.
         """
         return self.client.initiate_device_flow(
-            {'client-request-id': self._get_new_correlation_id(),
-             'x-client-current-telemetry': self._build_current_telemetry_request_header(self.INITIATE_DEVICE_FLOW)},
+            headers={'client-request-id': _get_new_correlation_id()},
             scope=decorate_scope(scopes or [], self.client_id),
             **kwargs)
 
@@ -611,8 +612,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     # 2018-10-4 Hack:
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
-                headers={'client-request-id': self._get_new_correlation_id(),
-                         'x-client-current-telemetry': self._build_current_telemetry_request_header(
+                headers={'client-request-id': _get_new_correlation_id(),
+                         'x-client-current-telemetry': _build_current_telemetry_request_header(
                              self.ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID)},
                 **kwargs)
 
@@ -634,11 +635,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain "error" and usually "error_description".
         """
         scopes = decorate_scope(scopes, self.client_id)
-        headers = {'client-request-id': self._get_new_correlation_id(),
-                   'x-client-current-telemetry': self._build_current_telemetry_request_header(
+        headers = {'client-request-id': _get_new_correlation_id(),
+                   'x-client-current-telemetry': _build_current_telemetry_request_header(
                        self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)}
         if not self.authority.is_adfs:
-            user_realm_result = self.authority.user_realm_discovery(username, headers)
+            user_realm_result = self.authority.user_realm_discovery(username, headers['client-request-id'])
             if user_realm_result.get("account_type") == "Federated":
                 return self._acquire_token_by_username_password_federated(
                     user_realm_result, username, password, scopes=scopes, headers=headers, **kwargs)
@@ -702,8 +703,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         # TBD: force_refresh behavior
         return self.client.obtain_token_for_client(
                 scope=scopes,  # This grant flow requires no scope decoration
-                headers={'client-request-id': self._get_new_correlation_id(),
-                         'x-client-current-telemetry': self._build_current_telemetry_request_header(
+                headers={'client-request-id': _get_new_correlation_id(),
+                         'x-client-current-telemetry': _build_current_telemetry_request_header(
                             self.ACQUIRE_TOKEN_FOR_CLIENT_ID)},
                 **kwargs)
 
@@ -740,8 +741,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 #    so that the calling app could use id_token_claims to implement
                 #    their own cache mapping, which is likely needed in web apps.
             data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of"),
-            headers={'client-request-id': self._get_new_correlation_id(),
-                     'x-client-current-telemetry': self._build_current_telemetry_request_header(
+            headers={'client-request-id': _get_new_correlation_id(),
+                     'x-client-current-telemetry': _build_current_telemetry_request_header(
                         self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID)},
             **kwargs)
 
