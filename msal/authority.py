@@ -41,9 +41,16 @@ class Authority(object):
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
-        authority, self.instance, tenant = canonicalize(authority_url)
-        self.policy = trust_framework_policy
-        self.is_b2c = True if trust_framework_policy else False
+        if isinstance(authority_url, dict):
+            assert ("authority" in authority_url
+                    and "user_flow" in authority_url)
+            self.authority_url = authority_url["authority"]
+            self.user_flow = authority_url["user_flow"]
+        else:
+            self.authority_url = authority_url
+            self.user_flow = None
+        authority, self.instance, tenant = canonicalize(self.authority_url)
+        self.is_b2c = True if self.user_flow else False
         if (tenant != "adfs" and (not self.is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             tenant_discovery_endpoint = instance_discovery(
@@ -55,7 +62,7 @@ class Authority(object):
                 'https://{}{}{}{}/.well-known/openid-configuration'.format(
                     self.instance,
                     authority.path,  # In B2C scenario, it is "/tenant/policy"
-                    "/"+ self.policy if self.is_b2c else "",
+                    "/"+ self.user_flow if self.is_b2c else "",
                     "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
         openid_config = tenant_discovery(

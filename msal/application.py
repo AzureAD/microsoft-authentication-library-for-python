@@ -140,7 +140,7 @@ class ClientApplication(object):
         self.timeout = timeout
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
-                validate_authority, verify=verify, proxies=proxies, timeout=timeout, trust_framework_policy=trust_framework_policy)
+                validate_authority, verify=verify, proxies=proxies, timeout=timeout)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)

@@ -17,12 +17,11 @@ def _get_app_and_auth_code(
         client_id,
         client_secret=None,
         authority="https://login.microsoftonline.com/common",
-        trust_framework_policy=None,
         port=44331,
         scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
         ):
     from msal.oauth2cli.authcode import obtain_auth_code
-    app = msal.ClientApplication(client_id, client_secret, authority=authority, trust_framework_policy=trust_framework_policy)
+    app = msal.ClientApplication(client_id, client_secret, authority=authority,)
     redirect_uri = "http://localhost:%d" % port
     ac = obtain_auth_code(port, auth_uri=app.get_authorization_request_url(
         scopes, redirect_uri=redirect_uri))
@@ -87,7 +86,7 @@ class E2eTestCase(unittest.TestCase):
             authority=None, client_id=None, username=None, password=None, scope=None, trust_framework_policy=None,
             **ignored):
         assert authority and client_id and username and password and scope
-        self.app = msal.PublicClientApplication(client_id, authority=authority, trust_framework_policy=trust_framework_policy)
+        self.app = msal.PublicClientApplication(client_id, authority=authority,)
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
         self.assertLoosely(result)
@@ -449,8 +448,8 @@ class LabBasedTestCase(E2eTestCase):
         (self.app, ac, redirect_uri) = _get_app_and_auth_code(
             "b876a048-55a5-4fc5-9403-f5d90cb1c852",
             client_secret=self.get_lab_user_secret("MSIDLABB2C-MSAapp-AppSecret"),
-            authority="https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com",
-            trust_framework_policy="B2C_1_SignInPolicy",
+            authority={"authority": "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com",
+                       "user_flow": "B2C_1_SignInPolicy"},
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
             scopes=scopes,
             )
@@ -472,8 +471,8 @@ class LabBasedTestCase(E2eTestCase):
 
     def test_b2c_acquire_token_by_ropc(self):
         self._test_username_password(
-            authority = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com",
-            trust_framework_policy = "B2C_1_ROPC_Auth",
+            authority = {"authority":"https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com",
+                         "user_flow": "B2C_1_ROPC_Auth"},
             client_id="e3b9ad76-9763-4827-b088-80c7a7888f79",
             username="b2clocal@msidlabb2c.onmicrosoft.com",
             password=self.get_lab_user_secret("msidlabb2c"),
