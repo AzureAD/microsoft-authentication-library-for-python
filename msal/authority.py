@@ -48,9 +48,9 @@ class Authority(object):
         self.proxies = proxies
         self.timeout = timeout
         authority, self.instance, tenant = canonicalize(authority_url)
+        parts = authority.path.split('/')
         is_b2c = True if any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or \
-                         (len(authority.path.split('/')) == 3
-                          and authority.path.split('/')[2].lower().startswith("b2c_")) else False
+                         (len(parts) == 3 and parts[2].lower().startswith("b2c_")) else False
         if (tenant != "adfs" and (not is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
