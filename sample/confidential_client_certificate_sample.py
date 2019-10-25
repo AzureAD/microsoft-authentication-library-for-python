@@ -2,7 +2,7 @@
 The configuration file would look like this (sans those // comments):
 
 {
-    "authority": "https://login.microsoftonline.com/organizations",
+    "authority": "https://login.microsoftonline.com/Enter_the_Tenant_Name_Here",
     "client_id": "your_client_id",
     "scope": ["https://graph.microsoft.com/.default"],
         // For more information about scopes for an app, refer:
@@ -60,7 +60,7 @@ if "access_token" in result:
     graph_data = requests.get(  # Use token to call downstream service
         config["endpoint"],
         headers={'Authorization': 'Bearer ' + result['access_token']}, ).json()
-    print("Users from graph: " + str(graph_data))
+    print("Graph API call result: " + str(graph_data))
 else:
     print(result.get("error"))
     print(result.get("error_description"))
