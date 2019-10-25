@@ -61,7 +61,7 @@ if "access_token" in result:
     # Calling graph using the access token
     graph_data = requests.get(  # Use token to call downstream service
         config["endpoint"],
-        headers={'Authorization': 'Bearer ' + result['access_token']}, ).json()
+        headers={'Authorization': 'Bearer ' + result['access_token']},).json()
     print("Graph API call result: " + str(graph_data))
 else:
     print(result.get("error"))

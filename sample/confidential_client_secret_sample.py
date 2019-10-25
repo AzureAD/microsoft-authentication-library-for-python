@@ -13,7 +13,7 @@ The configuration file would look like this (sans those // comments):
         // https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Client-Credentials#registering-client-secrets-using-the-application-registration-portal
 
     "endpoint": "https://graph.microsoft.com/v1.0/users"
-        //scope needed for this is User.Read.All from Application permissions which needs admin consent
+        // scope needed for this is User.Read.All from Application permissions which needs admin consent
         // https://github.com/Azure-Samples/ms-identity-python-daemon/blob/master/1-Call-MsGraph-WithSecret/README.md
 }
 
@@ -60,7 +60,7 @@ if "access_token" in result:
     # Calling graph using the access token
     graph_data = requests.get(  # Use token to call downstream service
         config["endpoint"],
-        headers={'Authorization': 'Bearer ' + result['access_token']}, ).json()
+        headers={'Authorization': 'Bearer ' + result['access_token']},).json()
     print("Graph API call result: " + str(graph_data))
 
 else:
