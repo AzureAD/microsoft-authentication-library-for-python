@@ -108,7 +108,7 @@ class TokenCache(object):
                 if sensitive in dictionary:
                     dictionary[sensitive] = "********"
         wipe(event.get("data", {}),
-            ("password", "client_secret", "refresh_token", "assertion"))
+            ("password", "client_secret", "refresh_token", "assertion", "username"))
         try:
             return self.__add(event, now=now)
         finally:
