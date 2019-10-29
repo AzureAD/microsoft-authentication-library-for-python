@@ -5,8 +5,13 @@ The configuration file would look like this:
     "authority": "https://login.microsoftonline.com/organizations",
     "client_id": "your_client_id",
     "username": "your_username@your_tenant.com",
-    "scope": ["User.Read"],
-    "password": "This is a sample only. You better NOT persist your password."
+    "password": "This is a sample only. You better NOT persist your password.",
+    "scope": ["User.ReadBasic.All"],
+        // You can find the other permission names from this document
+        // https://docs.microsoft.com/en-us/graph/permissions-reference
+    "endpoint": "https://graph.microsoft.com/v1.0/users"
+        // You can find more Microsoft Graph API endpoints from Graph Explorer
+        // https://developer.microsoft.com/en-us/graph/graph-explorer
 }
 
 You can then run this sample with a JSON configuration file:
@@ -18,6 +23,7 @@ import sys  # For simplicity, we'll read config file from 1st CLI param sys.argv
 import json
 import logging
 
+import requests
 import msal
 
 
@@ -51,10 +57,11 @@ if not result:
         config["username"], config["password"], scopes=config["scope"])
 
 if "access_token" in result:
-    print(result["access_token"])
-    print(result["token_type"])
-    print(result["expires_in"])  # You don't normally need to care about this.
-                                 # It will be good for at least 5 minutes.
+    # Calling graph using the access token
+    graph_data = requests.get(  # Use token to call downstream service
+        config["endpoint"],
+        headers={'Authorization': 'Bearer ' + result['access_token']},).json()
+    print("Graph API call result: %s" % json.dumps(graph_data, indent=2))
 else:
     print(result.get("error"))
     print(result.get("error_description"))
