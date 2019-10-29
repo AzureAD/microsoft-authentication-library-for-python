@@ -37,7 +37,8 @@ import msal
 
 
 # Optional logging
-# logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)  # Enable DEBUG log for entire script
+# logging.getLogger("msal").setLevel(logging.INFO)  # Optionally disable MSAL DEBUG logs
 
 config = json.load(open(sys.argv[1]))
 
