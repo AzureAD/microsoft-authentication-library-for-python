@@ -18,7 +18,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +195,7 @@ class ClientApplication(object):
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
             response_type="code",  # Can be "token" if you use Implicit Grant
+            prompt=None,
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -208,6 +209,11 @@ class ClientApplication(object):
         :param str response_type:
             Default value is "code" for an OAuth2 Authorization Code grant.
             You can use other content such as "id_token".
+        :param str prompt:
+            By default, no prompt value will be sent, not even "none".
+            You will have to specify a value explicitly.
+            Its valid values are defined in Open ID Connect specs
+            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -235,6 +241,7 @@ class ClientApplication(object):
         return client.build_auth_request_uri(
             response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
+            prompt=prompt,
             scope=decorate_scope(scopes, self.client_id),
             )
 
@@ -413,7 +420,7 @@ class ClientApplication(object):
         #     verify=self.verify, proxies=self.proxies, timeout=self.timeout,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-            scopes, account, self.authority, **kwargs)
+            scopes, account, self.authority, force_refresh=force_refresh, **kwargs)
         if result:
             return result
         for alias in self._get_authority_aliases(self.authority.instance):
