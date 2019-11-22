@@ -100,6 +100,7 @@ class Authority(object):
 
 
 def canonicalize(authority_url):
+    # Returns (url_parsed_result, hostname_in_lowercase, tenant)
     authority = urlparse(authority_url)
     parts = authority.path.split("/")
     if authority.scheme != "https" or len(parts) < 2 or not parts[1]:
@@ -109,7 +110,7 @@ def canonicalize(authority_url):
             "https://login.microsoftonline.com/<tenant> "
             "or https://<tenant_name>.b2clogin.com/<tenant_name>.onmicrosoft.com/policy"
             % authority_url)
-    return authority, authority.netloc, parts[1]
+    return authority, authority.hostname, parts[1]
 
 def instance_discovery(url, **kwargs):
     return requests.get(  # Note: This URL seemingly returns V1 endpoint only
