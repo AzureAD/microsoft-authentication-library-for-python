@@ -52,12 +52,18 @@ class E2eTestCase(unittest.TestCase):
         accounts = self.app.get_accounts(username=username)
         self.assertNotEqual(0, len(accounts))
         account = accounts[0]
-        # Going to test acquire_token_silent(...) to locate an AT from cache
-        result_from_cache = self.app.acquire_token_silent(scope, account=account)
-        self.assertIsNotNone(result_from_cache)
-        self.assertEqual(
-            result_from_wire['access_token'], result_from_cache['access_token'],
-            "We should get a cached AT")
+        if ("scope" not in result_from_wire  # This is the usual case
+                or  # Authority server could reject some scopes
+                set(scope) <= set(result_from_wire["scope"].split(" "))
+                ):
+            # Going to test acquire_token_silent(...) to locate an AT from cache
+            result_from_cache = self.app.acquire_token_silent(scope, account=account)
+            self.assertIsNotNone(result_from_cache)
+            self.assertIsNone(
+                result_from_cache.get("refresh_token"), "A cache hit returns no RT")
+            self.assertEqual(
+                result_from_wire['access_token'], result_from_cache['access_token'],
+                "We should get a cached AT")
 
         # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
         self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
