@@ -521,6 +521,7 @@ class ClientApplication(object):
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
         error_object = None
+        skip_sub_errors = ["bad_token", "token_expired", "client_mismatch", "device_authentication_failed"]
         logger.debug("Found %d RTs matching %s", len(matches), query)
         client = self._build_client(self.client_credential, authority)
         for entry in matches:
@@ -533,10 +534,10 @@ class ClientApplication(object):
             if "error" not in response:
                 return response
             else:
-                #the implementation for internal suberror codes like bad_token , token_expired WOULD COME HERE
-                error_object = response
-            logger.debug(
-                "Refresh failed. {error}: {error_description}".format(**response))
+                if response.get("suberror") not in skip_sub_errors:
+                    error_object = response
+                logger.debug(
+                    "Refresh failed. {error}: {error_description}".format(**response))
             if break_condition(response):
                 break
         return error_object
