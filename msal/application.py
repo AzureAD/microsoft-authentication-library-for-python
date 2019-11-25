@@ -413,6 +413,7 @@ class ClientApplication(object):
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        result = None
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
@@ -432,6 +433,7 @@ class ClientApplication(object):
                 scopes, account, the_authority, force_refresh=force_refresh, **kwargs)
             if result:
                 return result
+        return result
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
             self,
@@ -518,6 +520,7 @@ class ClientApplication(object):
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
+        error_object = None
         logger.debug("Found %d RTs matching %s", len(matches), query)
         client = self._build_client(self.client_credential, authority)
         for entry in matches:
@@ -529,10 +532,14 @@ class ClientApplication(object):
                 **kwargs)
             if "error" not in response:
                 return response
+            else:
+                #the implementation for internal suberror codes like bad_token , token_expired WOULD COME HERE
+                error_object = response
             logger.debug(
                 "Refresh failed. {error}: {error_description}".format(**response))
             if break_condition(response):
                 break
+        return error_object
 
     def _validate_ssh_cert_input_data(self, data):
         if data.get("token_type") == "ssh-cert":
