@@ -390,7 +390,7 @@ class LabBasedTestCase(E2eTestCase):
             password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
 
     @unittest.skipUnless(
-        os.getenv("OBO_CLIENT_SECRET"),
+        os.getenv("OBO_CLIENT_SECRET") and False,  # Temporarily disable this case
         "Need OBO_CLIENT_SECRET from https://buildautomation.vault.azure.net/secrets/IdentityDivisionDotNetOBOServiceSecret")
     def test_acquire_token_obo(self):
         # Some hardcoded, pre-defined settings
@@ -407,7 +407,9 @@ class LabBasedTestCase(E2eTestCase):
             scopes=[  # The OBO app's scope. Yours might be different.
                 "%s/access_as_user" % obo_client_id],
             )
-        self.assertIsNotNone(pca_result.get("access_token"), "PCA should work")
+        self.assertIsNotNone(
+            pca_result.get("access_token"),
+            "PCA failed to get AT because %s" % json.dumps(pca_result, indent=2))
 
         # 2. Our mid-tier service uses OBO to obtain a token for downstream service
         cca = msal.ConfidentialClientApplication(
