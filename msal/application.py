@@ -422,7 +422,7 @@ class ClientApplication(object):
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh, **kwargs)
-        if result:
+        if "error" not in result:
             return result
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
@@ -485,7 +485,7 @@ class ClientApplication(object):
             # For now, we try existing RTs (*). If it works, we are in that family.
             # (*) RTs of a different app/family are not supposed to be
             # shared with or accessible by us in the first place.
-            at = self._acquire_token_silent_by_finding_specific_refresh_token(
+            response = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes,
                 dict(query, family_id="1"),  # A hack, we have only 1 family for now
                 rt_remover=lambda rt_item: None,  # NO-OP b/c RTs are likely not mine
@@ -494,14 +494,14 @@ class ClientApplication(object):
                     # https://msazure.visualstudio.com/One/_git/ESTS-Docs/pullrequest/1138595
                     "client_mismatch" in response.get("error_additional_info", []),
                 **kwargs)
-            if at:
-                return at
+            if "error" not in response:
+                return response
         if app_metadata.get("family_id"):  # Meaning this app belongs to this family
-            at = self._acquire_token_silent_by_finding_specific_refresh_token(
+            response = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes, dict(query, family_id=app_metadata["family_id"]),
                 **kwargs)
-            if at:
-                return at
+            if "error" not in response:
+                return response
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
         return self._acquire_token_silent_by_finding_specific_refresh_token(
