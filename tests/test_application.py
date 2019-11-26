@@ -194,3 +194,37 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
         self.assertNotEqual(None, at)
         self.assertEqual(self.access_token, at.get('access_token'))
 
+class TestClientApplicationForSuberrors(unittest.TestCase):
+
+    @classmethod
+    def setUp(self):
+        self.authority_url = "https://login.microsoftonline.com/common"
+        self.authority = msal.authority.Authority(self.authority_url)
+        self.scopes = ["s1", "s2"]
+        self.uid = "my_uid"
+        self.utid = "my_utid"
+        self.account = {"home_account_id": "{}.{}".format(self.uid, self.utid)}
+        self.frt = "what the frt"
+        self.cache = msal.SerializableTokenCache()
+        self.client_id = "my_app"
+        self.access_token = "access token"
+        self.cache.add({  # Pre-populate a FRT
+            "client_id": self.client_id,
+            "scope": self.scopes,
+            "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
+            "response": TokenCacheTestCase.build_response(
+                access_token=self.access_token,
+                uid=self.uid, utid=self.utid, refresh_token=self.frt),
+        })  # The add(...) helper populates correct home_account_id for future searching
+
+    def test_error_response(self):
+        app = ClientApplication(
+            self.client_id,
+            authority=self.authority_url, token_cache=self.cache)
+        def tester(url, data=None, **kwargs):
+            return Mock(status_code=200, json=Mock(return_value={
+                "error": "invalid_grant",
+                "error_description": "Was issued to another client",
+                "suberror": "basic_action"}))
+        response = app.acquire_token_silent(["s3"],self.account,authority=self.authority, post=tester)
+        self.assertEqual("basic_action", response.get("suberror"), "Exposes the suberror object")
