@@ -423,7 +423,7 @@ class ClientApplication(object):
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh, **kwargs)
         if result:
-            if "error" not in result:
+            if "access_token" in result:
                 return result
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
