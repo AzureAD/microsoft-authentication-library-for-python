@@ -361,7 +361,7 @@ class LabBasedTestCase(E2eTestCase):
             password=self.get_lab_user_secret(config["lab_name"]), **config)
 
     @unittest.skipUnless(
-        os.getenv("OBO_CLIENT_SECRET") and False,  # Temporarily disable this case
+        os.getenv("OBO_CLIENT_SECRET"),
         "Need OBO_CLIENT_SECRET from https://buildautomation.vault.azure.net/secrets/IdentityDivisionDotNetOBOServiceSecret")
     def test_acquire_token_obo(self):
         # Some hardcoded, pre-defined settings
