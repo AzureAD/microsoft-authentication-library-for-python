@@ -226,5 +226,5 @@ class TestClientApplicationForSuberrors(unittest.TestCase):
                 "error": "invalid_grant",
                 "error_description": "Was issued to another client",
                 "suberror": "basic_action"}))
-        response = app.acquire_token_silent(["s3"],self.account,authority=self.authority, post=tester)
-        self.assertEqual("basic_action", response.get("suberror"), "Exposes the suberror object")
+        response = app.acquire_token_silent(["s3"], self.account, authority=self.authority, post=tester, error_response=True)
+        self.assertEqual("basic_action", response.classification, "Exposes the suberror object")
