@@ -318,10 +318,8 @@ class LabBasedTestCase(E2eTestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.session = get_session(get_lab_app(), [
-            "https://request.msidlab.com/.default",  # Existing user & password API
-            # "https://user.msidlab.com/.default",  # New user API
-            ])
+        # https://docs.msidlab.com/accounts/apiaccess.html#code-snippet
+        cls.session = get_session(get_lab_app(), ["https://msidlab.com/.default"])
 
     @classmethod
     def tearDownClass(cls):
