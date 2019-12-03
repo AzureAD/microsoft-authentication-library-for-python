@@ -15,6 +15,7 @@ from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache
+from .exceptions import Error
 
 
 # The __init__.py will import this. Not the other way around.
@@ -392,6 +393,7 @@ class ClientApplication(object):
             account,  # type: Optional[Account]
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
+            error_response= False,  # type: Optional[boolean]
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
@@ -423,8 +425,13 @@ class ClientApplication(object):
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh, **kwargs)
         if result:
-            if "access_token" in result:
+            if result.get("access_token"):
                 return result
+            if error_response:
+                if result.get("suberror") in set(["bad_token", "token_expired", "client_mismatch"]):
+                    result = None
+                print(result)
+                return Error(result['error'], result['error_description'], result['suberror'])
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
@@ -433,7 +440,13 @@ class ClientApplication(object):
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh, **kwargs)
             if result:
-                return result
+                if result.get("access_token"):
+                    return result
+                if error_response:
+                    if result.get("suberror") in set(["bad_token", "token_expired", "client_mismatch"]):
+                        result = None
+                    else:
+                        return Error(result['error_code'], result['error_description'], result['suberror'])
         return result
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
@@ -523,8 +536,7 @@ class ClientApplication(object):
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
-        error_object = None
-        skip_sub_errors = ["bad_token", "token_expired", "client_mismatch", "device_authentication_failed"]
+        last_response = None
         logger.debug("Found %d RTs matching %s", len(matches), query)
         client = self._build_client(self.client_credential, authority)
         for entry in matches:
@@ -537,13 +549,12 @@ class ClientApplication(object):
             if "error" not in response:
                 return response
             else:
-                if response.get("suberror") not in skip_sub_errors:
-                    error_object = response
+                last_response = response
                 logger.debug(
                     "Refresh failed. {error}: {error_description}".format(**response))
             if break_condition(response):
                 break
-        return error_object
+        return last_response
 
     def _validate_ssh_cert_input_data(self, data):
         if data.get("token_type") == "ssh-cert":

@@ -36,3 +36,11 @@ class MsalError(Exception):
 class MsalServiceError(MsalError):
     msg = u"{error}: {error_description}"
 
+
+class Error(object):
+
+    def __init__(self, error_code=None, error_message=None, classification=None):
+        self.error_code = error_code
+        self.error_message = error_message
+        self.classification = classification
+
