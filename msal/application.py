@@ -430,7 +430,6 @@ class ClientApplication(object):
             if error_response:
                 if result.get("suberror") in set(["bad_token", "token_expired", "client_mismatch"]):
                     result = None
-                print(result)
                 return Error(result['error'], result['error_description'], result['suberror'])
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
