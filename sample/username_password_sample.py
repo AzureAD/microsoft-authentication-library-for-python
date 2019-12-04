@@ -43,14 +43,37 @@ app = msal.PublicClientApplication(
 
 # The pattern to acquire a token looks like this.
 result = None
+errors = []
 
 # Firstly, check the cache to see if this end user has signed in before
 accounts = app.get_accounts(username=config["username"])
 if accounts:
     logging.info("Account(s) exists in cache, probably with token too. Let's try.")
-    result = app.acquire_token_silent(config["scope"], account=accounts[0])
+    result = app.acquire_token_silent(config["scope"], account=accounts[0],
+        errors=errors,  # Optional. Only needed if you want to subscribe CA errors
+        )
 
 if not result:
+
+    if errors:  # This allows you to handle Conditional Access errors specifically
+        print("There is a refresh token in cache, but it was rejected.")
+        if errors[0].get("classification") == "basic_action":
+            print("""Condition can be resolved by user interaction
+                during the interactive authentication flow.""")
+            # After this if...else... we'll fall back to acquire_token_by_xyz(...)
+        elif errors[0].get("classification") == "additional_action":
+            print("""Condition can be resolved by additional remedial interaction
+                with the system, outside of the interactive authentication flow.""")
+            # After this if...else... we'll fall back to acquire_token_by_xyz(...)
+        elif errors[0].get("classification") == "message_only":
+            print("""Condition cannot be resolved at this time.
+                Launching interactive authentication flow will show a message
+                explaining the condition.""")
+            sys.exit("Abort without bothering to try acquire_token_by_xyz()")
+        else:
+            print("Invoke default error handling routine")
+            # After this if...else... we'll fall back to acquire_token_by_xyz(...)
+
     logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
     # See this page for constraints of Username Password Flow.
     # https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
