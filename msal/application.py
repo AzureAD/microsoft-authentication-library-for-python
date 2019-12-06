@@ -415,7 +415,7 @@ class ClientApplication(object):
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        result = None
+        response = None
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
@@ -428,9 +428,10 @@ class ClientApplication(object):
             if result.get("access_token"):
                 return result
             if error_response:
-                if result.get("suberror") in set(["bad_token", "token_expired", "client_mismatch"]):
-                    result = None
-                return Error(result['error'], result['error_description'], result['suberror'])
+                classification = result.get("suberror")
+                if classification:
+                    if classification not in set(["bad_token", "token_expired", "client_mismatch"]):
+                        response = Error(result['error'], result['error_description'], result['suberror'])
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
@@ -442,11 +443,11 @@ class ClientApplication(object):
                 if result.get("access_token"):
                     return result
                 if error_response:
-                    if result.get("suberror") in set(["bad_token", "token_expired", "client_mismatch"]):
-                        result = None
-                    else:
-                        return Error(result['error_code'], result['error_description'], result['suberror'])
-        return result
+                    classification = result.get("suberror")
+                    if classification:
+                        if classification not in set(["bad_token", "token_expired", "client_mismatch"]):
+                            response = Error(result['error'], result['error_description'], result['suberror'])
+        return response
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
             self,
