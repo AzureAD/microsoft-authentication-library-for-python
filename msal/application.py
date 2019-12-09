@@ -73,7 +73,7 @@ class ClientApplication(object):
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
             verify=True, proxies=None, timeout=None,
-            client_claims=None):
+            client_claims=None, app_name=None, app_version=None):
         """Create an instance of application.
 
         :param client_id: Your app has a client_id after you register it on AAD.
@@ -143,12 +143,21 @@ class ClientApplication(object):
                 validate_authority, verify=verify, proxies=proxies, timeout=timeout)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
-        self.client = self._build_client(client_credential, self.authority)
+        self.client = self._build_client(client_credential, self.authority, app_name, app_version)
         self.authority_groups = None
 
-    def _build_client(self, client_credential, authority):
+    def _build_client(self, client_credential, authority, app_name, app_version):
         client_assertion = None
         client_assertion_type = None
+        default_headers = {
+            "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
+            "x-client-os": sys.platform,
+            "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
+        }
+        if app_name:
+            default_headers['app-name'] =  app_name
+        if app_version:
+            default_headers['app-version'] = app_version
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
@@ -174,11 +183,7 @@ class ClientApplication(object):
         return Client(
             server_configuration,
             self.client_id,
-            default_headers={
-                "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
-                "x-client-os": sys.platform,
-                "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
-                },
+            default_headers=default_headers,
             default_body=default_body,
             client_assertion=client_assertion,
             client_assertion_type=client_assertion_type,
