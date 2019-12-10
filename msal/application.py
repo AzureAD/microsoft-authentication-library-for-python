@@ -146,12 +146,14 @@ class ClientApplication(object):
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
+        self.app_name = app_name
+        self.app_version = app_version
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
                 validate_authority, verify=verify, proxies=proxies, timeout=timeout)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
-        self.client = self._build_client(client_credential, self.authority, app_name, app_version)
+        self.client = self._build_client(client_credential, self.authority)
         self.authority_groups = None
 
     def _build_client(self, client_credential, authority, app_name=None, app_version=None):
@@ -162,10 +164,10 @@ class ClientApplication(object):
             "x-client-os": sys.platform,
             "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
         }
-        if app_name:
-            default_headers['x-app-name'] = app_name
-        if app_version:
-            default_headers['x-app-ver'] = app_version
+        if self.app_name:
+            default_headers['x-app-name'] = self.app_name
+        if self.app_version:
+            default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
