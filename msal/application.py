@@ -131,6 +131,14 @@ class ClientApplication(object):
             It will be passed to the
             `timeout parameter in the underlying requests library
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
+        :param app_name: (optional)
+            You can provide your application name for telemetry purposes which will be
+            passed as an additional header value "x-app-name"
+            By default, the additional header value will not be passed
+        :param app_version: (optional)
+            You can provide your application version for telemetry purposes which will be
+            passed as an additional header value "x-app-ver"
+            By default, the additional header value will not be passed
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -155,7 +163,7 @@ class ClientApplication(object):
             "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
         }
         if app_name:
-            default_headers['x-app-name'] =  app_name
+            default_headers['x-app-name'] = app_name
         if app_version:
             default_headers['x-app-ver'] = app_version
         default_body = {"client_info": 1}
