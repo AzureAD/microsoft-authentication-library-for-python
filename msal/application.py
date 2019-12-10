@@ -132,13 +132,11 @@ class ClientApplication(object):
             `timeout parameter in the underlying requests library
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
         :param app_name: (optional)
-            You can provide your application name for telemetry purposes which will be
-            passed as an additional header value "x-app-name"
-            By default, the additional header value will not be passed
+            You can provide your application name for Microsoft telemetry purposes.
+            Default value is None, means it will not be passed to Microsoft.
         :param app_version: (optional)
-            You can provide your application version for telemetry purposes which will be
-            passed as an additional header value "x-app-ver"
-            By default, the additional header value will not be passed
+            You can provide your application version for Microsoft telemetry purposes.
+            Default value is None, means it will not be passed to Microsoft.
         """
         self.client_id = client_id
         self.client_credential = client_credential
