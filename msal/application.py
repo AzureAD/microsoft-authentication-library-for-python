@@ -146,7 +146,7 @@ class ClientApplication(object):
         self.client = self._build_client(client_credential, self.authority, app_name, app_version)
         self.authority_groups = None
 
-    def _build_client(self, client_credential, authority, app_name, app_version):
+    def _build_client(self, client_credential, authority, app_name=None, app_version=None):
         client_assertion = None
         client_assertion_type = None
         default_headers = {
