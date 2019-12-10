@@ -4,7 +4,12 @@ The configuration file would look like this:
 {
     "authority": "https://login.microsoftonline.com/common",
     "client_id": "your_client_id",
-    "scope": ["User.Read"]
+    "scope": ["User.ReadBasic.All"],
+        // You can find the other permission names from this document
+        // https://docs.microsoft.com/en-us/graph/permissions-reference
+    "endpoint": "https://graph.microsoft.com/v1.0/users"
+        // You can find more Microsoft Graph API endpoints from Graph Explorer
+        // https://developer.microsoft.com/en-us/graph/graph-explorer
 }
 
 You can then run this sample with a JSON configuration file:
@@ -16,11 +21,13 @@ import sys  # For simplicity, we'll read config file from 1st CLI param sys.argv
 import json
 import logging
 
+import requests
 import msal
 
 
 # Optional logging
-# logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)  # Enable DEBUG log for entire script
+# logging.getLogger("msal").setLevel(logging.INFO)  # Optionally disable MSAL DEBUG logs
 
 config = json.load(open(sys.argv[1]))
 
@@ -70,12 +77,12 @@ if not result:
         # and then keep calling acquire_token_by_device_flow(flow) in your own customized loop.
 
 if "access_token" in result:
-    print(result["access_token"])
-    print(result["token_type"])
-    print(result["expires_in"])  # You don't normally need to care about this.
-                                 # It will be good for at least 5 minutes.
+    # Calling graph using the access token
+    graph_data = requests.get(  # Use token to call downstream service
+        config["endpoint"],
+        headers={'Authorization': 'Bearer ' + result['access_token']},).json()
+    print("Graph API call result: %s" % json.dumps(graph_data, indent=2))
 else:
     print(result.get("error"))
     print(result.get("error_description"))
     print(result.get("correlation_id"))  # You may need this when reporting a bug
-
