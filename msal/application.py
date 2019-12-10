@@ -155,9 +155,9 @@ class ClientApplication(object):
             "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
         }
         if app_name:
-            default_headers['app-name'] =  app_name
+            default_headers['x-app-name'] =  app_name
         if app_version:
-            default_headers['app-version'] = app_version
+            default_headers['x-app-ver'] = app_version
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
