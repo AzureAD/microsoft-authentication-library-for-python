@@ -77,7 +77,9 @@ if accounts:
             elif option == "user_password_expired":
                 print("User password expired")
             else:
-                print("Invoke default error handling routine")
+                result = app.acquire_token_by_username_password(
+                    config["username"], config["password"], scopes=config["scope"])
+                print(json.dumps(result, indent=4))
 
 else:
     result = app.acquire_token_by_username_password(

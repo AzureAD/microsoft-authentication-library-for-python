@@ -427,11 +427,6 @@ class ClientApplication(object):
         if result:
             if result.get("access_token"):
                 return result
-            if error_response:
-                classification = result.get("suberror")
-                if classification:
-                    if classification not in set(["bad_token", "token_expired", "client_mismatch"]):
-                        response = Error(result['error'], result['error_description'], result['suberror'])
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
@@ -442,11 +437,10 @@ class ClientApplication(object):
             if result:
                 if result.get("access_token"):
                     return result
-                if error_response:
-                    classification = result.get("suberror")
-                    if classification:
-                        if classification not in set(["bad_token", "token_expired", "client_mismatch"]):
-                            response = Error(result['error'], result['error_description'], result['suberror'])
+        if error_response:
+            if result and result.get("suberror"):
+                if result.get("suberror") not in set(["bad_token", "token_expired", "client_mismatch"]):
+                    response = Error(result['error'], result['error_description'], result['suberror'])
         return response
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
@@ -508,9 +502,8 @@ class ClientApplication(object):
                     # https://msazure.visualstudio.com/One/_git/ESTS-Docs/pullrequest/1138595
                     "client_mismatch" in response.get("error_additional_info", []),
                 **kwargs)
-            if response:
-                if "error" not in response:
-                    return response
+            if response and "error" not in response:
+                return response
         if app_metadata.get("family_id"):  # Meaning this app belongs to this family
             response = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes, dict(query, family_id=app_metadata["family_id"]),
