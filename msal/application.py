@@ -409,9 +409,16 @@ class ClientApplication(object):
         :param force_refresh:
             If True, it will skip Access Token look-up,
             and try to find a Refresh Token to obtain a new Access Token.
+        :param error_response:
+            A boolean flag for whether returning error response.
+            Default value is False, which will just return None instead of error.
+
         :return:
             - A dict containing "access_token" key, when cache lookup succeeds.
             - None when cache lookup does not yield anything.
+            - An Error object containing the error response,
+               this will be available only when an error actually happens,
+               and when the "error_response" parameter was True.
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
