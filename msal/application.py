@@ -447,6 +447,7 @@ class ClientApplication(object):
         if result:
             if result.get("access_token"):
                 return result
+            response = result
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
@@ -457,10 +458,11 @@ class ClientApplication(object):
             if result:
                 if result.get("access_token"):
                     return result
+                response = result
         if error_response:
-            if result and result.get("suberror"):
-                if result.get("suberror") not in set(["bad_token", "token_expired", "client_mismatch"]):
-                    response = Error(result['error'], result['error_description'], result['suberror'])
+            if response and response.get("suberror"):
+                if response.get("suberror") not in set(["bad_token", "token_expired", "client_mismatch"]):
+                    response = Error(response['error'], response['error_description'], response['suberror'])
         return response
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
