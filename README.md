@@ -1,4 +1,4 @@
-# Microsoft Authentication Library (MSAL) for Python Preview
+# Microsoft Authentication Library (MSAL) for Python
 
 
 | `dev` branch | Reference Docs
