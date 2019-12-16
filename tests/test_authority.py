@@ -78,12 +78,11 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
         # We now pretend this authority supports no User Realm Discovery
         class MockResponse(object):
             status_code = 404
-        a.user_realm_discovery("john.doe@example.com", "ecbecaf4-1759-498d-ae24-25a98a8eca27", response=MockResponse())
+        a.user_realm_discovery("john.doe@example.com", response=MockResponse())
         self.assertIn(
             "login.microsoftonline.com",
             Authority._domains_without_user_realm_discovery,
             "user_realm_discovery() should memorize domains not supporting URD")
         a.user_realm_discovery("john.doe@example.com",
-                               "ecbecaf4-1759-498d-ae24-25a98a8eca27",
                                response="This would cause exception if memorization did not work")
 

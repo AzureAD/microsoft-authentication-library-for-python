@@ -303,7 +303,7 @@ class ClientApplication(object):
                 scope=decorate_scope(scopes, self.client_id)),
             headers={'client-request-id': _get_new_correlation_id(),
                      'x-client-current-telemetry': _build_current_telemetry_request_header(
-                self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)},
+                         self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)},
             **kwargs)
 
     def get_accounts(self, username=None):

@@ -80,7 +80,7 @@ class Authority(object):
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
         self.is_adfs = self.tenant.lower() == 'adfs'
 
-    def user_realm_discovery(self, username, correlation_id, response=None):
+    def user_realm_discovery(self, username, correlation_id=None, response=None):
         # It will typically return a dict containing "ver", "account_type",
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
