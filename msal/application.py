@@ -462,7 +462,9 @@ class ClientApplication(object):
         if error_response:
             if response and response.get("suberror"):
                 if response.get("suberror") not in set(["bad_token", "token_expired", "client_mismatch"]):
-                    response = Error(response['error'], response['error_description'], response['suberror'])
+                    response["classification"] = response.pop("suberror")
+                    return response
+        response = None
         return response
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(

@@ -227,4 +227,4 @@ class TestClientApplicationForSuberrors(unittest.TestCase):
                 "error_description": "Was issued to another client",
                 "suberror": "basic_action"}))
         response = app.acquire_token_silent(["s3"], self.account, authority=self.authority, post=tester, error_response=True)
-        self.assertEqual("basic_action", response.classification, "Exposes the suberror object")
+        self.assertEqual("basic_action", response.get("classification"), "Exposes the suberror object")
