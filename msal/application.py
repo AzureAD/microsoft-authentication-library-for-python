@@ -80,7 +80,6 @@ class ClientApplication(object):
     ACQUIRE_TOKEN_SILENT_ID = "84"
     ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID = "301"
     ACQUIRE_TOKEN_ON_BEHALF_OF_ID = "523"
-    INITIATE_DEVICE_FLOW = "621"
     ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID = "622"
     ACQUIRE_TOKEN_FOR_CLIENT_ID = "730"
     ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID = "832"
@@ -544,7 +543,7 @@ class ClientApplication(object):
                 scope=scopes,
                 headers={'client-request-id': _get_new_correlation_id(),
                          'x-client-current-telemetry': _build_current_telemetry_request_header(
-                            self.ACQUIRE_TOKEN_SILENT_ID, force_refresh)},
+                            self.ACQUIRE_TOKEN_SILENT_ID, force_refresh=force_refresh)},
                 **kwargs)
             if "error" not in response:
                 return response
@@ -588,6 +587,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain some other readable key/value pairs.
         """
         return self.client.initiate_device_flow(
+            # x-client-current-telemetry is not currently required by our telemetry
             headers={'client-request-id': _get_new_correlation_id()},
             scope=decorate_scope(scopes or [], self.client_id),
             **kwargs)
@@ -612,10 +612,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     # 2018-10-4 Hack:
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
-                headers={'client-request-id': _get_new_correlation_id(),
-                         'x-client-current-telemetry': _build_current_telemetry_request_header(
-                             self.ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID)},
-                **kwargs)
+                headers={
+                    'client-request-id': flow.get("_client_request_id", _get_new_correlation_id()),
+                    'x-client-current-telemetry': _build_current_telemetry_request_header(
+                        self.ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID)},
+            **kwargs)
 
     def acquire_token_by_username_password(
             self, username, password, scopes, **kwargs):
@@ -639,7 +640,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                    'x-client-current-telemetry': _build_current_telemetry_request_header(
                        self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)}
         if not self.authority.is_adfs:
-            user_realm_result = self.authority.user_realm_discovery(username, headers['client-request-id'])
+            user_realm_result = self.authority.user_realm_discovery(username, correlation_id=headers['client-request-id'])
             if user_realm_result.get("account_type") == "Federated":
                 return self._acquire_token_by_username_password_federated(
                     user_realm_result, username, password, scopes=scopes, headers=headers, **kwargs)
