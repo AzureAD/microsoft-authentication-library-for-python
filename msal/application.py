@@ -429,7 +429,7 @@ class ClientApplication(object):
         :return:
             - A dict containing "access_token" key, when cache lookup succeeds.
             - None when cache lookup does not yield anything.
-            - An Error object containing the error response,
+            - A dict containing the error response with classification of the error,
                this will be available only when an error actually happens,
                and when the "error_response" parameter was True.
         """
