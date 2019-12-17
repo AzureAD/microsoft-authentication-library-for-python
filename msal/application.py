@@ -19,7 +19,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "0.8.0"
+__version__ = "1.0.0"
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class ClientApplication(object):
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
             verify=True, proxies=None, timeout=None,
-            client_claims=None):
+            client_claims=None, app_name=None, app_version=None):
         """Create an instance of application.
 
         :param client_id: Your app has a client_id after you register it on AAD.
@@ -149,6 +149,12 @@ class ClientApplication(object):
             It will be passed to the
             `timeout parameter in the underlying requests library
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
+        :param app_name: (optional)
+            You can provide your application name for Microsoft telemetry purposes.
+            Default value is None, means it will not be passed to Microsoft.
+        :param app_version: (optional)
+            You can provide your application version for Microsoft telemetry purposes.
+            Default value is None, means it will not be passed to Microsoft.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -156,6 +162,8 @@ class ClientApplication(object):
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
+        self.app_name = app_name
+        self.app_version = app_version
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
                 validate_authority, verify=verify, proxies=proxies, timeout=timeout)
@@ -167,6 +175,15 @@ class ClientApplication(object):
     def _build_client(self, client_credential, authority):
         client_assertion = None
         client_assertion_type = None
+        default_headers = {
+            "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
+            "x-client-os": sys.platform,
+            "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
+        }
+        if self.app_name:
+            default_headers['x-app-name'] = self.app_name
+        if self.app_version:
+            default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
@@ -192,11 +209,7 @@ class ClientApplication(object):
         return Client(
             server_configuration,
             self.client_id,
-            default_headers={
-                "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
-                "x-client-os": sys.platform,
-                "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
-                },
+            default_headers=default_headers,
             default_body=default_body,
             client_assertion=client_assertion,
             client_assertion_type=client_assertion_type,
@@ -213,6 +226,7 @@ class ClientApplication(object):
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
             response_type="code",  # Can be "token" if you use Implicit Grant
+            prompt=None,
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -226,6 +240,11 @@ class ClientApplication(object):
         :param str response_type:
             Default value is "code" for an OAuth2 Authorization Code grant.
             You can use other content such as "id_token".
+        :param str prompt:
+            By default, no prompt value will be sent, not even "none".
+            You will have to specify a value explicitly.
+            Its valid values are defined in Open ID Connect specs
+            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -253,6 +272,7 @@ class ClientApplication(object):
         return client.build_auth_request_uri(
             response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
+            prompt=prompt,
             scope=decorate_scope(scopes, self.client_id),
             )
 
@@ -434,7 +454,7 @@ class ClientApplication(object):
         #     verify=self.verify, proxies=self.proxies, timeout=self.timeout,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-            scopes, account, self.authority, **kwargs)
+            scopes, account, self.authority, force_refresh=force_refresh, **kwargs)
         if result:
             return result
         for alias in self._get_authority_aliases(self.authority.instance):

@@ -48,7 +48,9 @@ class Authority(object):
         self.proxies = proxies
         self.timeout = timeout
         authority, self.instance, tenant = canonicalize(authority_url)
-        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS)
+        parts = authority.path.split('/')
+        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
+            len(parts) == 3 and parts[2].lower().startswith("b2c_"))
         if (tenant != "adfs" and (not is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
@@ -99,6 +101,7 @@ class Authority(object):
 
 
 def canonicalize(authority_url):
+    # Returns (url_parsed_result, hostname_in_lowercase, tenant)
     authority = urlparse(authority_url)
     parts = authority.path.split("/")
     if authority.scheme != "https" or len(parts) < 2 or not parts[1]:
@@ -108,7 +111,7 @@ def canonicalize(authority_url):
             "https://login.microsoftonline.com/<tenant> "
             "or https://<tenant_name>.b2clogin.com/<tenant_name>.onmicrosoft.com/policy"
             % authority_url)
-    return authority, authority.netloc, parts[1]
+    return authority, authority.hostname, parts[1]
 
 def instance_discovery(url, **kwargs):
     return requests.get(  # Note: This URL seemingly returns V1 endpoint only
