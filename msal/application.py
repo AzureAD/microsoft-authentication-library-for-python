@@ -15,7 +15,6 @@ from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache
-from .exceptions import Error
 
 
 # The __init__.py will import this. Not the other way around.
@@ -406,7 +405,7 @@ class ClientApplication(object):
             account,  # type: Optional[Account]
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
-            error_response= False,  # type: Optional[boolean]
+            error_response=False,  # type: Optional[boolean]
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
@@ -532,11 +531,13 @@ class ClientApplication(object):
             response = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes, dict(query, family_id=app_metadata["family_id"]),
                 **kwargs)
-            if response:
-                if "error" not in response:
+            if response and "error" not in response:
                     return response
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
+        # suberror of "bad_token", "client_mismatch", etc. would only happen in FoCI scenarios,
+        # and would naturally have been absorbed by the logic above.
+        # The non-foci logic here will simply relay any other suberror to downstream.
         return self._acquire_token_silent_by_finding_specific_refresh_token(
             authority, scopes, dict(query, client_id=self.client_id), **kwargs)
 
