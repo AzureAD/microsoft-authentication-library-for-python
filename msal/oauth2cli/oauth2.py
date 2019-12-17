@@ -220,7 +220,6 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
         flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
-        flow["_client_request_id"] = kwargs.get('client-request-id')  # correlation Id for telemetry
         return flow
 
     def _obtain_token_by_device_flow(self, flow, **kwargs):

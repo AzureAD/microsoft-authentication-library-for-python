@@ -606,11 +606,16 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "user_code" key, among others
             - an error response would contain some other readable key/value pairs.
         """
-        return self.client.initiate_device_flow(
-            # x-client-current-telemetry is not currently required by our telemetry
-            headers={'client-request-id': _get_new_correlation_id()},
+        correlation_id = _get_new_correlation_id()
+        flow = self.client.initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
+            headers={
+                'client-request-id': correlation_id,
+                # 'x-client-current-telemetry' is not currently required
+                },
             **kwargs)
+        flow["_client_request_id"] = correlation_id
+        return flow
 
     def acquire_token_by_device_flow(self, flow, **kwargs):
         """Obtain token by a device flow object, with customizable polling effect.
