@@ -447,6 +447,7 @@ class ClientApplication(object):
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        correlation_id = _get_new_correlation_id()
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
@@ -454,7 +455,9 @@ class ClientApplication(object):
         #     verify=self.verify, proxies=self.proxies, timeout=self.timeout,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-            scopes, account, self.authority, force_refresh=force_refresh, **kwargs)
+            scopes, account, self.authority, force_refresh=force_refresh,
+            correlation_id=correlation_id,
+            **kwargs)
         if result:
             return result
         for alias in self._get_authority_aliases(self.authority.instance):
@@ -463,7 +466,9 @@ class ClientApplication(object):
                 validate_authority=False,
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-                scopes, account, the_authority, force_refresh=force_refresh, **kwargs)
+                scopes, account, the_authority, force_refresh=force_refresh,
+                correlation_id=correlation_id,
+                **kwargs)
             if result:
                 return result
 
@@ -548,7 +553,7 @@ class ClientApplication(object):
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
             rt_remover=None, break_condition=lambda response: False,
-            force_refresh=False, **kwargs):
+            force_refresh=False, correlation_id=None, **kwargs):
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
@@ -561,9 +566,11 @@ class ClientApplication(object):
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 on_removing_rt=rt_remover or self.token_cache.remove_rt,
                 scope=scopes,
-                headers={'client-request-id': _get_new_correlation_id(),
-                         'x-client-current-telemetry': _build_current_telemetry_request_header(
-                            self.ACQUIRE_TOKEN_SILENT_ID, force_refresh=force_refresh)},
+                headers={
+                    'client-request-id': correlation_id or _get_new_correlation_id(),
+                    'x-client-current-telemetry': _build_current_telemetry_request_header(
+                        self.ACQUIRE_TOKEN_SILENT_ID, force_refresh=force_refresh),
+                    },
                 **kwargs)
             if "error" not in response:
                 return response
