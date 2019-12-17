@@ -50,6 +50,8 @@ def decorate_scope(
         decorated = scope_set | reserved_scope
     return list(decorated)
 
+CLIENT_REQUEST_ID = 'client-request-id'
+CLIENT_CURRENT_TELEMETRY = 'x-client-current-telemetry'
 
 def _get_new_correlation_id():
         return str(uuid.uuid4())
@@ -321,9 +323,11 @@ class ClientApplication(object):
             data=dict(
                 kwargs.pop("data", {}),
                 scope=decorate_scope(scopes, self.client_id)),
-            headers={'client-request-id': _get_new_correlation_id(),
-                     'x-client-current-telemetry': _build_current_telemetry_request_header(
-                         self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)},
+            headers={
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
+                },
             **kwargs)
 
     def get_accounts(self, username=None):
@@ -567,8 +571,8 @@ class ClientApplication(object):
                 on_removing_rt=rt_remover or self.token_cache.remove_rt,
                 scope=scopes,
                 headers={
-                    'client-request-id': correlation_id or _get_new_correlation_id(),
-                    'x-client-current-telemetry': _build_current_telemetry_request_header(
+                    CLIENT_REQUEST_ID: correlation_id or _get_new_correlation_id(),
+                    CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                         self.ACQUIRE_TOKEN_SILENT_ID, force_refresh=force_refresh),
                     },
                 **kwargs)
@@ -596,6 +600,8 @@ class ClientApplication(object):
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
+    DEVICE_FLOW_CORRELATION_ID = "_correlation_id"
+
     def __init__(self, client_id, client_credential=None, **kwargs):
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
@@ -617,11 +623,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         flow = self.client.initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
             headers={
-                'client-request-id': correlation_id,
-                # 'x-client-current-telemetry' is not currently required
+                CLIENT_REQUEST_ID: correlation_id,
+                # CLIENT_CURRENT_TELEMETRY is not currently required
                 },
             **kwargs)
-        flow["_client_request_id"] = correlation_id
+        flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
         return flow
 
     def acquire_token_by_device_flow(self, flow, **kwargs):
@@ -645,9 +651,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 # during transition period,
                 # service seemingly need both device_code and code parameter.
             headers={
-                'client-request-id':
-                    flow.get("_client_request_id") or _get_new_correlation_id(),
-                'x-client-current-telemetry': _build_current_telemetry_request_header(
+                CLIENT_REQUEST_ID:
+                    flow.get(self.DEVICE_FLOW_CORRELATION_ID) or _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID),
                 },
             **kwargs)
@@ -671,8 +677,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         """
         scopes = decorate_scope(scopes, self.client_id)
         headers = {
-            'client-request-id': _get_new_correlation_id(),
-            'x-client-current-telemetry': _build_current_telemetry_request_header(
+            CLIENT_REQUEST_ID: _get_new_correlation_id(),
+            CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
             }
         if not self.authority.is_adfs:
@@ -743,8 +749,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         return self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
-                'client-request-id': _get_new_correlation_id(),
-                'x-client-current-telemetry': _build_current_telemetry_request_header(
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_FOR_CLIENT_ID),
                 },
             **kwargs)
@@ -783,8 +789,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 #    their own cache mapping, which is likely needed in web apps.
             data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of"),
             headers={
-                'client-request-id': _get_new_correlation_id(),
-                'x-client-current-telemetry': _build_current_telemetry_request_header(
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID),
                 },
             **kwargs)
