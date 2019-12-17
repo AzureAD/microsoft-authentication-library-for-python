@@ -84,5 +84,5 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
             Authority._domains_without_user_realm_discovery,
             "user_realm_discovery() should memorize domains not supporting URD")
         a.user_realm_discovery("john.doe@example.com",
-                               response="This would cause exception if memorization did not work")
+            response="This would cause exception if memorization did not work")
 
