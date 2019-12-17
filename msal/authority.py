@@ -82,7 +82,7 @@ class Authority(object):
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
         self.is_adfs = self.tenant.lower() == 'adfs'
 
-    def user_realm_discovery(self, username, response=None):
+    def user_realm_discovery(self, username, correlation_id=None, response=None):
         # It will typically return a dict containing "ver", "account_type",
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
@@ -90,7 +90,8 @@ class Authority(object):
             resp = response or requests.get(
                 "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
                     netloc=self.instance, username=username),
-                headers={'Accept':'application/json'},
+                headers={'Accept':'application/json',
+                         'client-request-id': correlation_id},
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
             if resp.status_code != 404:
                 resp.raise_for_status()
