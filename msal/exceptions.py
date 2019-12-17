@@ -36,4 +36,3 @@ class MsalError(Exception):
 class MsalServiceError(MsalError):
     msg = u"{error}: {error_description}"
 
-
