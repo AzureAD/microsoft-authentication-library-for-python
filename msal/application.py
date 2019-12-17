@@ -683,7 +683,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             }
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
-                username, correlation_id=headers['client-request-id'])
+                username, correlation_id=headers[CLIENT_REQUEST_ID])
             if user_realm_result.get("account_type") == "Federated":
                 return self._acquire_token_by_username_password_federated(
                     user_realm_result, username, password, scopes=scopes,
