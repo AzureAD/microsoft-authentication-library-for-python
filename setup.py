@@ -53,7 +53,7 @@ setup(
     author_email='nugetaad@microsoft.com',
     url='https://github.com/AzureAD/microsoft-authentication-library-for-python',
     classifiers=[
-        'Development Status :: 4 - Beta',
+        'Development Status :: 5 - Production/Stable',
         'Programming Language :: Python',
         'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 2.7',
