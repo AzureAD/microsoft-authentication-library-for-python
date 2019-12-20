@@ -611,9 +611,11 @@ class ClientApplication(object):
                 return result
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
+        # suberror of "bad_token", "client_mismatch", etc. would only happen in FoCI scenarios,
+        # and would naturally have been absorbed by the logic above.
+        # The non-foci logic here will simply relay any other suberror to downstream.
         return self._acquire_token_silent_by_finding_specific_refresh_token(
-            authority, scopes, dict(query, client_id=self.client_id),
-            **kwargs)
+            authority, scopes, dict(query, client_id=self.client_id), **kwargs)
 
     def _get_app_metadata(self, environment):
         apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
@@ -624,7 +626,7 @@ class ClientApplication(object):
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
             rt_remover=None, break_condition=lambda response: False,
-            force_refresh=False, correlation_id=None, error_response=False, **kwargs):
+            force_refresh=False, correlation_id=None, **kwargs):
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
