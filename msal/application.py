@@ -476,12 +476,79 @@ class ClientApplication(object):
             if result:
                 return result
 
+    def acquire_token_silent_with_errors(
+            self,
+            scopes,  # type: List[str]
+            account,  # type: Optional[Account]
+            authority=None,  # See get_authorization_request_url()
+            force_refresh=False,  # type: Optional[boolean]
+            **kwargs):
+        """Acquire an access token for given account, without user interaction.
+
+        It is done either by finding a valid access token from cache,
+        or by finding a valid refresh token from cache and then automatically
+        use it to redeem a new access token.
+
+        :param list[str] scopes: (Required)
+            Scopes requested to access a protected API (a resource).
+        :param account:
+            one of the account object returned by :func:`~get_accounts`,
+            or use None when you want to find an access token for this client.
+        :param force_refresh:
+            If True, it will skip Access Token look-up,
+            and try to find a Refresh Token to obtain a new Access Token.
+        :return:
+            - A dict containing "access_token" key, when cache lookup succeeds.
+            - A dict containing error response. This error response will also
+            contain "classification" key giving more information about
+            conditional access errors.
+            - None when cache lookup does not yield anything.
+        """
+        assert isinstance(scopes, list), "Invalid parameter type"
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        correlation_id = _get_new_correlation_id()
+        response= None
+        if authority:
+            warnings.warn("We haven't decided how/if this method will accept authority parameter")
+        # the_authority = Authority(
+        #     authority,
+        #     verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+        #     ) if authority else self.authority
+        result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
+            scopes, account, self.authority, force_refresh=force_refresh,
+            correlation_id=correlation_id, error_response=True,
+            **kwargs)
+        if result:
+            if result.get("access_token"):
+                return result
+            response = result
+        for alias in self._get_authority_aliases(self.authority.instance):
+            the_authority = Authority(
+                "https://" + alias + "/" + self.authority.tenant,
+                validate_authority=False,
+                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+            result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
+                scopes, account, the_authority, force_refresh=force_refresh,
+                correlation_id=correlation_id,
+                **kwargs)
+            if result:
+                if result.get("access_token"):
+                    return result
+                response = result
+        if response and response.get("suberror"):
+            if response.get("suberror") not in set(["bad_token", "token_expired", "client_mismatch"]):
+                response["classification"] = response.pop("suberror")
+                return response
+
+        return response
+
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
             self,
             scopes,  # type: List[str]
             account,  # type: Optional[Account]
             authority,  # This can be different than self.authority
             force_refresh=False,  # type: Optional[boolean]
+            error_response=False,  # type: Optional[boolean]
             **kwargs):
         if not force_refresh:
             query={
@@ -510,10 +577,10 @@ class ClientApplication(object):
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, decorate_scope(scopes, self.client_id), account,
-                force_refresh=force_refresh, **kwargs)
+                force_refresh=force_refresh, error_response=error_response, **kwargs)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self, authority, scopes, account, **kwargs):
+            self, authority, scopes, account, error_response, **kwargs):
         query = {
             "environment": authority.instance,
             "home_account_id": (account or {}).get("home_account_id"),
@@ -526,7 +593,7 @@ class ClientApplication(object):
             # For now, we try existing RTs (*). If it works, we are in that family.
             # (*) RTs of a different app/family are not supposed to be
             # shared with or accessible by us in the first place.
-            at = self._acquire_token_silent_by_finding_specific_refresh_token(
+            result = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes,
                 dict(query, family_id="1"),  # A hack, we have only 1 family for now
                 rt_remover=lambda rt_item: None,  # NO-OP b/c RTs are likely not mine
@@ -534,19 +601,20 @@ class ClientApplication(object):
                     # Based on an AAD-only behavior mentioned in internal doc here
                     # https://msazure.visualstudio.com/One/_git/ESTS-Docs/pullrequest/1138595
                     "client_mismatch" in response.get("error_additional_info", []),
-                **kwargs)
-            if at:
-                return at
+                error_response=error_response, **kwargs)
+            if result:
+                return result
         if app_metadata.get("family_id"):  # Meaning this app belongs to this family
-            at = self._acquire_token_silent_by_finding_specific_refresh_token(
+            result = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes, dict(query, family_id=app_metadata["family_id"]),
-                **kwargs)
-            if at:
-                return at
+                error_response=error_response, **kwargs)
+            if result:
+                return result
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
         return self._acquire_token_silent_by_finding_specific_refresh_token(
-            authority, scopes, dict(query, client_id=self.client_id), **kwargs)
+            authority, scopes, dict(query, client_id=self.client_id), error_response=error_response,
+            **kwargs)
 
     def _get_app_metadata(self, environment):
         apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
@@ -557,13 +625,14 @@ class ClientApplication(object):
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
             rt_remover=None, break_condition=lambda response: False,
-            force_refresh=False, correlation_id=None, **kwargs):
+            force_refresh=False, correlation_id=None, error_response=False, **kwargs):
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
         logger.debug("Found %d RTs matching %s", len(matches), query)
         client = self._build_client(self.client_credential, authority)
+        result = None
         for entry in matches:
             logger.debug("Cache attempts an RT")
             response = client.obtain_token_by_refresh_token(
@@ -578,10 +647,13 @@ class ClientApplication(object):
                 **kwargs)
             if "error" not in response:
                 return response
+            if error_response:
+                result = response
             logger.debug(
                 "Refresh failed. {error}: {error_description}".format(**response))
             if break_condition(response):
                 break
+        return result
 
     def _validate_ssh_cert_input_data(self, data):
         if data.get("token_type") == "ssh-cert":
@@ -794,3 +866,4 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID),
                 },
             **kwargs)
+

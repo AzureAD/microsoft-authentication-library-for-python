@@ -194,7 +194,7 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
         self.assertNotEqual(None, at)
         self.assertEqual(self.access_token, at.get('access_token'))
 
-class TestClientApplicationForSuberrors(unittest.TestCase):
+class TestClientApplicationForErrors(unittest.TestCase):
 
     @classmethod
     def setUp(self):
@@ -217,14 +217,31 @@ class TestClientApplicationForSuberrors(unittest.TestCase):
                 uid=self.uid, utid=self.utid, refresh_token=self.frt),
         })  # The add(...) helper populates correct home_account_id for future searching
 
-    def test_error_response(self):
+    def test_error_response_with_ca_errors(self):
         app = ClientApplication(
             self.client_id,
             authority=self.authority_url, token_cache=self.cache)
+        mock_dict = {
+            "error": "invalid_grant",
+            "error_description": "Was issued to another client",
+            "suberror": "basic_action"}
+
         def tester(url, data=None, **kwargs):
-            return Mock(status_code=200, json=Mock(return_value={
-                "error": "invalid_grant",
-                "error_description": "Was issued to another client",
-                "suberror": "basic_action"}))
-        response = app.acquire_token_silent(["s3"], self.account, authority=self.authority, post=tester, error_response=True)
-        self.assertEqual("basic_action", response.get("classification"), "Exposes the suberror object")
+            return Mock(status_code=200, json=Mock(return_value=mock_dict))
+
+        response = app.acquire_token_silent_with_errors(["s3"], self.account, authority=self.authority, post=tester)
+        self.assertEqual("basic_action", response.get("classification"), "Exposes the suberror as classification")
+
+    def test_error_response_non_ca_errors(self):
+        app = ClientApplication(
+            self.client_id,
+            authority=self.authority_url, token_cache=self.cache)
+        mock_dict = {
+            "error": "invalid_grant",
+            "error_description": "Was issued to another client"}
+
+        def tester(url, data=None, **kwargs):
+            return Mock(status_code=200, json=Mock(return_value=mock_dict))
+
+        response = app.acquire_token_silent_with_errors(["s3"], self.account, authority=self.authority, post=tester)
+        self.assertEqual(mock_dict, response, "Exposes the error object")
