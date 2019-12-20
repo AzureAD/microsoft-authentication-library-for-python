@@ -74,7 +74,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         def tester(url, data=None, **kwargs):
             self.assertEqual(self.frt, data.get("refresh_token"), "Should attempt the FRT")
-            return Mock(status_code=200, json=Mock(return_value={
+            return Mock(status_code=400, json=Mock(return_value={
                 "error": "invalid_grant",
                 "error_description": "Was issued to another client"}))
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
