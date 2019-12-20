@@ -578,8 +578,10 @@ class ClientApplication(object):
                 **kwargs)
             if "error" not in response:
                 return response
-            logger.debug(
-                "Refresh failed. {error}: {error_description}".format(**response))
+            logger.debug("Refresh failed. {error}: {error_description}".format(
+                error=response.get("error"),
+                error_description=response.get("error_description"),
+                ))
             if break_condition(response):
                 break
 
