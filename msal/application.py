@@ -320,9 +320,7 @@ class ClientApplication(object):
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         return self.client.obtain_token_by_authorization_code(
             code, redirect_uri=redirect_uri,
-            data=dict(
-                kwargs.pop("data", {}),
-                scope=decorate_scope(scopes, self.client_id)),
+            scope=decorate_scope(scopes, self.client_id),
             headers={
                 CLIENT_REQUEST_ID: _get_new_correlation_id(),
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
