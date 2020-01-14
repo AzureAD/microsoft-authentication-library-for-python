@@ -333,7 +333,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         return params
 
     def obtain_token_by_authorization_code(
-            self, code, redirect_uri=None, **kwargs):
+            self, code, redirect_uri=None, scope=None, **kwargs):
         """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
 
         This is typically used by a server-side app (Confidential Client),
@@ -344,9 +344,15 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         :param redirect_uri:
             Required, if the "redirect_uri" parameter was included in the
             authorization request, and their values MUST be identical.
+        :param scope:
+            It is both unnecessary and harmless to use scope here, per RFC 6749.
+            We suggest to use the same scope already used in auth request uri,
+            so that this library can link the obtained tokens with their scope.
         """
         data = kwargs.pop("data", {})
         data.update(code=code, redirect_uri=redirect_uri)
+        if scope:
+            data["scope"] = scope
         if not self.client_secret:
             # client_id is required, if the client is not authenticating itself.
             # See https://tools.ietf.org/html/rfc6749#section-4.1.3
@@ -400,7 +406,9 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                 scope = _resp["scope"].split()  # It is conceptually a set,
                     # but we represent it as a list which can be persisted to JSON
             else:
-                # TODO: Deal with absent scope in authorization grant
+                # Note: The scope will generally be absent in authorization grant,
+                #       but our obtain_token_by_authorization_code(...) encourages
+                #       app developer to still explicitly provide a scope here.
                 scope = _data.get("scope")
             self.on_obtaining_tokens({
                 "client_id": self.client_id,
