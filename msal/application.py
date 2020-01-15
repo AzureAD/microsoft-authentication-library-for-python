@@ -431,9 +431,39 @@ class ClientApplication(object):
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
+        It behaves same as :func:`~acquire_token_silent_with_error`,
+        except that this method will combine the cache empty and refresh error
+        into one return value, `None`.
+        If your app does not need to care the exact token refresh error during
+        token cache look-up, then this method is easier to use.
+
+        Internally, this method calls :func:`~acquire_token_silent_with_error`.
+
+        :return:
+            - A dict containing no "error" key,
+              and typically contains an "access_token" key,
+              if cache lookup succeeded.
+            - None when cache lookup does not yield a token.
+        """
+        result = self.acquire_token_silent_with_error(
+            scopes, account, authority, force_refresh, **kwargs)
+        return result if result and "error" not in result else None
+
+    def acquire_token_silent_with_error(
+            self,
+            scopes,  # type: List[str]
+            account,  # type: Optional[Account]
+            authority=None,  # See get_authorization_request_url()
+            force_refresh=False,  # type: Optional[boolean]
+            **kwargs):
+        """Acquire an access token for given account, without user interaction.
+
         It is done either by finding a valid access token from cache,
         or by finding a valid refresh token from cache and then automatically
         use it to redeem a new access token.
+
+        Unlike :func:`~acquire_token_silent`,
+        error happened during token refresh would also be returned.
 
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
@@ -444,8 +474,11 @@ class ClientApplication(object):
             If True, it will skip Access Token look-up,
             and try to find a Refresh Token to obtain a new Access Token.
         :return:
-            - A dict containing "access_token" key, when cache lookup succeeds.
-            - None when cache lookup does not yield anything.
+            - A dict containing no "error" key,
+              and typically contains an "access_token" key,
+              if cache lookup succeeded.
+            - None when there is simply no token in the cache.
+            - A dict containing an "error" key, when token refresh failed.
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
@@ -460,8 +493,9 @@ class ClientApplication(object):
             scopes, account, self.authority, force_refresh=force_refresh,
             correlation_id=correlation_id,
             **kwargs)
-        if result:
+        if result and "error" not in result:
             return result
+        final_result = result
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
@@ -472,7 +506,10 @@ class ClientApplication(object):
                 correlation_id=correlation_id,
                 **kwargs)
             if result:
-                return result
+                if "error" not in result:
+                    return result
+                final_result = result
+        return final_result
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
             self,
@@ -533,13 +570,13 @@ class ClientApplication(object):
                     # https://msazure.visualstudio.com/One/_git/ESTS-Docs/pullrequest/1138595
                     "client_mismatch" in response.get("error_additional_info", []),
                 **kwargs)
-            if at:
+            if at and "error" not in at:
                 return at
         if app_metadata.get("family_id"):  # Meaning this app belongs to this family
             at = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes, dict(query, family_id=app_metadata["family_id"]),
                 **kwargs)
-            if at:
+            if at and "error" not in at:
                 return at
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
@@ -562,6 +599,8 @@ class ClientApplication(object):
             query=query)
         logger.debug("Found %d RTs matching %s", len(matches), query)
         client = self._build_client(self.client_credential, authority)
+
+        response = None  # A distinguishable value to mean cache is empty
         for entry in matches:
             logger.debug("Cache attempts an RT")
             response = client.obtain_token_by_refresh_token(
@@ -582,6 +621,7 @@ class ClientApplication(object):
                 ))
             if break_condition(response):
                 break
+        return response  # Returns the latest error (if any), or just None
 
     def _validate_ssh_cert_input_data(self, data):
         if data.get("token_type") == "ssh-cert":
