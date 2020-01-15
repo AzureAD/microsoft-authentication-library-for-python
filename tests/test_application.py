@@ -75,6 +75,13 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
         self.assertEqual(
             None, self.app.acquire_token_silent_with_error(['cache_miss'], self.account))
 
+    def test_acquire_token_silent_will_suppress_error(self):
+        error_response = {"error": "invalid_grant", "suberror": "xyz"}
+        def tester(url, **kwargs):
+            return Mock(status_code=400, json=Mock(return_value=error_response))
+        self.assertEqual(None, self.app.acquire_token_silent(
+            self.scopes, self.account, post=tester))
+
     def test_acquire_token_silent_with_error_will_return_error(self):
         error_response = {"error": "invalid_grant", "error_description": "xyz"}
         def tester(url, **kwargs):
@@ -82,12 +89,21 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
         self.assertEqual(error_response, self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester))
 
-    def test_acquire_token_silent_will_suppress_error(self):
-        error_response = {"error": "invalid_grant", "error_description": "xyz"}
+    def test_atswe_will_map_some_suberror_to_classification_as_is(self):
+        error_response = {"error": "invalid_grant", "suberror": "basic_action"}
         def tester(url, **kwargs):
             return Mock(status_code=400, json=Mock(return_value=error_response))
-        self.assertEqual(None, self.app.acquire_token_silent(
-            self.scopes, self.account, post=tester))
+        result = self.app.acquire_token_silent_with_error(
+            self.scopes, self.account, post=tester)
+        self.assertEqual("basic_action", result.get("classification"))
+
+    def test_atswe_will_map_some_suberror_to_classification_to_empty_string(self):
+        error_response = {"error": "invalid_grant", "suberror": "client_mismatch"}
+        def tester(url, **kwargs):
+            return Mock(status_code=400, json=Mock(return_value=error_response))
+        result = self.app.acquire_token_silent_with_error(
+            self.scopes, self.account, post=tester)
+        self.assertEqual("", result.get("classification"))
 
 class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 

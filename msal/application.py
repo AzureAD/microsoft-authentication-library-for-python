@@ -509,6 +509,14 @@ class ClientApplication(object):
                 if "error" not in result:
                     return result
                 final_result = result
+        if final_result and final_result.get("suberror"):
+            final_result["classification"] = {  # Suppress these suberrors, per #57
+                "bad_token": "",
+                "token_expired": "",
+                "protection_policy_required": "",
+                "client_mismatch": "",
+                "device_authentication_failed": "",
+                }.get(final_result["suberror"], final_result["suberror"])
         return final_result
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
