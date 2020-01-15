@@ -46,6 +46,49 @@ class TestHelperExtractCerts(unittest.TestCase):  # It is used by SNI scenario
         self.assertEqual(["my_cert1", "my_cert2"], extract_certs(pem))
 
 
+class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
+
+    def setUp(self):
+        self.authority_url = "https://login.microsoftonline.com/common"
+        self.authority = msal.authority.Authority(self.authority_url)
+        self.scopes = ["s1", "s2"]
+        self.uid = "my_uid"
+        self.utid = "my_utid"
+        self.account = {"home_account_id": "{}.{}".format(self.uid, self.utid)}
+        self.rt = "this is a rt"
+        self.cache = msal.SerializableTokenCache()
+        self.client_id = "my_app"
+        self.cache.add({  # Pre-populate the cache
+            "client_id": self.client_id,
+            "scope": self.scopes,
+            "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
+            "response": TokenCacheTestCase.build_response(
+                access_token="an expired AT to trigger refresh", expires_in=-99,
+                uid=self.uid, utid=self.utid, refresh_token=self.rt),
+            })  # The add(...) helper populates correct home_account_id for future searching
+        self.app = ClientApplication(
+            self.client_id, authority=self.authority_url, token_cache=self.cache)
+
+    def test_cache_empty_will_be_returned_as_None(self):
+        self.assertEqual(
+            None, self.app.acquire_token_silent(['cache_miss'], self.account))
+        self.assertEqual(
+            None, self.app.acquire_token_silent_with_error(['cache_miss'], self.account))
+
+    def test_acquire_token_silent_with_error_will_return_error(self):
+        error_response = {"error": "invalid_grant", "error_description": "xyz"}
+        def tester(url, **kwargs):
+            return Mock(status_code=400, json=Mock(return_value=error_response))
+        self.assertEqual(error_response, self.app.acquire_token_silent_with_error(
+            self.scopes, self.account, post=tester))
+
+    def test_acquire_token_silent_will_suppress_error(self):
+        error_response = {"error": "invalid_grant", "error_description": "xyz"}
+        def tester(url, **kwargs):
+            return Mock(status_code=400, json=Mock(return_value=error_response))
+        self.assertEqual(None, self.app.acquire_token_silent(
+            self.scopes, self.account, post=tester))
+
 class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     def setUp(self):
