@@ -222,6 +222,38 @@ class TokenCacheTestCase(unittest.TestCase):
             {}).get("key_id")
         self.assertEqual(my_key_id, cached_key_id, "AT should be bound to the key")
 
+    def test_add_access_token_and_ssh_certificate(self):
+        # test adding both an access token and SSH certificate into the
+        # cache with the same values
+
+        # add an access token
+        self.cache.add({
+            "client_id": "my_client_id",
+            "scope": ["s1"],
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "response": self.build_response(
+                uid="uid", utid="utid",
+                expires_in=3600, access_token="an access token",
+                refresh_token="a refresh token"),
+            }, now=1000)
+
+        # add an SSH certificate
+        self.cache.add({
+            "data": {"key_id": "key_id", "token_type": "ssh-cert"},
+            "client_id": "my_client_id",
+            "scope": ["s1"],
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "response": self.build_response(
+                uid="uid", utid="utid",
+                expires_in=3600, access_token="an ssh certificate",
+                refresh_token="a refresh token"),
+            }, now=1000)
+
+        # assert that there are 2 tokens in the cache, one for the AT
+        # and one for the SSH cert
+        self.assertEqual(2, len(self.cache._cache["AccessToken"].values()),
+            "There should be 2 tokens in the cache, 1 for SSH and 1 for AT")
+
 
 class SerializableTokenCacheTestCase(TokenCacheTestCase):
     # Run all inherited test methods, and have extra check in tearDown()
