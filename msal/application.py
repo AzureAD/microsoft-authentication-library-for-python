@@ -431,11 +431,14 @@ class ClientApplication(object):
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
-        It behaves same as :func:`~acquire_token_silent_with_error`,
-        except that this method will combine the cache empty and refresh error
+        It is done either by finding a valid access token from cache,
+        or by finding a valid refresh token from cache and then automatically
+        use it to redeem a new access token.
+
+        This method will combine the cache empty and refresh error
         into one return value, `None`.
-        If your app does not need to care the exact token refresh error during
-        token cache look-up, then this method is easier to use.
+        If your app does not care about the exact token refresh error during
+        token cache look-up, then this method is easier and recommended.
 
         Internally, this method calls :func:`~acquire_token_silent_with_error`.
 
@@ -462,8 +465,10 @@ class ClientApplication(object):
         or by finding a valid refresh token from cache and then automatically
         use it to redeem a new access token.
 
-        Unlike :func:`~acquire_token_silent`,
-        error happened during token refresh would also be returned.
+        This method will differentiate cache empty from token refresh error.
+        If your app cares the exact token refresh error during
+        token cache look-up, then this method is suitable.
+        Otherwise, the other method :func:`~acquire_token_silent` is recommended.
 
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
