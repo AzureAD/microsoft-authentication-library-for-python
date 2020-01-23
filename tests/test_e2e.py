@@ -308,6 +308,10 @@ def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confiden
 
 class LabBasedTestCase(E2eTestCase):
     _secrets = {}
+    adfs2019_scopes = ["placeholder"]  # Need this to satisfy MSAL API surface.
+        # Internally, MSAL will also append more scopes like "openid" etc..
+        # ADFS 2019 will issue tokens for valid scope only, by default "openid".
+        # https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/overview/ad-fs-faq#what-permitted-scopes-are-supported-by-ad-fs
 
     @classmethod
     def setUpClass(cls):
@@ -365,6 +369,47 @@ class LabBasedTestCase(E2eTestCase):
         config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2019")
         self._test_username_password(
             password=self.get_lab_user_secret(config["lab_name"]), **config)
+
+    def test_ropc_adfs2019_onprem(self):
+        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
+        config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
+        config["client_id"] = "PublicClientId"
+        config["scope"] = self.adfs2019_scopes
+        self._test_username_password(
+            password=self.get_lab_user_secret(config["lab_name"]), **config)
+
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    def test_adfs2019_onprem_acquire_token_by_auth_code(self):
+        """When prompted, you can manually login using this account:
+
+        # https://msidlab.com/api/user?usertype=onprem&federationprovider=ADFSv2019
+        username = "..."  # The upn from the link above
+        password="***"  # From https://aka.ms/GetLabUserSecret?Secret=msidlabXYZ
+        """
+        scopes = self.adfs2019_scopes
+        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
+        (self.app, ac, redirect_uri) = _get_app_and_auth_code(
+            # Configuration is derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.7.0/tests/Microsoft.Identity.Test.Common/TestConstants.cs#L250-L259
+            "PublicClientId",
+            authority="https://fs.%s.com/adfs" % config["lab_name"],
+            port=8080,
+            scopes=scopes,
+            )
+        result = self.app.acquire_token_by_authorization_code(
+            ac, scopes, redirect_uri=redirect_uri)
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result.get("id_token_claims"), indent=4),
+            )
+        self.assertIn(
+            "access_token", result,
+            "{error}: {error_description}".format(
+                # Note: No interpolation here, cause error won't always present
+                error=result.get("error"),
+                error_description=result.get("error_description")))
+        self.assertCacheWorksForUser(result, scopes, username=None)
 
     @unittest.skipUnless(
         os.getenv("OBO_CLIENT_SECRET"),
