@@ -29,12 +29,18 @@ class TestAuthority(unittest.TestCase):
         self.assertNotIn('v2.0', a.token_endpoint)
 
     def test_unknown_host_wont_pass_instance_discovery(self):
-        with self.assertRaisesRegexp(ValueError, "invalid_instance"):
-            Authority('https://unknown.host/tenant_doesnt_matter_in_this_case')
+        _assert = getattr(self, "assertRaisesRegex", self.assertRaisesRegexp)  # Hack
+        with _assert(ValueError, "invalid_instance"):
+            Authority('https://example.com/tenant_doesnt_matter_in_this_case')
 
-    def test_invalid_host_skipping_validation_meets_connection_error_down_the_road(self):
-        with self.assertRaises(requests.exceptions.RequestException):
-            Authority('https://unknown.host/invalid', validate_authority=False)
+    def test_invalid_host_skipping_validation_can_be_turned_off(self):
+        try:
+            Authority('https://example.com/invalid', validate_authority=False)
+        except ValueError as e:
+            if "invalid_instance" in str(e):  # Imprecise but good enough
+                self.fail("validate_authority=False should turn off validation")
+        except:  # Could be requests...RequestException, json...JSONDecodeError, etc.
+            pass  # Those are expected for this unittest case
 
 
 class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
