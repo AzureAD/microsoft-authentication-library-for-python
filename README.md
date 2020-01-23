@@ -1,40 +1,40 @@
-# Microsoft Authentication Library (MSAL) for Python Preview
+# Microsoft Authentication Library (MSAL) for Python
 
-The MSAL library for Python enables your app to access the
-[Microsoft Cloud](https://cloud.microsoft.com)
-by supporting authentication of users with
-[Microsoft Azure Active Directory accounts](https://azure.microsoft.com/en-us/services/active-directory/)
-and [Microsoft Accounts](https://account.microsoft.com) using industry standard OAuth2 and OpenID Connect.
-Soon MSAL Python will also support [Azure AD B2C](https://azure.microsoft.com/services/active-directory-b2c/).
 
-Not sure whether this is the SDK you are looking for? There are other Microsoft Identity SDKs
+| `dev` branch | Reference Docs
+|---------------|---------------
+ [![Build status](https://api.travis-ci.org/AzureAD/microsoft-authentication-library-for-python.svg?branch=dev)](https://travis-ci.org/AzureAD/microsoft-authentication-library-for-python) | [![Documentation Status](https://readthedocs.org/projects/msal-python/badge/?version=latest)](https://msal-python.readthedocs.io/en/latest/?badge=latest)
+
+The Microsoft Authentication Library for Python enables applications to integrate with the [Microsoft identity platform](https://aka.ms/aaddevv2). It allows you to sign in users or apps with Microsoft identities ([Azure AD](https://azure.microsoft.com/services/active-directory/), [Microsoft Accounts](https://account.microsoft.com) and [Azure AD B2C](https://azure.microsoft.com/services/active-directory-b2c/) accounts) and obtain tokens to call Microsoft APIs such as [Microsoft Graph](https://graph.microsoft.io/) or your own APIs registered with the Microsoft identity platform. It is built using industry standard OAuth2 and OpenID Connect protocols
+
+Not sure whether this is the SDK you are looking for your app? There are other Microsoft Identity SDKs
 [here](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Microsoft-Authentication-Client-Libraries).
 
-## Important Note about the MSAL Preview
+Quick links:
 
-This library is suitable for use in a production environment.
-We provide the same production level support for this library as we do our current production libraries.
-During the preview we may make changes to the API, internal cache format, and other mechanisms of this library,
-which you will be required to take along with bug fixes or feature improvements.
-This may impact your application.
-For instance, a change to the cache format may impact your users, such as requiring them to sign in again.
-An API change may require you to update your code.
-When we provide the General Availability release
-we will require you to update to the General Availability version within six months,
-as applications written using a preview version of library may no longer work.
+| [Getting Started](https://docs.microsoft.com/azure/active-directory/develop/quickstart-v2-python-webapp) | [Docs](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki) | [Samples](https://aka.ms/aaddevsamplesv2) | [Support](README.md#community-help-and-support)
+| --- | --- | --- | --- |
 
 ## Installation
 
+You can find MSAL Python on [Pypi](https://pypi.org/project/msal/).
 1. If you haven't already, [install and/or upgrade the pip](https://pip.pypa.io/en/stable/installing/)
    of your Python environment to a recent version. We tested with pip 18.1.
 2. As usual, just run `pip install msal`.
 
-## Usage and Samples
+## Versions
+
+This library follows [Semantic Versioning](http://semver.org/).
+
+You can find the changes for each version under
+[Releases](https://github.com/AzureAD/microsoft-authentication-library-for-python/releases).
+
+## Usage
 
 Before using MSAL Python (or any MSAL SDKs, for that matter), you will have to
-[register your application with the AAD 2.0 endpoint](https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-v2-register-an-app).
+[register your application with the Microsoft identity platform](https://docs.microsoft.com/azure/active-directory/develop/quickstart-v2-register-an-app).
 
-Acquiring tokens with MSAL Python need to follow this 3-step pattern.
+Acquiring tokens with MSAL Python follows this 3-step pattern.
 
 1. MSAL proposes a clean separation between
    [public client applications, and confidential client applications](https://tools.ietf.org/html/rfc6749#section-2.1).
@@ -89,28 +89,28 @@ Acquiring tokens with MSAL Python need to follow this 3-step pattern.
 That is the high level pattern. There will be some variations for different flows. They are demonstrated in
 [samples hosted right in this repo](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample).
 
+Refer the [Wiki](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki) pages for more details on the MSAL Python functionality and usage.
 
-## Documentation
+## Migrating from ADAL
 
+If your application is using ADAL Python, we recommend you to update to use MSAL Python. No new feature work will be done in ADAL Python.
+
+See the [ADAL to MSAL migration](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Migrate-to-MSAL-Python) guide.
+
+## Roadmap
+
+You can follow the latest updates and plans for MSAL Python in the [Roadmap](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Roadmap) published on our Wiki.
+
+## Samples and Documentation
+
+MSAL Python supports multiple [application types and authentication scenarios](https://docs.microsoft.com/azure/active-directory/develop/authentication-flows-app-scenarios).
 The generic documents on
-[Auth Scenarios](https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-scenarios)
+[Auth Scenarios](https://docs.microsoft.com/azure/active-directory/develop/authentication-scenarios)
 and
-[Auth protocols](https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-protocols)
+[Auth protocols](https://docs.microsoft.com/azure/active-directory/develop/active-directory-v2-protocols)
 are recommended reading.
 
-There is the [API reference of MSAL Python](https://msal-python.rtfd.io) which documents every parameter of each public method.
-
-More and more detail about MSAL Python functionality and usage will be documented in the
-[Wiki](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki).
-
-
-
-## Versions
-
-This library follows [Semantic Versioning](http://semver.org/).
-
-You can find the changes for each version under
-[Releases](https://github.com/AzureAD/microsoft-authentication-library-for-python/releases).
+We provide a [full suite of sample applications](https://aka.ms/aaddevsamplesv2) and [documentation](https://aka.ms/aaddevv2) to help you get started with learning the Microsoft identity platform.
 
 ## Community Help and Support
 
@@ -124,7 +124,7 @@ Here is the latest Q&A on Stack Overflow for MSAL:
 
 ## Security Reporting
 
-If you find a security issue with our libraries or services please report it to [secure@microsoft.com](mailto:secure@microsoft.com) with as much detail as possible. Your submission may be eligible for a bounty through the [Microsoft Bounty](http://aka.ms/bugbounty) program. Please do not post security issues to GitHub Issues or any other public site. We will contact you shortly upon receiving the information. We encourage you to get notifications of when security incidents occur by visiting [this page](https://technet.microsoft.com/en-us/security/dd252948) and subscribing to Security Advisory Alerts.
+If you find a security issue with our libraries or services please report it to [secure@microsoft.com](mailto:secure@microsoft.com) with as much detail as possible. Your submission may be eligible for a bounty through the [Microsoft Bounty](http://aka.ms/bugbounty) program. Please do not post security issues to GitHub Issues or any other public site. We will contact you shortly upon receiving the information. We encourage you to get notifications of when security incidents occur by visiting [this page](https://technet.microsoft.com/security/dd252948) and subscribing to Security Advisory Alerts.
 
 ## Contributing
 

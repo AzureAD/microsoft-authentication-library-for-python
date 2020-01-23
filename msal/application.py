@@ -6,6 +6,7 @@ except:  # Python 3
 import logging
 import sys
 import warnings
+import uuid
 
 import requests
 
@@ -18,7 +19,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,16 @@ def decorate_scope(
         decorated = scope_set | reserved_scope
     return list(decorated)
 
+CLIENT_REQUEST_ID = 'client-request-id'
+CLIENT_CURRENT_TELEMETRY = 'x-client-current-telemetry'
+
+def _get_new_correlation_id():
+        return str(uuid.uuid4())
+
+
+def _build_current_telemetry_request_header(public_api_id, force_refresh=False):
+        return "1|{},{}|".format(public_api_id, "1" if force_refresh else "0")
+
 
 def extract_certs(public_cert_content):
     # Parses raw public certificate file contents and returns a list of strings
@@ -68,12 +79,21 @@ def extract_certs(public_cert_content):
 
 class ClientApplication(object):
 
+    ACQUIRE_TOKEN_SILENT_ID = "84"
+    ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID = "301"
+    ACQUIRE_TOKEN_ON_BEHALF_OF_ID = "523"
+    ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID = "622"
+    ACQUIRE_TOKEN_FOR_CLIENT_ID = "730"
+    ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID = "832"
+    GET_ACCOUNTS_ID = "902"
+    REMOVE_ACCOUNT_ID = "903"
+
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
             verify=True, proxies=None, timeout=None,
-            client_claims=None):
+            client_claims=None, app_name=None, app_version=None):
         """Create an instance of application.
 
         :param client_id: Your app has a client_id after you register it on AAD.
@@ -131,6 +151,12 @@ class ClientApplication(object):
             It will be passed to the
             `timeout parameter in the underlying requests library
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
+        :param app_name: (optional)
+            You can provide your application name for Microsoft telemetry purposes.
+            Default value is None, means it will not be passed to Microsoft.
+        :param app_version: (optional)
+            You can provide your application version for Microsoft telemetry purposes.
+            Default value is None, means it will not be passed to Microsoft.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -138,6 +164,8 @@ class ClientApplication(object):
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
+        self.app_name = app_name
+        self.app_version = app_version
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
                 validate_authority, verify=verify, proxies=proxies, timeout=timeout)
@@ -149,6 +177,15 @@ class ClientApplication(object):
     def _build_client(self, client_credential, authority):
         client_assertion = None
         client_assertion_type = None
+        default_headers = {
+            "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
+            "x-client-os": sys.platform,
+            "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
+        }
+        if self.app_name:
+            default_headers['x-app-name'] = self.app_name
+        if self.app_version:
+            default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
@@ -174,11 +211,7 @@ class ClientApplication(object):
         return Client(
             server_configuration,
             self.client_id,
-            default_headers={
-                "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
-                "x-client-os": sys.platform,
-                "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
-                },
+            default_headers=default_headers,
             default_body=default_body,
             client_assertion=client_assertion,
             client_assertion_type=client_assertion_type,
@@ -287,9 +320,12 @@ class ClientApplication(object):
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         return self.client.obtain_token_by_authorization_code(
             code, redirect_uri=redirect_uri,
-            data=dict(
-                kwargs.pop("data", {}),
-                scope=decorate_scope(scopes, self.client_id)),
+            scope=decorate_scope(scopes, self.client_id),
+            headers={
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
+                },
             **kwargs)
 
     def get_accounts(self, username=None):
@@ -399,6 +435,41 @@ class ClientApplication(object):
         or by finding a valid refresh token from cache and then automatically
         use it to redeem a new access token.
 
+        This method will combine the cache empty and refresh error
+        into one return value, `None`.
+        If your app does not care about the exact token refresh error during
+        token cache look-up, then this method is easier and recommended.
+
+        Internally, this method calls :func:`~acquire_token_silent_with_error`.
+
+        :return:
+            - A dict containing no "error" key,
+              and typically contains an "access_token" key,
+              if cache lookup succeeded.
+            - None when cache lookup does not yield a token.
+        """
+        result = self.acquire_token_silent_with_error(
+            scopes, account, authority, force_refresh, **kwargs)
+        return result if result and "error" not in result else None
+
+    def acquire_token_silent_with_error(
+            self,
+            scopes,  # type: List[str]
+            account,  # type: Optional[Account]
+            authority=None,  # See get_authorization_request_url()
+            force_refresh=False,  # type: Optional[boolean]
+            **kwargs):
+        """Acquire an access token for given account, without user interaction.
+
+        It is done either by finding a valid access token from cache,
+        or by finding a valid refresh token from cache and then automatically
+        use it to redeem a new access token.
+
+        This method will differentiate cache empty from token refresh error.
+        If your app cares the exact token refresh error during
+        token cache look-up, then this method is suitable.
+        Otherwise, the other method :func:`~acquire_token_silent` is recommended.
+
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
         :param account:
@@ -408,11 +479,15 @@ class ClientApplication(object):
             If True, it will skip Access Token look-up,
             and try to find a Refresh Token to obtain a new Access Token.
         :return:
-            - A dict containing "access_token" key, when cache lookup succeeds.
-            - None when cache lookup does not yield anything.
+            - A dict containing no "error" key,
+              and typically contains an "access_token" key,
+              if cache lookup succeeded.
+            - None when there is simply no token in the cache.
+            - A dict containing an "error" key, when token refresh failed.
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        correlation_id = _get_new_correlation_id()
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
@@ -420,18 +495,34 @@ class ClientApplication(object):
         #     verify=self.verify, proxies=self.proxies, timeout=self.timeout,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-            scopes, account, self.authority, force_refresh=force_refresh, **kwargs)
-        if result:
+            scopes, account, self.authority, force_refresh=force_refresh,
+            correlation_id=correlation_id,
+            **kwargs)
+        if result and "error" not in result:
             return result
+        final_result = result
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
                 validate_authority=False,
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-                scopes, account, the_authority, force_refresh=force_refresh, **kwargs)
+                scopes, account, the_authority, force_refresh=force_refresh,
+                correlation_id=correlation_id,
+                **kwargs)
             if result:
-                return result
+                if "error" not in result:
+                    return result
+                final_result = result
+        if final_result and final_result.get("suberror"):
+            final_result["classification"] = {  # Suppress these suberrors, per #57
+                "bad_token": "",
+                "token_expired": "",
+                "protection_policy_required": "",
+                "client_mismatch": "",
+                "device_authentication_failed": "",
+                }.get(final_result["suberror"], final_result["suberror"])
+        return final_result
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
             self,
@@ -467,7 +558,7 @@ class ClientApplication(object):
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, decorate_scope(scopes, self.client_id), account,
-                **kwargs)
+                force_refresh=force_refresh, **kwargs)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self, authority, scopes, account, **kwargs):
@@ -492,13 +583,13 @@ class ClientApplication(object):
                     # https://msazure.visualstudio.com/One/_git/ESTS-Docs/pullrequest/1138595
                     "client_mismatch" in response.get("error_additional_info", []),
                 **kwargs)
-            if at:
+            if at and "error" not in at:
                 return at
         if app_metadata.get("family_id"):  # Meaning this app belongs to this family
             at = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes, dict(query, family_id=app_metadata["family_id"]),
                 **kwargs)
-            if at:
+            if at and "error" not in at:
                 return at
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
@@ -513,26 +604,37 @@ class ClientApplication(object):
 
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
-            rt_remover=None, break_condition=lambda response: False, **kwargs):
+            rt_remover=None, break_condition=lambda response: False,
+            force_refresh=False, correlation_id=None, **kwargs):
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
         logger.debug("Found %d RTs matching %s", len(matches), query)
         client = self._build_client(self.client_credential, authority)
+
+        response = None  # A distinguishable value to mean cache is empty
         for entry in matches:
             logger.debug("Cache attempts an RT")
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 on_removing_rt=rt_remover or self.token_cache.remove_rt,
                 scope=scopes,
+                headers={
+                    CLIENT_REQUEST_ID: correlation_id or _get_new_correlation_id(),
+                    CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                        self.ACQUIRE_TOKEN_SILENT_ID, force_refresh=force_refresh),
+                    },
                 **kwargs)
             if "error" not in response:
                 return response
-            logger.debug(
-                "Refresh failed. {error}: {error_description}".format(**response))
+            logger.debug("Refresh failed. {error}: {error_description}".format(
+                error=response.get("error"),
+                error_description=response.get("error_description"),
+                ))
             if break_condition(response):
                 break
+        return response  # Returns the latest error (if any), or just None
 
     def _validate_ssh_cert_input_data(self, data):
         if data.get("token_type") == "ssh-cert":
@@ -551,6 +653,8 @@ class ClientApplication(object):
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
+    DEVICE_FLOW_CORRELATION_ID = "_correlation_id"
+
     def __init__(self, client_id, client_credential=None, **kwargs):
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
@@ -568,9 +672,16 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "user_code" key, among others
             - an error response would contain some other readable key/value pairs.
         """
-        return self.client.initiate_device_flow(
+        correlation_id = _get_new_correlation_id()
+        flow = self.client.initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
+            headers={
+                CLIENT_REQUEST_ID: correlation_id,
+                # CLIENT_CURRENT_TELEMETRY is not currently required
+                },
             **kwargs)
+        flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
+        return flow
 
     def acquire_token_by_device_flow(self, flow, **kwargs):
         """Obtain token by a device flow object, with customizable polling effect.
@@ -587,12 +698,18 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain "error" and usually "error_description".
         """
         return self.client.obtain_token_by_device_flow(
-                flow,
-                data=dict(kwargs.pop("data", {}), code=flow["device_code"]),
-                    # 2018-10-4 Hack:
-                    # during transition period,
-                    # service seemingly need both device_code and code parameter.
-                **kwargs)
+            flow,
+            data=dict(kwargs.pop("data", {}), code=flow["device_code"]),
+                # 2018-10-4 Hack:
+                # during transition period,
+                # service seemingly need both device_code and code parameter.
+            headers={
+                CLIENT_REQUEST_ID:
+                    flow.get(self.DEVICE_FLOW_CORRELATION_ID) or _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID),
+                },
+            **kwargs)
 
     def acquire_token_by_username_password(
             self, username, password, scopes, **kwargs):
@@ -612,13 +729,22 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain "error" and usually "error_description".
         """
         scopes = decorate_scope(scopes, self.client_id)
+        headers = {
+            CLIENT_REQUEST_ID: _get_new_correlation_id(),
+            CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
+            }
         if not self.authority.is_adfs:
-            user_realm_result = self.authority.user_realm_discovery(username)
+            user_realm_result = self.authority.user_realm_discovery(
+                username, correlation_id=headers[CLIENT_REQUEST_ID])
             if user_realm_result.get("account_type") == "Federated":
                 return self._acquire_token_by_username_password_federated(
-                    user_realm_result, username, password, scopes=scopes, **kwargs)
+                    user_realm_result, username, password, scopes=scopes,
+                    headers=headers, **kwargs)
         return self.client.obtain_token_by_username_password(
-                username, password, scope=scopes, **kwargs)
+                username, password, scope=scopes,
+                headers=headers,
+                **kwargs)
 
     def _acquire_token_by_username_password_federated(
             self, user_realm_result, username, password, scopes=None, **kwargs):
@@ -674,8 +800,13 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # TBD: force_refresh behavior
         return self.client.obtain_token_for_client(
-                scope=scopes,  # This grant flow requires no scope decoration
-                **kwargs)
+            scope=scopes,  # This grant flow requires no scope decoration
+            headers={
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_FOR_CLIENT_ID),
+                },
+            **kwargs)
 
     def acquire_token_on_behalf_of(self, user_assertion, scopes, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
@@ -710,5 +841,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 #    so that the calling app could use id_token_claims to implement
                 #    their own cache mapping, which is likely needed in web apps.
             data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of"),
+            headers={
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID),
+                },
             **kwargs)
 

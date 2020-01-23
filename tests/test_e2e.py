@@ -2,11 +2,11 @@ import logging
 import os
 import json
 import time
+import unittest
 
 import requests
 
 import msal
-from tests import unittest
 
 
 logger = logging.getLogger(__name__)
@@ -52,12 +52,18 @@ class E2eTestCase(unittest.TestCase):
         accounts = self.app.get_accounts(username=username)
         self.assertNotEqual(0, len(accounts))
         account = accounts[0]
-        # Going to test acquire_token_silent(...) to locate an AT from cache
-        result_from_cache = self.app.acquire_token_silent(scope, account=account)
-        self.assertIsNotNone(result_from_cache)
-        self.assertEqual(
-            result_from_wire['access_token'], result_from_cache['access_token'],
-            "We should get a cached AT")
+        if ("scope" not in result_from_wire  # This is the usual case
+                or  # Authority server could reject some scopes
+                set(scope) <= set(result_from_wire["scope"].split(" "))
+                ):
+            # Going to test acquire_token_silent(...) to locate an AT from cache
+            result_from_cache = self.app.acquire_token_silent(scope, account=account)
+            self.assertIsNotNone(result_from_cache)
+            self.assertIsNone(
+                result_from_cache.get("refresh_token"), "A cache hit returns no RT")
+            self.assertEqual(
+                result_from_wire['access_token'], result_from_cache['access_token'],
+                "We should get a cached AT")
 
         # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
         self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
@@ -263,19 +269,6 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
             "%s obtained tokens: %s", self.id(), json.dumps(result, indent=4))
 
 
-def get_lab_user(mam=False, mfa=False, isFederated=False, federationProvider=None):
-    # Based on https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/LAB.aspx
-    user = requests.get("https://api.msidlab.com/api/user", params=dict(  # Publicly available
-        mam=mam, mfa=mfa, isFederated=isFederated, federationProvider=federationProvider,
-        )).json()
-    return {  # Mapping lab API response to our simplified configuration format
-        "authority": user["Authority"][0] + user["Users"]["tenantId"],
-        "client_id": user["AppID"],
-        "username": user["Users"]["upn"],
-        "lab": {"labname": user["Users"]["upn"].split('@')[1].split('.')[0]},  # :(
-        "scope": ["https://graph.microsoft.com/.default"],
-        }
-
 def get_lab_app(
         env_client_id="LAB_APP_CLIENT_ID",
         env_client_secret="LAB_APP_CLIENT_SECRET",
@@ -315,13 +308,15 @@ def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confiden
 
 class LabBasedTestCase(E2eTestCase):
     _secrets = {}
+    adfs2019_scopes = ["placeholder"]  # Need this to satisfy MSAL API surface.
+        # Internally, MSAL will also append more scopes like "openid" etc..
+        # ADFS 2019 will issue tokens for valid scope only, by default "openid".
+        # https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/overview/ad-fs-faq#what-permitted-scopes-are-supported-by-ad-fs
 
     @classmethod
     def setUpClass(cls):
-        cls.session = get_session(get_lab_app(), [
-            "https://request.msidlab.com/.default",  # Existing user & password API
-            # "https://user.msidlab.com/.default",  # New user API
-            ])
+        # https://docs.msidlab.com/accounts/apiaccess.html#code-snippet
+        cls.session = get_session(get_lab_app(), ["https://msidlab.com/.default"])
 
     @classmethod
     def tearDownClass(cls):
@@ -332,62 +327,89 @@ class LabBasedTestCase(E2eTestCase):
         lab_name = lab_name.lower()
         if lab_name not in cls._secrets:
             logger.info("Querying lab user password for %s", lab_name)
-            # Short link only works in browser "https://aka.ms/GetLabUserSecret?Secret=%s"
-            # So we use the official link written in here
-            # https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API%27s.aspx
-            url = ("https://request.msidlab.com/api/GetLabUserSecret?code=KpY5uCcoKo0aW8VOL/CUO3wnu9UF2XbSnLFGk56BDnmQiwD80MQ7HA==&Secret=%s"
-                % lab_name)
+            url = "https://msidlab.com/api/LabUserSecret?secret=%s" % lab_name
             resp = cls.session.get(url)
-            cls._secrets[lab_name] = resp.json()["Value"]
+            cls._secrets[lab_name] = resp.json()["value"]
         return cls._secrets[lab_name]
 
     @classmethod
-    def get_lab_user(cls, query):  # Experimental: The query format is in lab team's Aug 9 email
-        resp = cls.session.get("https://user.msidlab.com/api/user", params=query)
+    def get_lab_user(cls, **query):  # https://docs.msidlab.com/labapi/userapi.html
+        resp = cls.session.get("https://msidlab.com/api/user", params=query)
         result = resp.json()[0]
         return {  # Mapping lab API response to our simplified configuration format
-            "authority": result["lab"]["authority"] + result["lab"]["tenantid"],
-            "client_id": result["app"]["objectid"],
-            "username": result["user"]["upn"],
-            "lab": result["lab"],
+            "authority": "https://login.microsoftonline.com/{}.onmicrosoft.com".format(
+                result["labName"]),
+            "client_id": result["appId"],
+            "username": result["upn"],
+            "lab_name": result["labName"],
             "scope": ["https://graph.microsoft.com/.default"],
             }
 
-    def test_aad_managed_user(self):  # Pure cloud or hybrid
-        config = get_lab_user(isFederated=False)
+    def test_aad_managed_user(self):  # Pure cloud
+        config = self.get_lab_user(usertype="cloud")
         self._test_username_password(
-            password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
+            password=self.get_lab_user_secret(config["lab_name"]), **config)
 
     def test_adfs4_fed_user(self):
-        config = get_lab_user(isFederated=True, federationProvider="ADFSv4")
+        config = self.get_lab_user(usertype="federated", federationProvider="ADFSv4")
         self._test_username_password(
-            password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
-
-    def test_adfs4_managed_user(self):  # Conceptually the hybrid
-        config = get_lab_user(isFederated=False, federationProvider="ADFSv4")
-        self._test_username_password(
-            password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
+            password=self.get_lab_user_secret(config["lab_name"]), **config)
 
     def test_adfs3_fed_user(self):
-        config = get_lab_user(isFederated=True, federationProvider="ADFSv3")
+        config = self.get_lab_user(usertype="federated", federationProvider="ADFSv3")
         self._test_username_password(
-            password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
-
-    def test_adfs3_managed_user(self):
-        config = get_lab_user(isFederated=False, federationProvider="ADFSv3")
-        self._test_username_password(
-            password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
+            password=self.get_lab_user_secret(config["lab_name"]), **config)
 
     def test_adfs2_fed_user(self):
-        config = get_lab_user(isFederated=True, federationProvider="ADFSv2")
+        config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2")
         self._test_username_password(
-            password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
+            password=self.get_lab_user_secret(config["lab_name"]), **config)
 
-    @unittest.skip("Old Lab API returns nothing. We will switch to new api later")
     def test_adfs2019_fed_user(self):
-        config = get_lab_user(isFederated=True, federationProvider="ADFSv2019")
+        config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2019")
         self._test_username_password(
-            password=self.get_lab_user_secret(config["lab"]["labname"]), **config)
+            password=self.get_lab_user_secret(config["lab_name"]), **config)
+
+    def test_ropc_adfs2019_onprem(self):
+        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
+        config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
+        config["client_id"] = "PublicClientId"
+        config["scope"] = self.adfs2019_scopes
+        self._test_username_password(
+            password=self.get_lab_user_secret(config["lab_name"]), **config)
+
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    def test_adfs2019_onprem_acquire_token_by_auth_code(self):
+        """When prompted, you can manually login using this account:
+
+        # https://msidlab.com/api/user?usertype=onprem&federationprovider=ADFSv2019
+        username = "..."  # The upn from the link above
+        password="***"  # From https://aka.ms/GetLabUserSecret?Secret=msidlabXYZ
+        """
+        scopes = self.adfs2019_scopes
+        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
+        (self.app, ac, redirect_uri) = _get_app_and_auth_code(
+            # Configuration is derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.7.0/tests/Microsoft.Identity.Test.Common/TestConstants.cs#L250-L259
+            "PublicClientId",
+            authority="https://fs.%s.com/adfs" % config["lab_name"],
+            port=8080,
+            scopes=scopes,
+            )
+        result = self.app.acquire_token_by_authorization_code(
+            ac, scopes, redirect_uri=redirect_uri)
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result.get("id_token_claims"), indent=4),
+            )
+        self.assertIn(
+            "access_token", result,
+            "{error}: {error_description}".format(
+                # Note: No interpolation here, cause error won't always present
+                error=result.get("error"),
+                error_description=result.get("error_description")))
+        self.assertCacheWorksForUser(result, scopes, username=None)
 
     @unittest.skipUnless(
         os.getenv("OBO_CLIENT_SECRET"),
@@ -396,18 +418,20 @@ class LabBasedTestCase(E2eTestCase):
         # Some hardcoded, pre-defined settings
         obo_client_id = "23c64cd8-21e4-41dd-9756-ab9e2c23f58c"
         downstream_scopes = ["https://graph.microsoft.com/User.Read"]
-        config = get_lab_user(isFederated=False)
+        config = self.get_lab_user(usertype="cloud")
 
         # 1. An app obtains a token representing a user, for our mid-tier service
         pca = msal.PublicClientApplication(
             "be9b0186-7dfd-448a-a944-f771029105bf", authority=config.get("authority"))
         pca_result = pca.acquire_token_by_username_password(
             config["username"],
-            self.get_lab_user_secret(config["lab"]["labname"]),
+            self.get_lab_user_secret(config["lab_name"]),
             scopes=[  # The OBO app's scope. Yours might be different.
                 "%s/access_as_user" % obo_client_id],
             )
-        self.assertIsNotNone(pca_result.get("access_token"), "PCA should work")
+        self.assertIsNotNone(
+            pca_result.get("access_token"),
+            "PCA failed to get AT because %s" % json.dumps(pca_result, indent=2))
 
         # 2. Our mid-tier service uses OBO to obtain a token for downstream service
         cca = msal.ConfidentialClientApplication(
@@ -480,4 +504,7 @@ class LabBasedTestCase(E2eTestCase):
             password=self.get_lab_user_secret("msidlabb2c"),
             scope=["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"],
             )
+
+if __name__ == "__main__":
+    unittest.main()
 
