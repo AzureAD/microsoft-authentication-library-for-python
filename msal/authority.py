@@ -114,7 +114,7 @@ def get_userrealm_discovery_request_info(instance, username, correlation_id):
 
 def get_instance_discovery_request_info(url):
     return {
-        "url": 'https://{}/common/discovery/instance'.format(
+        "url": 'https://{}/common/discovery/instance'.format(  # Note: This URL seemingly returns V1 endpoint only
             WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
             # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
             # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
@@ -165,9 +165,8 @@ def canonicalize(authority_url):
     return authority, authority.hostname, parts[1]
 
 def instance_discovery(url, **kwargs):
-    return requests.get(  # Note: This URL seemingly returns V1 endpoint only
-        **get_instance_discovery_request_info(url=url),
-        **kwargs).json()
+    kwargs.update(get_instance_discovery_request_info(url))
+    return requests.get(**kwargs).json()
 
 def tenant_discovery(tenant_discovery_endpoint, **kwargs):
     # Returns Openid Configuration
