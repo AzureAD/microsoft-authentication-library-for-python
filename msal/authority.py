@@ -73,10 +73,10 @@ class Authority(object):
         # "federation_metadata_url", "federation_active_auth_url", etc.
         if self.instance not in self.__class__._domains_without_user_realm_discovery:
             if response is None:
-                response = requests.get(**get_userrealm_discovery_request_info(instance=self.instance,
+                response = requests.get(verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+                                        **get_userrealm_discovery_request_info(instance=self.instance,
                                                                                username=username,
-                                                                               correlation_id=correlation_id),
-                                        verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+                                                                               correlation_id=correlation_id))
 
             discovery_payload = verify_user_realm_discovery_response(response)
 
