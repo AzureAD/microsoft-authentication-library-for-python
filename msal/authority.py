@@ -34,7 +34,7 @@ class Authority(object):
     _domains_without_user_realm_discovery = set([])
 
     def __init__(self, authority_url, validate_authority=True,
-            verify=True, proxies=None, timeout=None,
+            verify=True, proxies=None, timeout=None, openid_config=None,
             ):
         """Creates an authority instance, and also validates it.
 
@@ -48,34 +48,36 @@ class Authority(object):
         self.proxies = proxies
         self.timeout = timeout
         authority, self.instance, tenant = canonicalize(authority_url)
-        parts = authority.path.split('/')
-        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
-            len(parts) == 3 and parts[2].lower().startswith("b2c_"))
-        if (tenant != "adfs" and (not is_b2c) and validate_authority
-                and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
-            payload = instance_discovery(
-                "https://{}{}/oauth2/v2.0/authorize".format(
-                    self.instance, authority.path),
+
+        if openid_config is None:
+            parts = authority.path.split('/')
+            is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
+                len(parts) == 3 and parts[2].lower().startswith("b2c_"))
+            if (tenant != "adfs" and (not is_b2c) and validate_authority
+                    and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
+                payload = instance_discovery(
+                    "https://{}{}/oauth2/v2.0/authorize".format(
+                        self.instance, authority.path),
+                    verify=verify, proxies=proxies, timeout=timeout)
+                if payload.get("error") == "invalid_instance":
+                    raise ValueError(
+                        "invalid_instance: "
+                        "The authority you provided, %s, is not whitelisted. "
+                        "If it is indeed your legit customized domain name, "
+                        "you can turn off this check by passing in "
+                        "validate_authority=False"
+                        % authority_url)
+                tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
+            else:
+                tenant_discovery_endpoint = (
+                    'https://{}{}{}/.well-known/openid-configuration'.format(
+                        self.instance,
+                        authority.path,  # In B2C scenario, it is "/tenant/policy"
+                        "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
+                        ))
+            openid_config = tenant_discovery(
+                tenant_discovery_endpoint,
                 verify=verify, proxies=proxies, timeout=timeout)
-            if payload.get("error") == "invalid_instance":
-                raise ValueError(
-                    "invalid_instance: "
-                    "The authority you provided, %s, is not whitelisted. "
-                    "If it is indeed your legit customized domain name, "
-                    "you can turn off this check by passing in "
-                    "validate_authority=False"
-                    % authority_url)
-            tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
-        else:
-            tenant_discovery_endpoint = (
-                'https://{}{}{}/.well-known/openid-configuration'.format(
-                    self.instance,
-                    authority.path,  # In B2C scenario, it is "/tenant/policy"
-                    "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
-                    ))
-        openid_config = tenant_discovery(
-            tenant_discovery_endpoint,
-            verify=verify, proxies=proxies, timeout=timeout)
         logger.debug("openid_config = %s", openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
