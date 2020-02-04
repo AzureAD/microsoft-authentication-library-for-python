@@ -93,7 +93,7 @@ class ClientApplication(object):
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
             verify=True, proxies=None, timeout=None,
-            client_claims=None, app_name=None, app_version=None):
+            client_claims=None, app_name=None, app_version=None, authority_obj=None, oauth_client=None):
         """Create an instance of application.
 
         :param client_id: Your app has a client_id after you register it on AAD.
@@ -166,12 +166,12 @@ class ClientApplication(object):
         self.timeout = timeout
         self.app_name = app_name
         self.app_version = app_version
-        self.authority = Authority(
+        self.authority = authority_obj if authority_obj is not None else Authority(
                 authority or "https://login.microsoftonline.com/common/",
                 validate_authority, verify=verify, proxies=proxies, timeout=timeout)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
-        self.client = self._build_client(client_credential, self.authority)
+        self.client = oauth_client if oauth_client is not None else self._build_client(client_credential, self.authority)
         self.authority_groups = None
 
     def _build_client(self, client_credential, authority):
@@ -229,6 +229,8 @@ class ClientApplication(object):
             redirect_uri=None,
             response_type="code",  # Can be "token" if you use Implicit Grant
             prompt=None,
+            authority_obj=None,
+            oauth_client=None,
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -263,12 +265,15 @@ class ClientApplication(object):
                 "We haven't decided if this method will accept authority parameter")
         # The previous implementation is, it will use self.authority by default.
         # Multi-tenant app can use new authority on demand
-        the_authority = Authority(
-            authority,
-            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
-            ) if authority else self.authority
+        if authority_obj is not None:
+            the_authority = authority_obj
+        else:
+            the_authority = Authority(
+                authority,
+                verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+                ) if authority else self.authority
 
-        client = Client(
+        client = oauth_client if oauth_client is not None else Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id)
         return client.build_auth_request_uri(
@@ -752,21 +757,18 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         proxies = kwargs.pop("proxies", self.proxies)
         wstrust_endpoint = {}
         if user_realm_result.get("federation_metadata_url"):
-            wstrust_endpoint = mex_send_request(
-                user_realm_result["federation_metadata_url"],
-                verify=verify, proxies=proxies)
+            wstrust_endpoint = self.send_federated_request(user_realm_result, verify=verify, proxies=proxies)
             if wstrust_endpoint is None:
                 raise ValueError("Unable to find wstrust endpoint from MEX. "
                     "This typically happens when attempting MSA accounts. "
                     "More details available here. "
                     "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
-        wstrust_result = wst_send_request(
-            username, password, user_realm_result.get("cloud_audience_urn"),
-            wstrust_endpoint.get("address",
-                # Fallback to an AAD supplied endpoint
-                user_realm_result.get("federation_active_auth_url")),
-            wstrust_endpoint.get("action"), verify=verify, proxies=proxies)
+        wstrust_result = self.send_wstrust_request(username, password, user_realm_result.get("cloud_audience_urn"),
+                                                   wstrust_endpoint.get("address",
+                                                                        # Fallback to an AAD supplied endpoint
+                                                                        user_realm_result.get("federation_active_auth_url")),
+                                                   wstrust_endpoint.get("action"), verify=verify, proxies=proxies)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
         GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
@@ -784,6 +786,16 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         return self.client.obtain_token_by_assertion(
             wstrust_result["token"], grant_type, scope=scopes, **kwargs)
 
+    def send_federated_request(self, user_realm_result, **kwargs):
+        return mex_send_request(
+            user_realm_result["federation_metadata_url"],
+            **kwargs
+        )
+
+    def send_wstrust_request(self, username, password, cloud_audience_urn, address, action, **kwargs):
+        return wst_send_request(
+            username, password, cloud_audience_urn, address, action, **kwargs
+        )
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
