@@ -2,6 +2,7 @@
 # OAuth2 spec https://tools.ietf.org/html/rfc6749
 
 import json
+import abc
 try:
     from urllib.parse import urlencode, parse_qs
 except ImportError:
@@ -15,9 +16,13 @@ import sys
 
 
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
+try:
+    ABC = abc.ABC
+except AttributeError:  # Python 2.7, abc exists, but not ABC
+    ABC = abc.ABCMeta("ABC", (object,), {"__slots__": ()})  # type: ignore
 
 
-class BaseClient(object):
+class AbstractBaseClient(ABC):
     # This low-level interface works. Yet you'll find its sub-class
     # more friendly to remind you what parameters are needed in each scenario.
     # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
@@ -102,17 +107,17 @@ class BaseClient(object):
             params['scope'] = self._stringify(params['scope'])
         return params  # A dict suitable to be used in http request
 
-    def _obtain_token(  # The verb "obtain" is influenced by OAUTH2 RFC 6749
+    def _stringify(self, sequence):
+        if isinstance(sequence, (list, set, tuple)):
+            return ' '.join(sorted(sequence))  # normalizing it, ascendingly
+        return sequence  # as-is
+
+    def _prepare_request(
             self, grant_type,
             params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
-            timeout=None,
-            post=None,  # A callable to replace requests.post(), for testing.
-                        # Such as: lambda url, **kwargs:
-                        #   Mock(status_code=200, json=Mock(return_value={}))
-            **kwargs  # Relay all extra parameters to underlying requests
-            ):  # Returns the json object came from the OAUTH2 response
+            ):  # Returns a dict of request parameters
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
 
         if self.default_body.get("client_assertion_type") and self.client_assertion:
@@ -146,13 +151,9 @@ class BaseClient(object):
                 "{}:{}".format(self.client_id, self.client_secret)
                 .encode("ascii")).decode("ascii")
 
-        if "token_endpoint" not in self.configuration:
-            raise ValueError("token_endpoint not found in configuration")
-        resp = (post or self.session.post)(
-            self.configuration["token_endpoint"],
-            headers=_headers, params=params, data=_data,
-            timeout=timeout or self.timeout,
-            **kwargs)
+        return dict(params=params, data=_data, headers=_headers)
+
+    def _parse_resposne(self, resp):
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
         try:
@@ -164,6 +165,26 @@ class BaseClient(object):
             self.logger.exception(
                     "Token response is not in json format: %s", resp.text)
             raise
+
+
+class BaseClient(AbstractBaseClient):
+    def _obtain_token(  # The verb "obtain" is influenced by OAUTH2 RFC 6749
+            self, grant_type,
+            params=None,  # a dict to be sent as query string to the endpoint
+            data=None,  # All relevant data, which will go into the http body
+            headers=None,  # a dict to be sent as request headers
+            timeout=None,
+            post=None,  # A callable to replace requests.post(), for testing.
+                        # Such as: lambda url, **kwargs:
+                        #   Mock(status_code=200, json=Mock(return_value={}))
+            **kwargs  # Relay all extra parameters to underlying requests
+            ):  # Returns the json object came from the OAUTH2 response
+        resp = (post or self.session.post)(
+            self.configuration["token_endpoint"],
+            timeout=timeout or self.timeout,
+            **dict(kwargs, **self._prepare_request(
+                grant_type, params=params, data=data, headers=headers)))
+        return self._parse_resposne(resp)
 
     def obtain_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
         # type: (str, Union[str, list, set, tuple]) -> dict
@@ -178,11 +199,6 @@ class BaseClient(object):
         data = kwargs.pop('data', {})
         data.update(refresh_token=refresh_token, scope=scope)
         return self._obtain_token("refresh_token", data=data, **kwargs)
-
-    def _stringify(self, sequence):
-        if isinstance(sequence, (list, set, tuple)):
-            return ' '.join(sorted(sequence))  # normalizing it, ascendingly
-        return sequence  # as-is
 
 
 class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
