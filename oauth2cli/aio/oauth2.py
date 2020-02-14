@@ -65,6 +65,13 @@ class BaseClient(AbstractBaseClient):
 
 class Client(BaseClient):
 
+    async def obtain_token_by_username_password(
+            self, username, password, scope=None, **kwargs):
+        """The Resource Owner Password Credentials Grant, used by legacy app."""
+        data = kwargs.pop("data", {})
+        data.update(username=username, password=password, scope=scope)
+        return await self._obtain_token("password", data=data, **kwargs)
+
     async def obtain_token_for_client(self, scope=None, **kwargs):
         """Obtain token for this client (rather than for an end user),
         a.k.a. the Client Credentials Grant, used by Backend Applications.
