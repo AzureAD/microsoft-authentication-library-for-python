@@ -3,6 +3,7 @@
 
 import json
 import abc
+import json
 try:
     from urllib.parse import urlencode, parse_qs
 except ImportError:
@@ -22,11 +23,7 @@ except AttributeError:  # Python 2.7, abc exists, but not ABC
     ABC = abc.ABCMeta("ABC", (object,), {"__slots__": ()})  # type: ignore
 
 
-class AbstractBaseClient(ABC):
-    # This low-level interface works. Yet you'll find its sub-class
-    # more friendly to remind you what parameters are needed in each scenario.
-    # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
-
+class AbstractBaseClient(ABC):  # TODO: Should this be a non-abstract but sans-io class?
     @staticmethod
     def encode_saml_assertion(assertion):
         return base64.urlsafe_b64encode(assertion).rstrip(b'=')  # Per RFC 7522
@@ -112,7 +109,7 @@ class AbstractBaseClient(ABC):
             return ' '.join(sorted(sequence))  # normalizing it, ascendingly
         return sequence  # as-is
 
-    def _prepare_request(
+    def _prepare_token_request(
             self, grant_type,
             params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
@@ -153,21 +150,23 @@ class AbstractBaseClient(ABC):
 
         return dict(params=params, data=_data, headers=_headers)
 
-    def _parse_resposne(self, resp):
-        if resp.status_code >= 500:
-            resp.raise_for_status()  # TODO: Will probably retry here
+    def _parse_token_resposne(self, body):
         try:
             # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
             # even an error response will be a valid json structure,
             # so we simply return it here, without needing to invent an exception.
-            return json.loads(resp.text)
+            return json.loads(body)
         except ValueError:
             self.logger.exception(
-                    "Token response is not in json format: %s", resp.text)
+                    "Token response is not in json format: %s", body)
             raise
 
 
 class BaseClient(AbstractBaseClient):
+    # This low-level interface works. Yet you'll find its sub-class
+    # more friendly to remind you what parameters are needed in each scenario.
+    # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
+
     def _obtain_token(  # The verb "obtain" is influenced by OAUTH2 RFC 6749
             self, grant_type,
             params=None,  # a dict to be sent as query string to the endpoint
@@ -182,9 +181,11 @@ class BaseClient(AbstractBaseClient):
         resp = (post or self.session.post)(
             self.configuration["token_endpoint"],
             timeout=timeout or self.timeout,
-            **dict(kwargs, **self._prepare_request(
+            **dict(kwargs, **self._prepare_token_request(
                 grant_type, params=params, data=data, headers=headers)))
-        return self._parse_resposne(resp)
+        if resp.status_code >= 500:
+            resp.raise_for_status()  # TODO: Will probably retry here
+        return self._parse_token_resposne(resp.text)
 
     def obtain_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
         # type: (str, Union[str, list, set, tuple]) -> dict
