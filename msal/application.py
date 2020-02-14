@@ -22,10 +22,11 @@ from .token_cache import TokenCache
 __version__ = "1.1.0"
 
 logger = logging.getLogger(__name__)
+RESERVED_SCOPES = frozenset(['openid', 'profile', 'offline_access'])
 
 def decorate_scope(
         scopes, client_id,
-        reserved_scope=frozenset(['openid', 'profile', 'offline_access'])):
+        reserved_scope=RESERVED_SCOPES):
     if not isinstance(scopes, (list, set, tuple)):
         raise ValueError("The input scopes should be a list, tuple, or set")
     scope_set = set(scopes)  # Input scopes is typically a list. Copy it to a set.
