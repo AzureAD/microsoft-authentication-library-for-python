@@ -23,7 +23,11 @@ except AttributeError:  # Python 2.7, abc exists, but not ABC
     ABC = abc.ABCMeta("ABC", (object,), {"__slots__": ()})  # type: ignore
 
 
-class AbstractBaseClient(ABC):  # TODO: Should this be a non-abstract but sans-io class?
+class AbstractBaseClient(ABC):
+    # We choose to implement all 4 grants in 1 class
+    # The common code shared by sync and async clients.
+    # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
+
     @staticmethod
     def encode_saml_assertion(assertion):
         return base64.urlsafe_b64encode(assertion).rstrip(b'=')  # Per RFC 7522
@@ -31,6 +35,15 @@ class AbstractBaseClient(ABC):  # TODO: Should this be a non-abstract but sans-i
     CLIENT_ASSERTION_TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
     CLIENT_ASSERTION_TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
     client_assertion_encoders = {CLIENT_ASSERTION_TYPE_SAML2: encode_saml_assertion}
+
+    DEVICE_FLOW = {  # consts for device flow, that can be customized by sub-class
+        "GRANT_TYPE": "urn:ietf:params:oauth:grant-type:device_code",
+        "DEVICE_CODE": "device_code",
+        }
+    DEVICE_FLOW_RETRIABLE_ERRORS = ("authorization_pending", "slow_down")
+    GRANT_TYPE_SAML2 = "urn:ietf:params:oauth:grant-type:saml2-bearer"  # RFC7522
+    GRANT_TYPE_JWT = "urn:ietf:params:oauth:grant-type:jwt-bearer"  # RFC7523
+    grant_assertion_encoders = {GRANT_TYPE_SAML2: encode_saml_assertion}
 
     def __init__(
             self,
@@ -161,11 +174,73 @@ class AbstractBaseClient(ABC):  # TODO: Should this be a non-abstract but sans-i
                     "Token response is not in json format: %s", body)
             raise
 
+    def build_auth_request_uri(
+            self,
+            response_type, redirect_uri=None, scope=None, state=None, **kwargs):
+        """Generate an authorization uri to be visited by resource owner.
+
+        Later when the response reaches your redirect_uri,
+        you can use parse_auth_response() to check the returned state.
+
+        This method could be named build_authorization_request_uri() instead,
+        but then there would be a build_authentication_request_uri() in the OIDC
+        subclass doing almost the same thing. So we use a loose term "auth" here.
+
+        :param response_type:
+            Must be "code" when you are using Authorization Code Grant,
+            "token" when you are using Implicit Grant, or other
+            (possibly space-delimited) strings as registered extension value.
+            See https://tools.ietf.org/html/rfc6749#section-3.1.1
+        :param redirect_uri: Optional. Server will use the pre-registered one.
+        :param scope: It is a space-delimited, case-sensitive string.
+            Some ID provider can accept empty string to represent default scope.
+        :param state: Recommended. An opaque value used by the client to
+            maintain state between the request and callback.
+        :param kwargs: Other parameters, typically defined in OpenID Connect.
+        """
+        if "authorization_endpoint" not in self.configuration:
+            raise ValueError("authorization_endpoint not found in configuration")
+        authorization_endpoint = self.configuration["authorization_endpoint"]
+        params = self._build_auth_request_params(
+            response_type, redirect_uri=redirect_uri, scope=scope, state=state,
+            **kwargs)
+        sep = '&' if '?' in authorization_endpoint else '?'
+        return "%s%s%s" % (authorization_endpoint, sep, urlencode(params))
+
+    @staticmethod
+    def parse_auth_response(params, state=None):
+        """Parse the authorization response being redirected back.
+
+        :param params: A string or dict of the query string
+        :param state: REQUIRED if the state parameter was present in the client
+            authorization request. This function will compare it with response.
+        """
+        if not isinstance(params, dict):
+            params = parse_qs(params)
+        if params.get('state') != state:
+            raise ValueError('state mismatch')
+        return params
+
 
 class BaseClient(AbstractBaseClient):
-    # This low-level interface works. Yet you'll find its sub-class
-    # more friendly to remind you what parameters are needed in each scenario.
-    # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
+    """This class implements OAuth2 methods.
+
+    Its methods define and document parameters mentioned in OAUTH2 RFC 6749.
+    """
+    def __init__(
+            self,
+            server_configuration,  # type: dict
+            client_id,  # type: str
+            verify=True,  # type: Union[str, True, False, None]
+            proxies=None,  # type: Optional[dict]
+            timeout=None,  # type: Union[tuple, float, None]
+            session=None,  # type: requests.Session
+            **kwargs):
+        super(BaseClient, self).__init__(server_configuration, client_id, **kwargs)
+        self.session = session or requests.Session()
+        self.session.verify = verify
+        self.session.proxies = proxies or {}
+        self.timeout = timeout
 
     def _obtain_token(  # The verb "obtain" is influenced by OAUTH2 RFC 6749
             self, grant_type,
@@ -178,6 +253,11 @@ class BaseClient(AbstractBaseClient):
                         #   Mock(status_code=200, json=Mock(return_value={}))
             **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
+        """An internal helper to obtain tokens.
+
+        This low-level method works. Yet you'll find its sibling methods
+        more friendly to remind you what parameters are needed in each scenario.
+        """
         resp = (post or self.session.post)(
             self.configuration["token_endpoint"],
             timeout=timeout or self.timeout,
@@ -200,22 +280,6 @@ class BaseClient(AbstractBaseClient):
         data = kwargs.pop('data', {})
         data.update(refresh_token=refresh_token, scope=scope)
         return self._obtain_token("refresh_token", data=data, **kwargs)
-
-
-class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
-    """This is the main API for oauth2 client.
-
-    Its methods define and document parameters mentioned in OAUTH2 RFC 6749.
-    """
-    DEVICE_FLOW = {  # consts for device flow, that can be customized by sub-class
-        "GRANT_TYPE": "urn:ietf:params:oauth:grant-type:device_code",
-        "DEVICE_CODE": "device_code",
-        }
-    DEVICE_FLOW_RETRIABLE_ERRORS = ("authorization_pending", "slow_down")
-    GRANT_TYPE_SAML2 = "urn:ietf:params:oauth:grant-type:saml2-bearer"  # RFC7522
-    GRANT_TYPE_JWT = "urn:ietf:params:oauth:grant-type:jwt-bearer"  # RFC7523
-    grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
-
 
     def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
         # type: (list, **dict) -> dict
@@ -304,53 +368,6 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                     return result
                 time.sleep(1)  # Shorten each round, to make exit more responsive
 
-    def build_auth_request_uri(
-            self,
-            response_type, redirect_uri=None, scope=None, state=None, **kwargs):
-        """Generate an authorization uri to be visited by resource owner.
-
-        Later when the response reaches your redirect_uri,
-        you can use parse_auth_response() to check the returned state.
-
-        This method could be named build_authorization_request_uri() instead,
-        but then there would be a build_authentication_request_uri() in the OIDC
-        subclass doing almost the same thing. So we use a loose term "auth" here.
-
-        :param response_type:
-            Must be "code" when you are using Authorization Code Grant,
-            "token" when you are using Implicit Grant, or other
-            (possibly space-delimited) strings as registered extension value.
-            See https://tools.ietf.org/html/rfc6749#section-3.1.1
-        :param redirect_uri: Optional. Server will use the pre-registered one.
-        :param scope: It is a space-delimited, case-sensitive string.
-            Some ID provider can accept empty string to represent default scope.
-        :param state: Recommended. An opaque value used by the client to
-            maintain state between the request and callback.
-        :param kwargs: Other parameters, typically defined in OpenID Connect.
-        """
-        if "authorization_endpoint" not in self.configuration:
-            raise ValueError("authorization_endpoint not found in configuration")
-        authorization_endpoint = self.configuration["authorization_endpoint"]
-        params = self._build_auth_request_params(
-            response_type, redirect_uri=redirect_uri, scope=scope, state=state,
-            **kwargs)
-        sep = '&' if '?' in authorization_endpoint else '?'
-        return "%s%s%s" % (authorization_endpoint, sep, urlencode(params))
-
-    @staticmethod
-    def parse_auth_response(params, state=None):
-        """Parse the authorization response being redirected back.
-
-        :param params: A string or dict of the query string
-        :param state: REQUIRED if the state parameter was present in the client
-            authorization request. This function will compare it with response.
-        """
-        if not isinstance(params, dict):
-            params = parse_qs(params)
-        if params.get('state') != state:
-            raise ValueError('state mismatch')
-        return params
-
     def obtain_token_by_authorization_code(
             self, code, redirect_uri=None, scope=None, **kwargs):
         """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
@@ -399,16 +416,70 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         data.update(scope=scope)
         return self._obtain_token("client_credentials", data=data, **kwargs)
 
+    def obtain_token_by_assertion(
+            self, assertion, grant_type, scope=None, **kwargs):
+        # type: (bytes, Union[str, None], Union[str, list, set, tuple]) -> dict
+        """This method implements Assertion Framework for OAuth2 (RFC 7521).
+        See details at https://tools.ietf.org/html/rfc7521#section-4.1
+
+        :param assertion:
+            The assertion bytes can be a raw SAML2 assertion, or a JWT assertion.
+        :param grant_type:
+            It is typically either the value of :attr:`GRANT_TYPE_SAML2`,
+            or :attr:`GRANT_TYPE_JWT`, the only two profiles defined in RFC 7521.
+        :param scope: Optional. It must be a subset of previously granted scopes.
+        """
+        encoder = self.grant_assertion_encoders.get(grant_type, lambda a: a)
+        data = kwargs.pop("data", {})
+        data.update(scope=scope, assertion=encoder(assertion))
+        return self._obtain_token(grant_type, data=data, **kwargs)
+
+
+class AbstractClient(AbstractBaseClient):
+
     def __init__(self,
             server_configuration, client_id, session,
             on_obtaining_tokens=lambda event: None,  # event is defined in _obtain_token(...)
             on_removing_rt=lambda token_item: None,
             on_updating_rt=lambda token_item, new_rt: None,
             **kwargs):
-        super(Client, self).__init__(server_configuration, client_id, session, **kwargs)
+        super(Client, self).__init__(
+            server_configuration, client_id, session, **kwargs)
         self.on_obtaining_tokens = on_obtaining_tokens
         self.on_removing_rt = on_removing_rt
         self.on_updating_rt = on_updating_rt
+
+    def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
+        RT = "refresh_token"
+        _data = data.copy()  # to prevent side effect
+        refresh_token = _data.get(RT)
+        resp = super(Client, self)._obtain_token(
+            grant_type, params, _data, *args, **kwargs)
+        if "error" not in resp:
+            _resp = resp.copy()
+            if grant_type == RT and RT in _resp and isinstance(refresh_token, dict):
+                _resp.pop(RT)  # So we skip it in on_obtaining_tokens(); it will
+                               # be handled in self.obtain_token_by_refresh_token()
+            if "scope" in _resp:
+                scope = _resp["scope"].split()  # It is conceptually a set,
+                    # but we represent it as a list which can be persisted to JSON
+            else:
+                # Note: The scope will generally be absent in authorization grant,
+                #       but our obtain_token_by_authorization_code(...) encourages
+                #       app developer to still explicitly provide a scope here.
+                scope = _data.get("scope")
+            self.on_obtaining_tokens({
+                "client_id": self.client_id,
+                "scope": scope,
+                "token_endpoint": self.configuration["token_endpoint"],
+                "grant_type": grant_type,  # can be used to know an IdToken-less
+                                           # response is for an app or for a user
+                "response": _resp, "params": params, "data": _data,
+                })
+        return resp
+
+
+class Client(BaseClient, AbstractClient):
 
     def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
         RT = "refresh_token"
@@ -470,22 +541,4 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         if 'refresh_token' in resp:
             self.on_updating_rt(token_item, resp['refresh_token'])
         return resp
-
-    def obtain_token_by_assertion(
-            self, assertion, grant_type, scope=None, **kwargs):
-        # type: (bytes, Union[str, None], Union[str, list, set, tuple]) -> dict
-        """This method implements Assertion Framework for OAuth2 (RFC 7521).
-        See details at https://tools.ietf.org/html/rfc7521#section-4.1
-
-        :param assertion:
-            The assertion bytes can be a raw SAML2 assertion, or a JWT assertion.
-        :param grant_type:
-            It is typically either the value of :attr:`GRANT_TYPE_SAML2`,
-            or :attr:`GRANT_TYPE_JWT`, the only two profiles defined in RFC 7521.
-        :param scope: Optional. It must be a subset of previously granted scopes.
-        """
-        encoder = self.grant_assertion_encoders.get(grant_type, lambda a: a)
-        data = kwargs.pop("data", {})
-        data.update(scope=scope, assertion=encoder(assertion))
-        return self._obtain_token(grant_type, data=data, **kwargs)
 
