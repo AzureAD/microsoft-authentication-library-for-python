@@ -152,6 +152,30 @@ class BaseClient(AbstractBaseClient):
                     return result
                 await sleeper(1)  # Shorten each round, to make exit more responsive
 
+    async def obtain_token_by_authorization_code(
+            self, code, redirect_uri=None, scope=None, **kwargs):
+        """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
+
+        This is typically used by a server-side app (Confidential Client),
+        but it can also be used by a device-side native app (Public Client).
+        See more detail at https://tools.ietf.org/html/rfc6749#section-4.1.3
+
+        :param code: The authorization code received from authorization server.
+        :param redirect_uri:
+            Required, if the "redirect_uri" parameter was included in the
+            authorization request, and their values MUST be identical.
+        :param scope:
+            It is both unnecessary and harmless to use scope here, per RFC 6749.
+            We suggest to use the same scope already used in auth request uri,
+            so that this library can link the obtained tokens with their scope.
+        """
+        data = self._prepare_obtain_token_by_authorization_code(
+            code, redirect_uri=redirect_uri, scope=scope)
+        return await self._obtain_token(
+            "authorization_code",
+            data=dict(data, **kwargs.pop("data", {})),
+            **kwargs)
+
     async def obtain_token_by_username_password(
             self, username, password, scope=None, **kwargs):
         """The Resource Owner Password Credentials Grant, used by legacy app."""

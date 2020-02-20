@@ -151,13 +151,13 @@ class TestClient(Oauth2TestCase):
             "code", redirect_uri=redirect_uri, scope=CONFIG.get("scope"))
         ac = obtain_auth_code(port, auth_uri=auth_request_uri)
         self.assertNotEqual(ac, None)
-        result = self.client.obtain_token_by_authorization_code(
+        result = self._run(self.client.obtain_token_by_authorization_code(
             ac,
             data={
                 "scope": CONFIG.get("scope"),
                 "resource": CONFIG.get("resource"),
                 },  # MSFT AAD only
-            redirect_uri=redirect_uri)
+            redirect_uri=redirect_uri))
         self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 
     @unittest.skipUnless(

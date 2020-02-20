@@ -220,6 +220,17 @@ class AbstractBaseClient(ABC):
             raise ValueError('state mismatch')
         return params
 
+    def _prepare_obtain_token_by_authorization_code(
+            self, code, redirect_uri=None, scope=None):
+        data = {"code": code, "redirect_uri": redirect_uri}
+        if scope:
+            data["scope"] = scope
+        if not self.client_secret:
+            # client_id is required, if the client is not authenticating itself.
+            # See https://tools.ietf.org/html/rfc6749#section-4.1.3
+            data["client_id"] = self.client_id
+        return data
+
 
 class BaseClient(AbstractBaseClient):
     # We choose to implement all 4 grants in 1 class
@@ -374,15 +385,12 @@ class BaseClient(AbstractBaseClient):
             We suggest to use the same scope already used in auth request uri,
             so that this library can link the obtained tokens with their scope.
         """
-        data = kwargs.pop("data", {})
-        data.update(code=code, redirect_uri=redirect_uri)
-        if scope:
-            data["scope"] = scope
-        if not self.client_secret:
-            # client_id is required, if the client is not authenticating itself.
-            # See https://tools.ietf.org/html/rfc6749#section-4.1.3
-            data["client_id"] = self.client_id
-        return self._obtain_token("authorization_code", data=data, **kwargs)
+        data = self._prepare_obtain_token_by_authorization_code(
+            code, redirect_uri=redirect_uri, scope=scope)
+        return self._obtain_token(
+            "authorization_code",
+            data=dict(data, **kwargs.pop("data", {})),
+            **kwargs)
 
     def obtain_token_by_username_password(
             self, username, password, scope=None, **kwargs):
