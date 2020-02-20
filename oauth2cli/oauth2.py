@@ -429,58 +429,32 @@ class AbstractClient(AbstractBaseClient):
 
     def __init__(self,
             server_configuration, client_id, session,
-            on_obtaining_tokens=lambda event: None,  # event is defined in _obtain_token(...)
-            on_removing_rt=lambda token_item: None,
-            on_updating_rt=lambda token_item, new_rt: None,
+            token_saver=None, rt_remover=None, rt_updater=None,
             **kwargs):
+        """This client accepts the hooks for token cache behaviors.
+
+        Each hook needs to be a callable when using sync API,
+        or an awaitable when using async API.
+        """
         super(AbstractClient, self).__init__(
             server_configuration, client_id, session, **kwargs)
-        self.on_obtaining_tokens = on_obtaining_tokens
-        self.on_removing_rt = on_removing_rt
-        self.on_updating_rt = on_updating_rt
-
-    def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
-        RT = "refresh_token"
-        _data = data.copy()  # to prevent side effect
-        refresh_token = _data.get(RT)
-        resp = super(Client, self)._obtain_token(
-            grant_type, params, _data, *args, **kwargs)
-        if "error" not in resp:
-            _resp = resp.copy()
-            if grant_type == RT and RT in _resp and isinstance(refresh_token, dict):
-                _resp.pop(RT)  # So we skip it in on_obtaining_tokens(); it will
-                               # be handled in self.obtain_token_by_refresh_token()
-            if "scope" in _resp:
-                scope = _resp["scope"].split()  # It is conceptually a set,
-                    # but we represent it as a list which can be persisted to JSON
-            else:
-                # Note: The scope will generally be absent in authorization grant,
-                #       but our obtain_token_by_authorization_code(...) encourages
-                #       app developer to still explicitly provide a scope here.
-                scope = _data.get("scope")
-            self.on_obtaining_tokens({
-                "client_id": self.client_id,
-                "scope": scope,
-                "token_endpoint": self.configuration["token_endpoint"],
-                "grant_type": grant_type,  # can be used to know an IdToken-less
-                                           # response is for an app or for a user
-                "response": _resp, "params": params, "data": _data,
-                })
-        return resp
+        self.token_saver = token_saver
+        self.rt_remover = rt_remover
+        self.rt_updater = rt_updater
 
 
 class Client(BaseClient, AbstractClient):
 
     def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
         RT = "refresh_token"
-        _data = data.copy()  # to prevent side effect
+        _data = data.copy()  # to prevent side effect from callback
         refresh_token = _data.get(RT)
         resp = super(Client, self)._obtain_token(
             grant_type, params, _data, *args, **kwargs)
-        if "error" not in resp:
+        if "error" not in resp and self.token_saver:
             _resp = resp.copy()
             if grant_type == RT and RT in _resp and isinstance(refresh_token, dict):
-                _resp.pop(RT)  # So we skip it in on_obtaining_tokens(); it will
+                _resp.pop(RT)  # So we skip it in token_saver(); it will
                                # be handled in self.obtain_token_by_refresh_token()
             if "scope" in _resp:
                 scope = _resp["scope"].split()  # It is conceptually a set,
@@ -490,7 +464,7 @@ class Client(BaseClient, AbstractClient):
                 #       but our obtain_token_by_authorization_code(...) encourages
                 #       app developer to still explicitly provide a scope here.
                 scope = _data.get("scope")
-            self.on_obtaining_tokens({
+            self.token_saver({
                 "client_id": self.client_id,
                 "scope": scope,
                 "token_endpoint": self.configuration["token_endpoint"],
@@ -502,7 +476,7 @@ class Client(BaseClient, AbstractClient):
 
     def obtain_token_by_refresh_token(self, token_item, scope=None,
             rt_getter=lambda token_item: token_item["refresh_token"],
-            on_removing_rt=None,
+            rt_remover=None,
             **kwargs):
         # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
         """This is an overload which will trigger token storage callbacks.
@@ -519,16 +493,16 @@ class Client(BaseClient, AbstractClient):
             granted by the resource ownser,
             according to https://tools.ietf.org/html/rfc6749#section-6
         :param rt_getter: A callable to translate the token_item to a raw RT string
-        :param on_removing_rt: If absent, fall back to the one defined in initialization
+        :param rt_remover: If absent, fall back to the one defined in initialization
         """
         resp = super(Client, self).obtain_token_by_refresh_token(
             rt_getter(token_item)
                 if not isinstance(token_item, string_types) else token_item,
             scope=scope,
             **kwargs)
-        if resp.get('error') == 'invalid_grant':
-            (on_removing_rt or self.on_removing_rt)(token_item)  # Discard old RT
-        if 'refresh_token' in resp:
-            self.on_updating_rt(token_item, resp['refresh_token'])
+        if resp.get('error') == 'invalid_grant' and (rt_remover or self.rt_remover):
+            (rt_remover or self.rt_remover)(token_item)  # Discard old RT
+        if 'refresh_token' in resp and self.rt_updater:
+            self.rt_updater(token_item, resp['refresh_token'])
         return resp
 

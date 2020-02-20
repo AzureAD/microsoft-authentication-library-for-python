@@ -3,7 +3,7 @@ import json
 import time
 from typing import Mapping
 
-from ..oauth2 import AbstractBaseClient
+from ..oauth2 import AbstractBaseClient, AbstractClient
 
 
 async def _get_content(http_resp):
@@ -152,9 +152,6 @@ class BaseClient(AbstractBaseClient):
                     return result
                 await sleeper(1)  # Shorten each round, to make exit more responsive
 
-
-class Client(BaseClient):
-
     async def obtain_token_by_username_password(
             self, username, password, scope=None, **kwargs):
         """The Resource Owner Password Credentials Grant, used by legacy app."""
@@ -175,4 +172,68 @@ class Client(BaseClient):
         data = kwargs.pop("data", {})
         data.update(scope=scope)
         return await self._obtain_token("client_credentials", data=data, **kwargs)
+
+class Client(BaseClient, AbstractClient):
+
+    async def _obtain_token(
+            self, grant_type, params=None, data=None, *args, **kwargs):
+        RT = "refresh_token"
+        _data = data.copy()  # to prevent side effect
+        refresh_token = _data.get(RT)
+        resp = await super(Client, self)._obtain_token(
+            grant_type, params, _data, *args, **kwargs)
+        if "error" not in resp and self.token_saver:
+            _resp = resp.copy()
+            if grant_type == RT and RT in _resp and isinstance(refresh_token, dict):
+                _resp.pop(RT)  # So we skip it in on_obtaining_tokens(); it will
+                               # be handled in self.obtain_token_by_refresh_token()
+            if "scope" in _resp:
+                scope = _resp["scope"].split()  # It is conceptually a set,
+                    # but we represent it as a list which can be persisted to JSON
+            else:
+                # Note: The scope will generally be absent in authorization grant,
+                #       but our obtain_token_by_authorization_code(...) encourages
+                #       app developer to still explicitly provide a scope here.
+                scope = _data.get("scope")
+            await self.token_saver({
+                "client_id": self.client_id,
+                "scope": scope,
+                "token_endpoint": self.configuration["token_endpoint"],
+                "grant_type": grant_type,  # can be used to know an IdToken-less
+                                           # response is for an app or for a user
+                "response": _resp, "params": params, "data": _data,
+                })
+        return resp
+
+    async def obtain_token_by_refresh_token(self, token_item, scope=None,
+            rt_getter=lambda token_item: token_item["refresh_token"],
+            rt_remover=None,
+            **kwargs):
+        # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
+        """This is an overload which will trigger token storage callbacks.
+
+        :param token_item:
+            A refresh token (RT) item, in flexible format. It can be a string,
+            or a whatever data structure containing RT string and its metadata,
+            in such case the `rt_getter` callable must be able to
+            extract the RT string out from the token item data structure.
+
+            Either way, this token_item will be passed into other callbacks as-is.
+
+        :param scope: If omitted, is treated as equal to the scope originally
+            granted by the resource ownser,
+            according to https://tools.ietf.org/html/rfc6749#section-6
+        :param rt_getter: A callable to translate the token_item to a raw RT string
+        :param rt_remover: If absent, fall back to the one defined in initialization
+        """
+        resp = super(Client, self).obtain_token_by_refresh_token(
+            rt_getter(token_item)
+                if not isinstance(token_item, string_types) else token_item,
+            scope=scope,
+            **kwargs)
+        if resp.get('error') == 'invalid_grant' and (rt_remover or self.rt_remover):
+            await (rt_remover or self.rt_remover)(token_item)  # Discard old RT
+        if 'refresh_token' in resp and self.rt_updater:
+            await self.rt_updater(token_item, resp['refresh_token'])
+        return resp
 
