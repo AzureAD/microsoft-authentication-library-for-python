@@ -197,6 +197,25 @@ class BaseClient(AbstractBaseClient):
         data.update(scope=scope)
         return await self._obtain_token("client_credentials", data=data, **kwargs)
 
+    async def obtain_token_by_assertion(
+            self, assertion, grant_type, scope=None, **kwargs):
+        # type: (bytes, Union[str, None], Union[str, list, set, tuple]) -> dict
+        """This method implements Assertion Framework for OAuth2 (RFC 7521).
+        See details at https://tools.ietf.org/html/rfc7521#section-4.1
+
+        :param assertion:
+            The assertion bytes can be a raw SAML2 assertion, or a JWT assertion.
+        :param grant_type:
+            It is typically either the value of :attr:`GRANT_TYPE_SAML2`,
+            or :attr:`GRANT_TYPE_JWT`, the only two profiles defined in RFC 7521.
+        :param scope: Optional. It must be a subset of previously granted scopes.
+        """
+        encoder = self.grant_assertion_encoders.get(grant_type, lambda a: a)
+        data = kwargs.pop("data", {})
+        data.update(scope=scope, assertion=encoder(assertion))
+        return await self._obtain_token(grant_type, data=data, **kwargs)
+
+
 class Client(BaseClient, AbstractClient):
 
     async def _obtain_token(
