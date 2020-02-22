@@ -1,8 +1,15 @@
+import abc
 import json
 import base64
 import time
 
 from . import oauth2
+
+try:
+    ABC = abc.ABC
+except AttributeError:  # Python 2.7, abc exists, but not ABC
+    ABC = abc.ABCMeta("ABC", (object,), {"__slots__": ()})  # type: ignore
+
 
 def decode_part(raw, encoding="utf-8"):
     """Decode a part of the JWT.
@@ -64,17 +71,20 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     return decoded
 
 
-class Client(oauth2.Client):
-    """OpenID Connect is a layer on top of the OAuth2.
-
-    See its specs at https://openid.net/connect/
-    """
+class AbstractClient(ABC):
 
     def decode_id_token(self, id_token, nonce=None):
         """See :func:`~decode_id_token`."""
         return decode_id_token(
             id_token, nonce=nonce,
             client_id=self.client_id, issuer=self.configuration.get("issuer"))
+
+
+class Client(oauth2.Client, AbstractClient):
+    """OpenID Connect is a layer on top of the OAuth2.
+
+    See its specs at https://openid.net/connect/
+    """
 
     def _obtain_token(self, grant_type, *args, **kwargs):
         """The result will also contain one more key "id_token_claims",
