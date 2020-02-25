@@ -33,6 +33,7 @@ import requests
 
 from .mex import Mex
 from .wstrust_response import parse_response
+from .oauth2cli.http import DefaultHttpClient
 
 
 logger = logging.getLogger(__name__)
@@ -51,15 +52,21 @@ def send_request(
         "Unsupported soap action: %s" % soap_action)
     data = _build_rst(
         username, password, cloud_audience_urn, endpoint_address, soap_action)
-    resp = requests.post(endpoint_address, data=data, headers={
+    http_client = DefaultHttpClient()
+    resp = http_client.request("POST", endpoint_address,
+                                              headers={
             'Content-type':'application/soap+xml; charset=utf-8',
             'SOAPAction': soap_action,
             }, **kwargs)
+    # resp = requests.post(endpoint_address, data=data, headers={
+    #         'Content-type':'application/soap+xml; charset=utf-8',
+    #         'SOAPAction': soap_action,
+    #         }, **kwargs)
     if resp.status_code >= 400:
-        logger.debug("Unsuccessful WsTrust request receives: %s", resp.text)
+        logger.debug("Unsuccessful WsTrust request receives: %s", resp.content.text)
     # It turns out ADFS uses 5xx status code even with client-side incorrect password error
     # resp.raise_for_status()
-    return parse_response(resp.text)
+    return parse_response(resp.content.text)
 
 def escape_password(password):
     return (password.replace('&', '&amp;').replace('"', '&quot;')

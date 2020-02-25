@@ -34,6 +34,7 @@ try:
 except ImportError:
     from xml.etree import ElementTree as ET
 
+from .oauth2cli.http import DefaultHttpClient
 import requests
 
 
@@ -42,9 +43,13 @@ def _xpath_of_root(route_to_leaf):
     return '/'.join(route_to_leaf + ['..'] * (len(route_to_leaf)-1))
 
 def send_request(mex_endpoint, **kwargs):
-    mex_document = requests.get(
-        mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
-        **kwargs).text
+    http_client = DefaultHttpClient()
+    resp = http_client.request("GET", mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
+                                    **kwargs)
+    mex_document = resp.content.text
+    # mex_document = requests.get(
+    #     mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
+    #     **kwargs).text
     return Mex(mex_document).get_wstrust_username_password_endpoint()
 
 

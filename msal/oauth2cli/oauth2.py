@@ -12,7 +12,8 @@ import time
 import base64
 import sys
 
-import requests
+from .http import DefaultHttpClient
+from .http import Response
 
 
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
@@ -40,6 +41,7 @@ class BaseClient(object):
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
+            http_client=None,
             verify=True,  # type: Union[str, True, False, None]
             proxies=None,  # type: Optional[dict]
             timeout=None,  # type: Union[tuple, float, None]
@@ -85,10 +87,10 @@ class BaseClient(object):
         if client_assertion_type is not None:
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
-        self.session = s = requests.Session()
-        s.headers.update(default_headers or {})
-        s.verify = verify
-        s.proxies = proxies or {}
+        if not http_client:
+            self.http_client = DefaultHttpClient(verify, proxies or {})
+        else:
+            self.http_client = http_client
         self.timeout = timeout
 
     def _build_auth_request_params(self, response_type, **kwargs):
@@ -148,18 +150,22 @@ class BaseClient(object):
             raise ValueError("token_endpoint not found in configuration")
         _headers = {'Accept': 'application/json'}
         _headers.update(headers or {})
-        resp = (post or self.session.post)(
-            self.configuration["token_endpoint"],
+        resp = (post or self.http_client.request)("POST", self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data, auth=auth,
             timeout=timeout or self.timeout,
             **kwargs)
+        # resp = (post or self.session.post)(
+        #     self.configuration["token_endpoint"],
+        #     headers=_headers, params=params, data=_data, auth=auth,
+        #     timeout=timeout or self.timeout,
+        #     **kwargs)
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
         try:
             # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
             # even an error response will be a valid json structure,
             # so we simply return it here, without needing to invent an exception.
-            return resp.json()
+            return resp.content.json()
         except ValueError:
             self.logger.exception(
                     "Token response is not in json format: %s", resp.text)
@@ -218,10 +224,15 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        flow = self.session.post(self.configuration[DAE],
-            data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-            timeout=timeout or self.timeout,
-            **kwargs).json()
+        resp = self.http_client.request("POST", self.configuration[DAE],
+                                                   data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
+                                                  timeout=timeout or self.timeout,
+                                                  **kwargs)
+        flow = resp.content.json()
+        # flow = self.session.post(self.configuration[DAE],
+        #     data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
+        #     timeout=timeout or self.timeout,
+        #     **kwargs).json()
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
         flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
