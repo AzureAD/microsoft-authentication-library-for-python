@@ -335,7 +335,7 @@ class LabBasedTestCase(E2eTestCase):
     @classmethod
     def get_lab_user(cls, **query):  # https://docs.msidlab.com/labapi/userapi.html
         resp = cls.session.get("https://msidlab.com/api/user", params=query)
-        result = resp.json()[0]
+        result = resp.json()[1]
         return {  # Mapping lab API response to our simplified configuration format
             "authority": "https://login.microsoftonline.com/{}.onmicrosoft.com".format(
                 result["labName"]),
