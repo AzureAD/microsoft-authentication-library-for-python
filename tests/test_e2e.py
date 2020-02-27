@@ -412,8 +412,7 @@ class LabBasedTestCase(E2eTestCase):
         self.assertCacheWorksForUser(result, scopes, username=None)
 
     @unittest.skipUnless(
-        os.getenv("OBO_CLIENT_SECRET_1"),
-        "Need OBO_CLIENT_SECRET from https://buildautomation.vault.azure.net/secrets/IdentityDivisionDotNetOBOServiceSecret")
+        os.getenv("LAB_OBO_CLIENT_SECRET"), "OBO app secret not found")
     def test_acquire_token_obo(self):
         # Some hardcoded, pre-defined settings
         obo_client_id = "f4aa5217-e87c-42b2-82af-5624dd14ee72"
@@ -436,7 +435,7 @@ class LabBasedTestCase(E2eTestCase):
         # 2. Our mid-tier service uses OBO to obtain a token for downstream service
         cca = msal.ConfidentialClientApplication(
             obo_client_id,
-            client_credential=os.getenv("OBO_CLIENT_SECRET_1"),
+            client_credential=os.getenv("LAB_OBO_CLIENT_SECRET"),
             authority=config.get("authority"),
             # token_cache= ...,  # Default token cache is all-tokens-store-in-memory.
                 # That's fine if OBO app uses short-lived msal instance per session.
