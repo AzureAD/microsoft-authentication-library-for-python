@@ -335,7 +335,7 @@ class LabBasedTestCase(E2eTestCase):
     @classmethod
     def get_lab_user(cls, **query):  # https://docs.msidlab.com/labapi/userapi.html
         resp = cls.session.get("https://msidlab.com/api/user", params=query)
-        result = resp.json()[1]
+        result = resp.json()[0]
         return {  # Mapping lab API response to our simplified configuration format
             "authority": "https://login.microsoftonline.com/{}.onmicrosoft.com".format(
                 result["labName"]),
@@ -416,18 +416,18 @@ class LabBasedTestCase(E2eTestCase):
         "Need OBO_CLIENT_SECRET from https://buildautomation.vault.azure.net/secrets/IdentityDivisionDotNetOBOServiceSecret")
     def test_acquire_token_obo(self):
         # Some hardcoded, pre-defined settings
-        obo_client_id = "23c64cd8-21e4-41dd-9756-ab9e2c23f58c"
-        downstream_scopes = ["https://graph.microsoft.com/User.Read"]
+        obo_client_id = "f4aa5217-e87c-42b2-82af-5624dd14ee72"
+        downstream_scopes = ["https://graph.microsoft.com/.default"]
         config = self.get_lab_user(usertype="cloud")
 
         # 1. An app obtains a token representing a user, for our mid-tier service
         pca = msal.PublicClientApplication(
-            "be9b0186-7dfd-448a-a944-f771029105bf", authority=config.get("authority"))
+            "c0485386-1e9a-4663-bc96-7ab30656de7f", authority=config.get("authority"))
         pca_result = pca.acquire_token_by_username_password(
             config["username"],
             self.get_lab_user_secret(config["lab_name"]),
             scopes=[  # The OBO app's scope. Yours might be different.
-                "%s/access_as_user" % obo_client_id],
+                "api://%s/read" % obo_client_id],
             )
         self.assertIsNotNone(
             pca_result.get("access_token"),
