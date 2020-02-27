@@ -412,7 +412,8 @@ class LabBasedTestCase(E2eTestCase):
         self.assertCacheWorksForUser(result, scopes, username=None)
 
     @unittest.skipUnless(
-        os.getenv("LAB_OBO_CLIENT_SECRET"), "OBO app secret not found")
+        os.getenv("LAB_OBO_CLIENT_SECRET"),
+        "Need LAB_OBO_CLIENT SECRET from https://msidlabs.vault.azure.net/secrets/TodoListServiceV2-OBO/c58ba97c34ca4464886943a847d1db56")
     def test_acquire_token_obo(self):
         # Some hardcoded, pre-defined settings
         obo_client_id = "f4aa5217-e87c-42b2-82af-5624dd14ee72"
