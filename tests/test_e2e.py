@@ -412,22 +412,22 @@ class LabBasedTestCase(E2eTestCase):
         self.assertCacheWorksForUser(result, scopes, username=None)
 
     @unittest.skipUnless(
-        os.getenv("OBO_CLIENT_SECRET"),
-        "Need OBO_CLIENT_SECRET from https://buildautomation.vault.azure.net/secrets/IdentityDivisionDotNetOBOServiceSecret")
+        os.getenv("LAB_OBO_CLIENT_SECRET"),
+        "Need LAB_OBO_CLIENT SECRET from https://msidlabs.vault.azure.net/secrets/TodoListServiceV2-OBO/c58ba97c34ca4464886943a847d1db56")
     def test_acquire_token_obo(self):
         # Some hardcoded, pre-defined settings
-        obo_client_id = "23c64cd8-21e4-41dd-9756-ab9e2c23f58c"
-        downstream_scopes = ["https://graph.microsoft.com/User.Read"]
+        obo_client_id = "f4aa5217-e87c-42b2-82af-5624dd14ee72"
+        downstream_scopes = ["https://graph.microsoft.com/.default"]
         config = self.get_lab_user(usertype="cloud")
 
         # 1. An app obtains a token representing a user, for our mid-tier service
         pca = msal.PublicClientApplication(
-            "be9b0186-7dfd-448a-a944-f771029105bf", authority=config.get("authority"))
+            "c0485386-1e9a-4663-bc96-7ab30656de7f", authority=config.get("authority"))
         pca_result = pca.acquire_token_by_username_password(
             config["username"],
             self.get_lab_user_secret(config["lab_name"]),
             scopes=[  # The OBO app's scope. Yours might be different.
-                "%s/access_as_user" % obo_client_id],
+                "api://%s/read" % obo_client_id],
             )
         self.assertIsNotNone(
             pca_result.get("access_token"),
@@ -436,7 +436,7 @@ class LabBasedTestCase(E2eTestCase):
         # 2. Our mid-tier service uses OBO to obtain a token for downstream service
         cca = msal.ConfidentialClientApplication(
             obo_client_id,
-            client_credential=os.getenv("OBO_CLIENT_SECRET"),
+            client_credential=os.getenv("LAB_OBO_CLIENT_SECRET"),
             authority=config.get("authority"),
             # token_cache= ...,  # Default token cache is all-tokens-store-in-memory.
                 # That's fine if OBO app uses short-lived msal instance per session.
