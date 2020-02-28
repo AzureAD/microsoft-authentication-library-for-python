@@ -336,9 +336,13 @@ class LabBasedTestCase(E2eTestCase):
     def get_lab_user(cls, **query):  # https://docs.msidlab.com/labapi/userapi.html
         resp = cls.session.get("https://msidlab.com/api/user", params=query)
         result = resp.json()[0]
+        authority_base = "https://login.microsoftonline.com/"
+        graph_endpoint = "https://graph.microsoft.com/.default"
+        if "azureenvironment" in query and query["azureenvironment"] == "azureusgovernment":
+            authority_base = "https://login.microsoftonline.us/"
+            graph_endpoint = "https://graph.microsoft.us/.default"
         return {  # Mapping lab API response to our simplified configuration format
-            "authority": "https://login.microsoftonline.com/{}.onmicrosoft.com".format(
-                result["labName"]),
+            "authority": authority_base + result["tenantID"],
             "client_id": result["appId"],
             "username": result["upn"],
             "lab_name": result["labName"],
@@ -504,6 +508,11 @@ class LabBasedTestCase(E2eTestCase):
             password=self.get_lab_user_secret("msidlabb2c"),
             scope=["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"],
             )
+
+    def test_arlington_acquire_token_by_ropc(self):
+        config = self.get_lab_user(azureenvironment="azureusgovernment")
+        self._test_username_password(
+            password=self.get_lab_user_secret(config["lab_name"]), **config)
 
 if __name__ == "__main__":
     unittest.main()
