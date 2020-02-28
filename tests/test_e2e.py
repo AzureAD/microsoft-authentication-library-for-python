@@ -323,6 +323,12 @@ class LabBasedTestCase(E2eTestCase):
         cls.session.close()
 
     @classmethod
+    def get_lab_app_object(cls, **query ):
+        url = "https://msidlab.com/api/app"
+        resp = cls.session.get(url, params=query)
+        return resp.json()[0]
+
+    @classmethod
     def get_lab_user_secret(cls, lab_name="msidlab4"):
         lab_name = lab_name.lower()
         if lab_name not in cls._secrets:
@@ -346,7 +352,7 @@ class LabBasedTestCase(E2eTestCase):
             "client_id": result["appId"],
             "username": result["upn"],
             "lab_name": result["labName"],
-            "scope": ["https://graph.microsoft.com/.default"],
+            "scope": [graph_endpoint],
             }
 
     def test_aad_managed_user(self):  # Pure cloud
@@ -513,6 +519,88 @@ class LabBasedTestCase(E2eTestCase):
         config = self.get_lab_user(azureenvironment="azureusgovernment")
         self._test_username_password(
             password=self.get_lab_user_secret(config["lab_name"]), **config)
+
+    def test_arlington_acquire_token_by_client_secret(self):
+        config = self.get_lab_user(usertype="cloud", azureenvironment="azureusgovernment", publicClient="no")
+        app = msal.ConfidentialClientApplication(config.get("client_id"),
+                                                 client_credential=self.get_lab_user_secret("ARLMSIDLAB1-IDLASBS-App-CC-Secret"),
+                                           authority=config.get("authority"),
+                                           )
+        result = app.acquire_token_for_client(config.get("scope"))
+        self.assertNotEqual(None, result.get("access_token"), str(result))
+
+    def test_arlington_acquire_token_obo(self):
+        obo_config = self.get_lab_user(
+            usertype="cloud", azureenvironment="azureusgovernment", publicClient="no")
+        obo_app_object = self.get_lab_app_object(
+            usertype="cloud", azureenvironment="azureusgovernment", publicClient="no")
+        downstream_scopes = ["https://graph.microsoft.com/.default"]
+        config = self.get_lab_user(usertype="cloud", azureenvironment="azureusgovernment", publicClient="yes")
+
+        # 1. An app obtains a token representing a user, for our mid-tier service
+        pca = msal.PublicClientApplication(
+            client_id=config.get("client_id"), authority=config.get("authority"))
+        pca_result = pca.acquire_token_by_username_password(
+            config["username"],
+            self.get_lab_user_secret(config["lab_name"]),
+            scopes=[  # The OBO app's scope. Yours might be different.
+                "{app_uri}/files.read".format(app_uri=obo_app_object.get("identifierUris"))],
+            )
+        self.assertIsNotNone(
+            pca_result.get("access_token"),
+            "PCA failed to get AT because %s" % json.dumps(pca_result, indent=2))
+
+        # 2. Our mid-tier service uses OBO to obtain a token for downstream service
+        cca = msal.ConfidentialClientApplication(
+            obo_config.get("client_id"),
+            client_credential=self.get_lab_user_secret("ARLMSIDLAB1-IDLASBS-App-CC-Secret"),
+            authority=obo_config.get("authority"),
+            # token_cache= ...,  # Default token cache is all-tokens-store-in-memory.
+                # That's fine if OBO app uses short-lived msal instance per session.
+                # Otherwise, the OBO app need to implement a one-cache-per-user setup.
+            )
+        cca_result = cca.acquire_token_on_behalf_of(
+            pca_result['access_token'], downstream_scopes)
+        self.assertNotEqual(None, cca_result.get("access_token"), str(cca_result))
+
+        # 3. Now the OBO app can simply store downstream token(s) in same session.
+        #    Alternatively, if you want to persist the downstream AT, and possibly
+        #    the RT (if any) for prolonged access even after your own AT expires,
+        #    now it is the time to persist current cache state for current user.
+        #    Assuming you already did that (which is not shown in this test case),
+        #    the following part shows one of the ways to obtain an AT from cache.
+        username = cca_result.get("id_token_claims", {}).get("preferred_username")
+        self.assertEqual(config["username"], username)
+        if username:  # A precaution so that we won't use other user's token
+            account = cca.get_accounts(username=username)[0]
+            result = cca.acquire_token_silent(downstream_scopes, account)
+            self.assertEqual(cca_result["access_token"], result["access_token"])
+
+    def test_arlington_acquire_token_device_code(self):
+        config = self.get_lab_user(usertype="cloud", azureenvironment="azureusgovernment", publicClient="yes")
+        scopes = ["user.read"]
+        self.app = msal.PublicClientApplication(
+            config['client_id'], authority=config["authority"])
+        flow = self.app.initiate_device_flow(scopes=scopes)
+        assert "user_code" in flow, "DF does not seem to be provisioned: %s".format(
+            json.dumps(flow, indent=4))
+        logger.info(flow["message"])
+
+        duration = 60
+        logger.info("We will wait up to %d seconds for you to sign in" % duration)
+        flow["expires_at"] = min(  # Shorten the time for quick test
+            flow["expires_at"], time.time() + duration)
+        result = self.app.acquire_token_by_device_flow(flow)
+        self.assertLoosely(  # It will skip this test if there is no user interaction
+            result,
+            assertion=lambda: self.assertIn('access_token', result),
+            skippable_errors=self.app.client.DEVICE_FLOW_RETRIABLE_ERRORS)
+        if "access_token" not in result:
+            self.skip("End user did not complete Device Flow in time")
+        self.assertCacheWorksForUser(result, scopes, username=None)
+        result["access_token"] = result["refresh_token"] = "************"
+        logger.info(
+            "%s obtained tokens: %s", self.id(), json.dumps(result, indent=4))
 
 if __name__ == "__main__":
     unittest.main()
