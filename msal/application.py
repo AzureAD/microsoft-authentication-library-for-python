@@ -247,6 +247,7 @@ class ClientApplication(object):
             You will have to specify a value explicitly.
             Its valid values are defined in Open ID Connect specs
             https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+        :param kwargs: Other parameters, typically defined in OpenID Connect.
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -276,6 +277,7 @@ class ClientApplication(object):
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             prompt=prompt,
             scope=decorate_scope(scopes, self.client_id),
+            **kwargs
             )
 
     def acquire_token_by_authorization_code(
