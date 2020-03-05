@@ -714,7 +714,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
     def acquire_token_by_username_password(
             self, username, password, scopes, **kwargs):
-        """Gets a token for a given resource via user credentails.
+        """Gets a token for a given resource via user credentials.
 
         See this page for constraints of Username Password Flow.
         https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
