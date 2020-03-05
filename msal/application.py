@@ -164,14 +164,13 @@ class ClientApplication(object):
         self.client_claims = client_claims
         self.verify = verify
         self.proxies = proxies
-        from msal.oauth2cli.http import DefaultHttpClient
-        self.http_client = http_client if http_client else DefaultHttpClient(self.verify, self.proxies)
+        self.http_client = http_client or DefaultHttpClient(verify=self.verify, proxy=self.proxies)
         self.timeout = timeout
         self.app_name = app_name
         self.app_version = app_version
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
-                validate_authority, verify=verify, proxies=proxies, timeout=timeout, http_client = self.http_client)
+                validate_authority, verify=verify, proxies=proxies, timeout=timeout, http_client=self.http_client)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
@@ -374,12 +373,6 @@ class ClientApplication(object):
             resp = self.http_client.request("GET", "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
                 headers={'Accept': 'application/json'},
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
-
-            # resp = requests.get(
-            #     "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-            #     headers={'Accept': 'application/json'},
-            #     verify=self.verify, proxies=self.proxies, timeout=self.timeout)
-            resp.raise_for_status()
             self.authority_groups = [
                 set(group['aliases']) for group in resp.content.json()['metadata']]
         for group in self.authority_groups:

@@ -88,7 +88,7 @@ class BaseClient(object):
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
         if not http_client:
-            self.http_client = DefaultHttpClient(verify, proxies or {})
+            self.http_client = DefaultHttpClient(verify=verify, proxy=proxies or {}, default_headers= {})
         else:
             self.http_client = http_client
         self.timeout = timeout
@@ -150,7 +150,7 @@ class BaseClient(object):
             raise ValueError("token_endpoint not found in configuration")
         _headers = {'Accept': 'application/json'}
         _headers.update(headers or {})
-        resp = (post or self.http_client.request)("POST", self.configuration["token_endpoint"],
+        resp = self.http_client.request("POST", self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data, auth=auth,
             timeout=timeout or self.timeout,
             **kwargs)

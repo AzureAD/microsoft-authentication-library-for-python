@@ -4,7 +4,6 @@ except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
 import logging
 
-import requests
 
 from .exceptions import MsalServiceError
 
@@ -54,7 +53,7 @@ class Authority(object):
             len(parts) == 3 and parts[2].lower().startswith("b2c_"))
         if (tenant != "adfs" and (not is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
-            payload = instance_discovery(
+            payload = self.instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
                     self.instance, authority.path),
                 verify=verify, proxies=proxies, timeout=timeout)
@@ -74,7 +73,7 @@ class Authority(object):
                     authority.path,  # In B2C scenario, it is "/tenant/policy"
                     "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
-        openid_config = tenant_discovery(
+        openid_config = self.tenant_discovery(
             tenant_discovery_endpoint,
             verify=verify, proxies=proxies, timeout=timeout)
         logger.debug("openid_config = %s", openid_config)
@@ -93,17 +92,7 @@ class Authority(object):
                      netloc=self.instance, username=username), headers={'Accept':'application/json',
                           'client-request-id': correlation_id}, timeout= self.timeout)
             if resp.status_code != 404:
-                resp.raise_for_status()
                 return resp.content.json()
-            # resp = response or requests.get(
-            #     "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
-            #         netloc=self.instance, username=username),
-            #     headers={'Accept':'application/json',
-            #              'client-request-id': correlation_id},
-            #     verify=self.verify, proxies=self.proxies, timeout=self.timeout)
-            # if resp.status_code != 404:
-            #     resp.raise_for_status()
-            #     return resp.json()
             self.__class__._domains_without_user_realm_discovery.add(self.instance)
         return {}  # This can guide the caller to fall back normal ROPC flow
 

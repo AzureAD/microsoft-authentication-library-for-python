@@ -17,7 +17,7 @@ class DefaultHttpClient(HttpClient):
     """
     General purpose HTTP Client for interacting with the Twilio API
     """
-    def __init__(self, default_headers=None, verify=None, proxy=None):
+    def __init__(self, default_headers={}, verify=None, proxy=None):
         """
         Constructor for the TwilioHttpClient
 
@@ -32,7 +32,6 @@ class DefaultHttpClient(HttpClient):
         self.session.headers.update(default_headers or {})
         self.session.verify = verify
         self.session.proxy = proxy
-
 
     def request(self, method, url, params=None, data=None, headers=None, auth=None, timeout=None,
                 allow_redirects=False, **kwargs):
@@ -50,37 +49,13 @@ class DefaultHttpClient(HttpClient):
         See the requests documentation for explanation of all these parameters
 
         :return: An http response
-        :rtype: A :class:`Response <twilio.rest.http.response.Response>` object
+        :rtype: A :class:`Response <http.response.Response>` object
         """
-        # if timeout is not None and timeout <= 0:
-        #     raise ValueError(timeout)
-        #
-        # kwargs = {
-        #     'method': method.upper(),
-        #     'url': url,
-        #     'params': params,
-        #     'data': data,
-        #     'headers': headers,
-        #     'auth': auth,
-        #     'hooks': self.request_hooks
-        # }
-        #
-        # if params:
-        #     self.logger.info('{method} Request: {url}?{query}'.format(query=urlencode(params), **kwargs))
-        #     self.logger.info('PARAMS: {params}'.format(**kwargs))
-        # else:
-        #     self.logger.info('{method} Request: {url}'.format(**kwargs))
-        # if data:
-        #     self.logger.info('PAYLOAD: {data}'.format(**kwargs))
-        #
-        # self.last_response = None
-        session = self.session or Session()
         if method == "POST":
-            response = session.post(headers=headers, params=params, data=data, auth=auth,
-            timeout=timeout, **kwargs)
+            response = self.session.post(url=url, headers=headers, params=params, data=data, auth=auth,
+                                         timeout=timeout, **kwargs)
         elif method == "GET":
-            response = requests.get(url= url, headers=headers, params=params, timeout=timeout)
-
-        self.last_response = Response(int(response.status_code), response.text)
-
-        return self.last_response
+            response = self.session.get(url=url, headers=headers, params=params, timeout=timeout, data=data, auth=auth)
+        response.raise_for_status()
+        response = Response(int(response.status_code), response)
+        return response

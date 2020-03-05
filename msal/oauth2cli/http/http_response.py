@@ -11,6 +11,3 @@ class Response(object):
     @property
     def text(self):
         return self.content
-
-    def __repr__(self):
-        return 'HTTP {} {}'.format(self.status_code, self.content)
