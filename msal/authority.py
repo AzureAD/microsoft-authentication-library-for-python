@@ -50,9 +50,9 @@ class Authority(object):
         self.http_client = http_client or DefaultHttpClient(verify=self.verify, proxy=self.proxies)
         authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
-        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
+        self.is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
             len(parts) == 3 and parts[2].lower().startswith("b2c_"))
-        if (tenant != "adfs" and (not is_b2c) and validate_authority
+        if (tenant != "adfs" and (not self.is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = self.instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
@@ -105,7 +105,7 @@ class Authority(object):
                  ), params={'authorization_endpoint': url, 'api-version': '1.0'},
              **kwargs)
 
-        return resp.content.json()
+        return resp.content
         # return requests.get(  # Note: This URL seemingly returns V1 endpoint only
         #     'https://{}/common/discovery/instance'.format(
         #         WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too

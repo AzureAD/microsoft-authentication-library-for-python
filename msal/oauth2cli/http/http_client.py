@@ -68,7 +68,6 @@ class DefaultHttpClient(HttpClient):
                 raise
         elif method == "GET":
             response = self.session.get(url=url, headers=headers, params=params, timeout=timeout, data=data, auth=auth)
-            response.raise_for_status()
             content = response.json()
         response = Response(int(response.status_code), content)
         return response
