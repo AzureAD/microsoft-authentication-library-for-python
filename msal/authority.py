@@ -1,9 +1,10 @@
+from msal.oauth2cli.http import DefaultHttpClient
+
 try:
     from urllib.parse import urlparse
 except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
 import logging
-
 
 from .exceptions import MsalServiceError
 
@@ -46,7 +47,7 @@ class Authority(object):
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
-        self.http_client = http_client
+        self.http_client = http_client or DefaultHttpClient(verify=self.verify, proxy=self.proxies)
         authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
         is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
@@ -92,7 +93,7 @@ class Authority(object):
                      netloc=self.instance, username=username), headers={'Accept':'application/json',
                           'client-request-id': correlation_id}, timeout= self.timeout)
             if resp.status_code != 404:
-                return resp.content.json()
+                return resp.content
             self.__class__._domains_without_user_realm_discovery.add(self.instance)
         return {}  # This can guide the caller to fall back normal ROPC flow
 
@@ -118,7 +119,7 @@ class Authority(object):
         # Returns Openid Configuration
         resp = self.http_client.request("GET", tenant_discovery_endpoint,
                                         **kwargs)
-        payload = resp.content.json()
+        payload = resp.content
 
         # resp = requests.get(tenant_discovery_endpoint, **kwargs)
         # payload = resp.json()

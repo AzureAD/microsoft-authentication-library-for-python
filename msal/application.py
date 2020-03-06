@@ -374,7 +374,7 @@ class ClientApplication(object):
                 headers={'Accept': 'application/json'},
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
             self.authority_groups = [
-                set(group['aliases']) for group in resp.content.json()['metadata']]
+                set(group['aliases']) for group in resp.content['metadata']]
         for group in self.authority_groups:
             if instance in group:
                 return [alias for alias in group if alias != instance]
@@ -506,7 +506,7 @@ class ClientApplication(object):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
                 validate_authority=False,
-                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+                verify=self.verify, proxies=self.proxies, timeout=self.timeout, http_client=self.http_client)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh,
                 correlation_id=correlation_id,

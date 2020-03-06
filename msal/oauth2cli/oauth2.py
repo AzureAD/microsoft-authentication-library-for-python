@@ -150,26 +150,11 @@ class BaseClient(object):
             raise ValueError("token_endpoint not found in configuration")
         _headers = {'Accept': 'application/json'}
         _headers.update(headers or {})
-        resp = self.http_client.request("POST", self.configuration["token_endpoint"],
+        resp = (post or self.http_client.request)("POST", self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data, auth=auth,
             timeout=timeout or self.timeout,
             **kwargs)
-        # resp = (post or self.session.post)(
-        #     self.configuration["token_endpoint"],
-        #     headers=_headers, params=params, data=_data, auth=auth,
-        #     timeout=timeout or self.timeout,
-        #     **kwargs)
-        if resp.status_code >= 500:
-            resp.raise_for_status()  # TODO: Will probably retry here
-        try:
-            # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
-            # even an error response will be a valid json structure,
-            # so we simply return it here, without needing to invent an exception.
-            return resp.content.json()
-        except ValueError:
-            self.logger.exception(
-                    "Token response is not in json format: %s", resp.text)
-            raise
+        return resp.content
 
     def obtain_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
         # type: (str, Union[str, list, set, tuple]) -> dict

@@ -51,11 +51,24 @@ class DefaultHttpClient(HttpClient):
         :return: An http response
         :rtype: A :class:`Response <http.response.Response>` object
         """
+        content = None
         if method == "POST":
             response = self.session.post(url=url, headers=headers, params=params, data=data, auth=auth,
                                          timeout=timeout, **kwargs)
+            if response.status_code >=500:
+                response.raise_for_status()
+            try:
+                # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
+                # even an error response will be a valid json structure,
+                # so we simply return it here, without needing to invent an exception.
+                content = response.json()
+            except ValueError:
+                self.logger.exception(
+                    "Token response is not in json format: %s", response.text)
+                raise
         elif method == "GET":
             response = self.session.get(url=url, headers=headers, params=params, timeout=timeout, data=data, auth=auth)
-        response.raise_for_status()
-        response = Response(int(response.status_code), response)
+            response.raise_for_status()
+            content = response.json()
+        response = Response(int(response.status_code), content)
         return response

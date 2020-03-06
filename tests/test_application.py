@@ -4,6 +4,8 @@ import os
 import json
 import logging
 
+from msal.oauth2cli.http import Response
+
 try:
     from unittest.mock import *  # Python 3
 except:
@@ -49,8 +51,9 @@ class TestHelperExtractCerts(unittest.TestCase):  # It is used by SNI scenario
 class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
 
     def setUp(self):
+        self.http_client = DefaultHttpClient()
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(self.authority_url)
+        self.authority = msal.authority.Authority(self.authority_url, http_client= self.http_client)
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -67,7 +70,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
                 uid=self.uid, utid=self.utid, refresh_token=self.rt),
             })  # The add(...) helper populates correct home_account_id for future searching
         self.app = ClientApplication(
-            self.client_id, authority=self.authority_url, token_cache=self.cache)
+            self.client_id, authority=self.authority_url, token_cache=self.cache, http_client=self.http_client)
 
     def test_cache_empty_will_be_returned_as_None(self):
         self.assertEqual(
@@ -77,30 +80,30 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
 
     def test_acquire_token_silent_will_suppress_error(self):
         error_response = {"error": "invalid_grant", "suberror": "xyz"}
-        def tester(url, **kwargs):
-            return Mock(status_code=400, json=Mock(return_value=error_response))
+        def tester(method, url, **kwargs):
+            return Response(400, error_response)
         self.assertEqual(None, self.app.acquire_token_silent(
             self.scopes, self.account, post=tester))
 
     def test_acquire_token_silent_with_error_will_return_error(self):
         error_response = {"error": "invalid_grant", "error_description": "xyz"}
-        def tester(url, **kwargs):
-            return Mock(status_code=400, json=Mock(return_value=error_response))
+        def tester(method, url, **kwargs):
+            return Response(400, error_response)
         self.assertEqual(error_response, self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester))
 
     def test_atswe_will_map_some_suberror_to_classification_as_is(self):
         error_response = {"error": "invalid_grant", "suberror": "basic_action"}
-        def tester(url, **kwargs):
-            return Mock(status_code=400, json=Mock(return_value=error_response))
+        def tester(method, url, **kwargs):
+            return Response(400, error_response)
         result = self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester)
         self.assertEqual("basic_action", result.get("classification"))
 
     def test_atswe_will_map_some_suberror_to_classification_to_empty_string(self):
         error_response = {"error": "invalid_grant", "suberror": "client_mismatch"}
-        def tester(url, **kwargs):
-            return Mock(status_code=400, json=Mock(return_value=error_response))
+        def tester(method, url, **kwargs):
+            return Response(400, error_response)
         result = self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester)
         self.assertEqual("", result.get("classification"))
@@ -131,11 +134,11 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         app = ClientApplication(
             "unknown_orphan", authority=self.authority_url, token_cache=self.cache)
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
-        def tester(url, data=None, **kwargs):
+        def tester(method, url, data=None, **kwargs):
             self.assertEqual(self.frt, data.get("refresh_token"), "Should attempt the FRT")
-            return Mock(status_code=400, json=Mock(return_value={
+            return Response(400, {
                 "error": "invalid_grant",
-                "error_description": "Was issued to another client"}))
+                "error_description": "Was issued to another client"})
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self.authority, self.scopes, self.account, post=tester)
         self.assertNotEqual([], app.token_cache.find(
@@ -154,20 +157,19 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
                 uid=self.uid, utid=self.utid, refresh_token=rt),
             })
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
-        def tester(url, data=None, **kwargs):
+        def tester(method, url, data=None, **kwargs):
             self.assertEqual(rt, data.get("refresh_token"), "Should attempt the RT")
-            return Mock(status_code=200, json=Mock(return_value={}))
+            return Response(200, {})
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self.authority, self.scopes, self.account, post=tester)
 
     def test_unknown_family_app_will_attempt_frt_and_join_family(self):
-        def tester(url, data=None, **kwargs):
+        def tester(method, url, data=None, **kwargs):
             self.assertEqual(
                 self.frt, data.get("refresh_token"), "Should attempt the FRT")
-            return Mock(
-                status_code=200,
-                json=Mock(return_value=TokenCacheTestCase.build_response(
-                    uid=self.uid, utid=self.utid, foci="1", access_token="at")))
+            return Response(
+                200, TokenCacheTestCase.build_response(
+                    uid=self.uid, utid=self.utid, foci="1", access_token="at"))
         app = ClientApplication(
             "unknown_family_app", authority=self.authority_url, token_cache=self.cache)
         at = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
