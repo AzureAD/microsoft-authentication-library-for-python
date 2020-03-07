@@ -46,9 +46,6 @@ def send_request(mex_endpoint, **kwargs):
     resp = http_client.request("GET", mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
                                     **kwargs)
     mex_document = resp.content
-    # mex_document = requests.get(
-    #     mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
-    #     **kwargs).text
     return Mex(mex_document).get_wstrust_username_password_endpoint()
 
 

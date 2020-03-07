@@ -57,7 +57,7 @@ def send_request(
             'SOAPAction': soap_action,
             }, **kwargs)
     if resp.status_code >= 400:
-        logger.debug("Unsuccessful WsTrust request receives: %s", resp.content.text)
+        logger.debug("Unsuccessful WsTrust request receives: %s", resp.content)
     # It turns out ADFS uses 5xx status code even with client-side incorrect password error
     # resp.raise_for_status()
     return parse_response(resp.content)

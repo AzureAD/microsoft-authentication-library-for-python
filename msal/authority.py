@@ -128,9 +128,3 @@ def canonicalize(authority_url):
             "or https://<tenant_name>.b2clogin.com/<tenant_name>.onmicrosoft.com/policy"
             % authority_url)
     return authority, authority.hostname, parts[1]
-
-
-
-
-
-

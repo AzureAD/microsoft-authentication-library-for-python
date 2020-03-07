@@ -147,6 +147,9 @@ class ClientApplication(object):
             It will be passed to the
             `proxies parameter in the underlying requests library
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_
+        :param http_client: (optional)
+            Your implementation of abstract class HttpClient <msal.http.http_client>
+            Defaults to default http client implementation which uses requests
         :param timeout: (optional)
             It will be passed to the
             `timeout parameter in the underlying requests library
@@ -169,7 +172,8 @@ class ClientApplication(object):
         self.app_version = app_version
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
-                validate_authority, verify=verify, proxies=proxies, timeout=timeout, http_client=self.http_client)
+                validate_authority, verify=verify, proxies=proxies, timeout=timeout,
+                http_client=self.http_client)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
