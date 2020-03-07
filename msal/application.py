@@ -1,3 +1,4 @@
+import json
 import time
 try:  # Python 2
     from urlparse import urljoin
@@ -8,15 +9,13 @@ import sys
 import warnings
 import uuid
 
-import requests
-
 from .oauth2cli import Client, JwtAssertionCreator
 from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache
-from msal.oauth2cli.http import DefaultHttpClient
+from msal.http import DefaultHttpClient
 
 
 # The __init__.py will import this. Not the other way around.
@@ -164,7 +163,7 @@ class ClientApplication(object):
         self.client_claims = client_claims
         self.verify = verify
         self.proxies = proxies
-        self.http_client = http_client or DefaultHttpClient(verify=self.verify, proxy=self.proxies)
+        self.http_client = http_client or DefaultHttpClient(verify=self.verify, proxies=self.proxies)
         self.timeout = timeout
         self.app_name = app_name
         self.app_version = app_version
@@ -268,7 +267,7 @@ class ClientApplication(object):
         # Multi-tenant app can use new authority on demand
         the_authority = Authority(
             authority,
-            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+            verify=self.verify, proxies=self.proxies, timeout=self.timeout, http_client=self.http_client
             ) if authority else self.authority
 
         client = Client(
@@ -373,8 +372,11 @@ class ClientApplication(object):
             resp = self.http_client.request("GET", "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
                 headers={'Accept': 'application/json'},
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+            if resp.status_code >= 400:
+                raise
+            resp = json.loads(resp.content)
             self.authority_groups = [
-                set(group['aliases']) for group in resp.content['metadata']]
+                set(group['aliases']) for group in resp['metadata']]
         for group in self.authority_groups:
             if instance in group:
                 return [alias for alias in group if alias != instance]

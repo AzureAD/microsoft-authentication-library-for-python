@@ -1,4 +1,6 @@
-from msal.oauth2cli.http import DefaultHttpClient
+import json
+
+from msal.http import DefaultHttpClient
 
 try:
     from urllib.parse import urlparse
@@ -25,6 +27,7 @@ WELL_KNOWN_B2C_HOSTS = [
     "b2clogin.de",
     ]
 
+
 class Authority(object):
     """This class represents an (already-validated) authority.
 
@@ -47,7 +50,7 @@ class Authority(object):
         self.verify = verify
         self.proxies = proxies
         self.timeout = timeout
-        self.http_client = http_client or DefaultHttpClient(verify=self.verify, proxy=self.proxies)
+        self.http_client = http_client or DefaultHttpClient(verify=self.verify, proxies=self.proxies)
         authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
         self.is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
@@ -87,15 +90,11 @@ class Authority(object):
         # It will typically return a dict containing "ver", "account_type",
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
-        if self.instance not in self.__class__._domains_without_user_realm_discovery:
-            resp = response or self.http_client.request("GET",
+        resp = response or self.http_client.request("GET",
                                                         "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
                      netloc=self.instance, username=username), headers={'Accept':'application/json',
                           'client-request-id': correlation_id}, timeout= self.timeout)
-            if resp.status_code != 404:
-                return resp.content
-            self.__class__._domains_without_user_realm_discovery.add(self.instance)
-        return {}  # This can guide the caller to fall back normal ROPC flow
+        return json.loads(resp.content)
 
     def instance_discovery(self, url, **kwargs):
         resp = self.http_client.request("GET", 'https://{}/common/discovery/instance'.format(
@@ -104,25 +103,13 @@ class Authority(object):
                      # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
                  ), params={'authorization_endpoint': url, 'api-version': '1.0'},
              **kwargs)
-
-        return resp.content
-        # return requests.get(  # Note: This URL seemingly returns V1 endpoint only
-        #     'https://{}/common/discovery/instance'.format(
-        #         WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
-        #             # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
-        #             # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
-        #         ),
-        #     params={'authorization_endpoint': url, 'api-version': '1.0'},
-        #     **kwargs).json()
+        return json.loads(resp.content)
 
     def tenant_discovery(self, tenant_discovery_endpoint, **kwargs):
         # Returns Openid Configuration
         resp = self.http_client.request("GET", tenant_discovery_endpoint,
                                         **kwargs)
-        payload = resp.content
-
-        # resp = requests.get(tenant_discovery_endpoint, **kwargs)
-        # payload = resp.json()
+        payload = json.loads(resp.content)
         if 'authorization_endpoint' in payload and 'token_endpoint' in payload:
             return payload
         raise MsalServiceError(status_code=resp.status_code, **payload)

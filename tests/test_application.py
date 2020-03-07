@@ -1,10 +1,7 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
-import os
-import json
-import logging
 
-from msal.oauth2cli.http import Response
+from msal.http import Response
 
 try:
     from unittest.mock import *  # Python 3
@@ -79,21 +76,21 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
             None, self.app.acquire_token_silent_with_error(['cache_miss'], self.account))
 
     def test_acquire_token_silent_will_suppress_error(self):
-        error_response = {"error": "invalid_grant", "suberror": "xyz"}
+        error_response = '{"error": "invalid_grant", "suberror": "xyz"}'
         def tester(method, url, **kwargs):
             return Response(400, error_response)
         self.assertEqual(None, self.app.acquire_token_silent(
             self.scopes, self.account, post=tester))
 
     def test_acquire_token_silent_with_error_will_return_error(self):
-        error_response = {"error": "invalid_grant", "error_description": "xyz"}
+        error_response = '{"error": "invalid_grant", "error_description": "xyz"}'
         def tester(method, url, **kwargs):
             return Response(400, error_response)
-        self.assertEqual(error_response, self.app.acquire_token_silent_with_error(
+        self.assertEqual(json.loads(error_response), self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester))
 
     def test_atswe_will_map_some_suberror_to_classification_as_is(self):
-        error_response = {"error": "invalid_grant", "suberror": "basic_action"}
+        error_response = '{"error": "invalid_grant", "suberror": "basic_action"}'
         def tester(method, url, **kwargs):
             return Response(400, error_response)
         result = self.app.acquire_token_silent_with_error(
@@ -101,7 +98,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
         self.assertEqual("basic_action", result.get("classification"))
 
     def test_atswe_will_map_some_suberror_to_classification_to_empty_string(self):
-        error_response = {"error": "invalid_grant", "suberror": "client_mismatch"}
+        error_response = '{"error": "invalid_grant", "suberror": "client_mismatch"}'
         def tester(method, url, **kwargs):
             return Response(400, error_response)
         result = self.app.acquire_token_silent_with_error(
@@ -134,11 +131,10 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         app = ClientApplication(
             "unknown_orphan", authority=self.authority_url, token_cache=self.cache)
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
+        error_response = '{"error": "invalid_grant","error_description": "Was issued to another client"}'
         def tester(method, url, data=None, **kwargs):
             self.assertEqual(self.frt, data.get("refresh_token"), "Should attempt the FRT")
-            return Response(400, {
-                "error": "invalid_grant",
-                "error_description": "Was issued to another client"})
+            return Response(400, error_response)
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self.authority, self.scopes, self.account, post=tester)
         self.assertNotEqual([], app.token_cache.find(
@@ -159,7 +155,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         def tester(method, url, data=None, **kwargs):
             self.assertEqual(rt, data.get("refresh_token"), "Should attempt the RT")
-            return Response(200, {})
+            return Response(200, '{}')
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self.authority, self.scopes, self.account, post=tester)
 
@@ -168,8 +164,8 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             self.assertEqual(
                 self.frt, data.get("refresh_token"), "Should attempt the FRT")
             return Response(
-                200, TokenCacheTestCase.build_response(
-                    uid=self.uid, utid=self.utid, foci="1", access_token="at"))
+                200, json.dumps(TokenCacheTestCase.build_response(
+                uid=self.uid, utid=self.utid, foci="1", access_token="at")))
         app = ClientApplication(
             "unknown_family_app", authority=self.authority_url, token_cache=self.cache)
         at = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(

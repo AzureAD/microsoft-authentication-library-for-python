@@ -34,8 +34,7 @@ try:
 except ImportError:
     from xml.etree import ElementTree as ET
 
-from .oauth2cli.http import DefaultHttpClient
-import requests
+from msal.http import DefaultHttpClient
 
 
 def _xpath_of_root(route_to_leaf):
@@ -46,7 +45,7 @@ def send_request(mex_endpoint, **kwargs):
     http_client = DefaultHttpClient()
     resp = http_client.request("GET", mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
                                     **kwargs)
-    mex_document = resp.content.text
+    mex_document = resp.content
     # mex_document = requests.get(
     #     mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
     #     **kwargs).text

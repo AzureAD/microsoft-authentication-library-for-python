@@ -1,5 +1,6 @@
 """This OAuth2 client implementation aims to be spec-compliant, and generic."""
 # OAuth2 spec https://tools.ietf.org/html/rfc6749
+import json
 
 try:
     from urllib.parse import urlencode, parse_qs
@@ -12,9 +13,7 @@ import time
 import base64
 import sys
 
-from .http import DefaultHttpClient
-from .http import Response
-
+from msal.http import DefaultHttpClient
 
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
 
@@ -83,14 +82,12 @@ class BaseClient(object):
         self.client_id = client_id
         self.client_secret = client_secret
         self.client_assertion = client_assertion
+        self.default_headers = default_headers or {}
         self.default_body = default_body or {}
         if client_assertion_type is not None:
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
-        if not http_client:
-            self.http_client = DefaultHttpClient(verify=verify, proxy=proxies or {}, default_headers= {})
-        else:
-            self.http_client = http_client
+        self.http_client = http_client if http_client else DefaultHttpClient(verify=verify, proxies=proxies)
         self.timeout = timeout
 
     def _build_auth_request_params(self, response_type, **kwargs):
@@ -149,12 +146,16 @@ class BaseClient(object):
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
         _headers = {'Accept': 'application/json'}
+        _headers.update(self.default_headers)
         _headers.update(headers or {})
         resp = (post or self.http_client.request)("POST", self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data, auth=auth,
             timeout=timeout or self.timeout,
             **kwargs)
-        return resp.content
+        if resp.status_code >= 500:
+            raise Exception
+        resp = json.loads(resp.content)
+        return resp
 
     def obtain_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
         # type: (str, Union[str, list, set, tuple]) -> dict
@@ -213,11 +214,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                                                    data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
                                                   timeout=timeout or self.timeout,
                                                   **kwargs)
-        flow = resp.content.json()
-        # flow = self.session.post(self.configuration[DAE],
-        #     data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-        #     timeout=timeout or self.timeout,
-        #     **kwargs).json()
+        flow = json.loads(resp.content)
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
         flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
