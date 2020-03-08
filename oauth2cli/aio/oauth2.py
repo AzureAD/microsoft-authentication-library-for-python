@@ -30,17 +30,19 @@ class BaseClient(AbstractBaseClient):
                         #   Mock(status_code=200, text="{}")
             **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
-        async with (post or self.session.post)(
+        resp = await (post or self.session.post)(
                 self.configuration["token_endpoint"],
                 timeout=timeout or self.timeout,
                 **dict(kwargs, **self._prepare_token_request(
                     grant_type, params=params, data=data, headers=headers))
-                ) as resp:
-            # aiohttp defines "status", others define "status_code"
-            status_code = getattr(resp, "status_code", None) or resp.status
-            if status_code >= 500:
-                resp.raise_for_status()  # TODO: Will probably retry here
-            return self._parse_token_resposne(await resp.text())
+                )
+        # RFC defines and some uses "status_code", aiohttp uses "status"
+        status_code = getattr(resp, "status_code", None) or resp.status
+        if status_code >= 500:
+            resp.raise_for_status()  # TODO: Will probably retry here
+        return self._parse_token_resposne(
+            # We accept a coroutine function (i.e. aiohttp) or a plaintext (httpx)
+            await resp.text() if callable(resp.text) else resp.text)
 
     async def obtain_token_by_refresh_token(
             self,
