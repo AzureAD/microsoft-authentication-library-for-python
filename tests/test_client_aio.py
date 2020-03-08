@@ -3,6 +3,7 @@ import logging
 import asyncio
 
 import aiohttp
+#import httpx
 
 from oauth2cli.aio.oidc import Client
 from tests import unittest
@@ -27,12 +28,18 @@ class TestClient(SyncTestClient):
     def setUpClass(cls):
         cls.loop = asyncio.get_event_loop()  # Create loop before coroutines,
             # to avoid error in here https://stackoverflow.com/questions/60066383
+
         cls.session = aiohttp.ClientSession()  # TODO: initialize in async method?
+        #cls.session = httpx.AsyncClient()
+
         cls.client = cls.create_client(Client, cls.session)
 
     @classmethod
     def tearDownClass(cls):
-        cls._run(cls.session.close())
+        _close = getattr(cls.session, "close",  # when using aiohttp
+            getattr(cls.session, "aclose", None))  # when using httpx
+        if _close:
+            cls._run(_close())
 
     @classmethod
     def _run(cls, coro):
