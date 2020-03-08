@@ -285,8 +285,10 @@ class BaseClient(AbstractBaseClient):
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
+        _data = kwargs.pop("data", {})
+        _data.update(client_id=self.client_id, scope=self._stringify(scope or []))
         resp = self.session.post(self.configuration[DAE],
-            data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
+            data=_data,
             timeout=timeout or self.timeout,
             headers=dict(self.default_headers, **kwargs.pop("headers", {})),
             **kwargs)

@@ -6,6 +6,11 @@ from typing import Mapping
 from ..oauth2 import AbstractBaseClient
 
 
+async def _get_content(http_resp):
+    # We accept a coroutine function (i.e. aiohttp) or a plaintext (httpx)
+    return await http_resp.text() if callable(http_resp.text) else http_resp.text
+
+
 class BaseClient(AbstractBaseClient):
     # Sadly, the code between sync and async client duplicates a lot.
 
@@ -30,9 +35,7 @@ class BaseClient(AbstractBaseClient):
         status_code = getattr(resp, "status_code", None) or resp.status
         if status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
-        return self._parse_token_resposne(
-            # We accept a coroutine function (i.e. aiohttp) or a plaintext (httpx)
-            await resp.text() if callable(resp.text) else resp.text)
+        return self._parse_token_resposne(await _get_content(resp))
 
     async def obtain_token_by_refresh_token(
             self,
@@ -70,20 +73,19 @@ class BaseClient(AbstractBaseClient):
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        async with self.session.post(
-                self.configuration[DAE],
-                data={
-                    "client_id": self.client_id,
-                    "scope": self._stringify(scope or []),
-                    },
-                timeout=timeout or self.timeout,
-                headers=dict(self.default_headers, **kwargs.pop("headers", {})),
-                **kwargs) as resp:
-            flow = json.loads(await resp.text())
-            flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
-            flow["expires_in"] = int(flow.get("expires_in", 1800))
-            flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
-            return flow
+        _data = kwargs.pop("data", {})
+        _data.update(client_id=self.client_id, scope=self._stringify(scope or []))
+        resp = await self.session.post(
+            self.configuration[DAE],
+            data=_data,
+            timeout=timeout or self.timeout,
+            headers=dict(self.default_headers, **kwargs.pop("headers", {})),
+            **kwargs)
+        flow = json.loads(await _get_content(resp))
+        flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
+        flow["expires_in"] = int(flow.get("expires_in", 1800))
+        flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
+        return flow
 
     async def _obtain_token_by_device_flow(self, flow, **kwargs):
         # type: (dict, **dict) -> dict
