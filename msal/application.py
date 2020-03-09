@@ -2,8 +2,10 @@ import json
 import time
 try:  # Python 2
     from urlparse import urljoin
+    from urllib2 import HTTPError
 except:  # Python 3
     from urllib.parse import urljoin
+    from urllib.error import HTTPError
 import logging
 import sys
 import warnings
@@ -376,8 +378,10 @@ class ClientApplication(object):
             resp = self.http_client.request("GET", "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
                 headers={'Accept': 'application/json'},
                 verify=self.verify, proxies=self.proxies, timeout=self.timeout)
-            if resp.status_code >= 400:
-                raise
+            if resp.status_code >= 500:
+                raise HttpError("Internal server error %s" % resp.content)
+            elif resp.status_code >= 400:
+                raise HttpError("Client error %s" % resp.content)
             resp = json.loads(resp.content)
             self.authority_groups = [
                 set(group['aliases']) for group in resp['metadata']]

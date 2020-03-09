@@ -4,9 +4,11 @@ import json
 
 try:
     from urllib.parse import urlencode, parse_qs
+    from urllib.error import HTTPError
 except ImportError:
     from urlparse import parse_qs
     from urllib import urlencode
+    from urllib2 import HTTPError
 import logging
 import warnings
 import time
@@ -153,7 +155,7 @@ class BaseClient(object):
             timeout=timeout or self.timeout,
             **kwargs)
         if resp.status_code >= 500:
-            raise Exception
+            raise HttpError("Internal server error %s" % resp.content)
         resp = json.loads(resp.content)
         return resp
 
