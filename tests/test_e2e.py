@@ -518,7 +518,7 @@ class WorldWideTestCase(LabBasedTestCase):
         config_pca = config
         config_pca["client_id"] = "c0485386-1e9a-4663-bc96-7ab30656de7f"
         config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
-        config_pca["scope"] = "api://%s/read" % config_cca["client_id"]
+        config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
 
         self._test_acquire_token_obo_lab(config_pca, config_cca)
 
