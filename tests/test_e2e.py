@@ -510,12 +510,14 @@ class WorldWideTestCase(LabBasedTestCase):
     def test_acquire_token_obo(self):
         config = self.get_lab_user(usertype="cloud")
 
-        config_cca = config
+        config_cca = {}
+        config_cca.update(config)
         config_cca["client_id"] = "f4aa5217-e87c-42b2-82af-5624dd14ee72"
         config_cca["scope"] = ["https://graph.microsoft.com/.default"]
         config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
 
-        config_pca = config
+        config_pca = {}
+        config_pca.update(config)
         config_pca["client_id"] = "c0485386-1e9a-4663-bc96-7ab30656de7f"
         config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
         config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
