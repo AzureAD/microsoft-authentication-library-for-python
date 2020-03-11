@@ -453,7 +453,7 @@ class LabBasedTestCase(E2eTestCase):
             "%s obtained tokens: %s", self.id(), json.dumps(result, indent=4))
 
 
-class WorldWideTestCases(LabBasedTestCase):
+class WorldWideTestCase(LabBasedTestCase):
 
     def test_aad_managed_user(self):  # Pure cloud
         config = self.get_lab_user(usertype="cloud")
