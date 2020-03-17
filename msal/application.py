@@ -229,6 +229,7 @@ class ClientApplication(object):
             redirect_uri=None,
             response_type="code",  # Can be "token" if you use Implicit Grant
             prompt=None,
+            nonce=None,
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -247,6 +248,9 @@ class ClientApplication(object):
             You will have to specify a value explicitly.
             Its valid values are defined in Open ID Connect specs
             https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+        :param nonce:
+            A cryptographically random value used to mitigate replay attacks. See also
+            `OIDC specs <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -276,6 +280,7 @@ class ClientApplication(object):
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             prompt=prompt,
             scope=decorate_scope(scopes, self.client_id),
+            nonce=nonce,
             )
 
     def acquire_token_by_authorization_code(
@@ -286,6 +291,7 @@ class ClientApplication(object):
                 # REQUIRED, if the "redirect_uri" parameter was included in the
                 # authorization request as described in Section 4.1.1, and their
                 # values MUST be identical.
+            nonce=None,
             **kwargs):
         """The second half of the Authorization Code Grant.
 
@@ -305,6 +311,11 @@ class ClientApplication(object):
             recipient, called audience.
             So the developer need to specify a scope so that we can restrict the
             token to be issued for the corresponding audience.
+
+        :param nonce:
+            If you provided a nonce when calling :func:`get_authorization_request_url`,
+            same nonce should also be provided here, so that we'll validate it.
+            An exception will be raised if the nonce in id token mismatches.
 
         :return: A dict representing the json response from AAD:
 
@@ -326,6 +337,7 @@ class ClientApplication(object):
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
                 },
+            nonce=nonce,
             **kwargs)
 
     def get_accounts(self, username=None):
