@@ -9,7 +9,7 @@ import time
 
 import requests
 
-from oauth2cli.oauth2 import Client
+from oauth2cli.oidc import Client
 from oauth2cli.authcode import obtain_auth_code
 from oauth2cli.assertion import JwtSigner
 from tests import unittest, Oauth2TestCase
@@ -132,8 +132,11 @@ class TestClient(Oauth2TestCase):
     def test_auth_code(self):
         port = CONFIG.get("listen_port", 44331)
         redirect_uri = "http://localhost:%s" % port
+        nonce = "nonce should contain sufficient entropy"
         auth_request_uri = self.client.build_auth_request_uri(
-            "code", redirect_uri=redirect_uri, scope=CONFIG.get("scope"))
+            "code",
+            nonce=nonce,
+            redirect_uri=redirect_uri, scope=CONFIG.get("scope"))
         ac = obtain_auth_code(port, auth_uri=auth_request_uri)
         self.assertNotEqual(ac, None)
         result = self.client.obtain_token_by_authorization_code(
@@ -142,6 +145,7 @@ class TestClient(Oauth2TestCase):
                 "scope": CONFIG.get("scope"),
                 "resource": CONFIG.get("resource"),
                 },  # MSFT AAD only
+            nonce=nonce,
             redirect_uri=redirect_uri)
         self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 

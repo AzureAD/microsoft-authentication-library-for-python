@@ -85,3 +85,37 @@ class Client(oauth2.Client):
             ret["id_token_claims"] = self.decode_id_token(ret["id_token"])
         return ret
 
+    def build_auth_request_uri(self, response_type, nonce=None, **kwargs):
+        """Generate an authorization uri to be visited by resource owner.
+
+        Return value and all other parameters are the same as
+        :func:`oauth2.Client.build_auth_request_uri`, plus new parameter(s):
+
+        :param nonce:
+            A hard-to-guess string used to mitigate replay attacks. See also
+            `OIDC specs <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+        """
+        return super(Client, self).build_auth_request_uri(
+            response_type, nonce=nonce, **kwargs)
+
+    def obtain_token_by_authorization_code(self, code, nonce=None, **kwargs):
+        """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
+
+        Return value and all other parameters are the same as
+        :func:`oauth2.Client.obtain_token_by_authorization_code`,
+        plus new parameter(s):
+
+        :param nonce:
+            If you provided a nonce when calling :func:`build_auth_request_uri`,
+            same nonce should also be provided here, so that we'll validate it.
+            An exception will be raised if the nonce in id token mismatches.
+        """
+        result = super(Client, self).obtain_token_by_authorization_code(
+            code, **kwargs)
+        nonce_in_id_token = result.get("id_token_claims", {}).get("nonce")
+        if "id_token_claims" in result and nonce and nonce != nonce_in_id_token:
+            raise ValueError(
+                'The nonce in id token ("%s") should match your nonce ("%s")' %
+                (nonce_in_id_token, nonce))
+        return result
+
