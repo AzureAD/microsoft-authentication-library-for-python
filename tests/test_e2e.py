@@ -19,12 +19,12 @@ def _get_app_and_auth_code(
         authority="https://login.microsoftonline.com/common",
         port=44331,
         scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
-        ):
+        **kwargs):
     from msal.oauth2cli.authcode import obtain_auth_code
     app = msal.ClientApplication(client_id, client_secret, authority=authority)
     redirect_uri = "http://localhost:%d" % port
     ac = obtain_auth_code(port, auth_uri=app.get_authorization_request_url(
-        scopes, redirect_uri=redirect_uri))
+        scopes, redirect_uri=redirect_uri, **kwargs))
     assert ac is not None
     return (app, ac, redirect_uri)
 
@@ -124,20 +124,21 @@ class FileBasedTestCase(E2eTestCase):
         self.skipUnlessWithConfig(["client_id", "username", "password", "scope"])
         self._test_username_password(**self.config)
 
-    def _get_app_and_auth_code(self):
+    def _get_app_and_auth_code(self, **kwargs):
         return _get_app_and_auth_code(
             self.config["client_id"],
             client_secret=self.config.get("client_secret"),
             authority=self.config.get("authority"),
             port=self.config.get("listen_port", 44331),
             scopes=self.config["scope"],
-            )
+            **kwargs)
 
     def test_auth_code(self):
         self.skipUnlessWithConfig(["client_id", "scope"])
-        (self.app, ac, redirect_uri) = self._get_app_and_auth_code()
+        nonce = "foo"
+        (self.app, ac, redirect_uri) = self._get_app_and_auth_code(nonce=nonce)
         result = self.app.acquire_token_by_authorization_code(
-            ac, self.config["scope"], redirect_uri=redirect_uri)
+            ac, self.config["scope"], redirect_uri=redirect_uri, nonce=nonce)
         logger.debug("%s.cache = %s",
             self.id(), json.dumps(self.app.token_cache._cache, indent=4))
         self.assertIn(
