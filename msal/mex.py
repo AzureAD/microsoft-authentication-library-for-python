@@ -34,15 +34,13 @@ try:
 except ImportError:
     from xml.etree import ElementTree as ET
 
-from msal.http import DefaultHttpClient
-
 
 def _xpath_of_root(route_to_leaf):
     # Construct an xpath suitable to find a root node which has a specified leaf
     return '/'.join(route_to_leaf + ['..'] * (len(route_to_leaf)-1))
 
-def send_request(mex_endpoint, **kwargs):
-    http_client = DefaultHttpClient()
+
+def send_request(mex_endpoint, http_client, **kwargs):
     resp = http_client.request("GET", mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
                                     **kwargs)
     mex_document = resp.content

@@ -31,13 +31,11 @@ import logging
 
 from .mex import Mex
 from .wstrust_response import parse_response
-from msal.http import DefaultHttpClient
-
 
 logger = logging.getLogger(__name__)
 
 def send_request(
-        username, password, cloud_audience_urn, endpoint_address, soap_action,
+        username, password, cloud_audience_urn, endpoint_address, soap_action, http_client,
         **kwargs):
     if not endpoint_address:
         raise ValueError("WsTrust endpoint address can not be empty")
@@ -50,22 +48,23 @@ def send_request(
         "Unsupported soap action: %s" % soap_action)
     data = _build_rst(
         username, password, cloud_audience_urn, endpoint_address, soap_action)
-    http_client = DefaultHttpClient()
-    resp = http_client.request("POST", endpoint_address, data=data,
+    resp = http_client.post(endpoint_address, data=data,
                                               headers={
             'Content-type':'application/soap+xml; charset=utf-8',
             'SOAPAction': soap_action,
             }, **kwargs)
     if resp.status_code >= 400:
-        logger.debug("Unsuccessful WsTrust request receives: %s", resp.content)
+        logger.debug("Unsuccessful WsTrust request receives: %s", resp.text)
     # It turns out ADFS uses 5xx status code even with client-side incorrect password error
     # resp.raise_for_status()
     return parse_response(resp.content)
+
 
 def escape_password(password):
     return (password.replace('&', '&amp;').replace('"', '&quot;')
         .replace("'", '&apos;')  # the only one not provided by cgi.escape(s, True)
         .replace('<', '&lt;').replace('>', '&gt;'))
+
 
 def wsu_time_format(datetime_obj):
     # WsTrust (http://docs.oasis-open.org/ws-sx/ws-trust/v1.4/ws-trust.html)
@@ -74,6 +73,7 @@ def wsu_time_format(datetime_obj):
     # It avoids the uncertainty of the optional ".ssssss" in datetime.isoformat()
     # https://docs.python.org/2/library/datetime.html#datetime.datetime.isoformat
     return datetime_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+
 
 def _build_rst(username, password, cloud_audience_urn, endpoint_address, soap_action):
     now = datetime.utcnow()

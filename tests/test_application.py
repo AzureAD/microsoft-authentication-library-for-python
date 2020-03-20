@@ -1,14 +1,13 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
 
-from msal.http import Response
-
 try:
     from unittest.mock import *  # Python 3
 except:
     from mock import *  # Need an external mock package
 
 from msal.application import *
+from msal.oauth2cli.default_http_client import Response
 import msal
 from tests import unittest
 from tests.test_token_cache import TokenCacheTestCase
@@ -77,21 +76,21 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
 
     def test_acquire_token_silent_will_suppress_error(self):
         error_response = '{"error": "invalid_grant", "suberror": "xyz"}'
-        def tester(method, url, **kwargs):
+        def tester(url, **kwargs):
             return Response(400, error_response)
         self.assertEqual(None, self.app.acquire_token_silent(
             self.scopes, self.account, post=tester))
 
     def test_acquire_token_silent_with_error_will_return_error(self):
         error_response = '{"error": "invalid_grant", "error_description": "xyz"}'
-        def tester(method, url, **kwargs):
+        def tester(url, **kwargs):
             return Response(400, error_response)
         self.assertEqual(json.loads(error_response), self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester))
 
     def test_atswe_will_map_some_suberror_to_classification_as_is(self):
         error_response = '{"error": "invalid_grant", "suberror": "basic_action"}'
-        def tester(method, url, **kwargs):
+        def tester(url, **kwargs):
             return Response(400, error_response)
         result = self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester)
@@ -99,7 +98,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
 
     def test_atswe_will_map_some_suberror_to_classification_to_empty_string(self):
         error_response = '{"error": "invalid_grant", "suberror": "client_mismatch"}'
-        def tester(method, url, **kwargs):
+        def tester(url, **kwargs):
             return Response(400, error_response)
         result = self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester)
@@ -109,7 +108,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(self.authority_url)
+        self.authority = msal.authority.Authority(self.authority_url, DefaultHttpClient())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -132,7 +131,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             "unknown_orphan", authority=self.authority_url, token_cache=self.cache)
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         error_response = '{"error": "invalid_grant","error_description": "Was issued to another client"}'
-        def tester(method, url, data=None, **kwargs):
+        def tester(url, data=None, **kwargs):
             self.assertEqual(self.frt, data.get("refresh_token"), "Should attempt the FRT")
             return Response(400, error_response)
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
@@ -153,14 +152,14 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
                 uid=self.uid, utid=self.utid, refresh_token=rt),
             })
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
-        def tester(method, url, data=None, **kwargs):
+        def tester(url, data=None, **kwargs):
             self.assertEqual(rt, data.get("refresh_token"), "Should attempt the RT")
             return Response(200, '{}')
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self.authority, self.scopes, self.account, post=tester)
 
     def test_unknown_family_app_will_attempt_frt_and_join_family(self):
-        def tester(method, url, data=None, **kwargs):
+        def tester(url, data=None, **kwargs):
             self.assertEqual(
                 self.frt, data.get("refresh_token"), "Should attempt the FRT")
             return Response(
