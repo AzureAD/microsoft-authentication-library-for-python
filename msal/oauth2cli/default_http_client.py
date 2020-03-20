@@ -7,7 +7,7 @@ class DefaultHttpClient(HttpClient):
     """
     Default HTTP Client
     """
-    def __init__(self, verify=True, proxies=None, timeout=None):
+    def __init__(self, verify=True, proxies=None):
         """
         Constructor for the DefaultHttpClient
 
@@ -19,28 +19,26 @@ class DefaultHttpClient(HttpClient):
             self.session.verify = verify
         if proxies:
             self.session.proxies = proxies
-        if timeout:
-            self.session.timeout = timeout
 
     def post(self, url, params=None, data=None, headers=None, **kwargs):
 
         response = self.session.post(url=url, params=params, headers=headers, data=data, **kwargs)
-        return Response(response.status_code, response.text)
+        return Response(response)
 
     def get(self, url, params=None, headers=None, **kwargs):
         response = self.session.get(url=url, params=params, headers=headers, **kwargs)
-        return Response(response.status_code, response.text)
+        return Response(response)
 
 
 class Response(Response):
 
-    def __init__(self, status_code, text):
-        """HTTP Response object
-            :param int status_code: Status code from HTTP response
-            :param str text: HTTP response in string format
+    def __init__(self, response):
+        """Constructor for DefaultResponseObject
+            response: Raw http response from requests
         """
-        self.status_code = status_code
-        self.text = text
+        self.status_code = response.status_code
+        self.text = response.text
+        self.response = response
 
     def raise_for_status(self):
-        self.text.raise_for_status()
+        self.response.raise_for_status()

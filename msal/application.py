@@ -89,8 +89,8 @@ class ClientApplication(object):
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
-            token_cache=None,
-            verify=True, proxies=None, http_client=None, timeout=None,
+            token_cache=None, http_client=None,
+            verify=True, proxies=None, timeout=None,
             client_claims=None, app_name=None, app_version=None):
         """Create an instance of application.
 
@@ -211,6 +211,7 @@ class ClientApplication(object):
         return Client(
             server_configuration,
             self.client_id,
+            http_client=self.http_client,
             default_headers=default_headers,
             default_body=default_body,
             client_assertion=client_assertion,
@@ -218,7 +219,7 @@ class ClientApplication(object):
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt,
-            http_client=self.http_client, timeout=self.timeout)
+            timeout=self.timeout)
 
     def get_authorization_request_url(
             self,
@@ -269,7 +270,7 @@ class ClientApplication(object):
 
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
-            self.client_id)
+            self.client_id, self.http_client)
         return client.build_auth_request_uri(
             response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
@@ -369,8 +370,7 @@ class ClientApplication(object):
             resp = self.http_client.get("https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
                 headers={'Accept': 'application/json'},
                 timeout=self.timeout)
-            if resp.status_code >= 500:
-                resp.raise_for_status()
+            resp.raise_for_status()
             resp = json.loads(resp.text)
             self.authority_groups = [
                 set(group['aliases']) for group in resp['metadata']]
