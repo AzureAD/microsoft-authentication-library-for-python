@@ -2,6 +2,8 @@
 # OAuth2 spec https://tools.ietf.org/html/rfc6749
 
 import json
+import abc
+import json
 try:
     from urllib.parse import urlencode, parse_qs
 except ImportError:
@@ -15,11 +17,14 @@ import sys
 
 
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
+try:
+    ABC = abc.ABC
+except AttributeError:  # Python 2.7, abc exists, but not ABC
+    ABC = abc.ABCMeta("ABC", (object,), {"__slots__": ()})  # type: ignore
 
 
-class BaseClient(object):
-    # This low-level interface works. Yet you'll find its sub-class
-    # more friendly to remind you what parameters are needed in each scenario.
+class AbstractBaseClient(ABC):
+    # The common code shared by sync and async clients.
     # More on Client Types at https://tools.ietf.org/html/rfc6749#section-2.1
 
     @staticmethod
@@ -29,6 +34,15 @@ class BaseClient(object):
     CLIENT_ASSERTION_TYPE_JWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
     CLIENT_ASSERTION_TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
     client_assertion_encoders = {CLIENT_ASSERTION_TYPE_SAML2: encode_saml_assertion}
+
+    DEVICE_FLOW = {  # consts for device flow, that can be customized by sub-class
+        "GRANT_TYPE": "urn:ietf:params:oauth:grant-type:device_code",
+        "DEVICE_CODE": "device_code",
+        }
+    DEVICE_FLOW_RETRIABLE_ERRORS = ("authorization_pending", "slow_down")
+    GRANT_TYPE_SAML2 = "urn:ietf:params:oauth:grant-type:saml2-bearer"  # RFC7522
+    GRANT_TYPE_JWT = "urn:ietf:params:oauth:grant-type:jwt-bearer"  # RFC7523
+    grant_assertion_encoders = {GRANT_TYPE_SAML2: encode_saml_assertion}
 
     def __init__(
             self,
@@ -102,17 +116,17 @@ class BaseClient(object):
             params['scope'] = self._stringify(params['scope'])
         return params  # A dict suitable to be used in http request
 
-    def _obtain_token(  # The verb "obtain" is influenced by OAUTH2 RFC 6749
+    def _stringify(self, sequence):
+        if isinstance(sequence, (list, set, tuple)):
+            return ' '.join(sorted(sequence))  # normalizing it, ascendingly
+        return sequence  # as-is
+
+    def _prepare_token_request(
             self, grant_type,
             params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
-            timeout=None,
-            post=None,  # A callable to replace requests.post(), for testing.
-                        # Such as: lambda url, **kwargs:
-                        #   Mock(status_code=200, json=Mock(return_value={}))
-            **kwargs  # Relay all extra parameters to underlying requests
-            ):  # Returns the json object came from the OAUTH2 response
+            ):  # Returns a dict of request parameters
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
 
         if self.default_body.get("client_assertion_type") and self.client_assertion:
@@ -146,146 +160,18 @@ class BaseClient(object):
                 "{}:{}".format(self.client_id, self.client_secret)
                 .encode("ascii")).decode("ascii")
 
-        if "token_endpoint" not in self.configuration:
-            raise ValueError("token_endpoint not found in configuration")
-        resp = (post or self.session.post)(
-            self.configuration["token_endpoint"],
-            headers=_headers, params=params, data=_data,
-            timeout=timeout or self.timeout,
-            **kwargs)
-        if resp.status_code >= 500:
-            resp.raise_for_status()  # TODO: Will probably retry here
+        return dict(params=params, data=_data, headers=_headers)
+
+    def _parse_token_resposne(self, body):
         try:
             # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
             # even an error response will be a valid json structure,
             # so we simply return it here, without needing to invent an exception.
-            return json.loads(resp.text)
+            return json.loads(body)
         except ValueError:
             self.logger.exception(
-                    "Token response is not in json format: %s", resp.text)
+                    "Token response is not in json format: %s", body)
             raise
-
-    def obtain_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
-        # type: (str, Union[str, list, set, tuple]) -> dict
-        """Obtain an access token via a refresh token.
-
-        :param refresh_token: The refresh token issued to the client
-        :param scope: If omitted, is treated as equal to the scope originally
-            granted by the resource ownser,
-            according to https://tools.ietf.org/html/rfc6749#section-6
-        """
-        assert isinstance(refresh_token, string_types)
-        data = kwargs.pop('data', {})
-        data.update(refresh_token=refresh_token, scope=scope)
-        return self._obtain_token("refresh_token", data=data, **kwargs)
-
-    def _stringify(self, sequence):
-        if isinstance(sequence, (list, set, tuple)):
-            return ' '.join(sorted(sequence))  # normalizing it, ascendingly
-        return sequence  # as-is
-
-
-class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
-    """This is the main API for oauth2 client.
-
-    Its methods define and document parameters mentioned in OAUTH2 RFC 6749.
-    """
-    DEVICE_FLOW = {  # consts for device flow, that can be customized by sub-class
-        "GRANT_TYPE": "urn:ietf:params:oauth:grant-type:device_code",
-        "DEVICE_CODE": "device_code",
-        }
-    DEVICE_FLOW_RETRIABLE_ERRORS = ("authorization_pending", "slow_down")
-    GRANT_TYPE_SAML2 = "urn:ietf:params:oauth:grant-type:saml2-bearer"  # RFC7522
-    GRANT_TYPE_JWT = "urn:ietf:params:oauth:grant-type:jwt-bearer"  # RFC7523
-    grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
-
-
-    def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
-        # type: (list, **dict) -> dict
-        # The naming of this method is following the wording of this specs
-        # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
-        """Initiate a device flow.
-
-        Returns the data defined in Device Flow specs.
-        https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.2
-
-        You should then orchestrate the User Interaction as defined in here
-        https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.3
-
-        And possibly here
-        https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.3.1
-        """
-        DAE = "device_authorization_endpoint"
-        if not self.configuration.get(DAE):
-            raise ValueError("You need to provide device authorization endpoint")
-        resp = self.session.post(self.configuration[DAE],
-            data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-            timeout=timeout or self.timeout,
-            headers=dict(self.default_headers, **kwargs.pop("headers", {})),
-            **kwargs)
-        flow = json.loads(resp.text)
-        flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
-        flow["expires_in"] = int(flow.get("expires_in", 1800))
-        flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
-        return flow
-
-    def _obtain_token_by_device_flow(self, flow, **kwargs):
-        # type: (dict, **dict) -> dict
-        # This method updates flow during each run. And it is non-blocking.
-        now = time.time()
-        skew = 1
-        if flow.get("latest_attempt_at", 0) + flow.get("interval", 5) - skew > now:
-            warnings.warn('Attempted too soon. Please do time.sleep(flow["interval"])')
-        data = kwargs.pop("data", {})
-        data.update({
-            "client_id": self.client_id,
-            self.DEVICE_FLOW["DEVICE_CODE"]: flow["device_code"],
-            })
-        result = self._obtain_token(
-            self.DEVICE_FLOW["GRANT_TYPE"], data=data, **kwargs)
-        if result.get("error") == "slow_down":
-            # Respecting https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.5
-            flow["interval"] = flow.get("interval", 5) + 5
-        flow["latest_attempt_at"] = now
-        return result
-
-    def obtain_token_by_device_flow(self,
-            flow,
-            exit_condition=lambda flow: flow.get("expires_at", 0) < time.time(),
-            **kwargs):
-        # type: (dict, Callable) -> dict
-        """Obtain token by a device flow object, with customizable polling effect.
-
-        Args:
-            flow (dict):
-                An object previously generated by initiate_device_flow(...).
-                Its content WILL BE CHANGED by this method during each run.
-                We share this object with you, so that you could implement
-                your own loop, should you choose to do so.
-
-            exit_condition (Callable):
-                This method implements a loop to provide polling effect.
-                The loop's exit condition is calculated by this callback.
-
-                The default callback makes the loop run until the flow expires.
-                Therefore, one of the ways to exit the polling early,
-                is to change the flow["expires_at"] to a small number such as 0.
-
-                In case you are doing async programming, you may want to
-                completely turn off the loop. You can do so by using a callback as:
-
-                    exit_condition = lambda flow: True
-
-                to make the loop run only once, i.e. no polling, hence non-block.
-        """
-        while True:
-            result = self._obtain_token_by_device_flow(flow, **kwargs)
-            if result.get("error") not in self.DEVICE_FLOW_RETRIABLE_ERRORS:
-                return result
-            for i in range(flow.get("interval", 5)):  # Wait interval seconds
-                if exit_condition(flow):
-                    return result
-                time.sleep(1)  # Shorten each round, to make exit more responsive
 
     def build_auth_request_uri(
             self,
@@ -334,6 +220,154 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             raise ValueError('state mismatch')
         return params
 
+    def _prepare_obtain_token_by_authorization_code(
+            self, code, redirect_uri=None, scope=None):
+        data = {"code": code, "redirect_uri": redirect_uri}
+        if scope:
+            data["scope"] = scope
+        if not self.client_secret:
+            # client_id is required, if the client is not authenticating itself.
+            # See https://tools.ietf.org/html/rfc6749#section-4.1.3
+            data["client_id"] = self.client_id
+        return data
+
+
+class BaseClient(AbstractBaseClient):
+    # We choose to implement all 4 grants in 1 class
+    """This class implements OAuth2 methods.
+
+    Its methods define and document parameters mentioned in OAUTH2 RFC 6749.
+    """
+
+    def _obtain_token(  # The verb "obtain" is influenced by OAUTH2 RFC 6749
+            self, grant_type,
+            params=None,  # a dict to be sent as query string to the endpoint
+            data=None,  # All relevant data, which will go into the http body
+            headers=None,  # a dict to be sent as request headers
+            timeout=None,
+            post=None,  # A callable to replace requests.post(), for testing.
+                        # Such as: lambda url, **kwargs:
+                        #   Mock(status_code=200, json=Mock(return_value={}))
+            **kwargs  # Relay all extra parameters to underlying requests
+            ):  # Returns the json object came from the OAUTH2 response
+        """An internal helper to obtain tokens.
+
+        This low-level method works. Yet you'll find its sibling methods
+        more friendly to remind you what parameters are needed in each scenario.
+        """
+        resp = (post or self.session.post)(
+            self.configuration["token_endpoint"],
+            timeout=timeout or self.timeout,
+            **dict(kwargs, **self._prepare_token_request(
+                grant_type, params=params, data=data, headers=headers)))
+        if resp.status_code >= 500:
+            resp.raise_for_status()  # TODO: Will probably retry here
+        return self._parse_token_resposne(resp.text)
+
+    def obtain_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
+        # type: (str, Union[str, list, set, tuple]) -> dict
+        """Obtain an access token via a refresh token.
+
+        :param refresh_token: The refresh token issued to the client
+        :param scope: If omitted, is treated as equal to the scope originally
+            granted by the resource ownser,
+            according to https://tools.ietf.org/html/rfc6749#section-6
+        """
+        assert isinstance(refresh_token, string_types)
+        data = kwargs.pop('data', {})
+        data.update(refresh_token=refresh_token, scope=scope)
+        return self._obtain_token("refresh_token", data=data, **kwargs)
+
+    def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
+        # type: (list, **dict) -> dict
+        # The naming of this method is following the wording of this specs
+        # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
+        """Initiate a device flow.
+
+        Returns the data defined in Device Flow specs.
+        https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.2
+
+        You should then orchestrate the User Interaction as defined in here
+        https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.3
+
+        And possibly here
+        https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.3.1
+        """
+        DAE = "device_authorization_endpoint"
+        if not self.configuration.get(DAE):
+            raise ValueError("You need to provide device authorization endpoint")
+        _data = kwargs.pop("data", {})
+        _data.update(client_id=self.client_id, scope=self._stringify(scope or []))
+        resp = self.session.post(self.configuration[DAE],
+            data=_data,
+            timeout=timeout or self.timeout,
+            headers=dict(self.default_headers, **kwargs.pop("headers", {})),
+            **kwargs)
+        flow = json.loads(resp.text)
+        flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
+        flow["expires_in"] = int(flow.get("expires_in", 1800))
+        flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
+        return flow
+
+    def _obtain_token_by_device_flow(self, flow, **kwargs):
+        # type: (dict, **dict) -> dict
+        # This method updates flow during each run. And it is non-blocking.
+        now = time.time()
+        skew = 1
+        if flow.get("latest_attempt_at", 0) + flow.get("interval", 5) - skew > now:
+            warnings.warn('Attempted too soon. Please do sleep(flow["interval"])')
+        data = kwargs.pop("data", {})
+        data.update({
+            "client_id": self.client_id,
+            self.DEVICE_FLOW["DEVICE_CODE"]: flow["device_code"],
+            })
+        result = self._obtain_token(
+            self.DEVICE_FLOW["GRANT_TYPE"], data=data, **kwargs)
+        if result.get("error") == "slow_down":
+            # Honor https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.5
+            flow["interval"] = flow.get("interval", 5) + 5
+        flow["latest_attempt_at"] = now
+        return result
+
+    def obtain_token_by_device_flow(self,
+            flow,
+            exit_condition=lambda flow: flow.get("expires_at", 0) < time.time(),
+            sleeper=time.sleep,  # Just for API symmetry with async API
+            **kwargs):
+        # type: (dict, Callable) -> dict
+        """Obtain token by a device flow object, with customizable polling effect.
+
+        Args:
+            flow (dict):
+                An object previously generated by initiate_device_flow(...).
+                Its content WILL BE CHANGED by this method during each run.
+                We share this object with you, so that you could implement
+                your own loop, should you choose to do so.
+
+            exit_condition (Callable):
+                This method implements a loop to provide polling effect.
+                The loop's exit condition is calculated by this callback.
+
+                The default callback makes the loop run until the flow expires.
+                Therefore, one of the ways to exit the polling early,
+                is to change the flow["expires_at"] to a small number such as 0.
+
+                In case you are doing async programming, you may want to
+                completely turn off the loop. You can do so by using a callback as:
+
+                    exit_condition = lambda flow: True
+
+                to make the loop run only once, i.e. no polling, hence non-block.
+        """
+        while True:
+            result = self._obtain_token_by_device_flow(flow, **kwargs)
+            if result.get("error") not in self.DEVICE_FLOW_RETRIABLE_ERRORS:
+                return result
+            for i in range(flow.get("interval", 5)):  # Wait interval seconds
+                if exit_condition(flow):
+                    return result
+                sleeper(1)  # Shorten each round, to make exit more responsive
+
     def obtain_token_by_authorization_code(
             self, code, redirect_uri=None, scope=None, **kwargs):
         """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
@@ -351,15 +385,12 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             We suggest to use the same scope already used in auth request uri,
             so that this library can link the obtained tokens with their scope.
         """
-        data = kwargs.pop("data", {})
-        data.update(code=code, redirect_uri=redirect_uri)
-        if scope:
-            data["scope"] = scope
-        if not self.client_secret:
-            # client_id is required, if the client is not authenticating itself.
-            # See https://tools.ietf.org/html/rfc6749#section-4.1.3
-            data["client_id"] = self.client_id
-        return self._obtain_token("authorization_code", data=data, **kwargs)
+        data = self._prepare_obtain_token_by_authorization_code(
+            code, redirect_uri=redirect_uri, scope=scope)
+        return self._obtain_token(
+            "authorization_code",
+            data=dict(data, **kwargs.pop("data", {})),
+            **kwargs)
 
     def obtain_token_by_username_password(
             self, username, password, scope=None, **kwargs):
@@ -382,78 +413,6 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         data.update(scope=scope)
         return self._obtain_token("client_credentials", data=data, **kwargs)
 
-    def __init__(self,
-            server_configuration, client_id, session,
-            on_obtaining_tokens=lambda event: None,  # event is defined in _obtain_token(...)
-            on_removing_rt=lambda token_item: None,
-            on_updating_rt=lambda token_item, new_rt: None,
-            **kwargs):
-        super(Client, self).__init__(server_configuration, client_id, session, **kwargs)
-        self.on_obtaining_tokens = on_obtaining_tokens
-        self.on_removing_rt = on_removing_rt
-        self.on_updating_rt = on_updating_rt
-
-    def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
-        RT = "refresh_token"
-        _data = data.copy()  # to prevent side effect
-        refresh_token = _data.get(RT)
-        resp = super(Client, self)._obtain_token(
-            grant_type, params, _data, *args, **kwargs)
-        if "error" not in resp:
-            _resp = resp.copy()
-            if grant_type == RT and RT in _resp and isinstance(refresh_token, dict):
-                _resp.pop(RT)  # So we skip it in on_obtaining_tokens(); it will
-                               # be handled in self.obtain_token_by_refresh_token()
-            if "scope" in _resp:
-                scope = _resp["scope"].split()  # It is conceptually a set,
-                    # but we represent it as a list which can be persisted to JSON
-            else:
-                # Note: The scope will generally be absent in authorization grant,
-                #       but our obtain_token_by_authorization_code(...) encourages
-                #       app developer to still explicitly provide a scope here.
-                scope = _data.get("scope")
-            self.on_obtaining_tokens({
-                "client_id": self.client_id,
-                "scope": scope,
-                "token_endpoint": self.configuration["token_endpoint"],
-                "grant_type": grant_type,  # can be used to know an IdToken-less
-                                           # response is for an app or for a user
-                "response": _resp, "params": params, "data": _data,
-                })
-        return resp
-
-    def obtain_token_by_refresh_token(self, token_item, scope=None,
-            rt_getter=lambda token_item: token_item["refresh_token"],
-            on_removing_rt=None,
-            **kwargs):
-        # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
-        """This is an overload which will trigger token storage callbacks.
-
-        :param token_item:
-            A refresh token (RT) item, in flexible format. It can be a string,
-            or a whatever data structure containing RT string and its metadata,
-            in such case the `rt_getter` callable must be able to
-            extract the RT string out from the token item data structure.
-
-            Either way, this token_item will be passed into other callbacks as-is.
-
-        :param scope: If omitted, is treated as equal to the scope originally
-            granted by the resource ownser,
-            according to https://tools.ietf.org/html/rfc6749#section-6
-        :param rt_getter: A callable to translate the token_item to a raw RT string
-        :param on_removing_rt: If absent, fall back to the one defined in initialization
-        """
-        resp = super(Client, self).obtain_token_by_refresh_token(
-            rt_getter(token_item)
-                if not isinstance(token_item, string_types) else token_item,
-            scope=scope,
-            **kwargs)
-        if resp.get('error') == 'invalid_grant':
-            (on_removing_rt or self.on_removing_rt)(token_item)  # Discard old RT
-        if 'refresh_token' in resp:
-            self.on_updating_rt(token_item, resp['refresh_token'])
-        return resp
-
     def obtain_token_by_assertion(
             self, assertion, grant_type, scope=None, **kwargs):
         # type: (bytes, Union[str, None], Union[str, list, set, tuple]) -> dict
@@ -471,4 +430,87 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         data = kwargs.pop("data", {})
         data.update(scope=scope, assertion=encoder(assertion))
         return self._obtain_token(grant_type, data=data, **kwargs)
+
+
+class AbstractClient(AbstractBaseClient):
+    # It contains common code between sync and async Client
+
+    def __init__(self,
+            server_configuration, client_id, session,
+            token_saver=None, rt_remover=None, rt_updater=None,
+            **kwargs):
+        """This client accepts the hooks for token cache behaviors.
+
+        Each hook needs to be a callable when using sync API,
+        or an awaitable when using async API.
+        """
+        super(AbstractClient, self).__init__(
+            server_configuration, client_id, session, **kwargs)
+        self.token_saver = token_saver
+        self.rt_remover = rt_remover
+        self.rt_updater = rt_updater
+
+
+class Client(BaseClient, AbstractClient):
+
+    def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
+        RT = "refresh_token"
+        _data = data.copy()  # to prevent side effect from callback
+        refresh_token = _data.get(RT)
+        resp = super(Client, self)._obtain_token(
+            grant_type, params, _data, *args, **kwargs)
+        if "error" not in resp and self.token_saver:
+            _resp = resp.copy()
+            if grant_type == RT and RT in _resp and isinstance(refresh_token, dict):
+                _resp.pop(RT)  # So we skip it in token_saver(); it will
+                               # be handled in self.obtain_token_by_refresh_token()
+            if "scope" in _resp:
+                scope = _resp["scope"].split()  # It is conceptually a set,
+                    # but we represent it as a list which can be persisted to JSON
+            else:
+                # Note: The scope will generally be absent in authorization grant,
+                #       but our obtain_token_by_authorization_code(...) encourages
+                #       app developer to still explicitly provide a scope here.
+                scope = _data.get("scope")
+            self.token_saver({
+                "client_id": self.client_id,
+                "scope": scope,
+                "token_endpoint": self.configuration["token_endpoint"],
+                "grant_type": grant_type,  # can be used to know an IdToken-less
+                                           # response is for an app or for a user
+                "response": _resp, "params": params, "data": _data,
+                })
+        return resp
+
+    def obtain_token_by_refresh_token(self, token_item, scope=None,
+            rt_getter=lambda token_item: token_item["refresh_token"],
+            rt_remover=None,
+            **kwargs):
+        # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
+        """This is an overload which will trigger token storage callbacks.
+
+        :param token_item:
+            A refresh token (RT) item, in flexible format. It can be a string,
+            or a whatever data structure containing RT string and its metadata,
+            in such case the `rt_getter` callable must be able to
+            extract the RT string out from the token item data structure.
+
+            Either way, this token_item will be passed into other callbacks as-is.
+
+        :param scope: If omitted, is treated as equal to the scope originally
+            granted by the resource ownser,
+            according to https://tools.ietf.org/html/rfc6749#section-6
+        :param rt_getter: A callable to translate the token_item to a raw RT string
+        :param rt_remover: If absent, fall back to the one defined in initialization
+        """
+        resp = super(Client, self).obtain_token_by_refresh_token(
+            rt_getter(token_item)
+                if not isinstance(token_item, string_types) else token_item,
+            scope=scope,
+            **kwargs)
+        if resp.get('error') == 'invalid_grant' and (rt_remover or self.rt_remover):
+            (rt_remover or self.rt_remover)(token_item)  # Discard old RT
+        if 'refresh_token' in resp and self.rt_updater:
+            self.rt_updater(token_item, resp['refresh_token'])
+        return resp
 

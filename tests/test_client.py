@@ -82,13 +82,23 @@ CONFIG = load_conf(os.path.join(THIS_FOLDER, CONFIG_FILENAME)) or {}
 class TestClient(Oauth2TestCase):
 
     @classmethod
+    def _run(cls, result):  # This method will be overridden in subclass for async
+        return result
+
+    def _sleep(self, n):  # This method will be overridden in subclass for async
+        time.sleep(n)
+
+    @classmethod
     def setUpClass(cls):
-        session = requests.Session()
+        cls.client = cls.create_client(Client, requests.Session())
+
+    @classmethod
+    def create_client(cls, ClientClass, session):
         if "client_certificate" in CONFIG:
             private_key_path = CONFIG["client_certificate"]["private_key_path"]
             with open(os.path.join(THIS_FOLDER, private_key_path)) as f:
                 private_key = f.read()  # Expecting PEM format
-            cls.client = Client(
+            return ClientClass(
                 CONFIG["openid_configuration"],
                 CONFIG['client_id'],
                 session,
@@ -100,12 +110,11 @@ class TestClient(Oauth2TestCase):
                         audience=CONFIG["openid_configuration"]["token_endpoint"],
                         issuer=CONFIG["client_id"],
                     ),
-                client_assertion_type=Client.CLIENT_ASSERTION_TYPE_JWT,
+                client_assertion_type=ClientClass.CLIENT_ASSERTION_TYPE_JWT,
                 )
         else:
-            cls.client = Client(
-                CONFIG["openid_configuration"], CONFIG['client_id'],
-                session,
+            return ClientClass(
+                CONFIG["openid_configuration"], CONFIG['client_id'], session,
                 client_secret=CONFIG.get('client_secret'))
 
     @unittest.skipIf(
@@ -113,7 +122,7 @@ class TestClient(Oauth2TestCase):
         "token_endpoint missing")
     @unittest.skipIf("client_secret" not in CONFIG, "client_secret missing")
     def test_client_credentials(self):
-        result = self.client.obtain_token_for_client(CONFIG.get('scope'))
+        result = self._run(self.client.obtain_token_for_client(CONFIG.get('scope')))
         self.assertIn('access_token', result)
 
     @unittest.skipIf(
@@ -123,10 +132,10 @@ class TestClient(Oauth2TestCase):
         not ("username" in CONFIG and "password" in CONFIG),
         "username/password missing")
     def test_username_password(self):
-        result = self.client.obtain_token_by_username_password(
+        result = self._run(self.client.obtain_token_by_username_password(
             CONFIG["username"], CONFIG["password"],
             data={"resource": CONFIG.get("resource")},  # MSFT AAD V1 only
-            scope=CONFIG.get("scope"))
+            scope=CONFIG.get("scope")))
         self.assertLoosely(result)
 
     @unittest.skipUnless(
@@ -142,21 +151,21 @@ class TestClient(Oauth2TestCase):
             redirect_uri=redirect_uri, scope=CONFIG.get("scope"))
         ac = obtain_auth_code(port, auth_uri=auth_request_uri)
         self.assertNotEqual(ac, None)
-        result = self.client.obtain_token_by_authorization_code(
+        result = self._run(self.client.obtain_token_by_authorization_code(
             ac,
             data={
                 "scope": CONFIG.get("scope"),
                 "resource": CONFIG.get("resource"),
                 },  # MSFT AAD only
             nonce=nonce,
-            redirect_uri=redirect_uri)
+            redirect_uri=redirect_uri))
         self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 
     @unittest.skipUnless(
         CONFIG.get("openid_configuration", {}).get("device_authorization_endpoint"),
         "device_authorization_endpoint is missing")
     def test_device_flow(self):
-        flow = self.client.initiate_device_flow(scope=CONFIG.get("scope"))
+        flow = self._run(self.client.initiate_device_flow(scope=CONFIG.get("scope")))
         try:
             msg = ("Use a web browser to open the page {verification_uri} and "
                 "enter the code {user_code} to authenticate.".format(**flow))
@@ -167,7 +176,11 @@ class TestClient(Oauth2TestCase):
         duration = 30
         logger.warning("We will wait up to %d seconds for you to sign in" % duration)
         flow["expires_at"] = time.time() + duration  # Shorten the time for quick test
-        result = self.client.obtain_token_by_device_flow(flow)
+        result = self._run(self.client.obtain_token_by_device_flow(
+            flow,
+            sleeper=self._sleep,
+            data={"code": flow["device_code"]},  # A workaround for one IdP
+            ))
         self.assertLoosely(
                 result,
                 assertion=lambda: self.assertIn('access_token', result),
