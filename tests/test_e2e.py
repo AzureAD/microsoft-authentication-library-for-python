@@ -19,12 +19,12 @@ def _get_app_and_auth_code(
         authority="https://login.microsoftonline.com/common",
         port=44331,
         scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
-        ):
+        **kwargs):
     from msal.oauth2cli.authcode import obtain_auth_code
     app = msal.ClientApplication(client_id, client_secret, authority=authority)
     redirect_uri = "http://localhost:%d" % port
     ac = obtain_auth_code(port, auth_uri=app.get_authorization_request_url(
-        scopes, redirect_uri=redirect_uri))
+        scopes, redirect_uri=redirect_uri, **kwargs))
     assert ac is not None
     return (app, ac, redirect_uri)
 
@@ -124,20 +124,20 @@ class FileBasedTestCase(E2eTestCase):
         self.skipUnlessWithConfig(["client_id", "username", "password", "scope"])
         self._test_username_password(**self.config)
 
-    def _get_app_and_auth_code(self):
+    def _get_app_and_auth_code(self, **kwargs):
         return _get_app_and_auth_code(
             self.config["client_id"],
             client_secret=self.config.get("client_secret"),
             authority=self.config.get("authority"),
             port=self.config.get("listen_port", 44331),
             scopes=self.config["scope"],
-            )
+            **kwargs)
 
-    def test_auth_code(self):
+    def _test_auth_code(self, auth_kwargs, token_kwargs):
         self.skipUnlessWithConfig(["client_id", "scope"])
-        (self.app, ac, redirect_uri) = self._get_app_and_auth_code()
+        (self.app, ac, redirect_uri) = self._get_app_and_auth_code(**auth_kwargs)
         result = self.app.acquire_token_by_authorization_code(
-            ac, self.config["scope"], redirect_uri=redirect_uri)
+            ac, self.config["scope"], redirect_uri=redirect_uri, **token_kwargs)
         logger.debug("%s.cache = %s",
             self.id(), json.dumps(self.app.token_cache._cache, indent=4))
         self.assertIn(
@@ -148,6 +148,18 @@ class FileBasedTestCase(E2eTestCase):
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, self.config["scope"], username=None)
 
+    def test_auth_code(self):
+        self._test_auth_code({}, {})
+
+    def test_auth_code_with_matching_nonce(self):
+        self._test_auth_code({"nonce": "foo"}, {"nonce": "foo"})
+
+    def test_auth_code_with_mismatching_nonce(self):
+        self.skipUnlessWithConfig(["client_id", "scope"])
+        (self.app, ac, redirect_uri) = self._get_app_and_auth_code(nonce="foo")
+        with self.assertRaises(ValueError):
+            self.app.acquire_token_by_authorization_code(
+                ac, self.config["scope"], redirect_uri=redirect_uri, nonce="bar")
 
     def test_ssh_cert(self):
         self.skipUnlessWithConfig(["client_id", "scope"])
