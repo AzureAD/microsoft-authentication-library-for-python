@@ -133,12 +133,11 @@ class FileBasedTestCase(E2eTestCase):
             scopes=self.config["scope"],
             **kwargs)
 
-    def test_auth_code(self):
+    def _test_auth_code(self, auth_kwargs, token_kwargs):
         self.skipUnlessWithConfig(["client_id", "scope"])
-        nonce = "foo"
-        (self.app, ac, redirect_uri) = self._get_app_and_auth_code(nonce=nonce)
+        (self.app, ac, redirect_uri) = self._get_app_and_auth_code(**auth_kwargs)
         result = self.app.acquire_token_by_authorization_code(
-            ac, self.config["scope"], redirect_uri=redirect_uri, nonce=nonce)
+            ac, self.config["scope"], redirect_uri=redirect_uri, **token_kwargs)
         logger.debug("%s.cache = %s",
             self.id(), json.dumps(self.app.token_cache._cache, indent=4))
         self.assertIn(
@@ -149,6 +148,18 @@ class FileBasedTestCase(E2eTestCase):
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, self.config["scope"], username=None)
 
+    def test_auth_code(self):
+        self._test_auth_code({}, {})
+
+    def test_auth_code_with_matching_nonce(self):
+        self._test_auth_code({"nonce": "foo"}, {"nonce": "foo"})
+
+    def test_auth_code_with_mismatching_nonce(self):
+        self.skipUnlessWithConfig(["client_id", "scope"])
+        (self.app, ac, redirect_uri) = self._get_app_and_auth_code(nonce="foo")
+        with self.assertRaises(ValueError):
+            self.app.acquire_token_by_authorization_code(
+                ac, self.config["scope"], redirect_uri=redirect_uri, nonce="bar")
 
     def test_ssh_cert(self):
         self.skipUnlessWithConfig(["client_id", "scope"])
