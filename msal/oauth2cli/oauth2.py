@@ -1,7 +1,7 @@
 """This OAuth2 client implementation aims to be spec-compliant, and generic."""
 # OAuth2 spec https://tools.ietf.org/html/rfc6749
-import json
 
+import json
 try:
     from urllib.parse import urlencode, parse_qs
 except ImportError:
@@ -12,7 +12,6 @@ import warnings
 import time
 import base64
 import sys
-from .default_http_client import DefaultHttpClient
 
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
 
@@ -132,6 +131,10 @@ class BaseClient(object):
         if _data.get('scope'):
             _data['scope'] = self._stringify(_data['scope'])
 
+        _headers = {'Accept': 'application/json'}
+        _headers.update(self.default_headers)
+        _headers.update(headers or {})
+
         # Quoted from https://tools.ietf.org/html/rfc6749#section-2.3.1
         # Clients in possession of a client password MAY use the HTTP Basic
         # authentication.
@@ -139,22 +142,27 @@ class BaseClient(object):
         # the authorization server MAY support including the
         # client credentials in the request-body using the following
         # parameters: client_id, client_secret.
-        auth = None
         if self.client_secret and self.client_id:
-            auth = (self.client_id, self.client_secret)  # for HTTP Basic Auth
+            _headers["Authorization"] = "Basic " + base64.b64encode(
+                "{}:{}".format(self.client_id, self.client_secret)
+                .encode("ascii")).decode("ascii")
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
-        _headers = {'Accept': 'application/json'}
-        _headers.update(self.default_headers)
-        _headers.update(headers or {})
         resp = (post or self.http_client.post)(self.configuration["token_endpoint"],
-            headers=_headers, params=params, data=_data, auth=auth,
-            timeout=timeout or self.timeout,
+            headers=_headers, params=params, data=_data, timeout=timeout or self.timeout,
             **kwargs)
         if resp.status_code >= 500:
             resp.raise_for_status()
-        return json.loads(resp.text)
+        try:
+            # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
+            # even an error response will be a valid json structure,
+            # so we simply return it here, without needing to invent an exception.
+            return json.loads(resp.text)
+        except ValueError:
+            self.logger.exception(
+                    "Token response is not in json format: %s", resp.text)
+            raise
 
     def obtain_token_by_refresh_token(self, refresh_token, scope=None, **kwargs):
         # type: (str, Union[str, list, set, tuple]) -> dict
@@ -210,9 +218,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
         resp = self.http_client.post(self.configuration[DAE],
-                                                   data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-                                                  timeout=timeout or self.timeout,
-                                                  **kwargs)
+            data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
+            timeout=timeout or self.timeout, **kwargs)
         flow = json.loads(resp.text)
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))

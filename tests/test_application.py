@@ -77,21 +77,21 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
     def test_acquire_token_silent_will_suppress_error(self):
         error_response = '{"error": "invalid_grant", "suberror": "xyz"}'
         def tester(url, **kwargs):
-            return Response(400, error_response, '')
+            return Mock(status_code=400, text=error_response)
         self.assertEqual(None, self.app.acquire_token_silent(
             self.scopes, self.account, post=tester))
 
     def test_acquire_token_silent_with_error_will_return_error(self):
         error_response = '{"error": "invalid_grant", "error_description": "xyz"}'
         def tester(url, **kwargs):
-            return Response(400, error_response, '')
+            return Mock(status_code=400, text=error_response)
         self.assertEqual(json.loads(error_response), self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester))
 
     def test_atswe_will_map_some_suberror_to_classification_as_is(self):
         error_response = '{"error": "invalid_grant", "suberror": "basic_action"}'
         def tester(url, **kwargs):
-            return Response(400, error_response, '')
+            return Mock(status_code=400, text=error_response)
         result = self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester)
         self.assertEqual("basic_action", result.get("classification"))
@@ -99,7 +99,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
     def test_atswe_will_map_some_suberror_to_classification_to_empty_string(self):
         error_response = '{"error": "invalid_grant", "suberror": "client_mismatch"}'
         def tester(url, **kwargs):
-            return Response(400, error_response, '')
+            return Mock(status_code=400, text=error_response)
         result = self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester)
         self.assertEqual("", result.get("classification"))
@@ -133,7 +133,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         error_response = '{"error": "invalid_grant","error_description": "Was issued to another client"}'
         def tester(url, data=None, **kwargs):
             self.assertEqual(self.frt, data.get("refresh_token"), "Should attempt the FRT")
-            return Response(400, error_response, '')
+            return Mock(status_code=400, text=error_response)
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self.authority, self.scopes, self.account, post=tester)
         self.assertNotEqual([], app.token_cache.find(
@@ -154,7 +154,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         def tester(url, data=None, **kwargs):
             self.assertEqual(rt, data.get("refresh_token"), "Should attempt the RT")
-            return Response(200, '{}', '')
+            return Mock(status_code=200, text='{}')
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self.authority, self.scopes, self.account, post=tester)
 
@@ -162,9 +162,9 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         def tester(url, data=None, **kwargs):
             self.assertEqual(
                 self.frt, data.get("refresh_token"), "Should attempt the FRT")
-            return Response(
-                200, json.dumps(TokenCacheTestCase.build_response(
-                uid=self.uid, utid=self.utid, foci="1", access_token="at")), '')
+            return Mock(
+                status_code=200, text=json.dumps(TokenCacheTestCase.build_response(
+                uid=self.uid, utid=self.utid, foci="1", access_token="at")))
         app = ClientApplication(
             "unknown_family_app", authority=self.authority_url, token_cache=self.cache)
         at = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(

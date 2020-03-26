@@ -1,7 +1,4 @@
 import json
-
-from .oauth2cli.default_http_client import DefaultHttpClient
-
 try:
     from urllib.parse import urlparse
 except ImportError:  # Fall back to Python 2
