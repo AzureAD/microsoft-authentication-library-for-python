@@ -1,4 +1,5 @@
 import json
+import requests
 import time
 try:  # Python 2
     from urlparse import urljoin
@@ -9,7 +10,7 @@ import sys
 import warnings
 import uuid
 
-from .oauth2cli import Client, JwtAssertionCreator, DefaultHttpClient
+from .oauth2cli import Client, JwtAssertionCreator
 from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
@@ -162,7 +163,12 @@ class ClientApplication(object):
         self.client_id = client_id
         self.client_credential = client_credential
         self.client_claims = client_claims
-        self.http_client = http_client if http_client else DefaultHttpClient(verify=verify, proxies=proxies)
+        if http_client:
+            self.http_client = http_client
+        else:
+            self.http_client = requests.Session()
+            self.http_client.verify = verify
+            self.http_client.proxies = proxies
         self.timeout = timeout
         self.app_name = app_name
         self.app_version = app_version

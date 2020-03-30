@@ -4,4 +4,3 @@ from .oidc import Client
 from .assertion import JwtAssertionCreator
 from .assertion import JwtSigner  # Obsolete. For backward compatibility.
 from .http import HttpClient
-from .default_http_client import DefaultHttpClient

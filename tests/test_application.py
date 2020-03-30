@@ -7,11 +7,10 @@ except:
     from mock import *  # Need an external mock package
 
 from msal.application import *
-from msal.oauth2cli.default_http_client import Response
 import msal
 from tests import unittest
 from tests.test_token_cache import TokenCacheTestCase
-
+import requests
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -47,9 +46,8 @@ class TestHelperExtractCerts(unittest.TestCase):  # It is used by SNI scenario
 class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
 
     def setUp(self):
-        self.http_client = DefaultHttpClient()
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(self.authority_url, http_client= self.http_client)
+        self.authority = msal.authority.Authority(self.authority_url, http_client= requests.Session())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -66,7 +64,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
                 uid=self.uid, utid=self.utid, refresh_token=self.rt),
             })  # The add(...) helper populates correct home_account_id for future searching
         self.app = ClientApplication(
-            self.client_id, authority=self.authority_url, token_cache=self.cache, http_client=self.http_client)
+            self.client_id, authority=self.authority_url, token_cache=self.cache)
 
     def test_cache_empty_will_be_returned_as_None(self):
         self.assertEqual(
@@ -108,7 +106,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(self.authority_url, DefaultHttpClient())
+        self.authority = msal.authority.Authority(self.authority_url, requests.Session())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"

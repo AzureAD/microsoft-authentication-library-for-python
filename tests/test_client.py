@@ -11,7 +11,6 @@ import requests
 
 from msal.oauth2cli import Client, JwtSigner
 from msal.oauth2cli.authcode import obtain_auth_code
-from msal.oauth2cli.default_http_client import DefaultHttpClient
 from tests import unittest, Oauth2TestCase
 
 
@@ -100,13 +99,13 @@ class TestClient(Oauth2TestCase):
                         issuer=CONFIG["client_id"],
                     ),
                 client_assertion_type=Client.CLIENT_ASSERTION_TYPE_JWT,
-                http_client=DefaultHttpClient()
+                http_client=requests.Session()
                 )
         else:
             cls.client = Client(
                 CONFIG["openid_configuration"], CONFIG['client_id'],
                 client_secret=CONFIG.get('client_secret'),
-                http_client=DefaultHttpClient())
+                http_client=requests.Session())
 
     @unittest.skipIf(
         "token_endpoint" not in CONFIG.get("openid_configuration", {}),
