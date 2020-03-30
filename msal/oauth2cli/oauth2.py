@@ -122,9 +122,7 @@ class BaseClient(object):
 
         _data.update(self.default_body)  # It may contain authen parameters
         _data.update(data or {})  # So the content in data param prevails
-        filtered = {k: v for k, v in _data.items() if v is not None}
-        _data.clear()
-        _data.update(filtered)
+        _data = {k: v for k, v in _data.items() if v}
         # We will have to clean up None values here,
         # because we can have some libraries not supporting cleaning of None values.
 
@@ -153,7 +151,7 @@ class BaseClient(object):
             headers=_headers, params=params, data=_data, timeout=timeout or self.timeout,
             **kwargs)
         if resp.status_code >= 500:
-            resp.raise_for_status()
+            resp.raise_for_status()  # TODO: Will probably retry here
         try:
             # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
             # even an error response will be a valid json structure,
