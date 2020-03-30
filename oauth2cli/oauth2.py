@@ -40,7 +40,6 @@ class BaseClient(object):
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
-            timeout=None,  # type: Union[tuple, float, None]
             ):
         """Initialize a client object to talk all the OAuth2 grants to the server.
 
@@ -75,6 +74,16 @@ class BaseClient(object):
                 you could choose to set this as {"client_secret": "your secret"}
                 if your authorization server wants it to be in the request body
                 (rather than in the request header).
+
+        There is no session-wide `timeout` parameter defined here.
+        The timeout behavior is different among different http clients you pick.
+        If you happen to use Requests, it chose to not support session-wide timeout
+        (https://github.com/psf/requests/issues/3341), but you can patch that by:
+
+            s = requests.Session()
+            s.request = functools.partial(s.request, timeout=3)
+
+        and then feed that patched session instance to this class.
         """
         self.configuration = server_configuration
         self.client_id = client_id
@@ -86,7 +95,6 @@ class BaseClient(object):
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
         self.session = session
-        self.timeout = timeout
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -107,7 +115,6 @@ class BaseClient(object):
             params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
-            timeout=None,
             post=None,  # A callable to replace requests.post(), for testing.
                         # Such as: lambda url, **kwargs:
                         #   Mock(status_code=200, json=Mock(return_value={}))
@@ -151,7 +158,6 @@ class BaseClient(object):
         resp = (post or self.session.post)(
             self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data,
-            timeout=timeout or self.timeout,
             **kwargs)
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
@@ -200,7 +206,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
 
 
-    def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
+    def initiate_device_flow(self, scope=None, **kwargs):
         # type: (list, **dict) -> dict
         # The naming of this method is following the wording of this specs
         # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
@@ -220,7 +226,6 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             raise ValueError("You need to provide device authorization endpoint")
         resp = self.session.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-            timeout=timeout or self.timeout,
             headers=dict(self.default_headers, **kwargs.pop("headers", {})),
             **kwargs)
         flow = json.loads(resp.text)
