@@ -1,6 +1,7 @@
 """This OAuth2 client implementation aims to be spec-compliant, and generic."""
 # OAuth2 spec https://tools.ietf.org/html/rfc6749
 
+import json
 try:
     from urllib.parse import urlencode, parse_qs
 except ImportError:
@@ -11,8 +12,6 @@ import warnings
 import time
 import base64
 import sys
-
-import requests
 
 
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
@@ -35,14 +34,12 @@ class BaseClient(object):
             self,
             server_configuration,  # type: dict
             client_id,  # type: str
+            session,  # type: http.HttpClient
             client_secret=None,  # type: Optional[str]
             client_assertion=None,  # type: Union[bytes, callable, None]
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
-            verify=True,  # type: Union[str, True, False, None]
-            proxies=None,  # type: Optional[dict]
-            timeout=None,  # type: Union[tuple, float, None]
             ):
         """Initialize a client object to talk all the OAuth2 grants to the server.
 
@@ -57,6 +54,7 @@ class BaseClient(object):
                 or
                 https://example.com/.../.well-known/openid-configuration
             client_id (str): The client's id, issued by the authorization server
+            session (object): An http.HttpClien-like object, e.g. requests.Session
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (bytes, callable):
                 The client assertion to authenticate this client, per RFC 7521.
@@ -76,20 +74,27 @@ class BaseClient(object):
                 you could choose to set this as {"client_secret": "your secret"}
                 if your authorization server wants it to be in the request body
                 (rather than in the request header).
+
+        There is no session-wide `timeout` parameter defined here.
+        The timeout behavior is different among different http clients you pick.
+        If you happen to use Requests, it chose to not support session-wide timeout
+        (https://github.com/psf/requests/issues/3341), but you can patch that by:
+
+            s = requests.Session()
+            s.request = functools.partial(s.request, timeout=3)
+
+        and then feed that patched session instance to this class.
         """
         self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
         self.client_assertion = client_assertion
+        self.default_headers = default_headers or {}
         self.default_body = default_body or {}
         if client_assertion_type is not None:
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
-        self.session = s = requests.Session()
-        s.headers.update(default_headers or {})
-        s.verify = verify
-        s.proxies = proxies or {}
-        self.timeout = timeout
+        self.session = session
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -110,7 +115,6 @@ class BaseClient(object):
             params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
-            timeout=None,
             post=None,  # A callable to replace requests.post(), for testing.
                         # Such as: lambda url, **kwargs:
                         #   Mock(status_code=200, json=Mock(return_value={}))
@@ -128,10 +132,14 @@ class BaseClient(object):
 
         _data.update(self.default_body)  # It may contain authen parameters
         _data.update(data or {})  # So the content in data param prevails
-        # We don't have to clean up None values here, because requests lib will.
+        _data = {k: v for k, v in _data.items() if v}  # Clean up None values
 
         if _data.get('scope'):
             _data['scope'] = self._stringify(_data['scope'])
+
+        _headers = {'Accept': 'application/json'}
+        _headers.update(self.default_headers)
+        _headers.update(headers or {})
 
         # Quoted from https://tools.ietf.org/html/rfc6749#section-2.3.1
         # Clients in possession of a client password MAY use the HTTP Basic
@@ -140,18 +148,16 @@ class BaseClient(object):
         # the authorization server MAY support including the
         # client credentials in the request-body using the following
         # parameters: client_id, client_secret.
-        auth = None
         if self.client_secret and self.client_id:
-            auth = (self.client_id, self.client_secret)  # for HTTP Basic Auth
+            _headers["Authorization"] = "Basic " + base64.b64encode(
+                "{}:{}".format(self.client_id, self.client_secret)
+                .encode("ascii")).decode("ascii")
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
-        _headers = {'Accept': 'application/json'}
-        _headers.update(headers or {})
         resp = (post or self.session.post)(
             self.configuration["token_endpoint"],
-            headers=_headers, params=params, data=_data, auth=auth,
-            timeout=timeout or self.timeout,
+            headers=_headers, params=params, data=_data,
             **kwargs)
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
@@ -159,7 +165,7 @@ class BaseClient(object):
             # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
             # even an error response will be a valid json structure,
             # so we simply return it here, without needing to invent an exception.
-            return resp.json()
+            return json.loads(resp.text)
         except ValueError:
             self.logger.exception(
                     "Token response is not in json format: %s", resp.text)
@@ -200,7 +206,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
 
 
-    def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
+    def initiate_device_flow(self, scope=None, **kwargs):
         # type: (list, **dict) -> dict
         # The naming of this method is following the wording of this specs
         # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
@@ -218,10 +224,11 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        flow = self.session.post(self.configuration[DAE],
+        resp = self.session.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-            timeout=timeout or self.timeout,
-            **kwargs).json()
+            headers=dict(self.default_headers, **kwargs.pop("headers", {})),
+            **kwargs)
+        flow = json.loads(resp.text)
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
         flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
@@ -381,12 +388,12 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         return self._obtain_token("client_credentials", data=data, **kwargs)
 
     def __init__(self,
-            server_configuration, client_id,
+            server_configuration, client_id, session,
             on_obtaining_tokens=lambda event: None,  # event is defined in _obtain_token(...)
             on_removing_rt=lambda token_item: None,
             on_updating_rt=lambda token_item, new_rt: None,
             **kwargs):
-        super(Client, self).__init__(server_configuration, client_id, **kwargs)
+        super(Client, self).__init__(server_configuration, client_id, session, **kwargs)
         self.on_obtaining_tokens = on_obtaining_tokens
         self.on_removing_rt = on_removing_rt
         self.on_updating_rt = on_updating_rt
