@@ -102,6 +102,32 @@ class E2eTestCase(unittest.TestCase):
             username=username if ".b2clogin.com" not in authority else None,
             )
 
+    def _test_device_code(
+            self, client_id=None, authority=None, scope=None, **ignored):
+        assert client_id and authority and scope
+        self.app = msal.PublicClientApplication(
+            client_id, authority=authority)
+        flow = self.app.initiate_device_flow(scopes=scope)
+        assert "user_code" in flow, "DF does not seem to be provisioned: %s".format(
+            json.dumps(flow, indent=4))
+        logger.info(flow["message"])
+
+        duration = 60
+        logger.info("We will wait up to %d seconds for you to sign in" % duration)
+        flow["expires_at"] = min(  # Shorten the time for quick test
+            flow["expires_at"], time.time() + duration)
+        result = self.app.acquire_token_by_device_flow(flow)
+        self.assertLoosely(  # It will skip this test if there is no user interaction
+            result,
+            assertion=lambda: self.assertIn('access_token', result),
+            skippable_errors=self.app.client.DEVICE_FLOW_RETRIABLE_ERRORS)
+        if "access_token" not in result:
+            self.skip("End user did not complete Device Flow in time")
+        self.assertCacheWorksForUser(result, scope, username=None)
+        result["access_token"] = result["refresh_token"] = "************"
+        logger.info(
+            "%s obtained tokens: %s", self.id(), json.dumps(result, indent=4))
+
 
 THIS_FOLDER = os.path.dirname(__file__)
 CONFIG = os.path.join(THIS_FOLDER, "config.json")
@@ -244,29 +270,7 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
             cls.config = json.load(f)
 
     def test_device_flow(self):
-        scopes = self.config["scope"]
-        self.app = msal.PublicClientApplication(
-            self.config['client_id'], authority=self.config["authority"])
-        flow = self.app.initiate_device_flow(scopes=scopes)
-        assert "user_code" in flow, "DF does not seem to be provisioned: %s".format(
-            json.dumps(flow, indent=4))
-        logger.info(flow["message"])
-
-        duration = 60
-        logger.info("We will wait up to %d seconds for you to sign in" % duration)
-        flow["expires_at"] = min(  # Shorten the time for quick test
-            flow["expires_at"], time.time() + duration)
-        result = self.app.acquire_token_by_device_flow(flow)
-        self.assertLoosely(  # It will skip this test if there is no user interaction
-            result,
-            assertion=lambda: self.assertIn('access_token', result),
-            skippable_errors=self.app.client.DEVICE_FLOW_RETRIABLE_ERRORS)
-        if "access_token" not in result:
-            self.skip("End user did not complete Device Flow in time")
-        self.assertCacheWorksForUser(result, scopes, username=None)
-        result["access_token"] = result["refresh_token"] = "************"
-        logger.info(
-            "%s obtained tokens: %s", self.id(), json.dumps(result, indent=4))
+        self._test_device_code(**self.config)
 
 
 def get_lab_app(
@@ -323,7 +327,7 @@ class LabBasedTestCase(E2eTestCase):
         cls.session.close()
 
     @classmethod
-    def get_lab_app_object(cls, **query ): # https://msidlab.com/swagger/index.html
+    def get_lab_app_object(cls, **query): # https://msidlab.com/swagger/index.html
         url = "https://msidlab.com/api/app"
         resp = cls.session.get(url, params=query)
         return resp.json()[0]
@@ -342,31 +346,29 @@ class LabBasedTestCase(E2eTestCase):
     def get_lab_user(cls, **query):  # https://docs.msidlab.com/labapi/userapi.html
         resp = cls.session.get("https://msidlab.com/api/user", params=query)
         result = resp.json()[0]
-        authority_base = "https://login.microsoftonline.com/"
-        graph_endpoint = "https://graph.microsoft.com/.default"
-        if "azureenvironment" in query and query["azureenvironment"] == "azureusgovernment":
-            authority_base = "https://login.microsoftonline.us/"
-            graph_endpoint = "https://graph.microsoft.us/.default"
+        _env = query.get("azureenvironment", "").lower()
+        authority_base = {
+            "azureusgovernment": "https://login.microsoftonline.us/"
+        }.get(_env, "https://login.microsoftonline.com/")
+        scope = {
+            "azureusgovernment": ["https://graph.microsoft.us/.default"],
+        }.get(_env, ["https://graph.microsoft.com/.default"])
         return {  # Mapping lab API response to our simplified configuration format
             "authority": authority_base + result["tenantID"],
             "client_id": result["appId"],
             "username": result["upn"],
             "lab_name": result["labName"],
-            "scope": [graph_endpoint],
+            "scope": scope,
             }
 
-    def _test_username_password_lab(self, config):
-        self._test_username_password(**config)
-
-    def _test_acquire_token_by_auth_code_lab(self, config):
+    def _test_acquire_token_by_auth_code(
+            self, client_id=None, authority=None, port=None, scope=None,
+            **ignored):
+        assert client_id and authority and port and scope
         (self.app, ac, redirect_uri) = _get_app_and_auth_code(
-            config["client_id"],
-            authority=config["authority"],
-            port=config["port"],
-            scopes=config["scope"],
-            )
+            client_id, authority, port, scope)
         result = self.app.acquire_token_by_authorization_code(
-            ac, config["scopes"], redirect_uri=redirect_uri)
+            ac, scope, redirect_uri=redirect_uri)
         logger.debug(
             "%s: cache = %s, id_token_claims = %s",
             self.id(),
@@ -379,9 +381,9 @@ class LabBasedTestCase(E2eTestCase):
                 # Note: No interpolation here, cause error won't always present
                 error=result.get("error"),
                 error_description=result.get("error_description")))
-        self.assertCacheWorksForUser(result, config["scopes"], username=None)
+        self.assertCacheWorksForUser(result, scope, username=None)
 
-    def _test_acquire_token_obo_lab(self, config_pca, config_cca):
+    def _test_acquire_token_obo(self, config_pca, config_cca):
         # 1. An app obtains a token representing a user, for our mid-tier service
         pca = msal.PublicClientApplication(
             config_pca["client_id"], authority=config_pca["authority"])
@@ -420,37 +422,14 @@ class LabBasedTestCase(E2eTestCase):
             result = cca.acquire_token_silent(config_cca["scope"], account)
             self.assertEqual(cca_result["access_token"], result["access_token"])
 
-    def _test_acquire_token_by_client_secret_lab(self, config):
-        app = msal.ConfidentialClientApplication(config["client_id"],
-                                                 client_credential=config["client_secret"],
-                                           authority=config["authority"],
-                                           )
-        result = app.acquire_token_for_client(config["scope"])
-        self.assertNotEqual(None, result.get("access_token"), str(result))
-
-    def _test_acquire_token_device_code_lab(self, config):
-        self.app = msal.PublicClientApplication(
-            config['client_id'], authority=config["authority"])
-        flow = self.app.initiate_device_flow(scopes=config["scope"])
-        assert "user_code" in flow, "DF does not seem to be provisioned: %s".format(
-            json.dumps(flow, indent=4))
-        logger.info(flow["message"])
-
-        duration = 60
-        logger.info("We will wait up to %d seconds for you to sign in" % duration)
-        flow["expires_at"] = min(  # Shorten the time for quick test
-            flow["expires_at"], time.time() + duration)
-        result = self.app.acquire_token_by_device_flow(flow)
-        self.assertLoosely(  # It will skip this test if there is no user interaction
-            result,
-            assertion=lambda: self.assertIn('access_token', result),
-            skippable_errors=self.app.client.DEVICE_FLOW_RETRIABLE_ERRORS)
-        if "access_token" not in result:
-            self.skip("End user did not complete Device Flow in time")
-        self.assertCacheWorksForUser(result, config["scope"], username=None)
-        result["access_token"] = result["refresh_token"] = "************"
-        logger.info(
-            "%s obtained tokens: %s", self.id(), json.dumps(result, indent=4))
+    def _test_acquire_token_by_client_secret(
+            self, client_id=None, client_secret=None, authority=None, scope=None,
+            **ignored):
+        assert client_id and client_secret and authority and scope
+        app = msal.ConfidentialClientApplication(
+            client_id, client_credential=client_secret, authority=authority)
+        result = app.acquire_token_for_client(scope)
+        self.assertIsNotNone(result.get("access_token"), "Got %s instead" % result)
 
 
 class WorldWideTestCase(LabBasedTestCase):
@@ -458,27 +437,27 @@ class WorldWideTestCase(LabBasedTestCase):
     def test_aad_managed_user(self):  # Pure cloud
         config = self.get_lab_user(usertype="cloud")
         config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password_lab(config)
+        self._test_username_password(**config)
 
     def test_adfs4_fed_user(self):
         config = self.get_lab_user(usertype="federated", federationProvider="ADFSv4")
         config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password_lab(config)
+        self._test_username_password(**config)
 
     def test_adfs3_fed_user(self):
         config = self.get_lab_user(usertype="federated", federationProvider="ADFSv3")
         config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password_lab(config)
+        self._test_username_password(**config)
 
     def test_adfs2_fed_user(self):
         config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2")
         config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password_lab(config)
+        self._test_username_password(**config)
 
     def test_adfs2019_fed_user(self):
         config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2019")
         config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password_lab(config)
+        self._test_username_password(**config)
 
     def test_ropc_adfs2019_onprem(self):
         # Configuration is derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.7.0/tests/Microsoft.Identity.Test.Common/TestConstants.cs#L250-L259
@@ -487,7 +466,7 @@ class WorldWideTestCase(LabBasedTestCase):
         config["client_id"] = "PublicClientId"
         config["scope"] = self.adfs2019_scopes
         config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password_lab(config)
+        self._test_username_password(**config)
 
     @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_adfs2019_onprem_acquire_token_by_auth_code(self):
@@ -502,7 +481,7 @@ class WorldWideTestCase(LabBasedTestCase):
         config["client_id"] = "PublicClientId"
         config["scope"] = self.adfs2019_scopes
         config["port"] = 8080
-        self._test_acquire_token_by_auth_code_lab(config)
+        self._test_acquire_token_by_auth_code(**config)
 
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CLIENT_SECRET"),
@@ -522,7 +501,7 @@ class WorldWideTestCase(LabBasedTestCase):
         config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
         config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
 
-        self._test_acquire_token_obo_lab(config_pca, config_cca)
+        self._test_acquire_token_obo(config_pca, config_cca)
 
     def _build_b2c_authority(self, policy):
         base = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com"
@@ -540,46 +519,47 @@ class WorldWideTestCase(LabBasedTestCase):
         config = {"authority": self._build_b2c_authority("B2C_1_SignInPolicy"),
                   "client_id": "b876a048-55a5-4fc5-9403-f5d90cb1c852",
                   "scope": ["https://msidlabb2c.onmicrosoft.com/msaapp/user_impersonation"], "port": 3843}
-        self._test_acquire_token_by_auth_code_lab(config)
+        self._test_acquire_token_by_auth_code(**config)
 
     def test_b2c_acquire_token_by_ropc(self):
         config = {"authority": self._build_b2c_authority("B2C_1_ROPC_Auth"),
                   "client_id": "e3b9ad76-9763-4827-b088-80c7a7888f79",
                   "username": "b2clocal@msidlabb2c.onmicrosoft.com", "password": self.get_lab_user_secret("msidlabb2c"),
                   "scope": ["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"]}
-        self._test_username_password_lab(config)
+        self._test_username_password(**config)
 
 
-class SovereignCloudTestCase(LabBasedTestCase):
+class ArlingtonCloudTestCase(LabBasedTestCase):
+    environment = "azureusgovernment"
 
     def test_arlington_acquire_token_by_ropc(self):
-        config = self.get_lab_user(azureenvironment="azureusgovernment")
+        config = self.get_lab_user(azureenvironment=self.environment)
         config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password_lab(config)
+        self._test_username_password(**config)
 
     def test_arlington_acquire_token_by_client_secret(self):
-        config = self.get_lab_user(usertype="cloud", azureenvironment="azureusgovernment", publicClient="no")
+        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
         config["client_secret"] = self.get_lab_user_secret("ARLMSIDLAB1-IDLASBS-App-CC-Secret")
-        self._test_acquire_token_by_client_secret_lab(config)
+        self._test_acquire_token_by_client_secret(**config)
 
     def test_arlington_acquire_token_obo(self):
         config_cca = self.get_lab_user(
-            usertype="cloud", azureenvironment="azureusgovernment", publicClient="no")
+            usertype="cloud", azureenvironment=self.environment, publicClient="no")
         config_cca["scope"] = ["https://graph.microsoft.us/.default"]
         config_cca["client_secret"] = self.get_lab_user_secret("ARLMSIDLAB1-IDLASBS-App-CC-Secret")
 
-        config_pca = self.get_lab_user(usertype="cloud", azureenvironment="azureusgovernment", publicClient="yes")
+        config_pca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         obo_app_object = self.get_lab_app_object(
-            usertype="cloud", azureenvironment="azureusgovernment", publicClient="no")
+            usertype="cloud", azureenvironment=self.environment, publicClient="no")
         config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
         config_pca["scope"] = ["{app_uri}/files.read".format(app_uri=obo_app_object.get("identifierUris"))]
 
-        self._test_acquire_token_obo_lab(config_pca, config_cca)
+        self._test_acquire_token_obo(config_pca, config_cca)
 
     def test_arlington_acquire_token_device_code(self):
-        config = self.get_lab_user(usertype="cloud", azureenvironment="azureusgovernment", publicClient="yes")
+        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config["scope"] = ["user.read"]
-        self._test_acquire_token_device_code_lab(config)
+        self._test_device_code(**config)
 
 
 if __name__ == "__main__":
