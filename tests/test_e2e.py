@@ -102,7 +102,7 @@ class E2eTestCase(unittest.TestCase):
             username=username if ".b2clogin.com" not in authority else None,
             )
 
-    def _test_device_code(
+    def _test_device_flow(
             self, client_id=None, authority=None, scope=None, **ignored):
         assert client_id and authority and scope
         self.app = msal.PublicClientApplication(
@@ -270,7 +270,7 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
             cls.config = json.load(f)
 
     def test_device_flow(self):
-        self._test_device_code(**self.config)
+        self._test_device_flow(**self.config)
 
 
 def get_lab_app(
@@ -327,7 +327,7 @@ class LabBasedTestCase(E2eTestCase):
         cls.session.close()
 
     @classmethod
-    def get_lab_app_object(cls, **query): # https://msidlab.com/swagger/index.html
+    def get_lab_app_object(cls, **query):  # https://msidlab.com/swagger/index.html
         url = "https://msidlab.com/api/app"
         resp = cls.session.get(url, params=query)
         return resp.json()[0]
@@ -349,10 +349,10 @@ class LabBasedTestCase(E2eTestCase):
         _env = query.get("azureenvironment", "").lower()
         authority_base = {
             "azureusgovernment": "https://login.microsoftonline.us/"
-        }.get(_env, "https://login.microsoftonline.com/")
+            }.get(_env, "https://login.microsoftonline.com/")
         scope = {
             "azureusgovernment": ["https://graph.microsoft.us/.default"],
-        }.get(_env, ["https://graph.microsoft.com/.default"])
+            }.get(_env, ["https://graph.microsoft.com/.default"])
         return {  # Mapping lab API response to our simplified configuration format
             "authority": authority_base + result["tenantID"],
             "client_id": result["appId"],
@@ -366,7 +366,7 @@ class LabBasedTestCase(E2eTestCase):
             **ignored):
         assert client_id and authority and port and scope
         (self.app, ac, redirect_uri) = _get_app_and_auth_code(
-            client_id, authority, port, scope)
+            client_id, authority=authority, port=port, scopes=scope)
         result = self.app.acquire_token_by_authorization_code(
             ac, scope, redirect_uri=redirect_uri)
         logger.debug(
@@ -516,17 +516,20 @@ class WorldWideTestCase(LabBasedTestCase):
                 # This won't work https://msidlab.com/api/user?usertype=b2c
             password="***"  # From https://aka.ms/GetLabUserSecret?Secret=msidlabb2c
         """
-        config = {"authority": self._build_b2c_authority("B2C_1_SignInPolicy"),
-                  "client_id": "b876a048-55a5-4fc5-9403-f5d90cb1c852",
-                  "scope": ["https://msidlabb2c.onmicrosoft.com/msaapp/user_impersonation"], "port": 3843}
-        self._test_acquire_token_by_auth_code(**config)
+        self._test_acquire_token_by_auth_code(
+            authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
+            client_id="b876a048-55a5-4fc5-9403-f5d90cb1c852", port=3843,
+            scope=["https://msidlabb2c.onmicrosoft.com/msaapp/user_impersonation"]
+            )
 
     def test_b2c_acquire_token_by_ropc(self):
-        config = {"authority": self._build_b2c_authority("B2C_1_ROPC_Auth"),
-                  "client_id": "e3b9ad76-9763-4827-b088-80c7a7888f79",
-                  "username": "b2clocal@msidlabb2c.onmicrosoft.com", "password": self.get_lab_user_secret("msidlabb2c"),
-                  "scope": ["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"]}
-        self._test_username_password(**config)
+        self._test_username_password(
+            authority=self._build_b2c_authority("B2C_1_ROPC_Auth"),
+            client_id="e3b9ad76-9763-4827-b088-80c7a7888f79",
+            username="b2clocal@msidlabb2c.onmicrosoft.com",
+            password=self.get_lab_user_secret("msidlabb2c"),
+            scope=["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"]
+            )
 
 
 class ArlingtonCloudTestCase(LabBasedTestCase):
@@ -556,10 +559,10 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
 
         self._test_acquire_token_obo(config_pca, config_cca)
 
-    def test_arlington_acquire_token_device_code(self):
+    def test_arlington_acquire_token_device_flow(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config["scope"] = ["user.read"]
-        self._test_device_code(**config)
+        self._test_device_flow(**config)
 
 
 if __name__ == "__main__":
