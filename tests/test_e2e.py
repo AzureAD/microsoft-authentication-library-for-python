@@ -535,17 +535,17 @@ class WorldWideTestCase(LabBasedTestCase):
 class ArlingtonCloudTestCase(LabBasedTestCase):
     environment = "azureusgovernment"
 
-    def test_arlington_acquire_token_by_ropc(self):
+    def test_acquire_token_by_ropc(self):
         config = self.get_lab_user(azureenvironment=self.environment)
         config["password"] = self.get_lab_user_secret(config["lab_name"])
         self._test_username_password(**config)
 
-    def test_arlington_acquire_token_by_client_secret(self):
+    def test_acquire_token_by_client_secret(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
         config["client_secret"] = self.get_lab_user_secret("ARLMSIDLAB1-IDLASBS-App-CC-Secret")
         self._test_acquire_token_by_client_secret(**config)
 
-    def test_arlington_acquire_token_obo(self):
+    def test_acquire_token_obo(self):
         config_cca = self.get_lab_user(
             usertype="cloud", azureenvironment=self.environment, publicClient="no")
         config_cca["scope"] = ["https://graph.microsoft.us/.default"]
@@ -559,7 +559,7 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
 
         self._test_acquire_token_obo(config_pca, config_cca)
 
-    def test_arlington_acquire_token_device_flow(self):
+    def test_acquire_token_device_flow(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config["scope"] = ["user.read"]
         self._test_device_flow(**config)
