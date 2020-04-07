@@ -518,7 +518,8 @@ class WorldWideTestCase(LabBasedTestCase):
         """
         self._test_acquire_token_by_auth_code(
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
-            client_id="b876a048-55a5-4fc5-9403-f5d90cb1c852", port=3843,
+            client_id="b876a048-55a5-4fc5-9403-f5d90cb1c852",
+            port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
             scope=["https://msidlabb2c.onmicrosoft.com/msaapp/user_impersonation"]
             )
 
@@ -528,7 +529,7 @@ class WorldWideTestCase(LabBasedTestCase):
             client_id="e3b9ad76-9763-4827-b088-80c7a7888f79",
             username="b2clocal@msidlabb2c.onmicrosoft.com",
             password=self.get_lab_user_secret("msidlabb2c"),
-            scope=["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"]
+            scope=["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"],
             )
 
 
