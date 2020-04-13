@@ -48,8 +48,7 @@ def send_request(
         "Unsupported soap action: %s" % soap_action)
     data = _build_rst(
         username, password, cloud_audience_urn, endpoint_address, soap_action)
-    resp = http_client.post(endpoint_address, data=data,
-                                              headers={
+    resp = http_client.post(endpoint_address, data=data, headers={
             'Content-type':'application/soap+xml; charset=utf-8',
             'SOAPAction': soap_action,
             }, **kwargs)

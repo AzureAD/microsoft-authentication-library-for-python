@@ -41,9 +41,9 @@ def _xpath_of_root(route_to_leaf):
 
 
 def send_request(mex_endpoint, http_client, **kwargs):
-    resp = http_client.get(mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
-                                    **kwargs)
-    mex_document = resp.text
+    mex_document = http_client.get(
+        mex_endpoint, headers={'Content-Type': 'application/soap+xml'},
+        **kwargs).text
     return Mex(mex_document).get_wstrust_username_password_endpoint()
 
 

@@ -1,5 +1,4 @@
 import json
-import requests
 import time
 try:  # Python 2
     from urlparse import urljoin
@@ -9,6 +8,8 @@ import logging
 import sys
 import warnings
 import uuid
+
+import requests
 
 from .oauth2cli import Client, JwtAssertionCreator
 from .authority import Authority
@@ -90,7 +91,8 @@ class ClientApplication(object):
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
-            token_cache=None, http_client=None,
+            token_cache=None,
+            http_client=None,
             verify=True, proxies=None, timeout=None,
             client_claims=None, app_name=None, app_version=None):
         """Create an instance of application.
@@ -140,7 +142,7 @@ class ClientApplication(object):
             By default, an in-memory cache will be created and used.
         :param http_client: (optional)
             Your implementation of abstract class HttpClient <msal.oauth2cli.http.http_client>
-            Defaults to default http client implementation which uses requests
+            Defaults to a requests session instance
         :param verify: (optional)
             It will be passed to the
             `verify parameter in the underlying requests library
@@ -385,7 +387,8 @@ class ClientApplication(object):
 
     def _get_authority_aliases(self, instance):
         if not self.authority_groups:
-            resp = self.http_client.get("https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
+            resp = self.http_client.get(
+                "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
                 headers={'Accept': 'application/json'},
                 timeout=self.timeout)
             resp.raise_for_status()
@@ -769,7 +772,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         wstrust_endpoint = {}
         if user_realm_result.get("federation_metadata_url"):
             wstrust_endpoint = mex_send_request(
-                user_realm_result["federation_metadata_url"], http_client=self.http_client)
+                user_realm_result["federation_metadata_url"],
+                http_client=self.http_client)
             if wstrust_endpoint is None:
                 raise ValueError("Unable to find wstrust endpoint from MEX. "
                     "This typically happens when attempting MSA accounts. "
