@@ -230,6 +230,7 @@ class ClientApplication(object):
             response_type="code",  # Can be "token" if you use Implicit Grant
             prompt=None,
             nonce=None,
+            domain_hint=None,  # type: Optional[str]
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -251,6 +252,9 @@ class ClientApplication(object):
         :param nonce:
             A cryptographically random value used to mitigate replay attacks. See also
             `OIDC specs <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+        :param domain_hint:
+            Provides a hint about the tenant or domain that the user should use to sign in. The value
+            of the domain hint is a registered domain for the tenant.
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -280,7 +284,7 @@ class ClientApplication(object):
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             prompt=prompt,
             scope=decorate_scope(scopes, self.client_id),
-            nonce=nonce,
+            nonce=nonce, domain_hint=domain_hint,
             )
 
     def acquire_token_by_authorization_code(
