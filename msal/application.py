@@ -255,6 +255,7 @@ class ClientApplication(object):
         :param domain_hint:
             Provides a hint about the tenant or domain that the user should use to sign in. The value
             of the domain hint is a registered domain for the tenant.
+            https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
