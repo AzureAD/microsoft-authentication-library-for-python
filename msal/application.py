@@ -230,6 +230,7 @@ class ClientApplication(object):
             response_type="code",  # Can be "token" if you use Implicit Grant
             prompt=None,
             nonce=None,
+            domain_hint=None,  # type: Optional[str]
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -251,6 +252,12 @@ class ClientApplication(object):
         :param nonce:
             A cryptographically random value used to mitigate replay attacks. See also
             `OIDC specs <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+        :param domain_hint:
+            Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
+            If included, it will skip the email-based discovery process that user goes
+            through on the sign-in page, leading to a slightly more streamlined user experience.
+            https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code
+            https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -281,6 +288,7 @@ class ClientApplication(object):
             prompt=prompt,
             scope=decorate_scope(scopes, self.client_id),
             nonce=nonce,
+            domain_hint=domain_hint,
             )
 
     def acquire_token_by_authorization_code(
