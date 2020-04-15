@@ -97,6 +97,7 @@ class ClientApplication(object):
         """Create an instance of application.
 
         :param client_id: Your app has a client_id after you register it on AAD.
+
         :param client_credential:
             For :class:`PublicClientApplication`, you simply use `None` here.
             For :class:`ConfidentialClientApplication`,
@@ -113,6 +114,17 @@ class ClientApplication(object):
             public_certificate (optional) is public key certificate
             which will be sent through 'x5c' JWT header only for
             subject name and issuer authentication to support cert auto rolls.
+
+            Per `specs <https://tools.ietf.org/html/rfc7515#section-4.1.6>`_,
+            "the certificate containing
+            the public key corresponding to the key used to digitally sign the
+            JWS MUST be the first certificate.  This MAY be followed by
+            additional certificates, with each subsequent certificate being the
+            one used to certify the previous one."
+            However, your certificate's issuer may use a different order.
+            So, if your attempt ends up with an error AADSTS700027 -
+            "The provided signature value did not match the expected signature value",
+            you may try use only the leaf cert (in PEM/str format) instead.
 
         :param dict client_claims:
             *Added in version 0.5.0*:
