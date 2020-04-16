@@ -39,7 +39,6 @@ class BaseClient(object):
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
-            timeout=None,  # type: Union[tuple, float, None]
             ):
         """Initialize a client object to talk all the OAuth2 grants to the server.
 
@@ -84,7 +83,6 @@ class BaseClient(object):
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
         self.http_client = http_client
-        self.timeout = timeout
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -104,7 +102,6 @@ class BaseClient(object):
             params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
-            timeout=None,
             post=None,  # A callable to replace requests.post(), for testing.
                         # Such as: lambda url, **kwargs:
                         #   Mock(status_code=200, json=Mock(return_value={}))
@@ -148,7 +145,7 @@ class BaseClient(object):
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
         resp = (post or self.http_client.post)(self.configuration["token_endpoint"],
-            headers=_headers, params=params, data=_data, timeout=timeout or self.timeout,
+            headers=_headers, params=params, data=_data,
             **kwargs)
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
@@ -197,7 +194,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
 
 
-    def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
+    def initiate_device_flow(self, scope=None, **kwargs):
         # type: (list, **dict) -> dict
         # The naming of this method is following the wording of this specs
         # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
@@ -217,7 +214,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             raise ValueError("You need to provide device authorization endpoint")
         resp = self.http_client.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-            timeout=timeout or self.timeout, **kwargs)
+            **kwargs)
         flow = json.loads(resp.text)
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
@@ -378,12 +375,13 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         return self._obtain_token("client_credentials", data=data, **kwargs)
 
     def __init__(self,
-            server_configuration, client_id,
+            server_configuration, client_id, http_client,
             on_obtaining_tokens=lambda event: None,  # event is defined in _obtain_token(...)
             on_removing_rt=lambda token_item: None,
             on_updating_rt=lambda token_item, new_rt: None,
             **kwargs):
-        super(Client, self).__init__(server_configuration, client_id, **kwargs)
+        super(Client, self).__init__(
+            server_configuration, client_id, http_client, **kwargs)
         self.on_obtaining_tokens = on_obtaining_tokens
         self.on_removing_rt = on_removing_rt
         self.on_updating_rt = on_updating_rt

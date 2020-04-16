@@ -1,3 +1,4 @@
+import functools
 import json
 import time
 try:  # Python 2
@@ -146,14 +147,17 @@ class ClientApplication(object):
         :param verify: (optional)
             It will be passed to the
             `verify parameter in the underlying requests library
+            This does not apply if you have chosen to pass your own Http client
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#ssl-cert-verification>`_
         :param proxies: (optional)
             It will be passed to the
             `proxies parameter in the underlying requests library
+            This does not apply if you have chosen to pass your own Http client
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_
         :param timeout: (optional)
             It will be passed to the
             `timeout parameter in the underlying requests library
+            This does not apply if you have chosen to pass your own Http client
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
         :param app_name: (optional)
             You can provide your application name for Microsoft telemetry purposes.
@@ -171,12 +175,15 @@ class ClientApplication(object):
             self.http_client = requests.Session()
             self.http_client.verify = verify
             self.http_client.proxies = proxies
-        self.timeout = timeout
+            # Requests, does not support session - wide timeout
+            # But you can patch that (https://github.com/psf/requests/issues/3341):
+            self.http_client.request = functools.partial(
+                self.http_client.request, timeout=timeout)
         self.app_name = app_name
         self.app_version = app_version
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
-                http_client=self.http_client, validate_authority=validate_authority, timeout=timeout)
+                http_client=self.http_client, validate_authority=validate_authority)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
@@ -226,8 +233,7 @@ class ClientApplication(object):
             client_assertion_type=client_assertion_type,
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
-            on_updating_rt=self.token_cache.update_rt,
-            timeout=self.timeout)
+            on_updating_rt=self.token_cache.update_rt)
 
     def get_authorization_request_url(
             self,
@@ -277,8 +283,7 @@ class ClientApplication(object):
         # The previous implementation is, it will use self.authority by default.
         # Multi-tenant app can use new authority on demand
         the_authority = Authority(
-            authority, http_client=self.http_client, timeout=self.timeout
-            ) if authority else self.authority
+            authority, http_client=self.http_client) if authority else self.authority
 
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
@@ -389,8 +394,7 @@ class ClientApplication(object):
         if not self.authority_groups:
             resp = self.http_client.get(
                 "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-                headers={'Accept': 'application/json'},
-                timeout=self.timeout)
+                headers={'Accept': 'application/json'})
             resp.raise_for_status()
             resp = json.loads(resp.text)
             self.authority_groups = [
@@ -513,7 +517,6 @@ class ClientApplication(object):
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
         #     authority, http_client=self.http_client,
-        #     timeout=self.timeout
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh,
@@ -525,8 +528,7 @@ class ClientApplication(object):
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
-                 http_client=self.http_client, validate_authority=False,
-                 timeout=self.timeout)
+                 http_client=self.http_client, validate_authority=False)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh,
                 correlation_id=correlation_id,
