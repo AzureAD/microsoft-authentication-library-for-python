@@ -10,7 +10,8 @@ from msal.application import *
 import msal
 from tests import unittest
 from tests.test_token_cache import TokenCacheTestCase
-import requests
+from tests.http_client import MinimalHttpClient
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -47,7 +48,8 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
 
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(self.authority_url, http_client= requests.Session())
+        self.authority = msal.authority.Authority(
+            self.authority_url, http_client=MinimalHttpClient())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -106,7 +108,8 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(self.authority_url, requests.Session())
+        self.authority = msal.authority.Authority(
+            self.authority_url, http_client=MinimalHttpClient())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"

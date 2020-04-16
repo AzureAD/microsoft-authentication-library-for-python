@@ -19,6 +19,7 @@ from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache
 
+
 # The __init__.py will import this. Not the other way around.
 __version__ = "1.2.0"
 
@@ -283,11 +284,12 @@ class ClientApplication(object):
         # The previous implementation is, it will use self.authority by default.
         # Multi-tenant app can use new authority on demand
         the_authority = Authority(
-            authority, http_client=self.http_client) if authority else self.authority
+            authority, http_client=self.http_client
+            ) if authority else self.authority
 
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
-            self.client_id, self.http_client)
+            self.client_id, http_client=self.http_client)
         return client.build_auth_request_uri(
             response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
@@ -516,7 +518,8 @@ class ClientApplication(object):
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
-        #     authority, http_client=self.http_client,
+        #     authority,
+        #     http_client=self.http_client,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh,
@@ -757,7 +760,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
             }
-        if not self.authority.is_adfs and not self.authority.is_b2c:
+        if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[CLIENT_REQUEST_ID])
             if user_realm_result.get("account_type") == "Federated":

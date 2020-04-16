@@ -45,9 +45,9 @@ class Authority(object):
         self.http_client = http_client
         authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
-        self.is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
+        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
             len(parts) == 3 and parts[2].lower().startswith("b2c_"))
-        if (tenant != "adfs" and (not self.is_b2c) and validate_authority
+        if (tenant != "adfs" and (not is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
