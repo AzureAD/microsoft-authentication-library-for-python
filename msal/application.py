@@ -96,9 +96,9 @@ class ClientApplication(object):
             client_claims=None, app_name=None, app_version=None):
         """Create an instance of application.
 
-        :param client_id: Your app has a client_id after you register it on AAD.
+        :param str client_id: Your app has a client_id after you register it on AAD.
 
-        :param client_credential:
+        :param str client_credential:
             For :class:`PublicClientApplication`, you simply use `None` here.
             For :class:`ConfidentialClientApplication`,
             it can be a string containing client secret,
