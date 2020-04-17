@@ -109,12 +109,14 @@ def canonicalize(authority_url):
     return authority, authority.hostname, parts[1]
 
 def instance_discovery(url, http_client, **kwargs):
-    resp = http_client.get('https://{}/common/discovery/instance'.format(
+    resp = http_client.get(  # Note: This URL seemingly returns V1 endpoint only
+        'https://{}/common/discovery/instance'.format(
              WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
                  # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
                  # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
-             ), params={'authorization_endpoint': url, 'api-version': '1.0'},
-         **kwargs)
+             ),
+        params={'authorization_endpoint': url, 'api-version': '1.0'},
+        **kwargs)
     return json.loads(resp.text)
 
 def tenant_discovery(tenant_discovery_endpoint, http_client, **kwargs):

@@ -184,7 +184,7 @@ class ClientApplication(object):
         self.app_version = app_version
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
-                http_client=self.http_client, validate_authority=validate_authority)
+                self.http_client, validate_authority=validate_authority)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
@@ -284,12 +284,14 @@ class ClientApplication(object):
         # The previous implementation is, it will use self.authority by default.
         # Multi-tenant app can use new authority on demand
         the_authority = Authority(
-            authority, http_client=self.http_client
+            authority,
+            self.http_client
             ) if authority else self.authority
 
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
-            self.client_id, http_client=self.http_client)
+            self.client_id,
+            self.http_client)
         return client.build_auth_request_uri(
             response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
@@ -398,9 +400,8 @@ class ClientApplication(object):
                 "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
                 headers={'Accept': 'application/json'})
             resp.raise_for_status()
-            resp = json.loads(resp.text)
             self.authority_groups = [
-                set(group['aliases']) for group in resp['metadata']]
+                set(group['aliases']) for group in json.loads(resp.text)['metadata']]
         for group in self.authority_groups:
             if instance in group:
                 return [alias for alias in group if alias != instance]
@@ -519,7 +520,7 @@ class ClientApplication(object):
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
         #     authority,
-        #     http_client=self.http_client,
+        #     self.http_client,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh,
@@ -531,7 +532,8 @@ class ClientApplication(object):
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
-                 http_client=self.http_client, validate_authority=False)
+                self.http_client,
+                validate_authority=False)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh,
                 correlation_id=correlation_id,
@@ -778,7 +780,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         if user_realm_result.get("federation_metadata_url"):
             wstrust_endpoint = mex_send_request(
                 user_realm_result["federation_metadata_url"],
-                http_client=self.http_client)
+                self.http_client)
             if wstrust_endpoint is None:
                 raise ValueError("Unable to find wstrust endpoint from MEX. "
                     "This typically happens when attempting MSA accounts. "
@@ -790,7 +792,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             wstrust_endpoint.get("address",
                 # Fallback to an AAD supplied endpoint
                 user_realm_result.get("federation_active_auth_url")),
-            wstrust_endpoint.get("action"), http_client=self.http_client)
+            wstrust_endpoint.get("action"), self.http_client)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
         GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
