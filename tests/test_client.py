@@ -91,6 +91,7 @@ class TestClient(Oauth2TestCase):
             cls.client = Client(
                 CONFIG["openid_configuration"],
                 CONFIG['client_id'],
+                MinimalHttpClient(),
                 client_assertion=JwtSigner(
                         private_key,
                         algorithm="RS256",
@@ -100,13 +101,12 @@ class TestClient(Oauth2TestCase):
                         issuer=CONFIG["client_id"],
                     ),
                 client_assertion_type=Client.CLIENT_ASSERTION_TYPE_JWT,
-                http_client=MinimalHttpClient()
                 )
         else:
             cls.client = Client(
                 CONFIG["openid_configuration"], CONFIG['client_id'],
-                client_secret=CONFIG.get('client_secret'),
-                http_client=MinimalHttpClient())
+                http_client=MinimalHttpClient(),
+                client_secret=CONFIG.get('client_secret'))
 
     @unittest.skipIf(
         "token_endpoint" not in CONFIG.get("openid_configuration", {}),

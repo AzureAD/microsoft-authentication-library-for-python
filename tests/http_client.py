@@ -17,3 +17,14 @@ class MinimalHttpClient:
     def get(self, url, params=None, headers=None, **kwargs):
         return self.session.get(
             url, params=params, headers=headers, timeout=self.timeout)
+
+
+class MinimalResponse(object):  # Not for production use
+    def __init__(self, status_code=None, text=None, requests_resp=None):
+        self.status_code = status_code or requests_resp.status_code
+        self.text = text or requests_resp.text
+        self._raw_resp = requests_resp
+
+    def raise_for_status(self):
+        if self._raw_resp:
+            self._raw_resp.raise_for_status()

@@ -12,7 +12,7 @@ class TestAuthority(unittest.TestCase):
         # Assert all well known authority hosts are using their own "common" tenant
         for host in WELL_KNOWN_AUTHORITY_HOSTS:
             a = Authority(
-                'https://{}/common'.format(host), http_client=MinimalHttpClient())
+                'https://{}/common'.format(host), MinimalHttpClient())
             self.assertEqual(
                 a.authorization_endpoint,
                 'https://%s/common/oauth2/v2.0/authorize' % host)
@@ -26,7 +26,7 @@ class TestAuthority(unittest.TestCase):
         less_known = 'login.windows.net'  # less.known.host/
         v1_token_endpoint = 'https://{}/common/oauth2/token'.format(less_known)
         a = Authority(
-            'https://{}/common'.format(less_known), http_client=MinimalHttpClient())
+            'https://{}/common'.format(less_known), MinimalHttpClient())
         self.assertEqual(a.token_endpoint, v1_token_endpoint)
         self.assertNotIn('v2.0', a.token_endpoint)
 
@@ -34,13 +34,13 @@ class TestAuthority(unittest.TestCase):
         _assert = getattr(self, "assertRaisesRegex", self.assertRaisesRegexp)  # Hack
         with _assert(ValueError, "invalid_instance"):
             Authority('https://example.com/tenant_doesnt_matter_in_this_case',
-                      http_client=MinimalHttpClient())
+                      MinimalHttpClient())
 
     def test_invalid_host_skipping_validation_can_be_turned_off(self):
         try:
             Authority(
                 'https://example.com/invalid',
-                http_client=MinimalHttpClient(), validate_authority=False)
+                MinimalHttpClient(), validate_authority=False)
         except ValueError as e:
             if "invalid_instance" in str(e):  # Imprecise but good enough
                 self.fail("validate_authority=False should turn off validation")
@@ -84,8 +84,7 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
         # We use a real authority so the constructor can finish tenant discovery
         authority = "https://login.microsoftonline.com/common"
         self.assertNotIn(authority, Authority._domains_without_user_realm_discovery)
-        a = Authority(authority, http_client=MinimalHttpClient(),
-            validate_authority=False)
+        a = Authority(authority, MinimalHttpClient(), validate_authority=False)
 
         # We now pretend this authority supports no User Realm Discovery
         class MockResponse(object):

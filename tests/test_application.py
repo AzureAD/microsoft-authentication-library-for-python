@@ -1,16 +1,10 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
-
-try:
-    from unittest.mock import *  # Python 3
-except:
-    from mock import *  # Need an external mock package
-
 from msal.application import *
 import msal
 from tests import unittest
 from tests.test_token_cache import TokenCacheTestCase
-from tests.http_client import MinimalHttpClient
+from tests.http_client import MinimalHttpClient, MinimalResponse
 
 
 logger = logging.getLogger(__name__)
@@ -49,7 +43,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
         self.authority = msal.authority.Authority(
-            self.authority_url, http_client=MinimalHttpClient())
+            self.authority_url, MinimalHttpClient())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -77,21 +71,21 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
     def test_acquire_token_silent_will_suppress_error(self):
         error_response = '{"error": "invalid_grant", "suberror": "xyz"}'
         def tester(url, **kwargs):
-            return Mock(status_code=400, text=error_response)
+            return MinimalResponse(status_code=400, text=error_response)
         self.assertEqual(None, self.app.acquire_token_silent(
             self.scopes, self.account, post=tester))
 
     def test_acquire_token_silent_with_error_will_return_error(self):
         error_response = '{"error": "invalid_grant", "error_description": "xyz"}'
         def tester(url, **kwargs):
-            return Mock(status_code=400, text=error_response)
+            return MinimalResponse(status_code=400, text=error_response)
         self.assertEqual(json.loads(error_response), self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester))
 
     def test_atswe_will_map_some_suberror_to_classification_as_is(self):
         error_response = '{"error": "invalid_grant", "suberror": "basic_action"}'
         def tester(url, **kwargs):
-            return Mock(status_code=400, text=error_response)
+            return MinimalResponse(status_code=400, text=error_response)
         result = self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester)
         self.assertEqual("basic_action", result.get("classification"))
@@ -99,7 +93,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
     def test_atswe_will_map_some_suberror_to_classification_to_empty_string(self):
         error_response = '{"error": "invalid_grant", "suberror": "client_mismatch"}'
         def tester(url, **kwargs):
-            return Mock(status_code=400, text=error_response)
+            return MinimalResponse(status_code=400, text=error_response)
         result = self.app.acquire_token_silent_with_error(
             self.scopes, self.account, post=tester)
         self.assertEqual("", result.get("classification"))
@@ -109,7 +103,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
         self.authority = msal.authority.Authority(
-            self.authority_url, http_client=MinimalHttpClient())
+            self.authority_url, MinimalHttpClient())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -134,7 +128,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         error_response = '{"error": "invalid_grant","error_description": "Was issued to another client"}'
         def tester(url, data=None, **kwargs):
             self.assertEqual(self.frt, data.get("refresh_token"), "Should attempt the FRT")
-            return Mock(status_code=400, text=error_response)
+            return MinimalResponse(status_code=400, text=error_response)
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self.authority, self.scopes, self.account, post=tester)
         self.assertNotEqual([], app.token_cache.find(
@@ -155,7 +149,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         def tester(url, data=None, **kwargs):
             self.assertEqual(rt, data.get("refresh_token"), "Should attempt the RT")
-            return Mock(status_code=200, text='{}')
+            return MinimalResponse(status_code=200, text='{}')
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self.authority, self.scopes, self.account, post=tester)
 
@@ -163,7 +157,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         def tester(url, data=None, **kwargs):
             self.assertEqual(
                 self.frt, data.get("refresh_token"), "Should attempt the FRT")
-            return Mock(
+            return MinimalResponse(
                 status_code=200, text=json.dumps(TokenCacheTestCase.build_response(
                 uid=self.uid, utid=self.utid, foci="1", access_token="at")))
         app = ClientApplication(
