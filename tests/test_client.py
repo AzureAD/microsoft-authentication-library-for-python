@@ -12,6 +12,7 @@ import requests
 from msal.oauth2cli import Client, JwtSigner
 from msal.oauth2cli.authcode import obtain_auth_code
 from tests import unittest, Oauth2TestCase
+from tests.http_client import MinimalHttpClient
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -83,7 +84,7 @@ class TestClient(Oauth2TestCase):
 
     @classmethod
     def setUpClass(cls):
-        session = requests.Session()
+        http_client = MinimalHttpClient()
         if "client_certificate" in CONFIG:
             private_key_path = CONFIG["client_certificate"]["private_key_path"]
             with open(os.path.join(THIS_FOLDER, private_key_path)) as f:
@@ -91,7 +92,7 @@ class TestClient(Oauth2TestCase):
             cls.client = Client(
                 CONFIG["openid_configuration"],
                 CONFIG['client_id'],
-                session,
+                http_client,
                 client_assertion=JwtSigner(
                         private_key,
                         algorithm="RS256",
@@ -104,8 +105,7 @@ class TestClient(Oauth2TestCase):
                 )
         else:
             cls.client = Client(
-                CONFIG["openid_configuration"], CONFIG['client_id'],
-                session,
+                CONFIG["openid_configuration"], CONFIG['client_id'], http_client,
                 client_secret=CONFIG.get('client_secret'))
 
     @unittest.skipIf(
