@@ -13,7 +13,6 @@ import time
 import base64
 import sys
 
-
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
 
 
@@ -34,7 +33,7 @@ class BaseClient(object):
             self,
             server_configuration,  # type: dict
             client_id,  # type: str
-            session,  # type: http.HttpClient
+            http_client,  # type: http.HttpClient
             client_secret=None,  # type: Optional[str]
             client_assertion=None,  # type: Union[bytes, callable, None]
             client_assertion_type=None,  # type: Optional[str]
@@ -54,7 +53,8 @@ class BaseClient(object):
                 or
                 https://example.com/.../.well-known/openid-configuration
             client_id (str): The client's id, issued by the authorization server
-            session (object): An http.HttpClien-like object, e.g. requests.Session
+            http_client (object):
+                An http.HttpClient-like object, e.g. requests.Session
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (bytes, callable):
                 The client assertion to authenticate this client, per RFC 7521.
@@ -76,7 +76,7 @@ class BaseClient(object):
                 (rather than in the request header).
 
         There is no session-wide `timeout` parameter defined here.
-        The timeout behavior is different among different http clients you pick.
+        The timeout behavior is determined by the actual http client you use.
         If you happen to use Requests, it chose to not support session-wide timeout
         (https://github.com/psf/requests/issues/3341), but you can patch that by:
 
@@ -94,7 +94,7 @@ class BaseClient(object):
         if client_assertion_type is not None:
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
-        self.session = session
+        self.http_client = http_client
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -155,7 +155,7 @@ class BaseClient(object):
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
-        resp = (post or self.session.post)(
+        resp = (post or self.http_client.post)(
             self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data,
             **kwargs)
@@ -224,7 +224,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        resp = self.session.post(self.configuration[DAE],
+        resp = self.http_client.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
             headers=dict(self.default_headers, **kwargs.pop("headers", {})),
             **kwargs)
@@ -388,12 +388,13 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         return self._obtain_token("client_credentials", data=data, **kwargs)
 
     def __init__(self,
-            server_configuration, client_id, session,
+            server_configuration, client_id, http_client,
             on_obtaining_tokens=lambda event: None,  # event is defined in _obtain_token(...)
             on_removing_rt=lambda token_item: None,
             on_updating_rt=lambda token_item, new_rt: None,
             **kwargs):
-        super(Client, self).__init__(server_configuration, client_id, session, **kwargs)
+        super(Client, self).__init__(
+            server_configuration, client_id, http_client, **kwargs)
         self.on_obtaining_tokens = on_obtaining_tokens
         self.on_removing_rt = on_removing_rt
         self.on_updating_rt = on_updating_rt
