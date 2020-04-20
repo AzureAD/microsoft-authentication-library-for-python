@@ -126,3 +126,4 @@ def tenant_discovery(tenant_discovery_endpoint, http_client, **kwargs):
     if 'authorization_endpoint' in payload and 'token_endpoint' in payload:
         return payload
     raise MsalServiceError(status_code=resp.status_code, **payload)
+
