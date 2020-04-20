@@ -12,6 +12,10 @@ import warnings
 import time
 import base64
 import sys
+import functools
+
+import requests
+
 
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
 
@@ -33,12 +37,15 @@ class BaseClient(object):
             self,
             server_configuration,  # type: dict
             client_id,  # type: str
-            http_client,  # type: http.HttpClient
+            http_client=None,  # We insert it here to match the upcoming async API
             client_secret=None,  # type: Optional[str]
             client_assertion=None,  # type: Union[bytes, callable, None]
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
+            verify=True,  # type: Union[str, True, False, None]
+            proxies=None,  # type: Optional[dict]
+            timeout=None,  # type: Union[tuple, float, None]
             ):
         """Initialize a client object to talk all the OAuth2 grants to the server.
 
@@ -53,8 +60,9 @@ class BaseClient(object):
                 or
                 https://example.com/.../.well-known/openid-configuration
             client_id (str): The client's id, issued by the authorization server
-            http_client (object):
-                An http.HttpClient-like object, e.g. requests.Session
+            http_client (http.HttpClient):
+                Your implementation of abstract class :class:`http.HttpClient`.
+                Defaults to a requests session instance.
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (bytes, callable):
                 The client assertion to authenticate this client, per RFC 7521.
@@ -75,6 +83,22 @@ class BaseClient(object):
                 if your authorization server wants it to be in the request body
                 (rather than in the request header).
 
+            verify (boolean):
+                It will be passed to the
+                `verify parameter in the underlying requests library
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#ssl-cert-verification>`_
+                This does not apply if you have chosen to pass your own Http client.
+            proxies (dict):
+                It will be passed to the
+                `proxies parameter in the underlying requests library
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_
+                This does not apply if you have chosen to pass your own Http client.
+            timeout (object):
+                It will be passed to the
+                `timeout parameter in the underlying requests library
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
+                This does not apply if you have chosen to pass your own Http client.
+
         There is no session-wide `timeout` parameter defined here.
         The timeout behavior is determined by the actual http client you use.
         If you happen to use Requests, it chose to not support session-wide timeout
@@ -94,7 +118,15 @@ class BaseClient(object):
         if client_assertion_type is not None:
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
-        self.http_client = http_client
+        if http_client:
+            self.http_client = http_client
+        else:
+            self.http_client = requests.Session()
+            self.http_client.verify = verify
+            self.http_client.proxies = proxies
+            self.http_client.request = functools.partial(
+                # A workaround for requests not supporting session-wide timeout
+                self.http_client.request, timeout=timeout)
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -388,13 +420,12 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         return self._obtain_token("client_credentials", data=data, **kwargs)
 
     def __init__(self,
-            server_configuration, client_id, http_client,
+            server_configuration, client_id,
             on_obtaining_tokens=lambda event: None,  # event is defined in _obtain_token(...)
             on_removing_rt=lambda token_item: None,
             on_updating_rt=lambda token_item, new_rt: None,
             **kwargs):
-        super(Client, self).__init__(
-            server_configuration, client_id, http_client, **kwargs)
+        super(Client, self).__init__(server_configuration, client_id, **kwargs)
         self.on_obtaining_tokens = on_obtaining_tokens
         self.on_removing_rt = on_removing_rt
         self.on_updating_rt = on_updating_rt

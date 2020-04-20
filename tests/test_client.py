@@ -92,7 +92,7 @@ class TestClient(Oauth2TestCase):
             cls.client = Client(
                 CONFIG["openid_configuration"],
                 CONFIG['client_id'],
-                http_client,
+                http_client=http_client,
                 client_assertion=JwtSigner(
                         private_key,
                         algorithm="RS256",
@@ -105,7 +105,8 @@ class TestClient(Oauth2TestCase):
                 )
         else:
             cls.client = Client(
-                CONFIG["openid_configuration"], CONFIG['client_id'], http_client,
+                CONFIG["openid_configuration"], CONFIG['client_id'],
+                http_client=http_client,
                 client_secret=CONFIG.get('client_secret'))
 
     @unittest.skipIf(
