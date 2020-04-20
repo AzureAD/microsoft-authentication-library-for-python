@@ -159,7 +159,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
                 self.frt, data.get("refresh_token"), "Should attempt the FRT")
             return MinimalResponse(
                 status_code=200, text=json.dumps(TokenCacheTestCase.build_response(
-                uid=self.uid, utid=self.utid, foci="1", access_token="at")))
+                    uid=self.uid, utid=self.utid, foci="1", access_token="at")))
         app = ClientApplication(
             "unknown_family_app", authority=self.authority_url, token_cache=self.cache)
         at = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(

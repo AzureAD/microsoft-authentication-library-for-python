@@ -10,12 +10,12 @@ class MinimalHttpClient:
         self.timeout = timeout
 
     def post(self, url, params=None, data=None, headers=None, **kwargs):
-        return MinimalResponse(self.session.post(
+        return MinimalResponse(requests_resp=self.session.post(
             url, params=params, data=data, headers=headers,
             timeout=self.timeout))
 
     def get(self, url, params=None, headers=None, **kwargs):
-        return MinimalResponse(self.session.get(
+        return MinimalResponse(requests_resp=self.session.get(
             url, params=params, headers=headers, timeout=self.timeout))
 
 

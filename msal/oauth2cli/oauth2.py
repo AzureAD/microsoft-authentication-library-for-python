@@ -33,7 +33,7 @@ class BaseClient(object):
             self,
             server_configuration,  # type: dict
             client_id,  # type: str
-            http_client,  # type: HttpClient
+            http_client,  # type: http.HttpClient
             client_secret=None,  # type: Optional[str]
             client_assertion=None,  # type: Union[bytes, callable, None]
             client_assertion_type=None,  # type: Optional[str]
@@ -53,6 +53,8 @@ class BaseClient(object):
                 or
                 https://example.com/.../.well-known/openid-configuration
             client_id (str): The client's id, issued by the authorization server
+            http_client (object):
+                An http.HttpClient-like object, e.g. requests.Session
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (bytes, callable):
                 The client assertion to authenticate this client, per RFC 7521.
@@ -72,6 +74,16 @@ class BaseClient(object):
                 you could choose to set this as {"client_secret": "your secret"}
                 if your authorization server wants it to be in the request body
                 (rather than in the request header).
+
+        There is no session-wide `timeout` parameter defined here.
+        The timeout behavior is determined by the actual http client you use.
+        If you happen to use Requests, it chose to not support session-wide timeout
+        (https://github.com/psf/requests/issues/3341), but you can patch that by:
+
+            s = requests.Session()
+            s.request = functools.partial(s.request, timeout=3)
+
+        and then feed that patched session instance to this class.
         """
         self.configuration = server_configuration
         self.client_id = client_id
@@ -90,6 +102,7 @@ class BaseClient(object):
         # or it can be a space-delimited string as defined in
         #   https://tools.ietf.org/html/rfc6749#section-8.4
         response_type = self._stringify(response_type)
+
         params = {'client_id': self.client_id, 'response_type': response_type}
         params.update(kwargs)  # Note: None values will override params
         params = {k: v for k, v in params.items() if v is not None}  # clean up
@@ -119,9 +132,7 @@ class BaseClient(object):
 
         _data.update(self.default_body)  # It may contain authen parameters
         _data.update(data or {})  # So the content in data param prevails
-        _data = {k: v for k, v in _data.items() if v}
-        # We will have to clean up None values here,
-        # because we can have some libraries not supporting cleaning of None values.
+        _data = {k: v for k, v in _data.items() if v}  # Clean up None values
 
         if _data.get('scope'):
             _data['scope'] = self._stringify(_data['scope'])
@@ -144,7 +155,8 @@ class BaseClient(object):
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
-        resp = (post or self.http_client.post)(self.configuration["token_endpoint"],
+        resp = (post or self.http_client.post)(
+            self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data,
             **kwargs)
         if resp.status_code >= 500:
@@ -214,6 +226,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             raise ValueError("You need to provide device authorization endpoint")
         resp = self.http_client.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
+            headers=dict(self.default_headers, **kwargs.pop("headers", {})),
             **kwargs)
         flow = json.loads(resp.text)
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
@@ -464,4 +477,3 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         data = kwargs.pop("data", {})
         data.update(scope=scope, assertion=encoder(assertion))
         return self._obtain_token(grant_type, data=data, **kwargs)
-
