@@ -477,4 +477,4 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         data = kwargs.pop("data", {})
         data.update(scope=scope, assertion=encoder(assertion))
         return self._obtain_token(grant_type, data=data, **kwargs)
-    
+
