@@ -148,18 +148,18 @@ class ClientApplication(object):
         :param verify: (optional)
             It will be passed to the
             `verify parameter in the underlying requests library
-            This does not apply if you have chosen to pass your own Http client
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#ssl-cert-verification>`_
+            This does not apply if you have chosen to pass your own Http client
         :param proxies: (optional)
             It will be passed to the
             `proxies parameter in the underlying requests library
-            This does not apply if you have chosen to pass your own Http client
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_
+            This does not apply if you have chosen to pass your own Http client
         :param timeout: (optional)
             It will be passed to the
             `timeout parameter in the underlying requests library
-            This does not apply if you have chosen to pass your own Http client
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
+            This does not apply if you have chosen to pass your own Http client
         :param app_name: (optional)
             You can provide your application name for Microsoft telemetry purposes.
             Default value is None, means it will not be passed to Microsoft.
@@ -291,7 +291,7 @@ class ClientApplication(object):
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id,
-            self.http_client)
+            http_client=self.http_client)
         return client.build_auth_request_uri(
             response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
