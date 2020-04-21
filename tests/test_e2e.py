@@ -7,7 +7,7 @@ import unittest
 import requests
 
 import msal
-
+from tests.http_client import MinimalHttpClient
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +21,8 @@ def _get_app_and_auth_code(
         scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
         **kwargs):
     from msal.oauth2cli.authcode import obtain_auth_code
-    app = msal.ClientApplication(client_id, client_secret, authority=authority)
+    app = msal.ClientApplication(
+        client_id, client_secret, authority=authority, http_client=MinimalHttpClient())
     redirect_uri = "http://localhost:%d" % port
     ac = obtain_auth_code(port, auth_uri=app.get_authorization_request_url(
         scopes, redirect_uri=redirect_uri, **kwargs))
@@ -92,7 +93,8 @@ class E2eTestCase(unittest.TestCase):
             authority=None, client_id=None, username=None, password=None, scope=None,
             **ignored):
         assert authority and client_id and username and password and scope
-        self.app = msal.PublicClientApplication(client_id, authority=authority)
+        self.app = msal.PublicClientApplication(
+            client_id, authority=authority, http_client=MinimalHttpClient())
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
         self.assertLoosely(result)
@@ -106,7 +108,7 @@ class E2eTestCase(unittest.TestCase):
             self, client_id=None, authority=None, scope=None, **ignored):
         assert client_id and authority and scope
         self.app = msal.PublicClientApplication(
-            client_id, authority=authority)
+            client_id, authority=authority, http_client=MinimalHttpClient())
         flow = self.app.initiate_device_flow(scopes=scope)
         assert "user_code" in flow, "DF does not seem to be provisioned: %s".format(
             json.dumps(flow, indent=4))
@@ -225,13 +227,13 @@ class FileBasedTestCase(E2eTestCase):
         self.assertEqual(refreshed_ssh_cert["token_type"], "ssh-cert")
         self.assertNotEqual(result["access_token"], refreshed_ssh_cert['access_token'])
 
-
     def test_client_secret(self):
         self.skipUnlessWithConfig(["client_id", "client_secret"])
         self.app = msal.ConfidentialClientApplication(
             self.config["client_id"],
             client_credential=self.config.get("client_secret"),
-            authority=self.config.get("authority"))
+            authority=self.config.get("authority"),
+            http_client=MinimalHttpClient())
         scope = self.config.get("scope", [])
         result = self.app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
@@ -245,7 +247,8 @@ class FileBasedTestCase(E2eTestCase):
             private_key = f.read()  # Should be in PEM format
         self.app = msal.ConfidentialClientApplication(
             self.config['client_id'],
-            {"private_key": private_key, "thumbprint": client_cert["thumbprint"]})
+            {"private_key": private_key, "thumbprint": client_cert["thumbprint"]},
+            http_client=MinimalHttpClient())
         scope = self.config.get("scope", [])
         result = self.app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
@@ -267,7 +270,8 @@ class FileBasedTestCase(E2eTestCase):
                 "private_key": private_key,
                 "thumbprint": self.config["thumbprint"],
                 "public_certificate": public_certificate,
-                })
+                },
+            http_client=MinimalHttpClient())
         scope = self.config.get("scope", [])
         result = self.app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
@@ -311,7 +315,7 @@ def get_lab_app(
     return msal.ConfidentialClientApplication(client_id, client_secret,
             authority="https://login.microsoftonline.com/"
                 "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
-            )
+            http_client=MinimalHttpClient())
 
 def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confidential client flow
     logger.info("Creating session")
@@ -398,7 +402,8 @@ class LabBasedTestCase(E2eTestCase):
     def _test_acquire_token_obo(self, config_pca, config_cca):
         # 1. An app obtains a token representing a user, for our mid-tier service
         pca = msal.PublicClientApplication(
-            config_pca["client_id"], authority=config_pca["authority"])
+            config_pca["client_id"], authority=config_pca["authority"],
+            http_client=MinimalHttpClient())
         pca_result = pca.acquire_token_by_username_password(
             config_pca["username"],
             config_pca["password"],
@@ -413,6 +418,7 @@ class LabBasedTestCase(E2eTestCase):
             config_cca["client_id"],
             client_credential=config_cca["client_secret"],
             authority=config_cca["authority"],
+            http_client=MinimalHttpClient(),
             # token_cache= ...,  # Default token cache is all-tokens-store-in-memory.
                 # That's fine if OBO app uses short-lived msal instance per session.
                 # Otherwise, the OBO app need to implement a one-cache-per-user setup.
@@ -439,7 +445,8 @@ class LabBasedTestCase(E2eTestCase):
             **ignored):
         assert client_id and client_secret and authority and scope
         app = msal.ConfidentialClientApplication(
-            client_id, client_credential=client_secret, authority=authority)
+            client_id, client_credential=client_secret, authority=authority,
+            http_client=MinimalHttpClient())
         result = app.acquire_token_for_client(scope)
         self.assertIsNotNone(result.get("access_token"), "Got %s instead" % result)
 
