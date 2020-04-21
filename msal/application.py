@@ -1,3 +1,5 @@
+import functools
+import json
 import time
 try:  # Python 2
     from urlparse import urljoin
@@ -54,11 +56,11 @@ CLIENT_REQUEST_ID = 'client-request-id'
 CLIENT_CURRENT_TELEMETRY = 'x-client-current-telemetry'
 
 def _get_new_correlation_id():
-        return str(uuid.uuid4())
+    return str(uuid.uuid4())
 
 
 def _build_current_telemetry_request_header(public_api_id, force_refresh=False):
-        return "1|{},{}|".format(public_api_id, "1" if force_refresh else "0")
+    return "1|{},{}|".format(public_api_id, "1" if force_refresh else "0")
 
 
 def extract_certs(public_cert_content):
@@ -92,6 +94,7 @@ class ClientApplication(object):
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
+            http_client=None,
             verify=True, proxies=None, timeout=None,
             client_claims=None, app_name=None, app_version=None):
         """Create an instance of application.
@@ -151,18 +154,24 @@ class ClientApplication(object):
         :param TokenCache cache:
             Sets the token cache used by this ClientApplication instance.
             By default, an in-memory cache will be created and used.
+        :param http_client: (optional)
+            Your implementation of abstract class HttpClient <msal.oauth2cli.http.http_client>
+            Defaults to a requests session instance
         :param verify: (optional)
             It will be passed to the
             `verify parameter in the underlying requests library
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#ssl-cert-verification>`_
+            This does not apply if you have chosen to pass your own Http client
         :param proxies: (optional)
             It will be passed to the
             `proxies parameter in the underlying requests library
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_
+            This does not apply if you have chosen to pass your own Http client
         :param timeout: (optional)
             It will be passed to the
             `timeout parameter in the underlying requests library
             <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
+            This does not apply if you have chosen to pass your own Http client
         :param app_name: (optional)
             You can provide your application name for Microsoft telemetry purposes.
             Default value is None, means it will not be passed to Microsoft.
@@ -173,14 +182,21 @@ class ClientApplication(object):
         self.client_id = client_id
         self.client_credential = client_credential
         self.client_claims = client_claims
-        self.verify = verify
-        self.proxies = proxies
-        self.timeout = timeout
+        if http_client:
+            self.http_client = http_client
+        else:
+            self.http_client = requests.Session()
+            self.http_client.verify = verify
+            self.http_client.proxies = proxies
+            # Requests, does not support session - wide timeout
+            # But you can patch that (https://github.com/psf/requests/issues/3341):
+            self.http_client.request = functools.partial(
+                self.http_client.request, timeout=timeout)
         self.app_name = app_name
         self.app_version = app_version
         self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
-                validate_authority, verify=verify, proxies=proxies, timeout=timeout)
+                self.http_client, validate_authority=validate_authority)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
@@ -223,14 +239,14 @@ class ClientApplication(object):
         return Client(
             server_configuration,
             self.client_id,
+            http_client=self.http_client,
             default_headers=default_headers,
             default_body=default_body,
             client_assertion=client_assertion,
             client_assertion_type=client_assertion_type,
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
-            on_updating_rt=self.token_cache.update_rt,
-            verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+            on_updating_rt=self.token_cache.update_rt)
 
     def get_authorization_request_url(
             self,
@@ -288,12 +304,13 @@ class ClientApplication(object):
         # Multi-tenant app can use new authority on demand
         the_authority = Authority(
             authority,
-            verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+            self.http_client
             ) if authority else self.authority
 
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
-            self.client_id)
+            self.client_id,
+            http_client=self.http_client)
         return client.build_auth_request_uri(
             response_type=response_type,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
@@ -399,13 +416,12 @@ class ClientApplication(object):
 
     def _get_authority_aliases(self, instance):
         if not self.authority_groups:
-            resp = requests.get(
+            resp = self.http_client.get(
                 "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-                headers={'Accept': 'application/json'},
-                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+                headers={'Accept': 'application/json'})
             resp.raise_for_status()
             self.authority_groups = [
-                set(group['aliases']) for group in resp.json()['metadata']]
+                set(group['aliases']) for group in json.loads(resp.text)['metadata']]
         for group in self.authority_groups:
             if instance in group:
                 return [alias for alias in group if alias != instance]
@@ -524,7 +540,7 @@ class ClientApplication(object):
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
         #     authority,
-        #     verify=self.verify, proxies=self.proxies, timeout=self.timeout,
+        #     self.http_client,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh,
@@ -536,8 +552,8 @@ class ClientApplication(object):
         for alias in self._get_authority_aliases(self.authority.instance):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
-                validate_authority=False,
-                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+                self.http_client,
+                validate_authority=False)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh,
                 correlation_id=correlation_id,
@@ -780,13 +796,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
     def _acquire_token_by_username_password_federated(
             self, user_realm_result, username, password, scopes=None, **kwargs):
-        verify = kwargs.pop("verify", self.verify)
-        proxies = kwargs.pop("proxies", self.proxies)
         wstrust_endpoint = {}
         if user_realm_result.get("federation_metadata_url"):
             wstrust_endpoint = mex_send_request(
                 user_realm_result["federation_metadata_url"],
-                verify=verify, proxies=proxies)
+                self.http_client)
             if wstrust_endpoint is None:
                 raise ValueError("Unable to find wstrust endpoint from MEX. "
                     "This typically happens when attempting MSA accounts. "
@@ -798,7 +812,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             wstrust_endpoint.get("address",
                 # Fallback to an AAD supplied endpoint
                 user_realm_result.get("federation_active_auth_url")),
-            wstrust_endpoint.get("action"), verify=verify, proxies=proxies)
+            wstrust_endpoint.get("action"), self.http_client)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
         GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
