@@ -1,6 +1,7 @@
 """This OAuth2 client implementation aims to be spec-compliant, and generic."""
 # OAuth2 spec https://tools.ietf.org/html/rfc6749
 
+import json
 try:
     from urllib.parse import urlencode, parse_qs
 except ImportError:
@@ -11,6 +12,7 @@ import warnings
 import time
 import base64
 import sys
+import functools
 
 import requests
 
@@ -35,12 +37,13 @@ class BaseClient(object):
             self,
             server_configuration,  # type: dict
             client_id,  # type: str
+            http_client=None,  # We insert it here to match the upcoming async API
             client_secret=None,  # type: Optional[str]
             client_assertion=None,  # type: Union[bytes, callable, None]
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
-            verify=True,  # type: Union[str, True, False, None]
+            verify=None,  # type: Union[str, True, False, None]
             proxies=None,  # type: Optional[dict]
             timeout=None,  # type: Union[tuple, float, None]
             ):
@@ -57,6 +60,21 @@ class BaseClient(object):
                 or
                 https://example.com/.../.well-known/openid-configuration
             client_id (str): The client's id, issued by the authorization server
+
+            http_client (http.HttpClient):
+                Your implementation of abstract class :class:`http.HttpClient`.
+                Defaults to a requests session instance.
+
+                There is no session-wide `timeout` parameter defined here.
+                Timeout behavior is determined by the actual http client you use.
+                If you happen to use Requests, it disallows session-wide timeout
+                (https://github.com/psf/requests/issues/3341). The workaround is:
+
+                    s = requests.Session()
+                    s.request = functools.partial(s.request, timeout=3)
+
+                and then feed that patched session instance to this class.
+
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (bytes, callable):
                 The client assertion to authenticate this client, per RFC 7521.
@@ -76,20 +94,52 @@ class BaseClient(object):
                 you could choose to set this as {"client_secret": "your secret"}
                 if your authorization server wants it to be in the request body
                 (rather than in the request header).
+
+            verify (boolean):
+                It will be passed to the
+                `verify parameter in the underlying requests library
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#ssl-cert-verification>`_.
+                When leaving it with default value (None), we will use True instead.
+
+                This does not apply if you have chosen to pass your own Http client.
+
+            proxies (dict):
+                It will be passed to the
+                `proxies parameter in the underlying requests library
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_.
+
+                This does not apply if you have chosen to pass your own Http client.
+
+            timeout (object):
+                It will be passed to the
+                `timeout parameter in the underlying requests library
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_.
+
+                This does not apply if you have chosen to pass your own Http client.
+
         """
         self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
         self.client_assertion = client_assertion
+        self.default_headers = default_headers or {}
         self.default_body = default_body or {}
         if client_assertion_type is not None:
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
-        self.session = s = requests.Session()
-        s.headers.update(default_headers or {})
-        s.verify = verify
-        s.proxies = proxies or {}
-        self.timeout = timeout
+        if http_client:
+            if verify is not None or proxies is not None or timeout is not None:
+                raise ValueError(
+                    "verify, proxies, or timeout is not allowed "
+                    "when http_client is in use")
+            self.http_client = http_client
+        else:
+            self.http_client = requests.Session()
+            self.http_client.verify = True if verify is None else verify
+            self.http_client.proxies = proxies
+            self.http_client.request = functools.partial(
+                # A workaround for requests not supporting session-wide timeout
+                self.http_client.request, timeout=timeout)
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -110,7 +160,6 @@ class BaseClient(object):
             params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
-            timeout=None,
             post=None,  # A callable to replace requests.post(), for testing.
                         # Such as: lambda url, **kwargs:
                         #   Mock(status_code=200, json=Mock(return_value={}))
@@ -128,10 +177,14 @@ class BaseClient(object):
 
         _data.update(self.default_body)  # It may contain authen parameters
         _data.update(data or {})  # So the content in data param prevails
-        # We don't have to clean up None values here, because requests lib will.
+        _data = {k: v for k, v in _data.items() if v}  # Clean up None values
 
         if _data.get('scope'):
             _data['scope'] = self._stringify(_data['scope'])
+
+        _headers = {'Accept': 'application/json'}
+        _headers.update(self.default_headers)
+        _headers.update(headers or {})
 
         # Quoted from https://tools.ietf.org/html/rfc6749#section-2.3.1
         # Clients in possession of a client password MAY use the HTTP Basic
@@ -140,18 +193,16 @@ class BaseClient(object):
         # the authorization server MAY support including the
         # client credentials in the request-body using the following
         # parameters: client_id, client_secret.
-        auth = None
         if self.client_secret and self.client_id:
-            auth = (self.client_id, self.client_secret)  # for HTTP Basic Auth
+            _headers["Authorization"] = "Basic " + base64.b64encode(
+                "{}:{}".format(self.client_id, self.client_secret)
+                .encode("ascii")).decode("ascii")
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
-        _headers = {'Accept': 'application/json'}
-        _headers.update(headers or {})
-        resp = (post or self.session.post)(
+        resp = (post or self.http_client.post)(
             self.configuration["token_endpoint"],
-            headers=_headers, params=params, data=_data, auth=auth,
-            timeout=timeout or self.timeout,
+            headers=_headers, params=params, data=_data,
             **kwargs)
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
@@ -159,7 +210,7 @@ class BaseClient(object):
             # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
             # even an error response will be a valid json structure,
             # so we simply return it here, without needing to invent an exception.
-            return resp.json()
+            return json.loads(resp.text)
         except ValueError:
             self.logger.exception(
                     "Token response is not in json format: %s", resp.text)
@@ -200,7 +251,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
 
 
-    def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
+    def initiate_device_flow(self, scope=None, **kwargs):
         # type: (list, **dict) -> dict
         # The naming of this method is following the wording of this specs
         # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
@@ -218,10 +269,11 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        flow = self.session.post(self.configuration[DAE],
+        resp = self.http_client.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-            timeout=timeout or self.timeout,
-            **kwargs).json()
+            headers=dict(self.default_headers, **kwargs.pop("headers", {})),
+            **kwargs)
+        flow = json.loads(resp.text)
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
         flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
