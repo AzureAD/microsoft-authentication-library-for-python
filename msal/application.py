@@ -641,7 +641,6 @@ class ClientApplication(object):
             if at and "error" not in at:
                 return at
             last_resp = at
-
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
         resp = self._acquire_token_silent_by_finding_specific_refresh_token(
