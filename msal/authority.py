@@ -1,10 +1,9 @@
+import json
 try:
     from urllib.parse import urlparse
 except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
 import logging
-
-import requests
 
 from .exceptions import MsalServiceError
 
@@ -25,6 +24,7 @@ WELL_KNOWN_B2C_HOSTS = [
     "b2clogin.de",
     ]
 
+
 class Authority(object):
     """This class represents an (already-validated) authority.
 
@@ -33,9 +33,7 @@ class Authority(object):
     """
     _domains_without_user_realm_discovery = set([])
 
-    def __init__(self, authority_url, validate_authority=True,
-            verify=True, proxies=None, timeout=None,
-            ):
+    def __init__(self, authority_url, http_client, validate_authority=True):
         """Creates an authority instance, and also validates it.
 
         :param validate_authority:
@@ -44,9 +42,7 @@ class Authority(object):
             This parameter only controls whether an instance discovery will be
             performed.
         """
-        self.verify = verify
-        self.proxies = proxies
-        self.timeout = timeout
+        self.http_client = http_client
         authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
         is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
@@ -56,7 +52,7 @@ class Authority(object):
             payload = instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
                     self.instance, authority.path),
-                verify=verify, proxies=proxies, timeout=timeout)
+                self.http_client)
             if payload.get("error") == "invalid_instance":
                 raise ValueError(
                     "invalid_instance: "
@@ -75,7 +71,7 @@ class Authority(object):
                     ))
         openid_config = tenant_discovery(
             tenant_discovery_endpoint,
-            verify=verify, proxies=proxies, timeout=timeout)
+            self.http_client)
         logger.debug("openid_config = %s", openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
@@ -87,15 +83,14 @@ class Authority(object):
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
         if self.instance not in self.__class__._domains_without_user_realm_discovery:
-            resp = response or requests.get(
+            resp = response or self.http_client.get(
                 "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
                     netloc=self.instance, username=username),
-                headers={'Accept':'application/json',
-                         'client-request-id': correlation_id},
-                verify=self.verify, proxies=self.proxies, timeout=self.timeout)
+                headers={'Accept': 'application/json',
+                         'client-request-id': correlation_id},)
             if resp.status_code != 404:
                 resp.raise_for_status()
-                return resp.json()
+                return json.loads(resp.text)
             self.__class__._domains_without_user_realm_discovery.add(self.instance)
         return {}  # This can guide the caller to fall back normal ROPC flow
 
@@ -113,20 +108,21 @@ def canonicalize(authority_url):
             % authority_url)
     return authority, authority.hostname, parts[1]
 
-def instance_discovery(url, **kwargs):
-    return requests.get(  # Note: This URL seemingly returns V1 endpoint only
+def instance_discovery(url, http_client, **kwargs):
+    resp = http_client.get(  # Note: This URL seemingly returns V1 endpoint only
         'https://{}/common/discovery/instance'.format(
             WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
                 # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
                 # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
             ),
         params={'authorization_endpoint': url, 'api-version': '1.0'},
-        **kwargs).json()
+        **kwargs)
+    return json.loads(resp.text)
 
-def tenant_discovery(tenant_discovery_endpoint, **kwargs):
+def tenant_discovery(tenant_discovery_endpoint, http_client, **kwargs):
     # Returns Openid Configuration
-    resp = requests.get(tenant_discovery_endpoint, **kwargs)
-    payload = resp.json()
+    resp = http_client.get(tenant_discovery_endpoint, **kwargs)
+    payload = json.loads(resp.text)
     if 'authorization_endpoint' in payload and 'token_endpoint' in payload:
         return payload
     raise MsalServiceError(status_code=resp.status_code, **payload)
