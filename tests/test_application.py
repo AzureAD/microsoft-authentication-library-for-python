@@ -176,6 +176,19 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     # Will not test scenario of app leaving family. Per specs, it won't happen.
 
+    def test_preexisting_family_app_will_attempt_frt_and_return_error(self):
+        error_response = '{"error": "invalid_grant", "error_description": "xyz"}'
+        def tester(url, data=None, **kwargs):
+            self.assertEqual(
+                self.frt, data.get("refresh_token"), "Should attempt the FRT")
+            return MinimalResponse(status_code=400, text=error_response)
+        app = ClientApplication(
+            "preexisting_family_app", authority=self.authority_url, token_cache=self.cache)
+        resp = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
+            self.authority, self.scopes, self.account, post=tester)
+        logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
+        self.assertEqual(json.loads(error_response), resp, "Error raised will be returned")
+
     def test_family_app_remove_account(self):
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         app = ClientApplication(
