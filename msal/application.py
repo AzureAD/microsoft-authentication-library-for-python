@@ -635,17 +635,16 @@ class ClientApplication(object):
                 return at
         last_resp = None
         if app_metadata.get("family_id"):  # Meaning this app belongs to this family
-            at = self._acquire_token_silent_by_finding_specific_refresh_token(
+            last_resp = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes, dict(query, family_id=app_metadata["family_id"]),
                 **kwargs)
-            if at and "error" not in at:
-                return at
-            last_resp = at
+            if last_resp and "error" not in last_resp:
+                return last_resp
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
-        resp = self._acquire_token_silent_by_finding_specific_refresh_token(
-            authority, scopes, dict(query, client_id=self.client_id), **kwargs)
-        return resp or last_resp
+        return self._acquire_token_silent_by_finding_specific_refresh_token(
+            authority, scopes, dict(query, client_id=self.client_id),
+            **kwargs) or last_resp
 
     def _get_app_metadata(self, environment):
         apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
