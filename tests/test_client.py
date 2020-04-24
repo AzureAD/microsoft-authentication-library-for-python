@@ -174,3 +174,11 @@ class TestClient(Oauth2TestCase):
                 assertion=lambda: self.assertIn('access_token', result),
                 skippable_errors=self.client.DEVICE_FLOW_RETRIABLE_ERRORS)
 
+
+class TestSessionAccessibility(unittest.TestCase):
+    def test_accessing_session_property_for_backward_compatibility(self):
+        client = Client({}, "client_id")
+        client.session
+        client.session.close()
+        client.session = "something"
+

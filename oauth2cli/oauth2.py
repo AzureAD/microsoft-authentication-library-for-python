@@ -33,6 +33,17 @@ class BaseClient(object):
     CLIENT_ASSERTION_TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
     client_assertion_encoders = {CLIENT_ASSERTION_TYPE_SAML2: encode_saml_assertion}
 
+    @property
+    def session(self):
+        warnings.warn("Will be gone in next major release", DeprecationWarning)
+        return self._http_client
+
+    @session.setter
+    def session(self, value):
+        warnings.warn("Will be gone in next major release", DeprecationWarning)
+        self._http_client = value
+
+
     def __init__(
             self,
             server_configuration,  # type: dict
