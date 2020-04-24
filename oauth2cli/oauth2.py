@@ -132,14 +132,14 @@ class BaseClient(object):
                 raise ValueError(
                     "verify, proxies, or timeout is not allowed "
                     "when http_client is in use")
-            self.http_client = http_client
+            self._http_client = http_client
         else:
-            self.http_client = requests.Session()
-            self.http_client.verify = True if verify is None else verify
-            self.http_client.proxies = proxies
-            self.http_client.request = functools.partial(
+            self._http_client = requests.Session()
+            self._http_client.verify = True if verify is None else verify
+            self._http_client.proxies = proxies
+            self._http_client.request = functools.partial(
                 # A workaround for requests not supporting session-wide timeout
-                self.http_client.request, timeout=timeout)
+                self._http_client.request, timeout=timeout)
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -200,7 +200,7 @@ class BaseClient(object):
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
-        resp = (post or self.http_client.post)(
+        resp = (post or self._http_client.post)(
             self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data,
             **kwargs)
@@ -269,7 +269,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        resp = self.http_client.post(self.configuration[DAE],
+        resp = self._http_client.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
             headers=dict(self.default_headers, **kwargs.pop("headers", {})),
             **kwargs)
