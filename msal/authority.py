@@ -79,9 +79,16 @@ class Authority(object):
                     authority.path,  # In B2C scenario, it is "/tenant/policy"
                     "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
-        openid_config = tenant_discovery(
-            tenant_discovery_endpoint,
-            self.http_client)
+        try:
+            openid_config = tenant_discovery(
+                tenant_discovery_endpoint,
+                self.http_client)
+        except json.decoder.JSONDecodeError:
+            raise ValueError(
+                "Unable to get authority configuration for {}. "
+                "Authority would typically be in a format of "
+                "https://login.microsoftonline.com/your_tenant_name".format(
+                authority_url))
         logger.debug("openid_config = %s", openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
