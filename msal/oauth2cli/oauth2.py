@@ -33,6 +33,17 @@ class BaseClient(object):
     CLIENT_ASSERTION_TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
     client_assertion_encoders = {CLIENT_ASSERTION_TYPE_SAML2: encode_saml_assertion}
 
+    @property
+    def session(self):
+        warnings.warn("Will be gone in next major release", DeprecationWarning)
+        return self._http_client
+
+    @session.setter
+    def session(self, value):
+        warnings.warn("Will be gone in next major release", DeprecationWarning)
+        self._http_client = value
+
+
     def __init__(
             self,
             server_configuration,  # type: dict
@@ -43,7 +54,7 @@ class BaseClient(object):
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
-            verify=True,  # type: Union[str, True, False, None]
+            verify=None,  # type: Union[str, True, False, None]
             proxies=None,  # type: Optional[dict]
             timeout=None,  # type: Union[tuple, float, None]
             ):
@@ -60,9 +71,21 @@ class BaseClient(object):
                 or
                 https://example.com/.../.well-known/openid-configuration
             client_id (str): The client's id, issued by the authorization server
+
             http_client (http.HttpClient):
                 Your implementation of abstract class :class:`http.HttpClient`.
                 Defaults to a requests session instance.
+
+                There is no session-wide `timeout` parameter defined here.
+                Timeout behavior is determined by the actual http client you use.
+                If you happen to use Requests, it disallows session-wide timeout
+                (https://github.com/psf/requests/issues/3341). The workaround is:
+
+                    s = requests.Session()
+                    s.request = functools.partial(s.request, timeout=3)
+
+                and then feed that patched session instance to this class.
+
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (bytes, callable):
                 The client assertion to authenticate this client, per RFC 7521.
@@ -86,28 +109,25 @@ class BaseClient(object):
             verify (boolean):
                 It will be passed to the
                 `verify parameter in the underlying requests library
-                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#ssl-cert-verification>`_
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#ssl-cert-verification>`_.
+                When leaving it with default value (None), we will use True instead.
+
                 This does not apply if you have chosen to pass your own Http client.
+
             proxies (dict):
                 It will be passed to the
                 `proxies parameter in the underlying requests library
-                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_.
+
                 This does not apply if you have chosen to pass your own Http client.
+
             timeout (object):
                 It will be passed to the
                 `timeout parameter in the underlying requests library
-                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_.
+
                 This does not apply if you have chosen to pass your own Http client.
 
-        There is no session-wide `timeout` parameter defined here.
-        The timeout behavior is determined by the actual http client you use.
-        If you happen to use Requests, it chose to not support session-wide timeout
-        (https://github.com/psf/requests/issues/3341), but you can patch that by:
-
-            s = requests.Session()
-            s.request = functools.partial(s.request, timeout=3)
-
-        and then feed that patched session instance to this class.
         """
         self.configuration = server_configuration
         self.client_id = client_id
@@ -119,14 +139,18 @@ class BaseClient(object):
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
         if http_client:
-            self.http_client = http_client
+            if verify is not None or proxies is not None or timeout is not None:
+                raise ValueError(
+                    "verify, proxies, or timeout is not allowed "
+                    "when http_client is in use")
+            self._http_client = http_client
         else:
-            self.http_client = requests.Session()
-            self.http_client.verify = verify
-            self.http_client.proxies = proxies
-            self.http_client.request = functools.partial(
+            self._http_client = requests.Session()
+            self._http_client.verify = True if verify is None else verify
+            self._http_client.proxies = proxies
+            self._http_client.request = functools.partial(
                 # A workaround for requests not supporting session-wide timeout
-                self.http_client.request, timeout=timeout)
+                self._http_client.request, timeout=timeout)
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -187,7 +211,7 @@ class BaseClient(object):
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
-        resp = (post or self.http_client.post)(
+        resp = (post or self._http_client.post)(
             self.configuration["token_endpoint"],
             headers=_headers, params=params, data=_data,
             **kwargs)
@@ -256,7 +280,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        resp = self.http_client.post(self.configuration[DAE],
+        resp = self._http_client.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
             headers=dict(self.default_headers, **kwargs.pop("headers", {})),
             **kwargs)
