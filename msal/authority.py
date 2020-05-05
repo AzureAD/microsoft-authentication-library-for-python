@@ -5,6 +5,11 @@ except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
 import logging
 
+# Historically some customers patched this module-wide requests instance.
+# We keep it here for now. They will be removed in next major release.
+import requests
+import requests as _requests
+
 from .exceptions import MsalServiceError
 
 
@@ -33,6 +38,11 @@ class Authority(object):
     """
     _domains_without_user_realm_discovery = set([])
 
+    @property
+    def http_client(self):  # Obsolete. We will remove this in next major release.
+        # A workaround: if module-wide requests is patched, we honor it.
+        return self._http_client if requests is _requests else requests
+
     def __init__(self, authority_url, http_client, validate_authority=True):
         """Creates an authority instance, and also validates it.
 
@@ -42,7 +52,7 @@ class Authority(object):
             This parameter only controls whether an instance discovery will be
             performed.
         """
-        self.http_client = http_client
+        self._http_client = http_client
         authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
         is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
