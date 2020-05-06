@@ -35,6 +35,11 @@ Before using MSAL Python (or any MSAL SDKs, for that matter), you will have to
 [register your application with the Microsoft identity platform](https://docs.microsoft.com/azure/active-directory/develop/quickstart-v2-register-an-app).
 
 Acquiring tokens with MSAL Python follows this 3-step pattern.
+(Note: That is the high level conceptual pattern.
+There will be some variations for different flows. They are demonstrated in
+[runnable samples hosted right in this repo](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample).
+)
+
 
 1. MSAL proposes a clean separation between
    [public client applications, and confidential client applications](https://tools.ietf.org/html/rfc6749#section-2.1).
@@ -43,7 +48,9 @@ Acquiring tokens with MSAL Python follows this 3-step pattern.
 
    ```python
    from msal import PublicClientApplication
-   app = PublicClientApplication("your_client_id", authority="...")
+   app = PublicClientApplication(
+       "your_client_id",
+       "authority": "https://login.microsoftonline.com/Enter_the_Tenant_Name_Here")
    ```
 
    Later, each time you would want an access token, you start by:
@@ -67,7 +74,7 @@ Acquiring tokens with MSAL Python follows this 3-step pattern.
        # Assuming the end user chose this one
        chosen = accounts[0]
        # Now let's try to find a token in cache for this account
-       result = app.acquire_token_silent(config["scope"], account=chosen)
+       result = app.acquire_token_silent(["your_scope"], account=chosen)
    ```
 
 3. Either there is no suitable token in the cache, or you chose to skip the previous step,
@@ -85,9 +92,6 @@ Acquiring tokens with MSAL Python follows this 3-step pattern.
        print(result.get("error_description"))
        print(result.get("correlation_id"))  # You may need this when reporting a bug
    ```
-
-That is the high level pattern. There will be some variations for different flows. They are demonstrated in
-[samples hosted right in this repo](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample).
 
 Refer the [Wiki](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki) pages for more details on the MSAL Python functionality and usage.
 
