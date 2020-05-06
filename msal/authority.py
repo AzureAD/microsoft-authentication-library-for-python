@@ -83,7 +83,7 @@ class Authority(object):
             openid_config = tenant_discovery(
                 tenant_discovery_endpoint,
                 self.http_client)
-        except json.decoder.JSONDecodeError:
+        except ValueError:  # json.decoder.JSONDecodeError in Py3 subclasses this
             raise ValueError(
                 "Unable to get authority configuration for {}. "
                 "Authority would typically be in a format of "
