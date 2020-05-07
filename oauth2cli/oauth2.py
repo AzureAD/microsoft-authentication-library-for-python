@@ -173,7 +173,7 @@ class BaseClient(object):
             headers=None,  # a dict to be sent as request headers
             post=None,  # A callable to replace requests.post(), for testing.
                         # Such as: lambda url, **kwargs:
-                        #   Mock(status_code=200, json=Mock(return_value={}))
+                        #   Mock(status_code=200, text='{}')
             **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
