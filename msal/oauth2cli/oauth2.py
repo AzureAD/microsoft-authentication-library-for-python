@@ -173,7 +173,7 @@ class BaseClient(object):
             headers=None,  # a dict to be sent as request headers
             post=None,  # A callable to replace requests.post(), for testing.
                         # Such as: lambda url, **kwargs:
-                        #   Mock(status_code=200, json=Mock(return_value={}))
+                        #   Mock(status_code=200, text='{}')
             **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
@@ -454,17 +454,20 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         self.on_removing_rt = on_removing_rt
         self.on_updating_rt = on_updating_rt
 
-    def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
-        RT = "refresh_token"
+    def _obtain_token(
+            self, grant_type, params=None, data=None,
+            also_save_rt=False,
+            *args, **kwargs):
         _data = data.copy()  # to prevent side effect
-        refresh_token = _data.get(RT)
         resp = super(Client, self)._obtain_token(
             grant_type, params, _data, *args, **kwargs)
         if "error" not in resp:
             _resp = resp.copy()
-            if grant_type == RT and RT in _resp and isinstance(refresh_token, dict):
-                _resp.pop(RT)  # So we skip it in on_obtaining_tokens(); it will
-                               # be handled in self.obtain_token_by_refresh_token()
+            RT = "refresh_token"
+            if grant_type == RT and RT in _resp and not also_save_rt:
+                # Then we skip it from on_obtaining_tokens();
+                # Leave it to self.obtain_token_by_refresh_token()
+                _resp.pop(RT, None)
             if "scope" in _resp:
                 scope = _resp["scope"].split()  # It is conceptually a set,
                     # but we represent it as a list which can be persisted to JSON
@@ -486,6 +489,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     def obtain_token_by_refresh_token(self, token_item, scope=None,
             rt_getter=lambda token_item: token_item["refresh_token"],
             on_removing_rt=None,
+            on_updating_rt=None,
             **kwargs):
         # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
         """This is an overload which will trigger token storage callbacks.
@@ -503,16 +507,28 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             according to https://tools.ietf.org/html/rfc6749#section-6
         :param rt_getter: A callable to translate the token_item to a raw RT string
         :param on_removing_rt: If absent, fall back to the one defined in initialization
+
+        :param on_updating_rt:
+            Default to None, it will fall back to the one defined in initialization.
+            This is the most common case.
+
+            As a special case, you can pass in a False,
+            then this function will NOT trigger on_updating_rt() for RT UPDATE,
+            instead it will allow the RT to be added by on_obtaining_tokens().
+            This behavior is useful when you are migrating RTs from elsewhere
+            into a token storage managed by this library.
         """
         resp = super(Client, self).obtain_token_by_refresh_token(
             rt_getter(token_item)
                 if not isinstance(token_item, string_types) else token_item,
             scope=scope,
+            also_save_rt=on_updating_rt is False,
             **kwargs)
         if resp.get('error') == 'invalid_grant':
             (on_removing_rt or self.on_removing_rt)(token_item)  # Discard old RT
-        if 'refresh_token' in resp:
-            self.on_updating_rt(token_item, resp['refresh_token'])
+        RT = "refresh_token"
+        if on_updating_rt is not False and RT in resp:
+            (on_updating_rt or self.on_updating_rt)(token_item, resp[RT])
         return resp
 
     def obtain_token_by_assertion(
