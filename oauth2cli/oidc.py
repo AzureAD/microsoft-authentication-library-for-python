@@ -1,6 +1,10 @@
 import json
 import base64
 import time
+import random
+import string
+import warnings
+import hashlib
 
 from . import oauth2
 
@@ -70,6 +74,11 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     return decoded
 
 
+def _nonce_hash(nonce):
+    # https://openid.net/specs/openid-connect-core-1_0.html#NonceNotes
+    return hashlib.sha256(nonce.encode("ascii")).hexdigest()
+
+
 class Client(oauth2.Client):
     """OpenID Connect is a layer on top of the OAuth2.
 
@@ -101,6 +110,7 @@ class Client(oauth2.Client):
             A hard-to-guess string used to mitigate replay attacks. See also
             `OIDC specs <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
         """
+        warnings.warn("Use initiate_auth_code_flow() instead", DeprecationWarning)
         return super(Client, self).build_auth_request_uri(
             response_type, nonce=nonce, **kwargs)
 
@@ -116,6 +126,8 @@ class Client(oauth2.Client):
             same nonce should also be provided here, so that we'll validate it.
             An exception will be raised if the nonce in id token mismatches.
         """
+        warnings.warn(
+            "Use obtain_token_by_auth_code_flow() instead", DeprecationWarning)
         result = super(Client, self).obtain_token_by_authorization_code(
             code, **kwargs)
         nonce_in_id_token = result.get("id_token_claims", {}).get("nonce")
@@ -123,5 +135,60 @@ class Client(oauth2.Client):
             raise ValueError(
                 'The nonce in id token ("%s") should match your nonce ("%s")' %
                 (nonce_in_id_token, nonce))
+        return result
+
+    def initiate_auth_code_flow(
+            self,
+            scope=None,
+            **kwargs):
+        """Initiate an auth code flow.
+
+        It provides nonce protection automatically.
+
+        :param list scope:
+            A list of strings, e.g. ["profile", "email", ...].
+            This method will automatically send ["openid"] to the wire,
+            although it won't modify your input list.
+
+        See :func:`oauth2.Client.initiate_auth_code_flow` in parent class
+        for descriptions on other parameters and return value.
+        """
+        if "id_token" in kwargs.get("response_type", ""):
+            # Implicit grant would cause auth response coming back in #fragment,
+            # but fragment won't reach a web service.
+            raise ValueError('response_type="id_token ..." is not allowed')
+        _scope = list(scope) if scope else []  # We won't modify input parameter
+        if "openid" not in _scope:
+            # "If no openid scope value is present,
+            # the request may still be a valid OAuth 2.0 request,
+            # but is not an OpenID Connect request." -- OIDC Core Specs, 3.1.2.2
+            # https://openid.net/specs/openid-connect-core-1_0.html#AuthRequestValidation
+            # Here we just automatically add it. If the caller do not want id_token,
+            # they should simply go with oauth2.Client.
+            _scope.append("openid")
+        nonce = "".join(random.sample(string.ascii_letters, 16))
+        flow = super(Client, self).initiate_auth_code_flow(
+            scope=_scope, nonce=_nonce_hash(nonce), **kwargs)
+        flow["nonce"] = nonce
+        return flow
+
+    def obtain_token_by_auth_code_flow(self, auth_code_flow, auth_response, **kwargs):
+        """Validate the auth_response being redirected back, and then obtain tokens.
+        and obtain ID token which can be used for user sign in.
+
+        It provides nonce protection out-of-the-box.
+
+        See :func:`oauth2.Client.obtain_token_by_auth_code_flow` in parent class
+        for descriptions on other parameters and return value.
+        """
+        result = super(Client, self).obtain_token_by_auth_code_flow(
+            auth_code_flow, auth_response, **kwargs)
+        if "id_token_claims" in result:
+            nonce_in_id_token = result.get("id_token_claims", {}).get("nonce")
+            expected_hash = _nonce_hash(auth_code_flow["nonce"])
+            if nonce_in_id_token != expected_hash:
+                raise RuntimeError(
+                    'The nonce in id token ("%s") should match our nonce ("%s")' %
+                    (nonce_in_id_token, expected_hash))
         return result
 

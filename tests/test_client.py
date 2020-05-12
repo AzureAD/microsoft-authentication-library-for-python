@@ -223,7 +223,7 @@ class TestRefreshTokenCallbacks(unittest.TestCase):
 
 class TestSessionAccessibility(unittest.TestCase):
     def test_accessing_session_property_for_backward_compatibility(self):
-        client = Client({}, "client_id")
+        client = Client({"token_endpoint": "https://example.com"}, "client_id")
         client.session
         client.session.close()
         client.session = "something"
