@@ -700,6 +700,36 @@ class ClientApplication(object):
                     "you must include a string parameter named 'key_id' "
                     "which identifies the key in the 'req_cnf' argument.")
 
+    def acquire_token_by_refresh_token(self, refresh_token, scopes):
+        """Acquire token(s) based on a refresh token (RT) obtained from elsewhere.
+
+        You use this method only when you have old RTs from elsewhere,
+        and now you want to migrate them into MSAL.
+        Calling this method results in new tokens automatically storing into MSAL.
+
+        You do NOT need to use this method if you are already using MSAL.
+        MSAL maintains RT automatically inside its token cache,
+        and an access token can be retrieved
+        when you call :func:`~acquire_token_silent`.
+
+        :param str refresh_token: The old refresh token, as a string.
+
+        :param list scopes:
+            The scopes associate with this old RT.
+            Each scope needs to be in the Microsoft identity platform (v2) format.
+            See `Scopes not resources <https://docs.microsoft.com/en-us/azure/active-directory/develop/migrate-python-adal-msal#scopes-not-resources>`_.
+
+        :return:
+            * A dict contains "error" and some other keys, when error happened.
+            * A dict contains no "error" key means migration was successful.
+        """
+        return self.client.obtain_token_by_refresh_token(
+            refresh_token,
+            decorate_scope(scopes, self.client_id),
+            rt_getter=lambda rt: rt,
+            on_updating_rt=False,
+            )
+
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
