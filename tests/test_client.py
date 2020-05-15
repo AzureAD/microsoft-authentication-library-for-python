@@ -12,6 +12,7 @@ import requests
 from msal.oauth2cli import Client, JwtSigner
 from msal.oauth2cli.authcode import obtain_auth_code
 from tests import unittest, Oauth2TestCase
+from tests.http_client import MinimalHttpClient, MinimalResponse
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -83,6 +84,7 @@ class TestClient(Oauth2TestCase):
 
     @classmethod
     def setUpClass(cls):
+        http_client = MinimalHttpClient()
         if "client_certificate" in CONFIG:
             private_key_path = CONFIG["client_certificate"]["private_key_path"]
             with open(os.path.join(THIS_FOLDER, private_key_path)) as f:
@@ -90,6 +92,7 @@ class TestClient(Oauth2TestCase):
             cls.client = Client(
                 CONFIG["openid_configuration"],
                 CONFIG['client_id'],
+                http_client=http_client,
                 client_assertion=JwtSigner(
                         private_key,
                         algorithm="RS256",
@@ -103,6 +106,7 @@ class TestClient(Oauth2TestCase):
         else:
             cls.client = Client(
                 CONFIG["openid_configuration"], CONFIG['client_id'],
+                http_client=http_client,
                 client_secret=CONFIG.get('client_secret'))
 
     @unittest.skipIf(
@@ -169,4 +173,58 @@ class TestClient(Oauth2TestCase):
                 result,
                 assertion=lambda: self.assertIn('access_token', result),
                 skippable_errors=self.client.DEVICE_FLOW_RETRIABLE_ERRORS)
+
+
+class TestRefreshTokenCallbacks(unittest.TestCase):
+
+    def _dummy(self, url, **kwargs):
+        return MinimalResponse(status_code=200, text='{"refresh_token": "new"}')
+
+    def test_rt_being_added(self):
+        client = Client(
+            {"token_endpoint": "http://example.com/token"},
+            "client_id",
+            http_client=MinimalHttpClient(),
+            on_obtaining_tokens=lambda event:
+                self.assertEqual("new", event["response"].get("refresh_token")),
+            on_updating_rt=lambda rt_item, new_rt:
+                self.fail("This should not be called here"),
+            )
+        client.obtain_token_by_authorization_code("code", post=self._dummy)
+
+    def test_rt_being_updated(self):
+        old_rt = {"refresh_token": "old"}
+        client = Client(
+            {"token_endpoint": "http://example.com/token"},
+            "client_id",
+            http_client=MinimalHttpClient(),
+            on_obtaining_tokens=lambda event:
+                self.assertNotIn("refresh_token", event["response"]),
+            on_updating_rt=lambda old, new:  # TODO: ensure it being called
+                (self.assertEqual(old_rt, old), self.assertEqual("new", new)),
+            )
+        client.obtain_token_by_refresh_token(
+            {"refresh_token": "old"}, post=self._dummy)
+
+    def test_rt_being_migrated(self):
+        old_rt = {"refresh_token": "old"}
+        client = Client(
+            {"token_endpoint": "http://example.com/token"},
+            "client_id",
+            http_client=MinimalHttpClient(),
+            on_obtaining_tokens=lambda event:
+                self.assertEqual("new", event["response"].get("refresh_token")),
+            on_updating_rt=lambda rt_item, new_rt:
+                self.fail("This should not be called here"),
+            )
+        client.obtain_token_by_refresh_token(
+            {"refresh_token": "old"}, on_updating_rt=False, post=self._dummy)
+
+
+class TestSessionAccessibility(unittest.TestCase):
+    def test_accessing_session_property_for_backward_compatibility(self):
+        client = Client({}, "client_id")
+        client.session
+        client.session.close()
+        client.session = "something"
 

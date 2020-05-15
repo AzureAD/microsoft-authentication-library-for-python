@@ -11,7 +11,14 @@ class HttpClient(object):
     def post(self, url, params=None, data=None, headers=None, **kwargs):
         """HTTP post.
 
-        params, data and headers MUST accept a dictionary.
+        :param dict params: A dict to be url-encoded and sent as query-string.
+        :param dict headers: A dict representing headers to be sent via request.
+        :param data:
+            Implementation needs to support 2 types.
+
+            * A dict, which will need to be urlencode() before being sent.
+            * (Recommended) A string, which will be sent in request as-is.
+
         It returns an :class:`~Response`-like object.
 
         Note: In its async counterpart, this method would be defined as async.
@@ -21,7 +28,9 @@ class HttpClient(object):
     def get(self, url, params=None, headers=None, **kwargs):
         """HTTP get.
 
-        params, data and headers MUST accept a dictionary.
+        :param dict params: A dict to be url-encoded and sent as query-string.
+        :param dict headers: A dict representing headers to be sent via request.
+
         It returns an :class:`~Response`-like object.
 
         Note: In its async counterpart, this method would be defined as async.

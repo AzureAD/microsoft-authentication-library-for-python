@@ -1,6 +1,7 @@
 """This OAuth2 client implementation aims to be spec-compliant, and generic."""
 # OAuth2 spec https://tools.ietf.org/html/rfc6749
 
+import json
 try:
     from urllib.parse import urlencode, parse_qs
 except ImportError:
@@ -11,6 +12,7 @@ import warnings
 import time
 import base64
 import sys
+import functools
 
 import requests
 
@@ -31,16 +33,28 @@ class BaseClient(object):
     CLIENT_ASSERTION_TYPE_SAML2 = "urn:ietf:params:oauth:client-assertion-type:saml2-bearer"
     client_assertion_encoders = {CLIENT_ASSERTION_TYPE_SAML2: encode_saml_assertion}
 
+    @property
+    def session(self):
+        warnings.warn("Will be gone in next major release", DeprecationWarning)
+        return self._http_client
+
+    @session.setter
+    def session(self, value):
+        warnings.warn("Will be gone in next major release", DeprecationWarning)
+        self._http_client = value
+
+
     def __init__(
             self,
             server_configuration,  # type: dict
             client_id,  # type: str
+            http_client=None,  # We insert it here to match the upcoming async API
             client_secret=None,  # type: Optional[str]
             client_assertion=None,  # type: Union[bytes, callable, None]
             client_assertion_type=None,  # type: Optional[str]
             default_headers=None,  # type: Optional[dict]
             default_body=None,  # type: Optional[dict]
-            verify=True,  # type: Union[str, True, False, None]
+            verify=None,  # type: Union[str, True, False, None]
             proxies=None,  # type: Optional[dict]
             timeout=None,  # type: Union[tuple, float, None]
             ):
@@ -57,6 +71,21 @@ class BaseClient(object):
                 or
                 https://example.com/.../.well-known/openid-configuration
             client_id (str): The client's id, issued by the authorization server
+
+            http_client (http.HttpClient):
+                Your implementation of abstract class :class:`http.HttpClient`.
+                Defaults to a requests session instance.
+
+                There is no session-wide `timeout` parameter defined here.
+                Timeout behavior is determined by the actual http client you use.
+                If you happen to use Requests, it disallows session-wide timeout
+                (https://github.com/psf/requests/issues/3341). The workaround is:
+
+                    s = requests.Session()
+                    s.request = functools.partial(s.request, timeout=3)
+
+                and then feed that patched session instance to this class.
+
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (bytes, callable):
                 The client assertion to authenticate this client, per RFC 7521.
@@ -76,20 +105,52 @@ class BaseClient(object):
                 you could choose to set this as {"client_secret": "your secret"}
                 if your authorization server wants it to be in the request body
                 (rather than in the request header).
+
+            verify (boolean):
+                It will be passed to the
+                `verify parameter in the underlying requests library
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#ssl-cert-verification>`_.
+                When leaving it with default value (None), we will use True instead.
+
+                This does not apply if you have chosen to pass your own Http client.
+
+            proxies (dict):
+                It will be passed to the
+                `proxies parameter in the underlying requests library
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#proxies>`_.
+
+                This does not apply if you have chosen to pass your own Http client.
+
+            timeout (object):
+                It will be passed to the
+                `timeout parameter in the underlying requests library
+                <http://docs.python-requests.org/en/v2.9.1/user/advanced/#timeouts>`_.
+
+                This does not apply if you have chosen to pass your own Http client.
+
         """
         self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
         self.client_assertion = client_assertion
+        self.default_headers = default_headers or {}
         self.default_body = default_body or {}
         if client_assertion_type is not None:
             self.default_body["client_assertion_type"] = client_assertion_type
         self.logger = logging.getLogger(__name__)
-        self.session = s = requests.Session()
-        s.headers.update(default_headers or {})
-        s.verify = verify
-        s.proxies = proxies or {}
-        self.timeout = timeout
+        if http_client:
+            if verify is not None or proxies is not None or timeout is not None:
+                raise ValueError(
+                    "verify, proxies, or timeout is not allowed "
+                    "when http_client is in use")
+            self._http_client = http_client
+        else:
+            self._http_client = requests.Session()
+            self._http_client.verify = True if verify is None else verify
+            self._http_client.proxies = proxies
+            self._http_client.request = functools.partial(
+                # A workaround for requests not supporting session-wide timeout
+                self._http_client.request, timeout=timeout)
 
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
@@ -110,10 +171,9 @@ class BaseClient(object):
             params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
-            timeout=None,
             post=None,  # A callable to replace requests.post(), for testing.
                         # Such as: lambda url, **kwargs:
-                        #   Mock(status_code=200, json=Mock(return_value={}))
+                        #   Mock(status_code=200, text='{}')
             **kwargs  # Relay all extra parameters to underlying requests
             ):  # Returns the json object came from the OAUTH2 response
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
@@ -128,10 +188,14 @@ class BaseClient(object):
 
         _data.update(self.default_body)  # It may contain authen parameters
         _data.update(data or {})  # So the content in data param prevails
-        # We don't have to clean up None values here, because requests lib will.
+        _data = {k: v for k, v in _data.items() if v}  # Clean up None values
 
         if _data.get('scope'):
             _data['scope'] = self._stringify(_data['scope'])
+
+        _headers = {'Accept': 'application/json'}
+        _headers.update(self.default_headers)
+        _headers.update(headers or {})
 
         # Quoted from https://tools.ietf.org/html/rfc6749#section-2.3.1
         # Clients in possession of a client password MAY use the HTTP Basic
@@ -140,18 +204,16 @@ class BaseClient(object):
         # the authorization server MAY support including the
         # client credentials in the request-body using the following
         # parameters: client_id, client_secret.
-        auth = None
         if self.client_secret and self.client_id:
-            auth = (self.client_id, self.client_secret)  # for HTTP Basic Auth
+            _headers["Authorization"] = "Basic " + base64.b64encode(
+                "{}:{}".format(self.client_id, self.client_secret)
+                .encode("ascii")).decode("ascii")
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
-        _headers = {'Accept': 'application/json'}
-        _headers.update(headers or {})
-        resp = (post or self.session.post)(
+        resp = (post or self._http_client.post)(
             self.configuration["token_endpoint"],
-            headers=_headers, params=params, data=_data, auth=auth,
-            timeout=timeout or self.timeout,
+            headers=_headers, params=params, data=_data,
             **kwargs)
         if resp.status_code >= 500:
             resp.raise_for_status()  # TODO: Will probably retry here
@@ -159,7 +221,7 @@ class BaseClient(object):
             # The spec (https://tools.ietf.org/html/rfc6749#section-5.2) says
             # even an error response will be a valid json structure,
             # so we simply return it here, without needing to invent an exception.
-            return resp.json()
+            return json.loads(resp.text)
         except ValueError:
             self.logger.exception(
                     "Token response is not in json format: %s", resp.text)
@@ -200,7 +262,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
 
 
-    def initiate_device_flow(self, scope=None, timeout=None, **kwargs):
+    def initiate_device_flow(self, scope=None, **kwargs):
         # type: (list, **dict) -> dict
         # The naming of this method is following the wording of this specs
         # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
@@ -218,10 +280,11 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        flow = self.session.post(self.configuration[DAE],
+        resp = self._http_client.post(self.configuration[DAE],
             data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
-            timeout=timeout or self.timeout,
-            **kwargs).json()
+            headers=dict(self.default_headers, **kwargs.pop("headers", {})),
+            **kwargs)
+        flow = json.loads(resp.text)
         flow["interval"] = int(flow.get("interval", 5))  # Some IdP returns string
         flow["expires_in"] = int(flow.get("expires_in", 1800))
         flow["expires_at"] = time.time() + flow["expires_in"]  # We invent this
@@ -391,17 +454,20 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         self.on_removing_rt = on_removing_rt
         self.on_updating_rt = on_updating_rt
 
-    def _obtain_token(self, grant_type, params=None, data=None, *args, **kwargs):
-        RT = "refresh_token"
+    def _obtain_token(
+            self, grant_type, params=None, data=None,
+            also_save_rt=False,
+            *args, **kwargs):
         _data = data.copy()  # to prevent side effect
-        refresh_token = _data.get(RT)
         resp = super(Client, self)._obtain_token(
             grant_type, params, _data, *args, **kwargs)
         if "error" not in resp:
             _resp = resp.copy()
-            if grant_type == RT and RT in _resp and isinstance(refresh_token, dict):
-                _resp.pop(RT)  # So we skip it in on_obtaining_tokens(); it will
-                               # be handled in self.obtain_token_by_refresh_token()
+            RT = "refresh_token"
+            if grant_type == RT and RT in _resp and not also_save_rt:
+                # Then we skip it from on_obtaining_tokens();
+                # Leave it to self.obtain_token_by_refresh_token()
+                _resp.pop(RT, None)
             if "scope" in _resp:
                 scope = _resp["scope"].split()  # It is conceptually a set,
                     # but we represent it as a list which can be persisted to JSON
@@ -423,6 +489,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     def obtain_token_by_refresh_token(self, token_item, scope=None,
             rt_getter=lambda token_item: token_item["refresh_token"],
             on_removing_rt=None,
+            on_updating_rt=None,
             **kwargs):
         # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
         """This is an overload which will trigger token storage callbacks.
@@ -440,16 +507,28 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             according to https://tools.ietf.org/html/rfc6749#section-6
         :param rt_getter: A callable to translate the token_item to a raw RT string
         :param on_removing_rt: If absent, fall back to the one defined in initialization
+
+        :param on_updating_rt:
+            Default to None, it will fall back to the one defined in initialization.
+            This is the most common case.
+
+            As a special case, you can pass in a False,
+            then this function will NOT trigger on_updating_rt() for RT UPDATE,
+            instead it will allow the RT to be added by on_obtaining_tokens().
+            This behavior is useful when you are migrating RTs from elsewhere
+            into a token storage managed by this library.
         """
         resp = super(Client, self).obtain_token_by_refresh_token(
             rt_getter(token_item)
                 if not isinstance(token_item, string_types) else token_item,
             scope=scope,
+            also_save_rt=on_updating_rt is False,
             **kwargs)
         if resp.get('error') == 'invalid_grant':
             (on_removing_rt or self.on_removing_rt)(token_item)  # Discard old RT
-        if 'refresh_token' in resp:
-            self.on_updating_rt(token_item, resp['refresh_token'])
+        RT = "refresh_token"
+        if on_updating_rt is not False and RT in resp:
+            (on_updating_rt or self.on_updating_rt)(token_item, resp[RT])
         return resp
 
     def obtain_token_by_assertion(
