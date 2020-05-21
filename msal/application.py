@@ -284,8 +284,9 @@ class ClientApplication(object):
             Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
             If included, it will skip the email-based discovery process that user goes
             through on the sign-in page, leading to a slightly more streamlined user experience.
-            https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code
-            https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8
+            More information on possible values 
+            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
