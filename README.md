@@ -50,7 +50,7 @@ There will be some variations for different flows. They are demonstrated in
    from msal import PublicClientApplication
    app = PublicClientApplication(
        "your_client_id",
-       "authority": "https://login.microsoftonline.com/Enter_the_Tenant_Name_Here")
+       authority="https://login.microsoftonline.com/Enter_the_Tenant_Name_Here")
    ```
 
    Later, each time you would want an access token, you start by:
