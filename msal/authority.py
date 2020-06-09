@@ -71,24 +71,28 @@ class Authority(object):
                     "you can turn off this check by passing in "
                     "validate_authority=False"
                     % authority_url)
-            tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
+            self.tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
-            tenant_discovery_endpoint = (
+            self.tenant_discovery_endpoint = (
                 'https://{}{}{}/.well-known/openid-configuration'.format(
                     self.instance,
                     authority.path,  # In B2C scenario, it is "/tenant/policy"
                     "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
+        self.authority_url = authority_url
+        self.tenant = canonicalize(authority_url)[2]
+
+    def tenant_discovery(self):
         try:
             openid_config = tenant_discovery(
-                tenant_discovery_endpoint,
+                self.tenant_discovery_endpoint,
                 self.http_client)
         except ValueError:  # json.decoder.JSONDecodeError in Py3 subclasses this
             raise ValueError(
                 "Unable to get authority configuration for {}. "
                 "Authority would typically be in a format of "
                 "https://login.microsoftonline.com/your_tenant_name".format(
-                authority_url))
+                self.authority_url))
         logger.debug("openid_config = %s", openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
