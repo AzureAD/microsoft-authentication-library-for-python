@@ -197,8 +197,8 @@ class ClientApplication(object):
         self.authority_url = authority
         self.validate_authority = validate_authority
         self.authority = Authority(
-                authority or "https://login.microsoftonline.com/common/",
-                self.http_client, validate_authority=validate_authority)
+                self.authority_url or "https://login.microsoftonline.com/common/",
+                self.http_client, validate_authority=self.validate_authority)
             # Here the self.authority is not the same type as authority in input
         self.client = None
         self.token_cache = token_cache or TokenCache()

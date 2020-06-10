@@ -53,15 +53,19 @@ class Authority(object):
             performed.
         """
         self._http_client = http_client
-        authority, self.instance, tenant = canonicalize(authority_url)
-        parts = authority.path.split('/')
-        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
+        self.authority, self.instance, self.tenant = canonicalize(authority_url)
+        parts = self.authority.path.split('/')
+        self.is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
             len(parts) == 3 and parts[2].lower().startswith("b2c_"))
-        if (tenant != "adfs" and (not is_b2c) and validate_authority
+        self.authority_url = authority_url
+        self.validate_authority = validate_authority
+
+    def tenant_discovery(self):
+        if (self.tenant != "adfs" and (not self.is_b2c) and self.validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
-                    self.instance, authority.path),
+                    self.instance, self.authority.path),
                 self.http_client)
             if payload.get("error") == "invalid_instance":
                 raise ValueError(
@@ -70,22 +74,18 @@ class Authority(object):
                     "If it is indeed your legit customized domain name, "
                     "you can turn off this check by passing in "
                     "validate_authority=False"
-                    % authority_url)
-            self.tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
+                    % self.authority_url)
+            tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
-            self.tenant_discovery_endpoint = (
+            tenant_discovery_endpoint = (
                 'https://{}{}{}/.well-known/openid-configuration'.format(
                     self.instance,
-                    authority.path,  # In B2C scenario, it is "/tenant/policy"
-                    "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
+                    self.authority.path,  # In B2C scenario, it is "/tenant/policy"
+                    "" if self.tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
-        self.authority_url = authority_url
-        self.tenant = canonicalize(authority_url)[2]
-
-    def tenant_discovery(self):
         try:
             openid_config = tenant_discovery(
-                self.tenant_discovery_endpoint,
+                tenant_discovery_endpoint,
                 self.http_client)
         except ValueError:  # json.decoder.JSONDecodeError in Py3 subclasses this
             raise ValueError(
