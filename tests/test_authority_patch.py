@@ -15,7 +15,7 @@ class TestAuthorityHonorsPatchedRequests(unittest.TestCase):
         # First, we test that the original, unmodified authority is working
         a = msal.authority.Authority(
             "https://login.microsoftonline.com/common", MinimalHttpClient())
-        a.tenant_discovery()
+        a.initialize()
         self.assertEqual(
             a.authorization_endpoint,
             'https://login.microsoftonline.com/common/oauth2/v2.0/authorize')
@@ -28,7 +28,7 @@ class TestAuthorityHonorsPatchedRequests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 a = msal.authority.Authority(
                     "https://login.microsoftonline.com/common", MinimalHttpClient())
-                a.tenant_discovery()
+                a.initialize()
         finally:  # Tricky:
             # Unpatch is necessary otherwise other test cases would be affected
             msal.authority.requests = original

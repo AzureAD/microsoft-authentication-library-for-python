@@ -549,6 +549,8 @@ class ClientApplication(object):
         #     authority,
         #     self.http_client,
         #     ) if authority else self.authority
+        if not self.authority.is_initialized:
+            self.authority.initialize()
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh,
             correlation_id=correlation_id,
@@ -561,6 +563,7 @@ class ClientApplication(object):
                 "https://" + alias + "/" + self.authority.tenant,
                 self.http_client,
                 validate_authority=False)
+            the_authority.initialize()
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh,
                 correlation_id=correlation_id,
@@ -668,9 +671,7 @@ class ClientApplication(object):
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
         logger.debug("Found %d RTs matching %s", len(matches), query)
-        if matches:
-            authority.tenant_discovery()
-            client = self._build_client(self.client_credential, authority)
+        client = self._build_client(self.client_credential, authority)
 
         response = None  # A distinguishable value to mean cache is empty
         for entry in matches:
@@ -709,8 +710,8 @@ class ClientApplication(object):
                     "you must include a string parameter named 'key_id' "
                     "which identifies the key in the 'req_cnf' argument.")
 
-    def setup_before_first_network_call(self):
-        self.authority.tenant_discovery()
+    def _setup_before_first_network_call(self):
+        self.authority.initialize()
         self.client = self._build_client(self.client_credential, self.authority)
 
     def acquire_token_by_refresh_token(self, refresh_token, scopes):
@@ -737,7 +738,7 @@ class ClientApplication(object):
             * A dict contains no "error" key means migration was successful.
         """
         if not self.client:
-            self.setup_before_first_network_call()
+            self._setup_before_first_network_call()
         return self.client.obtain_token_by_refresh_token(
             refresh_token,
             decorate_scope(scopes, self.client_id),
@@ -768,7 +769,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain some other readable key/value pairs.
         """
         if not self.client:
-            self.setup_before_first_network_call()
+            self._setup_before_first_network_call()
         correlation_id = _get_new_correlation_id()
         flow = self.client.initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
@@ -795,7 +796,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain "error" and usually "error_description".
         """
         if not self.client:
-            self.setup_before_first_network_call()
+            self._setup_before_first_network_call()
         return self.client.obtain_token_by_device_flow(
             flow,
             data=dict(kwargs.pop("data", {}), code=flow["device_code"]),
@@ -828,7 +829,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain "error" and usually "error_description".
         """
         if not self.client:
-            self.setup_before_first_network_call()
+            self._setup_before_first_network_call()
         scopes = decorate_scope(scopes, self.client_id)
         headers = {
             CLIENT_REQUEST_ID: _get_new_correlation_id(),
@@ -899,7 +900,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # TBD: force_refresh behavior
         if not self.client:
-            self.setup_before_first_network_call()
+            self._setup_before_first_network_call()
         return self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
@@ -933,7 +934,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
         if not self.client:
-            self.setup_before_first_network_call()
+            self._setup_before_first_network_call()
         return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs

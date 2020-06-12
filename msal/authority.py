@@ -59,8 +59,9 @@ class Authority(object):
             len(parts) == 3 and parts[2].lower().startswith("b2c_"))
         self.authority_url = authority_url
         self.validate_authority = validate_authority
+        self.is_initialized = False
 
-    def tenant_discovery(self):
+    def initialize(self):
         if (self.tenant != "adfs" and (not self.is_b2c) and self.validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
@@ -98,6 +99,7 @@ class Authority(object):
         self.token_endpoint = openid_config['token_endpoint']
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
         self.is_adfs = self.tenant.lower() == 'adfs'
+        self.is_initialized = True
 
     def user_realm_discovery(self, username, correlation_id=None, response=None):
         # It will typically return a dict containing "ver", "account_type",
