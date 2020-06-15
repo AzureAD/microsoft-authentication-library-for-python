@@ -53,20 +53,26 @@ class Authority(object):
             performed.
         """
         self._http_client = http_client
-        self.authority, self.instance, self.tenant = canonicalize(authority_url)
-        parts = self.authority.path.split('/')
-        self.is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
-            len(parts) == 3 and parts[2].lower().startswith("b2c_"))
         self.authority_url = authority_url
         self.validate_authority = validate_authority
         self.is_initialized = False
 
     def initialize(self):
-        if (self.tenant != "adfs" and (not self.is_b2c) and self.validate_authority
+        if not self.is_initialized:
+            self.__initialize()
+            self.is_initialized = True
+
+    def __initialize(self):
+        authority, self.instance, tenant = canonicalize(self.authority_url)
+        parts = authority.path.split('/')
+        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
+                len(parts) == 3 and parts[2].lower().startswith("b2c_"))
+
+        if (tenant != "adfs" and (not is_b2c) and self.validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
-                    self.instance, self.authority.path),
+                    self.instance, authority.path),
                 self.http_client)
             if payload.get("error") == "invalid_instance":
                 raise ValueError(
@@ -81,8 +87,8 @@ class Authority(object):
             tenant_discovery_endpoint = (
                 'https://{}{}{}/.well-known/openid-configuration'.format(
                     self.instance,
-                    self.authority.path,  # In B2C scenario, it is "/tenant/policy"
-                    "" if self.tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
+                    authority.path,  # In B2C scenario, it is "/tenant/policy"
+                    "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
         try:
             openid_config = tenant_discovery(
@@ -99,7 +105,6 @@ class Authority(object):
         self.token_endpoint = openid_config['token_endpoint']
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
         self.is_adfs = self.tenant.lower() == 'adfs'
-        self.is_initialized = True
 
     def user_realm_discovery(self, username, correlation_id=None, response=None):
         # It will typically return a dict containing "ver", "account_type",

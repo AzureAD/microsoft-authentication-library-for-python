@@ -86,7 +86,7 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
         authority = "https://login.microsoftonline.com/common"
         self.assertNotIn(authority, Authority._domains_without_user_realm_discovery)
         a = Authority(authority, MinimalHttpClient(), validate_authority=False)
-
+        a.initialize()
         # We now pretend this authority supports no User Realm Discovery
         class MockResponse(object):
             status_code = 404
