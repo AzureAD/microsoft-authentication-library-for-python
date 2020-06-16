@@ -67,7 +67,7 @@ class Authority(object):
         authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
         is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
-                len(parts) == 3 and parts[2].lower().startswith("b2c_"))
+            len(parts) == 3 and parts[2].lower().startswith("b2c_"))
         if (tenant != "adfs" and (not is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
@@ -99,7 +99,7 @@ class Authority(object):
                 "Unable to get authority configuration for {}. "
                 "Authority would typically be in a format of "
                 "https://login.microsoftonline.com/your_tenant_name".format(
-                self.authority_url))
+                authority_url))
         logger.debug("openid_config = %s", openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
