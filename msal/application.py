@@ -395,6 +395,7 @@ class ClientApplication(object):
             Your app can choose to display those information to end user,
             and allow user to choose one of his/her accounts to proceed.
         """
+        self.authority.initialize()
         accounts = self._find_msal_accounts(environment=self.authority.instance)
         if not accounts:  # Now try other aliases of this authority instance
             for alias in self._get_authority_aliases(self.authority.instance):
@@ -547,8 +548,7 @@ class ClientApplication(object):
         #     authority,
         #     self.http_client,
         #     ) if authority else self.authority
-        if not self.authority.is_initialized:
-            self.authority.initialize()
+        self.authority.initialize()
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh,
             correlation_id=correlation_id,

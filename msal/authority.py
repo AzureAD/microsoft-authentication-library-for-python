@@ -81,7 +81,7 @@ class Authority(object):
                     "If it is indeed your legit customized domain name, "
                     "you can turn off this check by passing in "
                     "validate_authority=False"
-                    % self.authority_url)
+                    % authority_url)
             tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
             tenant_discovery_endpoint = (
