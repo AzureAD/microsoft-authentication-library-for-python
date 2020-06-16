@@ -53,22 +53,22 @@ class Authority(object):
             performed.
         """
         self._http_client = http_client
-        self.authority_url = authority_url
-        self.validate_authority = validate_authority
-        self.is_initialized = False
+        self._authority_url = authority_url
+        self._validate_authority = validate_authority
+        self._is_initialized = False
 
     def initialize(self):
-        if not self.is_initialized:
-            self.__initialize()
-            self.is_initialized = True
+        if not self._is_initialized:
+            self.__initialize(self._authority_url, self._http_client, self._validate_authority)
+            self._is_initialized = True
 
-    def __initialize(self):
-        authority, self.instance, tenant = canonicalize(self.authority_url)
+    def __initialize(self, authority_url, http_client, validate_authority):
+        self._http_client = http_client
+        authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
         is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
                 len(parts) == 3 and parts[2].lower().startswith("b2c_"))
-
-        if (tenant != "adfs" and (not is_b2c) and self.validate_authority
+        if (tenant != "adfs" and (not is_b2c) and validate_authority
                 and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
             payload = instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
