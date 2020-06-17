@@ -200,7 +200,7 @@ class ClientApplication(object):
             # Here the self.authority is not the same type as authority in input
         self.client = None
         self.token_cache = token_cache or TokenCache()
-        self.client_credential = client_credential
+        self._client_credential = client_credential
         self.authority_groups = None
 
     def _build_client(self, client_credential, authority):
@@ -368,9 +368,7 @@ class ClientApplication(object):
         # really empty.
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        if not self.client:
-            self.setup_before_first_network_call()
-        return self.client.obtain_token_by_authorization_code(
+        return self._get_client().obtain_token_by_authorization_code(
             code, redirect_uri=redirect_uri,
             scope=decorate_scope(scopes, self.client_id),
             headers={
@@ -707,9 +705,11 @@ class ClientApplication(object):
                     "you must include a string parameter named 'key_id' "
                     "which identifies the key in the 'req_cnf' argument.")
 
-    def _setup_before_first_network_call(self):
-        self.authority.initialize()
-        self.client = self._build_client(self.client_credential, self.authority)
+    def _get_client(self):
+        if not self.client:
+            self.authority.initialize()
+            self.client = self._build_client(self._client_credential, self.authority)
+        return self.client
 
     def acquire_token_by_refresh_token(self, refresh_token, scopes):
         """Acquire token(s) based on a refresh token (RT) obtained from elsewhere.
@@ -734,9 +734,7 @@ class ClientApplication(object):
             * A dict contains "error" and some other keys, when error happened.
             * A dict contains no "error" key means migration was successful.
         """
-        if not self.client:
-            self._setup_before_first_network_call()
-        return self.client.obtain_token_by_refresh_token(
+        return self._get_client().obtain_token_by_refresh_token(
             refresh_token,
             decorate_scope(scopes, self.client_id),
             rt_getter=lambda rt: rt,
@@ -765,10 +763,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "user_code" key, among others
             - an error response would contain some other readable key/value pairs.
         """
-        if not self.client:
-            self._setup_before_first_network_call()
         correlation_id = _get_new_correlation_id()
-        flow = self.client.initiate_device_flow(
+        flow = self._get_client().initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
             headers={
                 CLIENT_REQUEST_ID: correlation_id,
@@ -792,9 +788,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        if not self.client:
-            self._setup_before_first_network_call()
-        return self.client.obtain_token_by_device_flow(
+        return self._get_client().obtain_token_by_device_flow(
             flow,
             data=dict(kwargs.pop("data", {}), code=flow["device_code"]),
                 # 2018-10-4 Hack:
@@ -825,8 +819,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        if not self.client:
-            self._setup_before_first_network_call()
+        self._get_client()
         scopes = decorate_scope(scopes, self.client_id)
         headers = {
             CLIENT_REQUEST_ID: _get_new_correlation_id(),
@@ -896,9 +889,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
-        if not self.client:
-            self._setup_before_first_network_call()
-        return self.client.obtain_token_for_client(
+        return self._get_client().obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
                 CLIENT_REQUEST_ID: _get_new_correlation_id(),
@@ -930,9 +921,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
-        if not self.client:
-            self._setup_before_first_network_call()
-        return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
+        return self._get_client().obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
             scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
