@@ -314,6 +314,7 @@ class ClientApplication(object):
             authority,
             self.http_client
             ) if authority else self.authority
+        the_authority.initialize()
 
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
@@ -862,16 +863,16 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
         grant_type = {
             SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
-            SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
+            SAML_TOKEN_TYPE_V2: self._get_client().GRANT_TYPE_SAML2,
             WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
-            WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
+            WSS_SAML_TOKEN_PROFILE_V2: self._get_client().GRANT_TYPE_SAML2
             }.get(wstrust_result.get("type"))
         if not grant_type:
             raise RuntimeError(
                 "RSTR returned unknown token type: %s", wstrust_result.get("type"))
-        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
+        self._get_client().grant_assertion_encoders.setdefault(  # Register a non-standard type
             grant_type, self.client.encode_saml_assertion)
-        return self.client.obtain_token_by_assertion(
+        return self._get_client().obtain_token_by_assertion(
             wstrust_result["token"], grant_type, scope=scopes, **kwargs)
 
 
