@@ -86,10 +86,15 @@ class E2eTestCase(unittest.TestCase):
                 result_from_wire['access_token'], result_from_cache['access_token'],
                 "We should get a cached AT")
 
-        # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
-        self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
+        if "refresh_token" in result_from_wire:
+            # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
+            self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
         result_from_cache = self.app.acquire_token_silent(
             scope, account=account, data=data or {})
+        if "refresh_token" not in result_from_wire:
+            self.assertEqual(
+                result_from_cache["access_token"], result_from_wire["access_token"],
+                "The previously cached AT should be returned")
         self.assertIsNotNone(result_from_cache,
                 "We should get a result from acquire_token_silent(...) call")
         self.assertIsNotNone(
