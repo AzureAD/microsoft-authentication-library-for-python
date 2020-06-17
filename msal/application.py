@@ -249,6 +249,12 @@ class ClientApplication(object):
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
 
+    def _get_client(self):
+        if not self.client:
+            self.authority.initialize()
+            self.client = self._build_client(self._client_credential, self.authority)
+        return self.client
+
     def get_authorization_request_url(
             self,
             scopes,  # type: list[str]
@@ -705,12 +711,6 @@ class ClientApplication(object):
                     "you must include a string parameter named 'key_id' "
                     "which identifies the key in the 'req_cnf' argument.")
 
-    def _get_client(self):
-        if not self.client:
-            self.authority.initialize()
-            self.client = self._build_client(self._client_credential, self.authority)
-        return self.client
-
     def acquire_token_by_refresh_token(self, refresh_token, scopes):
         """Acquire token(s) based on a refresh token (RT) obtained from elsewhere.
 
@@ -819,7 +819,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        self._get_client()
+        self.authority.initialize()
         scopes = decorate_scope(scopes, self.client_id)
         headers = {
             CLIENT_REQUEST_ID: _get_new_correlation_id(),
@@ -833,7 +833,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 return self._acquire_token_by_username_password_federated(
                     user_realm_result, username, password, scopes=scopes,
                     headers=headers, **kwargs)
-        return self.client.obtain_token_by_username_password(
+        return self._get_client().obtain_token_by_username_password(
                 username, password, scope=scopes,
                 headers=headers,
                 **kwargs)
