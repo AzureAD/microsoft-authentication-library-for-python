@@ -863,9 +863,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
         grant_type = {
             SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
-            SAML_TOKEN_TYPE_V2: self._get_client().GRANT_TYPE_SAML2,
+            SAML_TOKEN_TYPE_V2: Client.GRANT_TYPE_SAML2,
             WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
-            WSS_SAML_TOKEN_PROFILE_V2: self._get_client().GRANT_TYPE_SAML2
+            WSS_SAML_TOKEN_PROFILE_V2: Client.GRANT_TYPE_SAML2
             }.get(wstrust_result.get("type"))
         if not grant_type:
             raise RuntimeError(
