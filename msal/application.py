@@ -820,13 +820,13 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        self.authority.initialize()
         scopes = decorate_scope(scopes, self.client_id)
         headers = {
             CLIENT_REQUEST_ID: _get_new_correlation_id(),
             CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
             }
+        self.authority.initialize()
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[CLIENT_REQUEST_ID])
