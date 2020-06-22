@@ -53,6 +53,17 @@ class Authority(object):
             performed.
         """
         self._http_client = http_client
+        self._authority_url = authority_url
+        self._validate_authority = validate_authority
+        self._is_initialized = False
+
+    def initialize(self):
+        if not self._is_initialized:
+            self.__initialize(self._authority_url, self._http_client, self._validate_authority)
+            self._is_initialized = True
+
+    def __initialize(self, authority_url, http_client, validate_authority):
+        self._http_client = http_client
         authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
         is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (

@@ -198,8 +198,9 @@ class ClientApplication(object):
                 authority or "https://login.microsoftonline.com/common/",
                 self.http_client, validate_authority=validate_authority)
             # Here the self.authority is not the same type as authority in input
+        self.client = None
         self.token_cache = token_cache or TokenCache()
-        self.client = self._build_client(client_credential, self.authority)
+        self._client_credential = client_credential
         self.authority_groups = None
 
     def _build_client(self, client_credential, authority):
@@ -247,6 +248,12 @@ class ClientApplication(object):
             on_obtaining_tokens=self.token_cache.add,
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
+
+    def _get_client(self):
+        if not self.client:
+            self.authority.initialize()
+            self.client = self._build_client(self._client_credential, self.authority)
+        return self.client
 
     def get_authorization_request_url(
             self,
@@ -307,6 +314,7 @@ class ClientApplication(object):
             authority,
             self.http_client
             ) if authority else self.authority
+        the_authority.initialize()
 
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
@@ -367,7 +375,7 @@ class ClientApplication(object):
         # really empty.
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        return self.client.obtain_token_by_authorization_code(
+        return self._get_client().obtain_token_by_authorization_code(
             code, redirect_uri=redirect_uri,
             scope=decorate_scope(scopes, self.client_id),
             headers={
@@ -391,6 +399,7 @@ class ClientApplication(object):
             Your app can choose to display those information to end user,
             and allow user to choose one of his/her accounts to proceed.
         """
+        self.authority.initialize()
         accounts = self._find_msal_accounts(environment=self.authority.instance)
         if not accounts:  # Now try other aliases of this authority instance
             for alias in self._get_authority_aliases(self.authority.instance):
@@ -543,6 +552,7 @@ class ClientApplication(object):
         #     authority,
         #     self.http_client,
         #     ) if authority else self.authority
+        self.authority.initialize()
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh,
             correlation_id=correlation_id,
@@ -555,6 +565,7 @@ class ClientApplication(object):
                 "https://" + alias + "/" + self.authority.tenant,
                 self.http_client,
                 validate_authority=False)
+            the_authority.initialize()
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh,
                 correlation_id=correlation_id,
@@ -724,7 +735,7 @@ class ClientApplication(object):
             * A dict contains "error" and some other keys, when error happened.
             * A dict contains no "error" key means migration was successful.
         """
-        return self.client.obtain_token_by_refresh_token(
+        return self._get_client().obtain_token_by_refresh_token(
             refresh_token,
             decorate_scope(scopes, self.client_id),
             rt_getter=lambda rt: rt,
@@ -754,7 +765,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - an error response would contain some other readable key/value pairs.
         """
         correlation_id = _get_new_correlation_id()
-        flow = self.client.initiate_device_flow(
+        flow = self._get_client().initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
             headers={
                 CLIENT_REQUEST_ID: correlation_id,
@@ -778,7 +789,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        return self.client.obtain_token_by_device_flow(
+        return self._get_client().obtain_token_by_device_flow(
             flow,
             data=dict(kwargs.pop("data", {}), code=flow["device_code"]),
                 # 2018-10-4 Hack:
@@ -815,6 +826,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
             }
+        self.authority.initialize()
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[CLIENT_REQUEST_ID])
@@ -822,7 +834,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 return self._acquire_token_by_username_password_federated(
                     user_realm_result, username, password, scopes=scopes,
                     headers=headers, **kwargs)
-        return self.client.obtain_token_by_username_password(
+        return self._get_client().obtain_token_by_username_password(
                 username, password, scope=scopes,
                 headers=headers,
                 **kwargs)
@@ -851,16 +863,16 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
         grant_type = {
             SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
-            SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
+            SAML_TOKEN_TYPE_V2: Client.GRANT_TYPE_SAML2,
             WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
-            WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
+            WSS_SAML_TOKEN_PROFILE_V2: Client.GRANT_TYPE_SAML2
             }.get(wstrust_result.get("type"))
         if not grant_type:
             raise RuntimeError(
                 "RSTR returned unknown token type: %s", wstrust_result.get("type"))
-        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
-            grant_type, self.client.encode_saml_assertion)
-        return self.client.obtain_token_by_assertion(
+        Client.grant_assertion_encoders.setdefault(  # Register a non-standard type
+            grant_type, Client.encode_saml_assertion)
+        return self._get_client().obtain_token_by_assertion(
             wstrust_result["token"], grant_type, scope=scopes, **kwargs)
 
 
@@ -878,7 +890,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
-        return self.client.obtain_token_for_client(
+        return self._get_client().obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
                 CLIENT_REQUEST_ID: _get_new_correlation_id(),
@@ -910,9 +922,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
-        return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
+        return self._get_client().obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
-            self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
+            Client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
             scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
                 # 1. Explicitly requesting an RT, without relying on AAD default
                 #    behavior, even though it currently still issues an RT.
