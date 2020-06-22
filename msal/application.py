@@ -870,8 +870,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         if not grant_type:
             raise RuntimeError(
                 "RSTR returned unknown token type: %s", wstrust_result.get("type"))
-        self._get_client().grant_assertion_encoders.setdefault(  # Register a non-standard type
-            grant_type, self.client.encode_saml_assertion)
+        Client.grant_assertion_encoders.setdefault(  # Register a non-standard type
+            grant_type, Client.encode_saml_assertion)
         return self._get_client().obtain_token_by_assertion(
             wstrust_result["token"], grant_type, scope=scopes, **kwargs)
 
@@ -924,7 +924,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
         return self._get_client().obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
-            self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
+            Client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
             scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
                 # 1. Explicitly requesting an RT, without relying on AAD default
                 #    behavior, even though it currently still issues an RT.
