@@ -99,7 +99,7 @@ class Client(oauth2.Client):
             response_type, nonce=nonce, **kwargs)
 
     def obtain_token_by_authorization_code(self, code, nonce=None, **kwargs):
-        """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
+        """Get a token via authorization code. a.k.a. Authorization Code Grant.
 
         Return value and all other parameters are the same as
         :func:`oauth2.Client.obtain_token_by_authorization_code`,
