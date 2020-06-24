@@ -757,6 +757,13 @@ class ClientApplication(object):
             lowercase_username = username.lower()
             accounts = [a for a in accounts
                 if a["username"].lower() == lowercase_username]
+            if not accounts:
+                logger.warning((
+                    "get_accounts(username='{}') finds no account. "
+                    "If tokens were acquired without 'profile' scope, "
+                    "they would contain no username for filtering. "
+                    "Consider calling get_accounts(username=None) instead."
+                    ).format(username))
         # Does not further filter by existing RTs here. It probably won't matter.
         # Because in most cases Accounts and RTs co-exist.
         # Even in the rare case when an RT is revoked and then removed,
@@ -1251,7 +1258,13 @@ class ClientApplication(object):
         self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
             grant_type, self.client.encode_saml_assertion)
         return self.client.obtain_token_by_assertion(
-            wstrust_result["token"], grant_type, scope=scopes, **kwargs)
+            wstrust_result["token"], grant_type, scope=scopes,
+            on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                event,
+                environment=self.authority.instance,
+                username=username,  # Useful in case IDT contains no such info
+                )),
+            **kwargs)
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
