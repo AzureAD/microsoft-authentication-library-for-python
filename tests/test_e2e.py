@@ -132,10 +132,9 @@ class E2eTestCase(unittest.TestCase):
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
         self.assertLoosely(result)
-        # self.assertEqual(None, result.get("error"), str(result))
         self.assertCacheWorksForUser(
             result, scope,
-            username=username if ".b2clogin.com" not in authority else None,
+            username=username,  # Our implementation works even when "profile" scope was not requested, or when profile claims is unavailable in B2C
             )
 
     def _test_device_flow(
@@ -554,11 +553,13 @@ class LabBasedTestCase(E2eTestCase):
         #    Assuming you already did that (which is not shown in this test case),
         #    the following part shows one of the ways to obtain an AT from cache.
         username = cca_result.get("id_token_claims", {}).get("preferred_username")
-        self.assertEqual(config_cca["username"], username)
-        if username:  # A precaution so that we won't use other user's token
-            account = cca.get_accounts(username=username)[0]
-            result = cca.acquire_token_silent(config_cca["scope"], account)
-            self.assertEqual(cca_result["access_token"], result["access_token"])
+        if username:  # It means CCA have requested an IDT w/ "profile" scope
+            self.assertEqual(config_cca["username"], username)
+        accounts = cca.get_accounts(username=username)
+        assert len(accounts) == 1, "App is expected to partition token cache per user"
+        account = accounts[0]
+        result = cca.acquire_token_silent(config_cca["scope"], account)
+        self.assertEqual(cca_result["access_token"], result["access_token"])
 
     def _test_acquire_token_by_client_secret(
             self, client_id=None, client_secret=None, authority=None, scope=None,

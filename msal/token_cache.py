@@ -108,11 +108,13 @@ class TokenCache(object):
                 if sensitive in dictionary:
                     dictionary[sensitive] = "********"
         wipe(event.get("data", {}),
-            ("password", "client_secret", "refresh_token", "assertion", "username"))
+            ("password", "client_secret", "refresh_token", "assertion"))
         try:
             return self.__add(event, now=now)
         finally:
-            wipe(event.get("response", {}), ("access_token", "refresh_token"))
+            wipe(event.get("response", {}), (  # These claims were useful during __add()
+                "access_token", "refresh_token", "username"))
+            wipe(event, ["username"])  # Needed for federated ROPC
             logger.debug("event=%s", json.dumps(
             # We examined and concluded that this log won't have Log Injection risk,
             # because the event payload is already in JSON so CR/LF will be escaped.
@@ -184,6 +186,8 @@ class TokenCache(object):
                         "oid", id_token_claims.get("sub")),
                     "username": id_token_claims.get("preferred_username")  # AAD
                         or id_token_claims.get("upn")  # ADFS 2019
+                        or data.get("username")  # Falls back to ROPC username
+                        or event.get("username")  # Falls back to Federated ROPC username
                         or "",  # The schema does not like null
                     "authority_type":
                         self.AuthorityType.ADFS if realm == "adfs"
