@@ -13,7 +13,6 @@ class TestAuthority(unittest.TestCase):
         for host in WELL_KNOWN_AUTHORITY_HOSTS:
             a = Authority(
                 'https://{}/common'.format(host), MinimalHttpClient())
-            a.initialize()
             self.assertEqual(
                 a.authorization_endpoint,
                 'https://%s/common/oauth2/v2.0/authorize' % host)
@@ -35,7 +34,7 @@ class TestAuthority(unittest.TestCase):
         _assert = getattr(self, "assertRaisesRegex", self.assertRaisesRegexp)  # Hack
         with _assert(ValueError, "invalid_instance"):
             Authority('https://example.com/tenant_doesnt_matter_in_this_case',
-                      MinimalHttpClient()).initialize()
+                      MinimalHttpClient())
 
     def test_invalid_host_skipping_validation_can_be_turned_off(self):
         try:
@@ -86,7 +85,7 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
         authority = "https://login.microsoftonline.com/common"
         self.assertNotIn(authority, Authority._domains_without_user_realm_discovery)
         a = Authority(authority, MinimalHttpClient(), validate_authority=False)
-        a.initialize()
+
         # We now pretend this authority supports no User Realm Discovery
         class MockResponse(object):
             status_code = 404
