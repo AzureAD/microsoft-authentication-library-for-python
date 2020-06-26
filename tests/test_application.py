@@ -104,7 +104,6 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         self.authority_url = "https://login.microsoftonline.com/common"
         self.authority = msal.authority.Authority(
             self.authority_url, MinimalHttpClient())
-        self.authority.initialize()
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
