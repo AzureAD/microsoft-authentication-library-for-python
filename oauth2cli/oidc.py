@@ -38,6 +38,11 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     """
     decoded = json.loads(decode_part(id_token.split('.')[1]))
     err = None  # https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
+    _now = now or time.time()
+    if _now < decoded.get("nbf", _now - 1):  # nbf is optional per JWT specs
+        # This is not an ID token validation, but a JWT validation
+        # https://tools.ietf.org/html/rfc7519#section-4.1.5
+        err = "0. The ID token is not yet valid"
     if issuer and issuer != decoded["iss"]:
         # https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationResponse
         err = ('2. The Issuer Identifier for the OpenID Provider, "%s", '
@@ -53,7 +58,7 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     # the Client and the Token Endpoint (which it is in this flow),
     # the TLS server validation MAY be used to validate the issuer
     # in place of checking the token signature.
-    if (now or time.time()) > decoded["exp"]:
+    if _now > decoded["exp"]:
         err = "9. The current time MUST be before the time represented by the exp Claim."
     if nonce and nonce != decoded.get("nonce"):
         err = ("11. Nonce must be the same value "
