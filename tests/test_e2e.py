@@ -482,7 +482,6 @@ class WorldWideTestCase(LabBasedTestCase):
         # Configuration is derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.7.0/tests/Microsoft.Identity.Test.Common/TestConstants.cs#L250-L259
         config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
         config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
-        config["client_id"] = "PublicClientId"
         config["scope"] = self.adfs2019_scopes
         config["password"] = self.get_lab_user_secret(config["lab_name"])
         self._test_username_password(**config)
@@ -497,7 +496,6 @@ class WorldWideTestCase(LabBasedTestCase):
         """
         config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
         config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
-        config["client_id"] = "PublicClientId"
         config["scope"] = self.adfs2019_scopes
         config["port"] = 8080
         self._test_acquire_token_by_auth_code(**config)
@@ -506,21 +504,27 @@ class WorldWideTestCase(LabBasedTestCase):
         os.getenv("LAB_OBO_CLIENT_SECRET"),
         "Need LAB_OBO_CLIENT SECRET from https://msidlabs.vault.azure.net/secrets/TodoListServiceV2-OBO/c58ba97c34ca4464886943a847d1db56")
     def test_acquire_token_obo(self):
-        config = self.get_lab_user(usertype="cloud")
+        if os.getenv("LAB_OBO_CONFIDENTIAL_CLIENTID") and os.getenv("LAB_OBO_PUBLIC_CLIENTID"):
+            config = self.get_lab_user(usertype="cloud")
 
-        config_cca = {}
-        config_cca.update(config)
-        config_cca["client_id"] = "f4aa5217-e87c-42b2-82af-5624dd14ee72"
-        config_cca["scope"] = ["https://graph.microsoft.com/.default"]
-        config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+            config_cca = {}
+            config_cca.update(config)
+            config_cca["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENTID")
+            config_cca["scope"] = ["https://graph.microsoft.com/.default"]
+            config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
 
-        config_pca = {}
-        config_pca.update(config)
-        config_pca["client_id"] = "c0485386-1e9a-4663-bc96-7ab30656de7f"
-        config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
-        config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
+            config_pca = {}
+            config_pca.update(config)
+            config_pca["client_id"] = os.getenv("LAB_OBO_PUBLIC_CLIENTID")
+            config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
+            config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
 
-        self._test_acquire_token_obo(config_pca, config_cca)
+            self._test_acquire_token_obo(config_pca, config_cca)
+        else:
+            logger.info("ENV variables LAB_OBO_CONFIDENTIAL_CLIENTID and/or LAB_OBO_PUBLIC_CLIENTID are not defined.")
+            # See https://docs.msidlab.com/flows/onbehalfofflow.html for details
+            raise unittest.SkipTest("Env variables were not found for OBO flow")
+
 
     def _build_b2c_authority(self, policy):
         base = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com"
@@ -535,20 +539,23 @@ class WorldWideTestCase(LabBasedTestCase):
                 # This won't work https://msidlab.com/api/user?usertype=b2c
             password="***"  # From https://aka.ms/GetLabUserSecret?Secret=msidlabb2c
         """
+        config = self.get_lab_app_object(azureenvironment="azureb2ccloud")
         self._test_acquire_token_by_auth_code(
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
-            client_id="b876a048-55a5-4fc5-9403-f5d90cb1c852",
+            client_id=config["appId"],
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
-            scope=["https://msidlabb2c.onmicrosoft.com/msaapp/user_impersonation"]
+            scope=config["defaultScopes"].split(',')  # Default scopes returned by lab are
+            # "https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read, https://msidlabb2c.onmicrosoft.com/msidlabb2capi/user_impersonation"
             )
 
     def test_b2c_acquire_token_by_ropc(self):
+        config = self.get_lab_app_object(azureenvironment="azureb2ccloud")
         self._test_username_password(
             authority=self._build_b2c_authority("B2C_1_ROPC_Auth"),
-            client_id="e3b9ad76-9763-4827-b088-80c7a7888f79",
+            client_id=config["appId"],
             username="b2clocal@msidlabb2c.onmicrosoft.com",
             password=self.get_lab_user_secret("msidlabb2c"),
-            scope=["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"],
+            scope=config["defaultScopes"].split(','),
             )
 
 
