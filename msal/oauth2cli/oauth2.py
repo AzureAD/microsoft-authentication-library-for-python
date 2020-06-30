@@ -233,7 +233,7 @@ class BaseClient(object):
 
         :param refresh_token: The refresh token issued to the client
         :param scope: If omitted, is treated as equal to the scope originally
-            granted by the resource ownser,
+            granted by the resource owner,
             according to https://tools.ietf.org/html/rfc6749#section-6
         """
         assert isinstance(refresh_token, string_types)
@@ -397,7 +397,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
 
     def obtain_token_by_authorization_code(
             self, code, redirect_uri=None, scope=None, **kwargs):
-        """Get a token via auhtorization code. a.k.a. Authorization Code Grant.
+        """Get a token via authorization code. a.k.a. Authorization Code Grant.
 
         This is typically used by a server-side app (Confidential Client),
         but it can also be used by a device-side native app (Public Client).
@@ -503,7 +503,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             Either way, this token_item will be passed into other callbacks as-is.
 
         :param scope: If omitted, is treated as equal to the scope originally
-            granted by the resource ownser,
+            granted by the resource owner,
             according to https://tools.ietf.org/html/rfc6749#section-6
         :param rt_getter: A callable to translate the token_item to a raw RT string
         :param on_removing_rt: If absent, fall back to the one defined in initialization
