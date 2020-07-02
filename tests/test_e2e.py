@@ -504,24 +504,24 @@ class WorldWideTestCase(LabBasedTestCase):
         os.getenv("LAB_OBO_CLIENT_SECRET"),
         "Need LAB_OBO_CLIENT SECRET from https://msidlabs.vault.azure.net/secrets/TodoListServiceV2-OBO/c58ba97c34ca4464886943a847d1db56")
     def test_acquire_token_obo(self):
-        if os.getenv("LAB_OBO_CONFIDENTIAL_CLIENTID") and os.getenv("LAB_OBO_PUBLIC_CLIENTID"):
+        if os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID") and os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"):
             config = self.get_lab_user(usertype="cloud")
 
             config_cca = {}
             config_cca.update(config)
-            config_cca["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENTID")
+            config_cca["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
             config_cca["scope"] = ["https://graph.microsoft.com/.default"]
             config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
 
             config_pca = {}
             config_pca.update(config)
-            config_pca["client_id"] = os.getenv("LAB_OBO_PUBLIC_CLIENTID")
+            config_pca["client_id"] = os.getenv("LAB_OBO_PUBLIC_CLIENT_ID")
             config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
             config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
 
             self._test_acquire_token_obo(config_pca, config_cca)
         else:
-            logger.info("ENV variables LAB_OBO_CONFIDENTIAL_CLIENTID and/or LAB_OBO_PUBLIC_CLIENTID are not defined.")
+            logger.info("ENV variables LAB_OBO_CONFIDENTIAL_CLIENT_ID and/or LAB_OBO_PUBLIC_CLIENT_ID are not defined.")
             # See https://docs.msidlab.com/flows/onbehalfofflow.html for details
             raise unittest.SkipTest("Env variables were not found for OBO flow")
 
@@ -544,8 +544,7 @@ class WorldWideTestCase(LabBasedTestCase):
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
             client_id=config["appId"],
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
-            scope=config["defaultScopes"].split(',')  # Default scopes returned by lab are
-            # "https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read, https://msidlabb2c.onmicrosoft.com/msidlabb2capi/user_impersonation"
+            scope=config["defaultScopes"].split(',')
             )
 
     def test_b2c_acquire_token_by_ropc(self):
