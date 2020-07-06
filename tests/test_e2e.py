@@ -544,7 +544,7 @@ class WorldWideTestCase(LabBasedTestCase):
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
             client_id=config["appId"],
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
-            scope=config["defaultScopes"].split(',')
+            scope=config["defaultScopes"].split(','),
             )
 
     def test_b2c_acquire_token_by_ropc(self):
