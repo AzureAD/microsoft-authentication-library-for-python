@@ -510,7 +510,6 @@ class WorldWideTestCase(LabBasedTestCase):
         os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"),
         "Public client id can be found here https://docs.msidlab.com/flows/onbehalfofflow.html")
     def test_acquire_token_obo(self):
-
         config = self.get_lab_user(usertype="cloud")
 
         config_cca = {}
