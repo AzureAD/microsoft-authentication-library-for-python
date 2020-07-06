@@ -503,28 +503,29 @@ class WorldWideTestCase(LabBasedTestCase):
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CLIENT_SECRET"),
         "Need LAB_OBO_CLIENT SECRET from https://msidlabs.vault.azure.net/secrets/TodoListServiceV2-OBO/c58ba97c34ca4464886943a847d1db56")
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
+        "Confidential client id can be found here https://docs.msidlab.com/flows/onbehalfofflow.html")
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"),
+        "Public client id can be found here https://docs.msidlab.com/flows/onbehalfofflow.html")
     def test_acquire_token_obo(self):
-        if os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID") and os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"):
-            config = self.get_lab_user(usertype="cloud")
 
-            config_cca = {}
-            config_cca.update(config)
-            config_cca["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
-            config_cca["scope"] = ["https://graph.microsoft.com/.default"]
-            config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+        config = self.get_lab_user(usertype="cloud")
 
-            config_pca = {}
-            config_pca.update(config)
-            config_pca["client_id"] = os.getenv("LAB_OBO_PUBLIC_CLIENT_ID")
-            config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
-            config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
+        config_cca = {}
+        config_cca.update(config)
+        config_cca["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
+        config_cca["scope"] = ["https://graph.microsoft.com/.default"]
+        config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
 
-            self._test_acquire_token_obo(config_pca, config_cca)
-        else:
-            logger.info("ENV variables LAB_OBO_CONFIDENTIAL_CLIENT_ID and/or LAB_OBO_PUBLIC_CLIENT_ID are not defined.")
-            # See https://docs.msidlab.com/flows/onbehalfofflow.html for details
-            raise unittest.SkipTest("Env variables were not found for OBO flow")
+        config_pca = {}
+        config_pca.update(config)
+        config_pca["client_id"] = os.getenv("LAB_OBO_PUBLIC_CLIENT_ID")
+        config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
+        config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
 
+        self._test_acquire_token_obo(config_pca, config_cca)
 
     def _build_b2c_authority(self, policy):
         base = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com"
