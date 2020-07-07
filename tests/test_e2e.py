@@ -590,6 +590,17 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
         config["scope"] = ["user.read"]
         self._test_device_flow(**config)
 
+    def test_acquire_token_silent_with_an_empty_cache_should_return_none(self):
+        config = self.get_lab_user(
+            usertype="cloud", azureenvironment=self.environment, publicClient="no")
+        app = msal.ConfidentialClientApplication(
+            config['client_id'], authority=config['authority'],
+            http_client=MinimalHttpClient())
+        result = app.acquire_token_silent(scopes=config['scope'], account=None)
+        self.assertEqual(result, None)
+        # Note: An alias in this region is no longer accepting HTTPS traffic.
+        #       If this test case passes without exception,
+        #       it means MSAL Python is not affected by that.
 
 if __name__ == "__main__":
     unittest.main()
