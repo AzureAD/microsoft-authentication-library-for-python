@@ -82,6 +82,7 @@ def extract_certs(public_cert_content):
 class ClientApplication(object):
 
     ACQUIRE_TOKEN_SILENT_ID = "84"
+    ACQUIRE_TOKEN_BY_REFRESH_TOKEN = "85"
     ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID = "301"
     ACQUIRE_TOKEN_ON_BEHALF_OF_ID = "523"
     ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID = "622"
@@ -727,6 +728,11 @@ class ClientApplication(object):
         return self.client.obtain_token_by_refresh_token(
             refresh_token,
             scope=decorate_scope(scopes, self.client_id),
+            headers={
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_BY_REFRESH_TOKEN),
+            },
             rt_getter=lambda rt: rt,
             on_updating_rt=False,
             on_removing_rt=lambda rt_item: None,  # No OP
