@@ -41,8 +41,7 @@ def _xpath_of_root(route_to_leaf):
 
 
 def send_request(mex_endpoint, http_client, **kwargs):
-    mex_document = http_client.get(
-        mex_endpoint, **kwargs).text
+    mex_document = http_client.get(mex_endpoint, **kwargs).text
     return Mex(mex_document).get_wstrust_username_password_endpoint()
 
 
