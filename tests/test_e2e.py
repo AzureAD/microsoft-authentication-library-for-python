@@ -302,7 +302,7 @@ def get_lab_app(
         # or it could be setup on Travis CI
         #   https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
         # Data came from here
-        # https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Rese.aspx#programmatic-access-info-for-lab-request-api
+        # https://docs.msidlab.com/accounts/confidentialclient.html
         logger.info("Using lab app defined by ENV variables %s and %s",
                 env_client_id, env_client_secret)
         client_id = os.getenv(env_client_id)
