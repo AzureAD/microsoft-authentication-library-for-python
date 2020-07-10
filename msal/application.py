@@ -552,6 +552,12 @@ class ClientApplication(object):
             return result
         final_result = result
         for alias in self._get_authority_aliases(self.authority.instance):
+            if not self.token_cache.find(
+                    self.token_cache.CredentialType.REFRESH_TOKEN,
+                    target=scopes,
+                    query={"environment": alias}):
+                # Skip heavy weight logic when RT for this alias doesn't exist
+                continue
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
                 self.http_client,
