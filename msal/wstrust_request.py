@@ -79,7 +79,7 @@ def _build_rst(username, password, cloud_audience_urn, endpoint_address, soap_ac
     return """<s:Envelope xmlns:s='{s}' xmlns:wsa='{wsa}' xmlns:wsu='{wsu}'>
         <s:Header>
             <wsa:Action s:mustUnderstand='1'>{soap_action}</wsa:Action>
-            <wsa:messageID>urn:uuid:{message_id}</wsa:messageID>
+            <wsa:MessageID>urn:uuid:{message_id}</wsa:MessageID>
             <wsa:ReplyTo>
             <wsa:Address>http://www.w3.org/2005/08/addressing/anonymous</wsa:Address>
             </wsa:ReplyTo>
