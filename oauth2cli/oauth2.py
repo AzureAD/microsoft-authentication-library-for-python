@@ -3,10 +3,10 @@
 
 import json
 try:
-    from urllib.parse import urlencode, parse_qs
+    from urllib.parse import urlencode, parse_qs, quote_plus
 except ImportError:
     from urlparse import parse_qs
-    from urllib import urlencode
+    from urllib import urlencode, quote_plus
 import logging
 import warnings
 import time
@@ -181,9 +181,14 @@ class BaseClient(object):
         # client credentials in the request-body using the following
         # parameters: client_id, client_secret.
         if self.client_secret and self.client_id:
-            _headers["Authorization"] = "Basic " + base64.b64encode(
-                "{}:{}".format(self.client_id, self.client_secret)
-                .encode("ascii")).decode("ascii")
+            _headers["Authorization"] = "Basic " + base64.b64encode("{}:{}".format(
+                # Per https://tools.ietf.org/html/rfc6749#section-2.3.1
+                # client_id and client_secret needs to be encoded by
+                # "application/x-www-form-urlencoded"
+                # https://www.w3.org/TR/html401/interact/forms.html#h-17.13.4.1
+                # BEFORE they are fed into HTTP Basic Authentication
+                quote_plus(self.client_id), quote_plus(self.client_secret)
+                ).encode("ascii")).decode("ascii")
 
         if "token_endpoint" not in self.configuration:
             raise ValueError("token_endpoint not found in configuration")
