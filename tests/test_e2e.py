@@ -97,8 +97,8 @@ class E2eTestCase(unittest.TestCase):
             client_id, authority=authority, http_client=MinimalHttpClient())
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
-        self.assertLoosely(result)
         self.assertEqual(None, result.get("error"), str(result))
+        self.assertLoosely(result)
         self.assertCacheWorksForUser(
             result, scope,
             username=username if ".b2clogin.com" not in authority else None,
