@@ -21,7 +21,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.4.1"
+__version__ = "1.4.2"
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,7 @@ def extract_certs(public_cert_content):
 class ClientApplication(object):
 
     ACQUIRE_TOKEN_SILENT_ID = "84"
+    ACQUIRE_TOKEN_BY_REFRESH_TOKEN = "85"
     ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID = "301"
     ACQUIRE_TOKEN_ON_BEHALF_OF_ID = "523"
     ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID = "622"
@@ -551,6 +552,12 @@ class ClientApplication(object):
             return result
         final_result = result
         for alias in self._get_authority_aliases(self.authority.instance):
+            if not self.token_cache.find(
+                    self.token_cache.CredentialType.REFRESH_TOKEN,
+                    target=scopes,
+                    query={"environment": alias}):
+                # Skip heavy weight logic when RT for this alias doesn't exist
+                continue
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
                 self.http_client,
@@ -727,6 +734,11 @@ class ClientApplication(object):
         return self.client.obtain_token_by_refresh_token(
             refresh_token,
             scope=decorate_scope(scopes, self.client_id),
+            headers={
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_BY_REFRESH_TOKEN),
+            },
             rt_getter=lambda rt: rt,
             on_updating_rt=False,
             on_removing_rt=lambda rt_item: None,  # No OP
