@@ -111,6 +111,7 @@ class Authority(object):
             if resp.status_code != 404:
                 resp.raise_for_status()
                 return json.loads(resp.text)
+            logger.debug("Adding domains without user realm discovery " + str(self.instance))
             self.__class__._domains_without_user_realm_discovery.add(self.instance)
         return {}  # This can guide the caller to fall back normal ROPC flow
 
