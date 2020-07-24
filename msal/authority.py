@@ -99,12 +99,14 @@ class Authority(object):
         # It will typically return a dict containing "ver", "account_type",
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
+        logger.debug("Inside urd "+ str(username) + "," + str(self.instance))
         if self.instance not in self.__class__._domains_without_user_realm_discovery:
             resp = response or self.http_client.get(
                 "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
                     netloc=self.instance, username=username),
                 headers={'Accept': 'application/json',
                          'client-request-id': correlation_id},)
+            logger.debug("discover response " + str(resp))
             if resp.status_code != 404:
                 resp.raise_for_status()
                 return json.loads(resp.text)
