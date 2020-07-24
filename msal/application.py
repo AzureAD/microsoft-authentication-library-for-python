@@ -554,7 +554,9 @@ class ClientApplication(object):
         for alias in self._get_authority_aliases(self.authority.instance):
             if not self.token_cache.find(
                     self.token_cache.CredentialType.REFRESH_TOKEN,
-                    target=scopes,
+                    # target=scopes,  # MUST NOT filter by scopes, because:
+                        # 1. AAD RTs are scope-independent;
+                        # 2. therefore target is optional per schema;
                     query={"environment": alias}):
                 # Skip heavy weight logic when RT for this alias doesn't exist
                 continue
