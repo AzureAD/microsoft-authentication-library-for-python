@@ -100,6 +100,7 @@ class Authority(object):
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
         logger.debug("Inside urd "+ str(username) + "," + str(self.instance))
+        logger.debug("Domains with user_realm_discovery" + str(self.__class__._domains_without_user_realm_discovery))
         if self.instance not in self.__class__._domains_without_user_realm_discovery:
             resp = response or self.http_client.get(
                 "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
