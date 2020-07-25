@@ -240,21 +240,30 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
                 uid=uid, utid=utid,
                 access_token=self.access_token, refresh_token="some refresh token"),
         })  # The add(...) helper populates correct home_account_id for future searching
-
-    def test_get_accounts(self):
-        app = ClientApplication(
+        self.app = ClientApplication(
             self.client_id,
             authority=self.authority_url_in_app, token_cache=self.cache)
-        accounts = app.get_accounts()
+
+    def test_get_accounts_should_find_accounts_under_different_alias(self):
+        accounts = self.app.get_accounts()
         self.assertNotEqual([], accounts)
         self.assertEqual(self.environment_in_cache, accounts[0].get("environment"),
             "We should be able to find an account under an authority alias")
 
-    def test_acquire_token_silent(self):
-        app = ClientApplication(
-            self.client_id,
-            authority=self.authority_url_in_app, token_cache=self.cache)
-        at = app.acquire_token_silent(self.scopes, self.account)
-        self.assertNotEqual(None, at)
-        self.assertEqual(self.access_token, at.get('access_token'))
+    def test_acquire_token_silent_should_find_at_under_different_alias(self):
+        result = self.app.acquire_token_silent(self.scopes, self.account)
+        self.assertNotEqual(None, result)
+        self.assertEqual(self.access_token, result.get('access_token'))
+
+    def test_acquire_token_silent_should_find_rt_under_different_alias(self):
+        self.cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
+        class ExpectedBehavior(Exception):
+            pass
+        def helper(scopes, account, authority, *args, **kwargs):
+            if authority.instance == self.environment_in_cache:
+                raise ExpectedBehavior("RT of different alias being attempted")
+        self.app._acquire_token_silent_from_cache_and_possibly_refresh_it = helper
+
+        with self.assertRaises(ExpectedBehavior):
+            self.app.acquire_token_silent(["different scope"], self.account)
 
