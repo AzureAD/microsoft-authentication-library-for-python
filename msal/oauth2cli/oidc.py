@@ -39,7 +39,8 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     decoded = json.loads(decode_part(id_token.split('.')[1]))
     err = None  # https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
     _now = now or time.time()
-    if _now < decoded.get("nbf", _now - 1):  # nbf is optional per JWT specs
+    skew = 120  # 2 minutes
+    if _now + skew < decoded.get("nbf", _now - 1):  # nbf is optional per JWT specs
         # This is not an ID token validation, but a JWT validation
         # https://tools.ietf.org/html/rfc7519#section-4.1.5
         err = "0. The ID token is not yet valid"
