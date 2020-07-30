@@ -86,13 +86,17 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
         self.assertNotIn(authority, Authority._domains_without_user_realm_discovery)
         a = Authority(authority, MinimalHttpClient(), validate_authority=False)
 
-        # We now pretend this authority supports no User Realm Discovery
-        class MockResponse(object):
-            status_code = 404
-        a.user_realm_discovery("john.doe@example.com", response=MockResponse())
-        self.assertIn(
-            "login.microsoftonline.com",
-            Authority._domains_without_user_realm_discovery,
-            "user_realm_discovery() should memorize domains not supporting URD")
-        a.user_realm_discovery("john.doe@example.com",
-            response="This would cause exception if memorization did not work")
+        try:
+            # We now pretend this authority supports no User Realm Discovery
+            class MockResponse(object):
+                status_code = 404
+            a.user_realm_discovery("john.doe@example.com", response=MockResponse())
+            self.assertIn(
+                "login.microsoftonline.com",
+                Authority._domains_without_user_realm_discovery,
+                "user_realm_discovery() should memorize domains not supporting URD")
+            a.user_realm_discovery("john.doe@example.com",
+                response="This would cause exception if memorization did not work")
+        finally:  # MUST NOT let the previous test changes affect other test cases
+            Authority._domains_without_user_realm_discovery = set([])
+
