@@ -97,7 +97,7 @@ class ClientApplication(object):
             token_cache=None,
             http_client=None,
             verify=True, proxies=None, timeout=None,
-            client_claims=None, app_name=None, app_version=None):
+            client_claims=None, client_capabilities=None, app_name=None, app_version=None):
         """Create an instance of application.
 
         :param str client_id: Your app has a client_id after you register it on AAD.
@@ -146,6 +146,11 @@ class ClientApplication(object):
                     "jti": a_random_uuid
                 }
 
+        :param list[str] client_capabilities
+            Allows configuration of one or more client capabilities, e.g. "llt"
+            MSAL will transform these into special claims request.
+            See https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter for
+            details on claim requests.
         :param str authority:
             A URL that identifies a token authority. It should be of the format
             https://login.microsoftonline.com/your_tenant
@@ -183,6 +188,11 @@ class ClientApplication(object):
         self.client_id = client_id
         self.client_credential = client_credential
         self.client_claims = client_claims
+        self.client_capabilities = {
+                "accessToken": {
+                    "xms_cc": client_capabilities
+                }
+            } if client_capabilities else None
         if http_client:
             self.http_client = http_client
         else:
@@ -216,6 +226,8 @@ class ClientApplication(object):
         if self.app_version:
             default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
+        if self.client_capabilities:
+            default_body["claims"] = self.client_capabilities
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
                     and "thumbprint" in client_credential)
@@ -320,6 +332,7 @@ class ClientApplication(object):
             scope=decorate_scope(scopes, self.client_id),
             nonce=nonce,
             domain_hint=domain_hint,
+            claims=self.client_capabilities
             )
 
     def acquire_token_by_authorization_code(
