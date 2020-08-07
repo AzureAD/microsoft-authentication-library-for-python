@@ -97,7 +97,8 @@ class ClientApplication(object):
             token_cache=None,
             http_client=None,
             verify=True, proxies=None, timeout=None,
-            client_claims=None, client_capabilities=None, app_name=None, app_version=None):
+            client_claims=None, app_name=None, app_version=None,
+            client_capabilities=None):
         """Create an instance of application.
 
         :param str client_id: Your app has a client_id after you register it on AAD.
@@ -146,11 +147,6 @@ class ClientApplication(object):
                     "jti": a_random_uuid
                 }
 
-        :param list[str] client_capabilities
-            Allows configuration of one or more client capabilities, e.g. "llt"
-            MSAL will transform these into special claims request.
-            See https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter for
-            details on claim requests.
         :param str authority:
             A URL that identifies a token authority. It should be of the format
             https://login.microsoftonline.com/your_tenant
@@ -184,15 +180,16 @@ class ClientApplication(object):
         :param app_version: (optional)
             You can provide your application version for Microsoft telemetry purposes.
             Default value is None, means it will not be passed to Microsoft.
+        :param list[str] client_capabilities: (optional)
+            Allows configuration of one or more client capabilities, e.g. ["CP1"].
+            MSAL will combine them into
+            `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_
+            which you will later provide via one of the acquire-token request.
         """
         self.client_id = client_id
         self.client_credential = client_credential
         self.client_claims = client_claims
-        self.client_capabilities = {
-                "accessToken": {
-                    "xms_cc": client_capabilities
-                }
-            } if client_capabilities else None
+        self.client_capabilities = client_capabilities
         if http_client:
             self.http_client = http_client
         else:
@@ -226,8 +223,6 @@ class ClientApplication(object):
         if self.app_version:
             default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
-        if self.client_capabilities:
-            default_body["claims"] = self.client_capabilities
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
                     and "thumbprint" in client_credential)
@@ -261,6 +256,19 @@ class ClientApplication(object):
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
 
+    def _merge_claims_capabilities(self, claims):
+        client_capabilities_json = {}
+        if self.client_capabilities:
+            client_capabilities_json = {
+                "access_token": {
+                    "xms_cc": self.client_capabilities
+                }
+            }
+        for key in claims:
+            claims.update(client_capabilities_json.get(key))
+
+        return claims
+
     def get_authorization_request_url(
             self,
             scopes,  # type: list[str]
@@ -272,6 +280,7 @@ class ClientApplication(object):
             prompt=None,
             nonce=None,
             domain_hint=None,  # type: Optional[str]
+            claims=None,  # type: Optional[dict]
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -300,6 +309,10 @@ class ClientApplication(object):
             More information on possible values
             `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
             `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+        :param claims:
+             The claims Authentication Request parameter requests that specific Claims be returned
+             from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+             It is represented as a JSON object containing lists of Claims being requested from these locations.
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -321,6 +334,7 @@ class ClientApplication(object):
             self.http_client
             ) if authority else self.authority
 
+        claims = self._merge_claims_capabilities(claims)
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id,
@@ -332,7 +346,7 @@ class ClientApplication(object):
             scope=decorate_scope(scopes, self.client_id),
             nonce=nonce,
             domain_hint=domain_hint,
-            claims=self.client_capabilities
+            claims=claims
             )
 
     def acquire_token_by_authorization_code(
@@ -344,6 +358,7 @@ class ClientApplication(object):
                 # authorization request as described in Section 4.1.1, and their
                 # values MUST be identical.
             nonce=None,
+            claims=None,
             **kwargs):
         """The second half of the Authorization Code Grant.
 
@@ -369,6 +384,11 @@ class ClientApplication(object):
             same nonce should also be provided here, so that we'll validate it.
             An exception will be raised if the nonce in id token mismatches.
 
+        :param claims:
+            The claims Authentication Request parameter requests that specific Claims be returned
+            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is represented as a JSON object containing lists of Claims being requested from these locations.
+
         :return: A dict representing the json response from AAD:
 
             - A successful response would contain "access_token" key,
@@ -389,6 +409,7 @@ class ClientApplication(object):
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
                 },
+            data=dict(kwargs.pop("data", {}), claims=claims),
             nonce=nonce,
             **kwargs)
 
@@ -792,7 +813,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
         return flow
 
-    def acquire_token_by_device_flow(self, flow, **kwargs):
+    def acquire_token_by_device_flow(self, flow, claims=None, **kwargs):
         """Obtain token by a device flow object, with customizable polling effect.
 
         :param dict flow:
@@ -800,15 +821,20 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             By default, this method's polling effect  will block current thread.
             You can abort the polling loop at any time,
             by changing the value of the flow's "expires_at" key to 0.
+        :param claims:
+            The claims Authentication Request parameter requests that specific Claims be returned
+            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is represented as a JSON object containing lists of Claims being requested from these locations.
 
         :return: A dict representing the json response from AAD:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
+        claims=self._merge_claims_capabilities(claims)
         return self.client.obtain_token_by_device_flow(
             flow,
-            data=dict(kwargs.pop("data", {}), code=flow["device_code"]),
+            data=dict(kwargs.pop("data", {}), code=flow["device_code"], claims=claims),
                 # 2018-10-4 Hack:
                 # during transition period,
                 # service seemingly need both device_code and code parameter.
@@ -821,7 +847,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             **kwargs)
 
     def acquire_token_by_username_password(
-            self, username, password, scopes, **kwargs):
+            self, username, password, scopes, claims=None, **kwargs):
         """Gets a token for a given resource via user credentials.
 
         See this page for constraints of Username Password Flow.
@@ -831,6 +857,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         :param str password: The password.
         :param list[str] scopes:
             Scopes requested to access a protected API (a resource).
+        :param claims:
+            The claims Authentication Request parameter requests that specific Claims be returned
+            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is represented as a JSON object containing lists of Claims being requested from these locations.
 
         :return: A dict representing the json response from AAD:
 
@@ -843,16 +873,17 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
             }
+        claims=self._merge_claims_capabilities(claims)
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[CLIENT_REQUEST_ID])
             if user_realm_result.get("account_type") == "Federated":
                 return self._acquire_token_by_username_password_federated(
                     user_realm_result, username, password, scopes=scopes,
-                    headers=headers, **kwargs)
+                    headers=headers, data=dict(kwargs.pop("data", {}), claims=claims), **kwargs)
         return self.client.obtain_token_by_username_password(
                 username, password, scope=scopes,
-                headers=headers,
+                headers=headers, data=dict(kwargs.pop("data", {}), claims=claims),
                 **kwargs)
 
     def _acquire_token_by_username_password_federated(
@@ -894,11 +925,15 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
-    def acquire_token_for_client(self, scopes, **kwargs):
+    def acquire_token_for_client(self, scopes, claims=None, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
 
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
+        :param claims:
+            The claims Authentication Request parameter requests that specific Claims be returned
+            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is represented as a JSON object containing lists of Claims being requested from these locations.
 
         :return: A dict representing the json response from AAD:
 
@@ -906,6 +941,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
+        claims = self._merge_claims_capabilities(claims)
         return self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
@@ -913,9 +949,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_FOR_CLIENT_ID),
                 },
+            data=dict(kwargs.pop("data", {}), claims=claims),
             **kwargs)
 
-    def acquire_token_on_behalf_of(self, user_assertion, scopes, **kwargs):
+    def acquire_token_on_behalf_of(self, user_assertion, scopes, claims=None, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
 
         The current app is a middle-tier service which was called with a token
@@ -930,6 +967,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
         :param str user_assertion: The incoming token already received by this app
         :param list[str] scopes: Scopes required by downstream API (a resource).
+        :param claims:
+            The claims Authentication Request parameter requests that specific Claims be returned
+            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is represented as a JSON object containing lists of Claims being requested from these locations.
 
         :return: A dict representing the json response from AAD:
 
@@ -938,6 +979,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
+        claims=self._merge_claims_capabilities(claims)
         return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
@@ -947,7 +989,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 # 2. Requesting an IDT (which would otherwise be unavailable)
                 #    so that the calling app could use id_token_claims to implement
                 #    their own cache mapping, which is likely needed in web apps.
-            data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of"),
+            data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of", claims=claims),
             headers={
                 CLIENT_REQUEST_ID: _get_new_correlation_id(),
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
