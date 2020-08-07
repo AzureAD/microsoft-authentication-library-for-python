@@ -257,16 +257,17 @@ class ClientApplication(object):
             on_updating_rt=self.token_cache.update_rt)
 
     def _merge_claims_capabilities(self, claims):
-        client_capabilities_json = {}
         if self.client_capabilities:
             client_capabilities_json = {
                 "access_token": {
                     "xms_cc": self.client_capabilities
                 }
             }
-        for key in claims:
-            claims.update(client_capabilities_json.get(key))
-
+        if claims and self.client_capabilities:
+            for key in claims:
+                claims.update(client_capabilities_json.get(key))
+        elif self.client_capabilities:
+            claims = client_capabilities_json
         return claims
 
     def get_authorization_request_url(
