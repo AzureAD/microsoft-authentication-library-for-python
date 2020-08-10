@@ -256,18 +256,21 @@ class ClientApplication(object):
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
 
-    def _merge_claims_capabilities(self, claims):
+    def _merge_claims_and_capabilities(self, claims):
         if self.client_capabilities:
-            client_capabilities_json = {
+            client_capabilities_dict = {
                 "access_token": {
-                    "xms_cc": self.client_capabilities
+                    "xms_cc": {
+                        "values": self.client_capabilities
+                    }
                 }
             }
-        if claims and self.client_capabilities:
-            for key in claims:
-                claims.update(client_capabilities_json.get(key))
-        elif self.client_capabilities:
-            claims = client_capabilities_json
+            if claims:
+                for key in client_capabilities_dict:
+                    claims_node = claims.get(key, {})
+                    claims_node.update(client_capabilities_dict[key])
+            else:
+                claims = client_capabilities_dict
         return claims
 
     def get_authorization_request_url(
@@ -335,7 +338,7 @@ class ClientApplication(object):
             self.http_client
             ) if authority else self.authority
 
-        claims = self._merge_claims_capabilities(claims)
+        claims = self._merge_claims_and_capabilities(claims)
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id,
@@ -832,7 +835,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        claims=self._merge_claims_capabilities(claims)
+        claims=self._merge_claims_and_capabilities(claims)
         return self.client.obtain_token_by_device_flow(
             flow,
             data=dict(kwargs.pop("data", {}), code=flow["device_code"], claims=claims),
@@ -874,7 +877,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
             }
-        claims=self._merge_claims_capabilities(claims)
+        claims=self._merge_claims_and_capabilities(claims)
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[CLIENT_REQUEST_ID])
@@ -942,7 +945,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
-        claims = self._merge_claims_capabilities(claims)
+        claims = self._merge_claims_and_capabilities(claims)
         return self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
@@ -980,7 +983,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
-        claims=self._merge_claims_capabilities(claims)
+        claims=self._merge_claims_and_capabilities(claims)
         return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
