@@ -257,6 +257,8 @@ class ClientApplication(object):
             on_updating_rt=self.token_cache.update_rt)
 
     def _merge_claims_and_capabilities(self, claims):
+        if claims:
+            claims = json.loads(claims)
         if self.client_capabilities:
             client_capabilities_dict = {
                 "access_token": {
@@ -268,10 +270,14 @@ class ClientApplication(object):
             if claims:
                 for key in client_capabilities_dict:
                     claims_node = claims.get(key, {})
-                    claims_node.update(client_capabilities_dict[key])
+                    if claims_node:
+                        claims_node.update(client_capabilities_dict[key])
+                    else:
+                        claims[key] = client_capabilities_dict[key]
+
             else:
-                claims = client_capabilities_dict
-        return claims
+                return json.dumps(client_capabilities_dict)
+        return json.dumps(claims)
 
     def get_authorization_request_url(
             self,
