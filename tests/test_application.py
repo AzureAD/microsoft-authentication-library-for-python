@@ -282,7 +282,8 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
             self.client_id,
             authority=self.authority_url_in_app, client_capabilities=["llt", "ssm"])
         merged_claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}, \"access_token\": {\"xms_cc\": {\"values\": [\"llt\", \"ssm\"]}}}"
-        assert merged_claims == app._merge_claims_and_capabilities(self.claims)
+        # Comparing  dictionaries as JSON object order differs based on python version
+        assert json.loads(merged_claims) == json.loads(app._merge_claims_and_capabilities(self.claims))
 
     def test_merged_claims_with_claims_have_access_token_returned_correctly(self):
         app = ClientApplication(
@@ -290,7 +291,8 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
             authority=self.authority_url_in_app, client_capabilities=["llt", "ssm"])
         claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}, \"access_token\": {\"nbf\":{\"essential\":true, \"value\":\"1563308371\"}}}"
         merged_claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}, \"access_token\": {\"nbf\": {\"essential\": true, \"value\": \"1563308371\"}, \"xms_cc\": {\"values\": [\"llt\", \"ssm\"]}}}"
-        assert merged_claims == app._merge_claims_and_capabilities(claims)
+        # Comparing  dictionaries as JSON object order differs based on python version
+        assert json.loads(merged_claims) == json.loads(app._merge_claims_and_capabilities(claims))
 
     def test_only_claims_returned_correctly(self):
         app = ClientApplication(
