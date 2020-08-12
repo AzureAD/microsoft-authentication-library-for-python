@@ -79,6 +79,30 @@ def extract_certs(public_cert_content):
     return [public_cert_content.strip()]
 
 
+def _merge_claims_and_capabilities(capabilities, claims):
+    if claims:
+        claims = json.loads(claims)
+    if capabilities:
+        client_capabilities_dict = {
+            "access_token": {
+                "xms_cc": {
+                    "values": capabilities
+                }
+            }
+        }
+        if claims:
+            for key in client_capabilities_dict:
+                claims_node = claims.get(key, {})
+                if claims_node:
+                    claims_node.update(client_capabilities_dict[key])
+                else:
+                    claims[key] = client_capabilities_dict[key]
+
+        else:
+            return json.dumps(client_capabilities_dict)
+    return json.dumps(claims)
+
+
 class ClientApplication(object):
 
     ACQUIRE_TOKEN_SILENT_ID = "84"
@@ -256,28 +280,6 @@ class ClientApplication(object):
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
 
-    def _merge_claims_and_capabilities(self, claims):
-        if claims:
-            claims = json.loads(claims)
-        if self.client_capabilities:
-            client_capabilities_dict = {
-                "access_token": {
-                    "xms_cc": {
-                        "values": self.client_capabilities
-                    }
-                }
-            }
-            if claims:
-                for key in client_capabilities_dict:
-                    claims_node = claims.get(key, {})
-                    if claims_node:
-                        claims_node.update(client_capabilities_dict[key])
-                    else:
-                        claims[key] = client_capabilities_dict[key]
-
-            else:
-                return json.dumps(client_capabilities_dict)
-        return json.dumps(claims)
 
     def get_authorization_request_url(
             self,
@@ -344,7 +346,7 @@ class ClientApplication(object):
             self.http_client
             ) if authority else self.authority
 
-        claims = self._merge_claims_and_capabilities(claims)
+        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id,
@@ -356,7 +358,7 @@ class ClientApplication(object):
             scope=decorate_scope(scopes, self.client_id),
             nonce=nonce,
             domain_hint=domain_hint,
-            claims=claims
+            claims=claims,
             )
 
     def acquire_token_by_authorization_code(
@@ -841,7 +843,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        claims=self._merge_claims_and_capabilities(claims)
+        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
         return self.client.obtain_token_by_device_flow(
             flow,
             data=dict(kwargs.pop("data", {}), code=flow["device_code"], claims=claims),
@@ -883,7 +885,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
             }
-        claims=self._merge_claims_and_capabilities(claims)
+        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[CLIENT_REQUEST_ID])
@@ -951,7 +953,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
-        claims = self._merge_claims_and_capabilities(claims)
+        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
         return self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
@@ -989,7 +991,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
-        claims=self._merge_claims_and_capabilities(claims)
+        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
         return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
