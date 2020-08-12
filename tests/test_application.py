@@ -2,6 +2,7 @@
 # so this test_application file contains only unit tests without dependency.
 from msal.application import *
 import msal
+from msal.application import _merge_claims_and_capabilities
 from tests import unittest
 from tests.test_token_cache import TokenCacheTestCase
 from tests.http_client import MinimalHttpClient, MinimalResponse
@@ -270,39 +271,25 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
 
 class TestApplicationForClientCapabilities(unittest.TestCase):
 
-    @classmethod
-    def setUp(self):
-        self.authority_url_in_app = "https://login.microsoftonline.com/common"
-        self.scopes = ["s1", "s2"]
-        self.client_id = "my_app"
-        self.claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}}"
-
     def test_merged_claims_returned_correctly(self):
-        app = ClientApplication(
-            self.client_id,
-            authority=self.authority_url_in_app, client_capabilities=["llt", "ssm"])
+        client_capabilities = ["llt", "ssm"]
+        claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}}"
         merged_claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}, \"access_token\": {\"xms_cc\": {\"values\": [\"llt\", \"ssm\"]}}}"
         # Comparing  dictionaries as JSON object order differs based on python version
-        assert json.loads(merged_claims) == json.loads(app._merge_claims_and_capabilities(self.claims))
+        assert json.loads(merged_claims) == json.loads(_merge_claims_and_capabilities(client_capabilities, claims))
 
     def test_merged_claims_with_claims_have_access_token_returned_correctly(self):
-        app = ClientApplication(
-            self.client_id,
-            authority=self.authority_url_in_app, client_capabilities=["llt", "ssm"])
+        client_capabilities = ["llt", "ssm"]
         claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}, \"access_token\": {\"nbf\":{\"essential\":true, \"value\":\"1563308371\"}}}"
         merged_claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}, \"access_token\": {\"nbf\": {\"essential\": true, \"value\": \"1563308371\"}, \"xms_cc\": {\"values\": [\"llt\", \"ssm\"]}}}"
         # Comparing  dictionaries as JSON object order differs based on python version
-        assert json.loads(merged_claims) == json.loads(app._merge_claims_and_capabilities(claims))
+        assert json.loads(merged_claims) == json.loads(_merge_claims_and_capabilities(client_capabilities, claims))
 
     def test_only_claims_returned_correctly(self):
-        app = ClientApplication(
-            self.client_id,
-            authority=self.authority_url_in_app)
-        assert self.claims == app._merge_claims_and_capabilities(self.claims)
+        claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}}"
+        assert claims == _merge_claims_and_capabilities(None, claims)
 
     def test_only_client_capabilities_returned_correctly(self):
+        client_capabilities = ["llt", "ssm"]
         merged_claims = "{\"access_token\": {\"xms_cc\": {\"values\": [\"llt\", \"ssm\"]}}}"
-        app = ClientApplication(
-            self.client_id,
-            authority=self.authority_url_in_app, client_capabilities=["llt", "ssm"])
-        assert app._merge_claims_and_capabilities(None) == merged_claims
+        assert _merge_claims_and_capabilities(client_capabilities, None) == merged_claims
