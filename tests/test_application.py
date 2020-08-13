@@ -276,20 +276,23 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
         claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}}"
         merged_claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}, \"access_token\": {\"xms_cc\": {\"values\": [\"llt\", \"ssm\"]}}}"
         # Comparing  dictionaries as JSON object order differs based on python version
-        assert json.loads(merged_claims) == json.loads(_merge_claims_and_capabilities(client_capabilities, claims))
+        self.assertEqual(json.loads(merged_claims), json.loads(_merge_claims_and_capabilities(client_capabilities, claims)))
 
     def test_merged_claims_with_claims_have_access_token_returned_correctly(self):
         client_capabilities = ["llt", "ssm"]
         claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}, \"access_token\": {\"nbf\":{\"essential\":true, \"value\":\"1563308371\"}}}"
         merged_claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}, \"access_token\": {\"nbf\": {\"essential\": true, \"value\": \"1563308371\"}, \"xms_cc\": {\"values\": [\"llt\", \"ssm\"]}}}"
         # Comparing  dictionaries as JSON object order differs based on python version
-        assert json.loads(merged_claims) == json.loads(_merge_claims_and_capabilities(client_capabilities, claims))
+        self.assertEqual(json.loads(merged_claims), json.loads(_merge_claims_and_capabilities(client_capabilities, claims)))
 
     def test_only_claims_returned_correctly(self):
         claims = "{\"id_token\": {\"auth_time\": {\"essential\": true}}}"
-        assert claims == _merge_claims_and_capabilities(None, claims)
+        self.assertEqual(claims, _merge_claims_and_capabilities(None, claims))
 
     def test_only_client_capabilities_returned_correctly(self):
         client_capabilities = ["llt", "ssm"]
         merged_claims = "{\"access_token\": {\"xms_cc\": {\"values\": [\"llt\", \"ssm\"]}}}"
-        assert _merge_claims_and_capabilities(client_capabilities, None) == merged_claims
+        self.assertEqual(_merge_claims_and_capabilities(client_capabilities, None), merged_claims)
+
+    def test_both_claims_and_capabilities_none(self):
+        self.assertEqual(_merge_claims_and_capabilities(None, None), None)

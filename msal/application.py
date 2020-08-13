@@ -80,9 +80,7 @@ def extract_certs(public_cert_content):
 
 
 def _merge_claims_and_capabilities(capabilities, claims):
-    if claims:
-        claims = json.loads(claims)
-    if capabilities:
+    if claims and capabilities:
         client_capabilities_dict = {
             "access_token": {
                 "xms_cc": {
@@ -90,17 +88,26 @@ def _merge_claims_and_capabilities(capabilities, claims):
                 }
             }
         }
-        if claims:
-            for key in client_capabilities_dict:
-                claims_node = claims.get(key, {})
-                if claims_node:
-                    claims_node.update(client_capabilities_dict[key])
-                else:
-                    claims[key] = client_capabilities_dict[key]
-
-        else:
-            return json.dumps(client_capabilities_dict)
-    return json.dumps(claims)
+        claims_dict = json.loads(claims)
+        for key in client_capabilities_dict:
+            claims_node = claims_dict.get(key, {})
+            if claims_node:
+                claims_node.update(client_capabilities_dict[key])
+            else:
+                claims_dict[key] = client_capabilities_dict[key]
+        return json.dumps(claims_dict)
+    elif claims:
+        return claims
+    elif capabilities:
+        client_capabilities_dict = {
+            "access_token": {
+                "xms_cc": {
+                    "values": capabilities
+                }
+            }
+        }
+        return json.dumps(client_capabilities_dict)
+    return None
 
 
 class ClientApplication(object):
@@ -213,7 +220,7 @@ class ClientApplication(object):
         self.client_id = client_id
         self.client_credential = client_credential
         self.client_claims = client_claims
-        self.client_capabilities = client_capabilities
+        self._client_capabilities = client_capabilities
         if http_client:
             self.http_client = http_client
         else:
@@ -292,7 +299,7 @@ class ClientApplication(object):
             prompt=None,
             nonce=None,
             domain_hint=None,  # type: Optional[str]
-            claims=None,  # type: Optional[dict]
+            claims=None,
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -325,6 +332,8 @@ class ClientApplication(object):
              The claims Authentication Request parameter requests that specific Claims be returned
              from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
              It is represented as a JSON object containing lists of Claims being requested from these locations.
+             See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+
         :return: The authorization url as a string.
         """
         """ # TBD: this would only be meaningful in a new acquire_token_interactive()
@@ -346,7 +355,6 @@ class ClientApplication(object):
             self.http_client
             ) if authority else self.authority
 
-        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
         client = Client(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id,
@@ -358,7 +366,7 @@ class ClientApplication(object):
             scope=decorate_scope(scopes, self.client_id),
             nonce=nonce,
             domain_hint=domain_hint,
-            claims=claims,
+            claims=_merge_claims_and_capabilities(self._client_capabilities, claims),
             )
 
     def acquire_token_by_authorization_code(
@@ -400,6 +408,7 @@ class ClientApplication(object):
             The claims Authentication Request parameter requests that specific Claims be returned
             from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is represented as a JSON object containing lists of Claims being requested from these locations.
+            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
 
         :return: A dict representing the json response from AAD:
 
@@ -421,7 +430,8 @@ class ClientApplication(object):
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
                 },
-            data=dict(kwargs.pop("data", {}), claims=claims),
+            data=dict(kwargs.pop("data", {}),
+                      claims=_merge_claims_and_capabilities(self._client_capabilities, claims)),
             nonce=nonce,
             **kwargs)
 
@@ -837,16 +847,17 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             The claims Authentication Request parameter requests that specific Claims be returned
             from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is represented as a JSON object containing lists of Claims being requested from these locations.
+            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
 
         :return: A dict representing the json response from AAD:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
         return self.client.obtain_token_by_device_flow(
             flow,
-            data=dict(kwargs.pop("data", {}), code=flow["device_code"], claims=claims),
+            data=dict(kwargs.pop("data", {}), code=flow["device_code"],
+                      claims=_merge_claims_and_capabilities(self._client_capabilities, claims)),
                 # 2018-10-4 Hack:
                 # during transition period,
                 # service seemingly need both device_code and code parameter.
@@ -873,6 +884,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             The claims Authentication Request parameter requests that specific Claims be returned
             from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is represented as a JSON object containing lists of Claims being requested from these locations.
+            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
 
         :return: A dict representing the json response from AAD:
 
@@ -885,17 +897,18 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                 self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
             }
-        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
+        _claims = _merge_claims_and_capabilities(self._client_capabilities, claims)
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[CLIENT_REQUEST_ID])
             if user_realm_result.get("account_type") == "Federated":
                 return self._acquire_token_by_username_password_federated(
                     user_realm_result, username, password, scopes=scopes,
-                    headers=headers, data=dict(kwargs.pop("data", {}), claims=claims), **kwargs)
+                    data=dict(kwargs.pop("data", {}), claims=_claims),
+                    headers=headers, **kwargs)
         return self.client.obtain_token_by_username_password(
                 username, password, scope=scopes,
-                headers=headers, data=dict(kwargs.pop("data", {}), claims=claims),
+                headers=headers, data=dict(kwargs.pop("data", {}), claims=_claims),
                 **kwargs)
 
     def _acquire_token_by_username_password_federated(
@@ -946,6 +959,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             The claims Authentication Request parameter requests that specific Claims be returned
             from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is represented as a JSON object containing lists of Claims being requested from these locations.
+            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
 
         :return: A dict representing the json response from AAD:
 
@@ -953,7 +967,6 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
-        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
         return self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
@@ -961,7 +974,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_FOR_CLIENT_ID),
                 },
-            data=dict(kwargs.pop("data", {}), claims=claims),
+            data=dict(kwargs.pop("data", {}),
+                      claims=_merge_claims_and_capabilities(self._client_capabilities, claims)),
             **kwargs)
 
     def acquire_token_on_behalf_of(self, user_assertion, scopes, claims=None, **kwargs):
@@ -983,6 +997,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             The claims Authentication Request parameter requests that specific Claims be returned
             from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is represented as a JSON object containing lists of Claims being requested from these locations.
+            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
 
         :return: A dict representing the json response from AAD:
 
@@ -991,7 +1006,6 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
-        claims = _merge_claims_and_capabilities(self.client_capabilities, claims)
         return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
@@ -1001,7 +1015,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 # 2. Requesting an IDT (which would otherwise be unavailable)
                 #    so that the calling app could use id_token_claims to implement
                 #    their own cache mapping, which is likely needed in web apps.
-            data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of", claims=claims),
+            data=dict(kwargs.pop("data", {}), requested_token_use="on_behalf_of",
+                      claims=_merge_claims_and_capabilities(self._client_capabilities, claims)),
             headers={
                 CLIENT_REQUEST_ID: _get_new_correlation_id(),
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
