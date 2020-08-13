@@ -287,7 +287,6 @@ class ClientApplication(object):
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
 
-
     def get_authorization_request_url(
             self,
             scopes,  # type: list[str]
