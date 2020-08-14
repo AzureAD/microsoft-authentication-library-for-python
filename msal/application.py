@@ -841,7 +841,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
                 claims=_merge_claims_and_capabilities(self._client_capabilities, claims),
-            ),
+                ),
             headers={
                 CLIENT_REQUEST_ID:
                     flow.get(self.DEVICE_FLOW_CORRELATION_ID) or _get_new_correlation_id(),
