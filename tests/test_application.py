@@ -295,14 +295,16 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
 
     def test_no_capabilities_only_claims_merge(self):
         claims = '''{"id_token": {"auth_time": {"essential": true}}}'''
-        self.assertEqual(claims, _merge_claims_and_capabilities(None, claims))
+        self.assertEqual(
+            json.loads(claims),
+            json.loads(_merge_claims_and_capabilities(None, claims)))
 
     def test_only_client_capabilities_no_claims_merge(self):
         client_capabilities = ["llt", "ssm"]
         merged_claims = '''{"access_token": {"xms_cc": {"values": ["llt", "ssm"]}}}'''
         self.assertEqual(
-            _merge_claims_and_capabilities(client_capabilities, None),
-            merged_claims)
+            json.loads(merged_claims),
+            json.loads(_merge_claims_and_capabilities(client_capabilities, None)))
 
     def test_both_claims_and_capabilities_none(self):
         self.assertEqual(_merge_claims_and_capabilities(None, None), None)
