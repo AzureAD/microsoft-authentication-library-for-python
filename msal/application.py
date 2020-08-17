@@ -513,6 +513,7 @@ class ClientApplication(object):
             account,  # type: Optional[Account]
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
+            claims=None,
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
@@ -527,6 +528,12 @@ class ClientApplication(object):
 
         Internally, this method calls :func:`~acquire_token_silent_with_error`.
 
+        :param claims:
+            The claims Authentication Request parameter requests that specific Claims be returned
+            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of Claims being requested from these locations.
+            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+
         :return:
             - A dict containing no "error" key,
               and typically contains an "access_token" key,
@@ -534,7 +541,7 @@ class ClientApplication(object):
             - None when cache lookup does not yield a token.
         """
         result = self.acquire_token_silent_with_error(
-            scopes, account, authority, force_refresh, **kwargs)
+            scopes, account, authority, force_refresh, claims, **kwargs)
         return result if result and "error" not in result else None
 
     def acquire_token_silent_with_error(
@@ -543,6 +550,7 @@ class ClientApplication(object):
             account,  # type: Optional[Account]
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
+            claims=None,
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
@@ -563,6 +571,11 @@ class ClientApplication(object):
         :param force_refresh:
             If True, it will skip Access Token look-up,
             and try to find a Refresh Token to obtain a new Access Token.
+        :param claims:
+            The claims Authentication Request parameter requests that specific Claims be returned
+            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of Claims being requested from these locations.
+            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
         :return:
             - A dict containing no "error" key,
               and typically contains an "access_token" key,
@@ -580,7 +593,9 @@ class ClientApplication(object):
         #     self.http_client,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-            scopes, account, self.authority, force_refresh=force_refresh,
+            scopes, account, self.authority,
+            force_refresh=force_refresh if not claims else True,
+            claims=claims,
             correlation_id=correlation_id,
             **kwargs)
         if result and "error" not in result:
@@ -600,7 +615,9 @@ class ClientApplication(object):
                 self.http_client,
                 validate_authority=False)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-                scopes, account, the_authority, force_refresh=force_refresh,
+                scopes, account, the_authority,
+                force_refresh=force_refresh if not claims else True,
+                claims=claims,
                 correlation_id=correlation_id,
                 **kwargs)
             if result:
@@ -623,6 +640,7 @@ class ClientApplication(object):
             account,  # type: Optional[Account]
             authority,  # This can be different than self.authority
             force_refresh=False,  # type: Optional[boolean]
+            claims=None,
             **kwargs):
         if not force_refresh:
             query={
@@ -651,10 +669,10 @@ class ClientApplication(object):
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, decorate_scope(scopes, self.client_id), account,
-                force_refresh=force_refresh, **kwargs)
+                force_refresh=force_refresh, claims=claims, **kwargs)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self, authority, scopes, account, **kwargs):
+            self, authority, scopes, account, claims=None, **kwargs):
         query = {
             "environment": authority.instance,
             "home_account_id": (account or {}).get("home_account_id"),
@@ -675,6 +693,7 @@ class ClientApplication(object):
                     # Based on an AAD-only behavior mentioned in internal doc here
                     # https://msazure.visualstudio.com/One/_git/ESTS-Docs/pullrequest/1138595
                     "client_mismatch" in response.get("error_additional_info", []),
+                claims=claims,
                 **kwargs)
             if at and "error" not in at:
                 return at
@@ -682,14 +701,14 @@ class ClientApplication(object):
         if app_metadata.get("family_id"):  # Meaning this app belongs to this family
             last_resp = at = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes, dict(query, family_id=app_metadata["family_id"]),
-                **kwargs)
+                claims=claims, **kwargs)
             if at and "error" not in at:
                 return at
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
         return self._acquire_token_silent_by_finding_specific_refresh_token(
             authority, scopes, dict(query, client_id=self.client_id),
-            **kwargs) or last_resp
+            claims=claims, **kwargs) or last_resp
 
     def _get_app_metadata(self, environment):
         apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
@@ -700,7 +719,7 @@ class ClientApplication(object):
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
             rt_remover=None, break_condition=lambda response: False,
-            force_refresh=False, correlation_id=None, **kwargs):
+            force_refresh=False, correlation_id=None, claims=None, **kwargs):
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
@@ -720,6 +739,9 @@ class ClientApplication(object):
                     CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                         self.ACQUIRE_TOKEN_SILENT_ID, force_refresh=force_refresh),
                     },
+                data=dict(
+                    kwargs.pop("data", {}),
+                    claims=_merge_claims_and_capabilities(self._client_capabilities, claims)),
                 **kwargs)
             if "error" not in response:
                 return response
