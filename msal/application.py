@@ -82,12 +82,13 @@ def extract_certs(public_cert_content):
 def _merge_claims_and_capabilities(capabilities, claims):
     # Represent capabilities as {"access_token": {"xms_cc": {"values": capabilities}}}
     # and then merge/add it into incoming claims
-    if capabilities:
-        claims_dict = json.loads(claims) if claims else {}
-        for key in ["access_token"]:  # We could add "id_token" if we'd decide to
-            claims_dict.setdefault(key, {}).update(xms_cc={"values": capabilities})
-        return json.dumps(claims_dict)
-    return claims
+    if not capabilities:
+        return claims
+    claims_dict = json.loads(claims) if claims else {}
+    for key in ["access_token"]:  # We could add "id_token" if we'd decide to
+        claims_dict.setdefault(key, {}).update(xms_cc={"values": capabilities})
+    return json.dumps(claims_dict)
+
 
 class ClientApplication(object):
 
