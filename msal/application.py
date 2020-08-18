@@ -541,7 +541,7 @@ class ClientApplication(object):
             - None when cache lookup does not yield a token.
         """
         result = self.acquire_token_silent_with_error(
-            scopes, account, authority, force_refresh, claims, **kwargs)
+            scopes, account, authority, force_refresh, claims=claims, **kwargs)
         return result if result and "error" not in result else None
 
     def acquire_token_silent_with_error(
@@ -594,7 +594,7 @@ class ClientApplication(object):
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority,
-            force_refresh=force_refresh if not claims else True,
+            force_refresh=force_refresh,
             claims=claims,
             correlation_id=correlation_id,
             **kwargs)
@@ -616,7 +616,7 @@ class ClientApplication(object):
                 validate_authority=False)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority,
-                force_refresh=force_refresh if not claims else True,
+                force_refresh=force_refresh,
                 claims=claims,
                 correlation_id=correlation_id,
                 **kwargs)
@@ -642,7 +642,7 @@ class ClientApplication(object):
             force_refresh=False,  # type: Optional[boolean]
             claims=None,
             **kwargs):
-        if not force_refresh:
+        if not (force_refresh or claims):  # Bypass AT when desired or using claims
             query={
                     "client_id": self.client_id,
                     "environment": authority.instance,
@@ -672,7 +672,7 @@ class ClientApplication(object):
                 force_refresh=force_refresh, claims=claims, **kwargs)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self, authority, scopes, account, claims=None, **kwargs):
+            self, authority, scopes, account, **kwargs):
         query = {
             "environment": authority.instance,
             "home_account_id": (account or {}).get("home_account_id"),
@@ -693,7 +693,6 @@ class ClientApplication(object):
                     # Based on an AAD-only behavior mentioned in internal doc here
                     # https://msazure.visualstudio.com/One/_git/ESTS-Docs/pullrequest/1138595
                     "client_mismatch" in response.get("error_additional_info", []),
-                claims=claims,
                 **kwargs)
             if at and "error" not in at:
                 return at
@@ -701,14 +700,14 @@ class ClientApplication(object):
         if app_metadata.get("family_id"):  # Meaning this app belongs to this family
             last_resp = at = self._acquire_token_silent_by_finding_specific_refresh_token(
                 authority, scopes, dict(query, family_id=app_metadata["family_id"]),
-                claims=claims, **kwargs)
+                **kwargs)
             if at and "error" not in at:
                 return at
         # Either this app is an orphan, so we will naturally use its own RT;
         # or all attempts above have failed, so we fall back to non-foci behavior.
         return self._acquire_token_silent_by_finding_specific_refresh_token(
             authority, scopes, dict(query, client_id=self.client_id),
-            claims=claims, **kwargs) or last_resp
+            **kwargs) or last_resp
 
     def _get_app_metadata(self, environment):
         apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
