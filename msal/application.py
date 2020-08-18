@@ -593,8 +593,7 @@ class ClientApplication(object):
         #     self.http_client,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-            scopes, account, self.authority,
-            force_refresh=force_refresh,
+            scopes, account, self.authority, force_refresh=force_refresh,
             claims=claims,
             correlation_id=correlation_id,
             **kwargs)
@@ -615,8 +614,7 @@ class ClientApplication(object):
                 self.http_client,
                 validate_authority=False)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
-                scopes, account, the_authority,
-                force_refresh=force_refresh,
+                scopes, account, the_authority, force_refresh=force_refresh,
                 claims=claims,
                 correlation_id=correlation_id,
                 **kwargs)
