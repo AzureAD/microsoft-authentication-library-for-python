@@ -637,6 +637,16 @@ class BlackForestCloudTestCase(LabBasedTestCase):
         config["port"] = 8080
         self._test_acquire_token_by_auth_code(**config)
 
+    def test_acquire_token_obo(self):
+        config_cca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
+        config_cca["client_secret"] = self.get_lab_user_secret("BLFMSIDLAB-IDLABS-APP-CC")
+        config_cca["authority"] = "https://login.microsoftonline.de/organizations"
+
+        config_pca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
+        config_pca["password"] = self.get_lab_user_secret("BLFMSIDLAB")
+        config_pca["scope"] = ["https://lab1.blfmsidlab.de/IDLABS_APP_CC/user_impersonation"]
+        config_pca["authority"] = "https://login.microsoftonline.de/organizations"
+
     def test_acquire_token_silent_with_an_empty_cache_should_return_none(self):
         config = self.get_lab_user(
             usertype="cloud", azureenvironment=self.environment, publicClient="no")
@@ -683,6 +693,18 @@ class FairfaxCloudTestCase(LabBasedTestCase):
         config["authority"] = "https://login.microsoftonline.us/organizations"
         config["port"] = 8080
         self._test_acquire_token_by_auth_code(**config)
+
+    def test_acquire_token_obo(self):
+        config_cca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
+        config_cca["client_secret"] = self.get_lab_user_secret("FFXMSIDLAB-IDLABS-APP-Confidential-Client")
+        config_cca["authority"] = "https://login.microsoftonline.us/organizations"
+
+        config_pca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
+        config_pca["password"] = self.get_lab_user_secret("FFXMSIDLAB")
+        config_pca["scope"] = ["https://lab1.ffxmsidlab.us/IDLABS_APP_Confidential_Client/files.read"]
+        config_pca["authority"] = "https://login.microsoftonline.us/organizations"
+
+        self._test_acquire_token_obo(config_pca, config_cca)
 
     def test_acquire_token_silent_with_an_empty_cache_should_return_none(self):
         config = self.get_lab_user(
