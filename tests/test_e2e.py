@@ -602,6 +602,73 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
         #       If this test case passes without exception,
         #       it means MSAL Python is not affected by that.
 
+
+class BlackForestCloudTestCase(LabBasedTestCase):
+    environment = "azuregermanycloudmigrated"
+
+    def test_acquire_token_by_ropc(self):
+        config = self.get_lab_user(azureenvironment=self.environment)
+        config["password"] = self.get_lab_user_secret("BLFMSIDLAB")
+        config['authority'] = "https://login.microsoftonline.de/organizations"
+        self._test_username_password(**config)
+
+    def test_acquire_token_by_client_secret(self):
+        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
+        config["client_secret"] = self.get_lab_user_secret("BLFMSIDLAB-IDLABS-APP-CC")
+        self._test_acquire_token_by_client_secret(**config)
+
+    def test_acquire_token_device_flow(self):
+        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
+        config["scope"] = ["user.read"]
+        config['authority'] = "https://login.microsoftonline.de/organizations"
+        self._test_device_flow(**config)
+
+    def test_acquire_token_silent_with_an_empty_cache_should_return_none(self):
+        config = self.get_lab_user(
+            usertype="cloud", azureenvironment=self.environment, publicClient="no")
+        app = msal.ConfidentialClientApplication(
+            config['client_id'], authority=config['authority'],
+            http_client=MinimalHttpClient())
+        result = app.acquire_token_silent(scopes=config['scope'], account=None)
+        self.assertEqual(result, None)
+        # Note: An alias in this region is no longer accepting HTTPS traffic.
+        #       If this test case passes without exception,
+        #       it means MSAL Python is not affected by that.
+
+
+class FairfaxCloudTestCase(LabBasedTestCase):
+    environment = "azureusgovernmentmigrated"
+
+    def test_acquire_token_by_ropc(self):
+        config = self.get_lab_user(azureenvironment=self.environment)
+        config["password"] = self.get_lab_user_secret("FFXMSIDLAB")
+        config["authority"] = "https://login.microsoftonline.us/organizations"
+        self._test_username_password(**config)
+
+    def test_acquire_token_by_client_secret(self):
+        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
+        config["client_secret"] = self.get_lab_user_secret("FFXMSIDLAB-IDLABS-APP-Confidential-Client")
+        self._test_acquire_token_by_client_secret(**config)
+
+    def test_acquire_token_device_flow(self):
+        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
+        config["scope"] = ["user.read"]
+        config["authority"] = "https://login.microsoftonline.us/organizations"
+        self._test_device_flow(**config)
+
+    def test_acquire_token_silent_with_an_empty_cache_should_return_none(self):
+        config = self.get_lab_user(
+            usertype="cloud", azureenvironment=self.environment, publicClient="no")
+        app = msal.ConfidentialClientApplication(
+            config['client_id'], authority=config['authority'],
+            http_client=MinimalHttpClient())
+        result = app.acquire_token_silent(scopes=config['scope'], account=None)
+        self.assertEqual(result, None)
+        # Note: An alias in this region is no longer accepting HTTPS traffic.
+        #       If this test case passes without exception,
+        #       it means MSAL Python is not affected by that.
+
+
 if __name__ == "__main__":
     unittest.main()
 
