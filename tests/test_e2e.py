@@ -617,6 +617,7 @@ class BlackForestCloudTestCase(LabBasedTestCase):
         config["client_secret"] = self.get_lab_user_secret("BLFMSIDLAB-IDLABS-APP-CC")
         self._test_acquire_token_by_client_secret(**config)
 
+    @unittest.skipIf(os.getenv("TRAVIS"), "Skip device flow for now")
     def test_acquire_token_device_flow(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config["scope"] = ["user.read"]
@@ -650,6 +651,7 @@ class FairfaxCloudTestCase(LabBasedTestCase):
         config["client_secret"] = self.get_lab_user_secret("FFXMSIDLAB-IDLABS-APP-Confidential-Client")
         self._test_acquire_token_by_client_secret(**config)
 
+    @unittest.skipIf(os.getenv("TRAVIS"), "Skip device flow for now")
     def test_acquire_token_device_flow(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config["scope"] = ["user.read"]
