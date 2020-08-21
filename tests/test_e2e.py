@@ -110,7 +110,7 @@ class E2eTestCase(unittest.TestCase):
         self.app = msal.PublicClientApplication(
             client_id, authority=authority, http_client=MinimalHttpClient())
         flow = self.app.initiate_device_flow(scopes=scope)
-        assert "user_code" in flow, "DF does not seem to be provisioned: %s".format(
+        assert "user_code" in flow, "DF does not seem to be provisioned: {}".format(
             json.dumps(flow, indent=4))
         logger.info(flow["message"])
 
@@ -617,7 +617,6 @@ class BlackForestCloudTestCase(LabBasedTestCase):
         config["client_secret"] = self.get_lab_user_secret("BLFMSIDLAB-IDLABS-APP-CC")
         self._test_acquire_token_by_client_secret(**config)
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Skip device flow for now")
     def test_acquire_token_device_flow(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config["scope"] = ["user.read"]
@@ -674,11 +673,10 @@ class FairfaxCloudTestCase(LabBasedTestCase):
         config["client_secret"] = self.get_lab_user_secret("FFXMSIDLAB-IDLABS-APP-Confidential-Client")
         self._test_acquire_token_by_client_secret(**config)
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Skip device flow for now")
     def test_acquire_token_device_flow(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config["scope"] = ["user.read"]
-        config["authority"] = "https://login.microsoftonline.us/organizations"
+        config["authority"] = "https://login.microsoftonline.us/4f9098e2-ab9e-43b7-9e68-9e52d645b781"
         self._test_device_flow(**config)
 
     @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
