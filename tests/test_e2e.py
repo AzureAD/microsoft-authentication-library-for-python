@@ -624,6 +624,19 @@ class BlackForestCloudTestCase(LabBasedTestCase):
         config['authority'] = "https://login.microsoftonline.de/organizations"
         self._test_device_flow(**config)
 
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    def test_acquire_token_by_auth_code(self):
+        """When prompted, you can manually login using this account:
+
+        # https://msidlab.com/api/user?azureEnvironment=azuregermanycloudmigrated
+        username = "..."  # The upn from the link above
+        password="***"  # From https://aka.ms/GetLabUserSecret?Secret=BLFMSIDLAB
+        """
+        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
+        config["authority"] = "https://login.microsoftonline.de/organizations"
+        config["port"] = 8080
+        self._test_acquire_token_by_auth_code(**config)
+
     def test_acquire_token_silent_with_an_empty_cache_should_return_none(self):
         config = self.get_lab_user(
             usertype="cloud", azureenvironment=self.environment, publicClient="no")
@@ -657,6 +670,19 @@ class FairfaxCloudTestCase(LabBasedTestCase):
         config["scope"] = ["user.read"]
         config["authority"] = "https://login.microsoftonline.us/organizations"
         self._test_device_flow(**config)
+
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    def test_acquire_token_by_auth_code(self):
+        """When prompted, you can manually login using this account:
+
+        # https://msidlab.com/api/user?azureEnvironment=azureusgovernmentmigrated
+        username = "..."  # The upn from the link above
+        password="***"  # From https://aka.ms/GetLabUserSecret?Secret=FFXMSIDLAB
+        """
+        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
+        config["authority"] = "https://login.microsoftonline.us/organizations"
+        config["port"] = 8080
+        self._test_acquire_token_by_auth_code(**config)
 
     def test_acquire_token_silent_with_an_empty_cache_should_return_none(self):
         config = self.get_lab_user(
