@@ -612,6 +612,12 @@ class BlackForestCloudTestCase(LabBasedTestCase):
         config['authority'] = "https://login.microsoftonline.de/organizations"
         self._test_username_password(**config)
 
+    def test_acquire_token_ropc_federated_user(self):
+        config = self.get_lab_user(azureenvironment=self.environment, usertype="federated")
+        config["password"] = self.get_lab_user_secret("BLFMSIDLAB")
+        config['authority'] = "https://login.microsoftonline.de/organizations"
+        self._test_username_password(**config)
+
     def test_acquire_token_by_client_secret(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
         config["client_secret"] = self.get_lab_user_secret("BLFMSIDLAB-IDLABS-APP-CC")
@@ -666,6 +672,12 @@ class FairfaxCloudTestCase(LabBasedTestCase):
         config = self.get_lab_user(azureenvironment=self.environment)
         config["password"] = self.get_lab_user_secret("FFXMSIDLAB")
         config["authority"] = "https://login.microsoftonline.us/organizations"
+        self._test_username_password(**config)
+
+    def test_acquire_token_ropc_federated_user(self):
+        config = self.get_lab_user(azureenvironment=self.environment, usertype="federated")
+        config["password"] = self.get_lab_user_secret("FFXMSIDLAB")
+        config['authority'] = "https://login.microsoftonline.us/organizations"
         self._test_username_password(**config)
 
     def test_acquire_token_by_client_secret(self):
