@@ -364,7 +364,9 @@ class LabBasedTestCase(E2eTestCase):
         result = resp.json()[0]
         _env = query.get("azureenvironment", "").lower()
         authority_base = {
-            "azureusgovernment": "https://login.microsoftonline.us/"
+            "azureusgovernment": "https://login.microsoftonline.us/",
+            "azuregermanycloudmigrated": "https://login.microsoftonline.de/",
+            "azureusgovernmentmigrated": "https://login.microsoftonline.us/"
             }.get(_env, "https://login.microsoftonline.com/")
         scope = {
             "azureusgovernment": ["https://graph.microsoft.us/.default"],
@@ -609,13 +611,11 @@ class BlackForestCloudTestCase(LabBasedTestCase):
     def test_acquire_token_by_ropc(self):
         config = self.get_lab_user(azureenvironment=self.environment)
         config["password"] = self.get_lab_user_secret("BLFMSIDLAB")
-        config['authority'] = "https://login.microsoftonline.de/organizations"
         self._test_username_password(**config)
 
     def test_acquire_token_ropc_federated_user(self):
         config = self.get_lab_user(azureenvironment=self.environment, usertype="federated")
         config["password"] = self.get_lab_user_secret("BLFMSIDLAB")
-        config['authority'] = "https://login.microsoftonline.de/organizations"
         self._test_username_password(**config)
 
     def test_acquire_token_by_client_secret(self):
@@ -626,7 +626,6 @@ class BlackForestCloudTestCase(LabBasedTestCase):
     def test_acquire_token_device_flow(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config["scope"] = ["user.read"]
-        config['authority'] = "https://login.microsoftonline.de/organizations"
         self._test_device_flow(**config)
 
     @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
@@ -638,19 +637,18 @@ class BlackForestCloudTestCase(LabBasedTestCase):
         password="***"  # From https://aka.ms/GetLabUserSecret?Secret=BLFMSIDLAB
         """
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
-        config["authority"] = "https://login.microsoftonline.de/organizations"
         config["port"] = 8080
         self._test_acquire_token_by_auth_code(**config)
 
     def test_acquire_token_obo(self):
         config_cca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
         config_cca["client_secret"] = self.get_lab_user_secret("BLFMSIDLAB-IDLABS-APP-CC")
-        config_cca["authority"] = "https://login.microsoftonline.de/organizations"
 
         config_pca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config_pca["password"] = self.get_lab_user_secret("BLFMSIDLAB")
-        config_pca["scope"] = ["https://lab1.blfmsidlab.de/IDLABS_APP_CC/user_impersonation"]
-        config_pca["authority"] = "https://login.microsoftonline.de/organizations"
+        config_pca["scope"] = ["https://TESTTESTIDTEST53.onmicrosoft.de/1c4998ba-7dd7-4ae0-8241-475165ce2ce1/user_impersonation"]
+
+        self._test_acquire_token_obo(config_pca, config_cca)
 
     def test_acquire_token_silent_with_an_empty_cache_should_return_none(self):
         config = self.get_lab_user(
@@ -671,13 +669,11 @@ class FairfaxCloudTestCase(LabBasedTestCase):
     def test_acquire_token_by_ropc(self):
         config = self.get_lab_user(azureenvironment=self.environment)
         config["password"] = self.get_lab_user_secret("FFXMSIDLAB")
-        config["authority"] = "https://login.microsoftonline.us/organizations"
         self._test_username_password(**config)
 
     def test_acquire_token_ropc_federated_user(self):
         config = self.get_lab_user(azureenvironment=self.environment, usertype="federated")
         config["password"] = self.get_lab_user_secret("FFXMSIDLAB")
-        config['authority'] = "https://login.microsoftonline.us/organizations"
         self._test_username_password(**config)
 
     def test_acquire_token_by_client_secret(self):
@@ -688,7 +684,6 @@ class FairfaxCloudTestCase(LabBasedTestCase):
     def test_acquire_token_device_flow(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config["scope"] = ["user.read"]
-        config["authority"] = "https://login.microsoftonline.us/4f9098e2-ab9e-43b7-9e68-9e52d645b781"
         self._test_device_flow(**config)
 
     @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
@@ -700,19 +695,16 @@ class FairfaxCloudTestCase(LabBasedTestCase):
         password="***"  # From https://aka.ms/GetLabUserSecret?Secret=FFXMSIDLAB
         """
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
-        config["authority"] = "https://login.microsoftonline.us/organizations"
         config["port"] = 8080
         self._test_acquire_token_by_auth_code(**config)
 
     def test_acquire_token_obo(self):
         config_cca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
         config_cca["client_secret"] = self.get_lab_user_secret("FFXMSIDLAB-IDLABS-APP-Confidential-Client")
-        config_cca["authority"] = "https://login.microsoftonline.us/organizations"
 
         config_pca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
         config_pca["password"] = self.get_lab_user_secret("FFXMSIDLAB")
         config_pca["scope"] = ["https://lab1.ffxmsidlab.us/IDLABS_APP_Confidential_Client/files.read"]
-        config_pca["authority"] = "https://login.microsoftonline.us/organizations"
 
         self._test_acquire_token_obo(config_pca, config_cca)
 
