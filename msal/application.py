@@ -235,6 +235,7 @@ class ClientApplication(object):
             "authorization_endpoint": authority.authorization_endpoint,
             "token_endpoint": authority.token_endpoint,
             "device_authorization_endpoint":
+                authority.device_endpoint or
                 urljoin(authority.token_endpoint, "devicecode"),
             }
         return Client(
