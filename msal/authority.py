@@ -92,7 +92,7 @@ class Authority(object):
         logger.debug("openid_config = %s", openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
-        self.device_endpoint = openid_config.get('device_authorization_endpoint')
+        self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
         self.is_adfs = self.tenant.lower() == 'adfs'
 
