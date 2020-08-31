@@ -84,10 +84,10 @@ def _merge_claims_challenge_and_capabilities(capabilities, claims_challenge):
     # and then merge/add it into incoming claims
     if not capabilities:
         return claims_challenge
-    claims_challenge_dict = json.loads(claims_challenge) if claims_challenge else {}
+    claims_dict = json.loads(claims_challenge) if claims_challenge else {}
     for key in ["access_token"]:  # We could add "id_token" if we'd decide to
-        claims_challenge_dict.setdefault(key, {}).update(xms_cc={"values": capabilities})
-    return json.dumps(claims_challenge_dict)
+        claims_dict.setdefault(key, {}).update(xms_cc={"values": capabilities})
+    return json.dumps(claims_dict)
 
 
 class ClientApplication(object):
