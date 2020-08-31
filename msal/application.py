@@ -79,15 +79,15 @@ def extract_certs(public_cert_content):
     return [public_cert_content.strip()]
 
 
-def _merge_claims_and_capabilities(capabilities, claims):
+def _merge_claims_challenge_and_capabilities(capabilities, claims_challenge):
     # Represent capabilities as {"access_token": {"xms_cc": {"values": capabilities}}}
     # and then merge/add it into incoming claims
     if not capabilities:
-        return claims
-    claims_dict = json.loads(claims) if claims else {}
+        return claims_challenge
+    claims_challenge_dict = json.loads(claims_challenge) if claims_challenge else {}
     for key in ["access_token"]:  # We could add "id_token" if we'd decide to
-        claims_dict.setdefault(key, {}).update(xms_cc={"values": capabilities})
-    return json.dumps(claims_dict)
+        claims_challenge_dict.setdefault(key, {}).update(xms_cc={"values": capabilities})
+    return json.dumps(claims_challenge_dict)
 
 
 class ClientApplication(object):
@@ -278,7 +278,7 @@ class ClientApplication(object):
             prompt=None,
             nonce=None,
             domain_hint=None,  # type: Optional[str]
-            claims=None,
+            claims_challenge=None,
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -307,11 +307,11 @@ class ClientApplication(object):
             More information on possible values
             `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
             `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
-        :param claims:
-             The claims Authentication Request parameter requests that specific Claims be returned
-             from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-             It is a string of a JSON object which contains lists of Claims being requested from these locations.
-             See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+        :param claims_challenge:
+             The claims_challenge parameter requests specific claims requested by the resource provider
+             in the form of a claims_challenge directive in the www-authenticate header to be
+             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
         :return: The authorization url as a string.
         """
@@ -345,7 +345,8 @@ class ClientApplication(object):
             scope=decorate_scope(scopes, self.client_id),
             nonce=nonce,
             domain_hint=domain_hint,
-            claims=_merge_claims_and_capabilities(self._client_capabilities, claims),
+            claims=_merge_claims_and_capabilities(
+                self._client_capabilities, claims_challenge),
             )
 
     def acquire_token_by_authorization_code(
@@ -357,7 +358,7 @@ class ClientApplication(object):
                 # authorization request as described in Section 4.1.1, and their
                 # values MUST be identical.
             nonce=None,
-            claims=None,
+            claims_challenge=None,
             **kwargs):
         """The second half of the Authorization Code Grant.
 
@@ -383,11 +384,11 @@ class ClientApplication(object):
             same nonce should also be provided here, so that we'll validate it.
             An exception will be raised if the nonce in id token mismatches.
 
-        :param claims:
-            The claims Authentication Request parameter requests that specific Claims be returned
-            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of Claims being requested from these locations.
-            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
 
         :return: A dict representing the json response from AAD:
 
@@ -411,7 +412,8 @@ class ClientApplication(object):
                 },
             data=dict(
                 kwargs.pop("data", {}),
-                claims=_merge_claims_and_capabilities(self._client_capabilities, claims)),
+                claims=_merge_claims_and_capabilities(
+                    self._client_capabilities, claims_challenge)),
             nonce=nonce,
             **kwargs)
 
@@ -514,7 +516,7 @@ class ClientApplication(object):
             account,  # type: Optional[Account]
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
-            claims=None,
+            claims_challenge=None,
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
@@ -529,11 +531,11 @@ class ClientApplication(object):
 
         Internally, this method calls :func:`~acquire_token_silent_with_error`.
 
-        :param claims:
-            The claims Authentication Request parameter requests that specific Claims be returned
-            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of Claims being requested from these locations.
-            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
 
         :return:
             - A dict containing no "error" key,
@@ -542,7 +544,8 @@ class ClientApplication(object):
             - None when cache lookup does not yield a token.
         """
         result = self.acquire_token_silent_with_error(
-            scopes, account, authority, force_refresh, claims=claims, **kwargs)
+            scopes, account, authority, force_refresh,
+            claims_challenge=claims_challenge, **kwargs)
         return result if result and "error" not in result else None
 
     def acquire_token_silent_with_error(
@@ -551,7 +554,7 @@ class ClientApplication(object):
             account,  # type: Optional[Account]
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
-            claims=None,
+            claims_challenge=None,
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
@@ -572,11 +575,11 @@ class ClientApplication(object):
         :param force_refresh:
             If True, it will skip Access Token look-up,
             and try to find a Refresh Token to obtain a new Access Token.
-        :param claims:
-            The claims Authentication Request parameter requests that specific Claims be returned
-            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of Claims being requested from these locations.
-            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
         :return:
             - A dict containing no "error" key,
               and typically contains an "access_token" key,
@@ -595,7 +598,7 @@ class ClientApplication(object):
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh,
-            claims=claims,
+            claims_challenge=claims_challenge,
             correlation_id=correlation_id,
             **kwargs)
         if result and "error" not in result:
@@ -616,7 +619,7 @@ class ClientApplication(object):
                 validate_authority=False)
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh,
-                claims=claims,
+                claims_challenge=claims_challenge,
                 correlation_id=correlation_id,
                 **kwargs)
             if result:
@@ -639,9 +642,9 @@ class ClientApplication(object):
             account,  # type: Optional[Account]
             authority,  # This can be different than self.authority
             force_refresh=False,  # type: Optional[boolean]
-            claims=None,
+            claims_challenge=None,
             **kwargs):
-        if not (force_refresh or claims):  # Bypass AT when desired or using claims
+        if not (force_refresh or claims_challenge):  # Bypass AT when desired or using claims
             query={
                     "client_id": self.client_id,
                     "environment": authority.instance,
@@ -668,7 +671,7 @@ class ClientApplication(object):
                     }
         return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, decorate_scope(scopes, self.client_id), account,
-                force_refresh=force_refresh, claims=claims, **kwargs)
+                force_refresh=force_refresh, claims_challenge=claims_challenge, **kwargs)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self, authority, scopes, account, **kwargs):
@@ -717,7 +720,7 @@ class ClientApplication(object):
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
             rt_remover=None, break_condition=lambda response: False,
-            force_refresh=False, correlation_id=None, claims=None, **kwargs):
+            force_refresh=False, correlation_id=None, claims_challenge=None, **kwargs):
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
@@ -739,7 +742,8 @@ class ClientApplication(object):
                     },
                 data=dict(
                     kwargs.pop("data", {}),
-                    claims=_merge_claims_and_capabilities(self._client_capabilities, claims)),
+                    claims=_merge_claims_and_capabilities(
+                        self._client_capabilities, claims_challenge)),
                 **kwargs)
             if "error" not in response:
                 return response
@@ -834,7 +838,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
         return flow
 
-    def acquire_token_by_device_flow(self, flow, claims=None, **kwargs):
+    def acquire_token_by_device_flow(self, flow, claims_challenge=None, **kwargs):
         """Obtain token by a device flow object, with customizable polling effect.
 
         :param dict flow:
@@ -842,11 +846,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             By default, this method's polling effect  will block current thread.
             You can abort the polling loop at any time,
             by changing the value of the flow's "expires_at" key to 0.
-        :param claims:
-            The claims Authentication Request parameter requests that specific Claims be returned
-            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of Claims being requested from these locations.
-            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
 
         :return: A dict representing the json response from AAD:
 
@@ -860,7 +864,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 code=flow["device_code"],  # 2018-10-4 Hack:
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
-                claims=_merge_claims_and_capabilities(self._client_capabilities, claims),
+                claims=_merge_claims_and_capabilities(
+                    self._client_capabilities, claims_challenge),
                 ),
             headers={
                 CLIENT_REQUEST_ID:
@@ -871,7 +876,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             **kwargs)
 
     def acquire_token_by_username_password(
-            self, username, password, scopes, claims=None, **kwargs):
+            self, username, password, scopes, claims_challenge=None, **kwargs):
         """Gets a token for a given resource via user credentials.
 
         See this page for constraints of Username Password Flow.
@@ -881,11 +886,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         :param str password: The password.
         :param list[str] scopes:
             Scopes requested to access a protected API (a resource).
-        :param claims:
-            The claims Authentication Request parameter requests that specific Claims be returned
-            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of Claims being requested from these locations.
-            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
 
         :return: A dict representing the json response from AAD:
 
@@ -900,7 +905,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             }
         data = dict(
             kwargs.pop("data", {}),
-            claims=_merge_claims_and_capabilities(self._client_capabilities, claims))
+            claims=_merge_claims_and_capabilities(
+                self._client_capabilities, claims_challenge))
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[CLIENT_REQUEST_ID])
@@ -954,16 +960,16 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
-    def acquire_token_for_client(self, scopes, claims=None, **kwargs):
+    def acquire_token_for_client(self, scopes, claims_challenge=None, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
 
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
-        :param claims:
-            The claims Authentication Request parameter requests that specific Claims be returned
-            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of Claims being requested from these locations.
-            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
 
         :return: A dict representing the json response from AAD:
 
@@ -980,10 +986,11 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 },
             data=dict(
                 kwargs.pop("data", {}),
-                claims=_merge_claims_and_capabilities(self._client_capabilities, claims)),
+                claims=_merge_claims_and_capabilities(
+                    self._client_capabilities, claims_challenge)),
             **kwargs)
 
-    def acquire_token_on_behalf_of(self, user_assertion, scopes, claims=None, **kwargs):
+    def acquire_token_on_behalf_of(self, user_assertion, scopes, claims_challenge=None, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
 
         The current app is a middle-tier service which was called with a token
@@ -998,11 +1005,11 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
         :param str user_assertion: The incoming token already received by this app
         :param list[str] scopes: Scopes required by downstream API (a resource).
-        :param claims:
-            The claims Authentication Request parameter requests that specific Claims be returned
-            from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of Claims being requested from these locations.
-            See also `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_.
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations..
 
         :return: A dict representing the json response from AAD:
 
@@ -1023,7 +1030,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             data=dict(
                 kwargs.pop("data", {}),
                 requested_token_use="on_behalf_of",
-                claims=_merge_claims_and_capabilities(self._client_capabilities, claims)),
+                claims=_merge_claims_and_capabilities(
+                    self._client_capabilities, claims_challenge)),
             headers={
                 CLIENT_REQUEST_ID: _get_new_correlation_id(),
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(

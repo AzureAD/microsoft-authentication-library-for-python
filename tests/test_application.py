@@ -2,7 +2,7 @@
 # so this test_application file contains only unit tests without dependency.
 from msal.application import *
 import msal
-from msal.application import _merge_claims_and_capabilities
+from msal.application import _merge_claims_challenge_and_capabilities
 from tests import unittest
 from tests.test_token_cache import TokenCacheTestCase
 from tests.http_client import MinimalHttpClient, MinimalResponse
@@ -273,17 +273,18 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
 
     def test_capabilities_and_id_token_claims_merge(self):
         client_capabilities = ["llt", "ssm"]
-        claims = '''{"id_token": {"auth_time": {"essential": true}}}'''
+        claims_challenge = '''{"id_token": {"auth_time": {"essential": true}}}'''
         merged_claims = '''{"id_token": {"auth_time": {"essential": true}}, 
                         "access_token": {"xms_cc": {"values": ["llt", "ssm"]}}}'''
         # Comparing  dictionaries as JSON object order differs based on python version
         self.assertEqual(
             json.loads(merged_claims),
-            json.loads(_merge_claims_and_capabilities(client_capabilities, claims)))
+            json.loads(_merge_claims_challenge_and_capabilities(
+                client_capabilities, claims_challenge)))
 
     def test_capabilities_and_id_token_claims_and_access_token_claims_merge(self):
         client_capabilities = ["llt", "ssm"]
-        claims = '''{"id_token": {"auth_time": {"essential": true}}, 
+        claims_challenge = '''{"id_token": {"auth_time": {"essential": true}}, 
                  "access_token": {"nbf":{"essential":true, "value":"1563308371"}}}'''
         merged_claims = '''{"id_token": {"auth_time": {"essential": true}},
                         "access_token": {"nbf": {"essential": true, "value": "1563308371"},
@@ -291,20 +292,21 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
         # Comparing  dictionaries as JSON object order differs based on python version
         self.assertEqual(
             json.loads(merged_claims),
-            json.loads(_merge_claims_and_capabilities(client_capabilities, claims)))
+            json.loads(_merge_claims_challenge_and_capabilities(
+                client_capabilities, claims_challenge)))
 
     def test_no_capabilities_only_claims_merge(self):
-        claims = '''{"id_token": {"auth_time": {"essential": true}}}'''
+        claims_challenge = '''{"id_token": {"auth_time": {"essential": true}}}'''
         self.assertEqual(
-            json.loads(claims),
-            json.loads(_merge_claims_and_capabilities(None, claims)))
+            json.loads(claims_challenge),
+            json.loads(_merge_claims_challenge_and_capabilities(None, claims_challenge)))
 
     def test_only_client_capabilities_no_claims_merge(self):
         client_capabilities = ["llt", "ssm"]
         merged_claims = '''{"access_token": {"xms_cc": {"values": ["llt", "ssm"]}}}'''
         self.assertEqual(
             json.loads(merged_claims),
-            json.loads(_merge_claims_and_capabilities(client_capabilities, None)))
+            json.loads(_merge_claims_challenge_and_capabilities(client_capabilities, None)))
 
     def test_both_claims_and_capabilities_none(self):
-        self.assertEqual(_merge_claims_and_capabilities(None, None), None)
+        self.assertEqual(_merge_claims_challenge_and_capabilities(None, None), None)
