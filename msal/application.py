@@ -258,6 +258,7 @@ class ClientApplication(object):
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
             response_type="code",  # Can be "token" if you use Implicit Grant
+            response_mode=None, # Can be "form_post", "fragment" or "query"
             prompt=None,
             nonce=None,
             domain_hint=None,  # type: Optional[str]
@@ -274,6 +275,10 @@ class ClientApplication(object):
         :param str response_type:
             Default value is "code" for an OAuth2 Authorization Code grant.
             You can use other content such as "id_token".
+        :param str response_mode:
+            Default value is up to the flow but can be:
+            "query", "fragment" or "form_post" for auth code grant and 
+            "fragment" or "form_post" for OpenID Connect.
         :param str prompt:
             By default, no prompt value will be sent, not even "none".
             You will have to specify a value explicitly.
@@ -315,7 +320,7 @@ class ClientApplication(object):
             self.client_id,
             http_client=self.http_client)
         return client.build_auth_request_uri(
-            response_type=response_type,
+            response_type=response_type, response_mode=response_mode,
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             prompt=prompt,
             scope=decorate_scope(scopes, self.client_id),
