@@ -345,7 +345,7 @@ class ClientApplication(object):
             scope=decorate_scope(scopes, self.client_id),
             nonce=nonce,
             domain_hint=domain_hint,
-            claims=_merge_claims_and_capabilities(
+            claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
             )
 
@@ -412,7 +412,7 @@ class ClientApplication(object):
                 },
             data=dict(
                 kwargs.pop("data", {}),
-                claims=_merge_claims_and_capabilities(
+                claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
             nonce=nonce,
             **kwargs)
@@ -742,7 +742,7 @@ class ClientApplication(object):
                     },
                 data=dict(
                     kwargs.pop("data", {}),
-                    claims=_merge_claims_and_capabilities(
+                    claims=_merge_claims_challenge_and_capabilities(
                         self._client_capabilities, claims_challenge)),
                 **kwargs)
             if "error" not in response:
@@ -864,7 +864,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 code=flow["device_code"],  # 2018-10-4 Hack:
                     # during transition period,
                     # service seemingly need both device_code and code parameter.
-                claims=_merge_claims_and_capabilities(
+                claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge),
                 ),
             headers={
@@ -905,7 +905,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             }
         data = dict(
             kwargs.pop("data", {}),
-            claims=_merge_claims_and_capabilities(
+            claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge))
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
@@ -986,7 +986,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 },
             data=dict(
                 kwargs.pop("data", {}),
-                claims=_merge_claims_and_capabilities(
+                claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
             **kwargs)
 
@@ -1030,7 +1030,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             data=dict(
                 kwargs.pop("data", {}),
                 requested_token_use="on_behalf_of",
-                claims=_merge_claims_and_capabilities(
+                claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
             headers={
                 CLIENT_REQUEST_ID: _get_new_correlation_id(),
