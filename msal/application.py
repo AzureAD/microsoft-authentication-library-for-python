@@ -1010,7 +1010,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             The claims_challenge parameter requests specific claims requested by the resource provider
             in the form of a claims_challenge directive in the www-authenticate header to be
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of claims being requested from these locations..
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
 
         :return: A dict representing the json response from AAD:
 
