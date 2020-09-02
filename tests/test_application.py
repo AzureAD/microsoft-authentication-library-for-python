@@ -272,10 +272,10 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
 class TestApplicationForClientCapabilities(unittest.TestCase):
 
     def test_capabilities_and_id_token_claims_merge(self):
-        client_capabilities = ["llt", "ssm"]
+        client_capabilities = ["foo", "bar"]
         claims_challenge = '''{"id_token": {"auth_time": {"essential": true}}}'''
         merged_claims = '''{"id_token": {"auth_time": {"essential": true}}, 
-                        "access_token": {"xms_cc": {"values": ["llt", "ssm"]}}}'''
+                        "access_token": {"xms_cc": {"values": ["foo", "bar"]}}}'''
         # Comparing  dictionaries as JSON object order differs based on python version
         self.assertEqual(
             json.loads(merged_claims),
@@ -283,12 +283,12 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
                 client_capabilities, claims_challenge)))
 
     def test_capabilities_and_id_token_claims_and_access_token_claims_merge(self):
-        client_capabilities = ["llt", "ssm"]
+        client_capabilities = ["foo", "bar"]
         claims_challenge = '''{"id_token": {"auth_time": {"essential": true}}, 
                  "access_token": {"nbf":{"essential":true, "value":"1563308371"}}}'''
         merged_claims = '''{"id_token": {"auth_time": {"essential": true}},
                         "access_token": {"nbf": {"essential": true, "value": "1563308371"},
-                                        "xms_cc": {"values": ["llt", "ssm"]}}}'''
+                                        "xms_cc": {"values": ["foo", "bar"]}}}'''
         # Comparing  dictionaries as JSON object order differs based on python version
         self.assertEqual(
             json.loads(merged_claims),
@@ -302,8 +302,8 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
             json.loads(_merge_claims_challenge_and_capabilities(None, claims_challenge)))
 
     def test_only_client_capabilities_no_claims_merge(self):
-        client_capabilities = ["llt", "ssm"]
-        merged_claims = '''{"access_token": {"xms_cc": {"values": ["llt", "ssm"]}}}'''
+        client_capabilities = ["foo", "bar"]
+        merged_claims = '''{"access_token": {"xms_cc": {"values": ["foo", "bar"]}}}'''
         self.assertEqual(
             json.loads(merged_claims),
             json.loads(_merge_claims_challenge_and_capabilities(client_capabilities, None)))
