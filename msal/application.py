@@ -193,6 +193,16 @@ class ClientApplication(object):
             Default value is None, means it will not be passed to Microsoft.
         :param list[str] client_capabilities: (optional)
             Allows configuration of one or more client capabilities, e.g. ["CP1"].
+
+            Client capability is meant to inform the Microsoft identity platform
+            (STS) what this client is capable for,
+            so STS can decide to turn on certain features.
+            For example, if client is capable to handle *claims challenge*,
+            STS can then issue CAE access tokens to resources
+            knowing when the resource emits *claims challenge*
+            the client will be capable to handle.
+
+            Client capability is implemented using ‘claims’ parameter, for now.
             MSAL will combine them into
             `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_
             which you will later provide via one of the acquire-token request.
