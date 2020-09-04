@@ -285,7 +285,7 @@ class ClientApplication(object):
             login_hint=None,  # type: Optional[str]
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
-            response_type="code",  # Can be "token" if you use Implicit Grant
+            response_type="code",  # Could be "token" if you use Implicit Grant
             prompt=None,
             nonce=None,
             domain_hint=None,  # type: Optional[str]
@@ -302,7 +302,11 @@ class ClientApplication(object):
             Address to return to upon receiving a response from the authority.
         :param str response_type:
             Default value is "code" for an OAuth2 Authorization Code grant.
-            You can use other content such as "id_token".
+
+            You could use other content such as "id_token" or "token",
+            which would trigger an Implicit Grant, but that is
+            `not recommended <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-implicit-grant-flow#is-the-implicit-grant-suitable-for-my-app>`_.
+
         :param str prompt:
             By default, no prompt value will be sent, not even "none".
             You will have to specify a value explicitly.
