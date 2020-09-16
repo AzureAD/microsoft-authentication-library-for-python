@@ -126,6 +126,8 @@ class TokenCache(object):
         environment = realm = None
         if "token_endpoint" in event:
             _, environment, realm = canonicalize(event["token_endpoint"])
+        if "environment" in event:  # Always available unless in legacy test cases
+            environment = event["environment"]  # Set by application.py
         response = event.get("response", {})
         data = event.get("data", {})
         access_token = response.get("access_token")
