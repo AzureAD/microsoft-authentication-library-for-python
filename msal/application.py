@@ -202,7 +202,9 @@ class ClientApplication(object):
             knowing when the resource emits *claims challenge*
             the client will be capable to handle.
 
-            Client capability is implemented using ‘claims’ parameter, for now.
+            Implementation details:
+            Client capability is implemented using "claims" parameter on the wire,
+            for now.
             MSAL will combine them into
             `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_
             which you will later provide via one of the acquire-token request.
