@@ -953,7 +953,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
         wstrust_result = wst_send_request(
-            username, password, user_realm_result.get("cloud_audience_urn"),
+            username, password,
+            user_realm_result.get("cloud_audience_urn", "urn:federation:MicrosoftOnline"),
             wstrust_endpoint.get("address",
                 # Fallback to an AAD supplied endpoint
                 user_realm_result.get("federation_active_auth_url")),
