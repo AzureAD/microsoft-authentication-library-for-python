@@ -172,7 +172,7 @@ class TokenCache(object):
                     at["key_id"] = data.get("key_id")
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
-            if client_info:
+            if client_info and event.get("add_account") is not False:
                 account = {
                     "home_account_id": home_account_id,
                     "environment": environment,

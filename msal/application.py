@@ -752,6 +752,11 @@ class ClientApplication(object):
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 on_removing_rt=rt_remover or self.token_cache.remove_rt,
+                on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                    event,
+                    environment=authority.instance,
+                    add_account=False,  # To honor a concurrent remove_account()
+                    )),
                 scope=scopes,
                 headers={
                     CLIENT_REQUEST_ID: correlation_id or _get_new_correlation_id(),
