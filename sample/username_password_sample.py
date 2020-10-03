@@ -26,9 +26,20 @@ import logging
 import requests
 import msal
 
+import os, atexit, msal
+cache = msal.SerializableTokenCache()
+"""
+if os.path.exists("my_cache.bin"):
+    cache.deserialize(open("my_cache.bin", "r").read())
+atexit.register(lambda:
+    open("my_cache.bin", "w").write(cache.serialize())
+    # Hint: The following optional line persists only when state changed
+    if cache.has_state_changed else None
+    )
+"""
 
 # Optional logging
-# logging.basicConfig(level=logging.DEBUG)  # Enable DEBUG log for entire script
+logging.basicConfig(level=logging.DEBUG)  # Enable DEBUG log for entire script
 # logging.getLogger("msal").setLevel(logging.INFO)  # Optionally disable MSAL DEBUG logs
 
 config = json.load(open(sys.argv[1]))
@@ -36,7 +47,7 @@ config = json.load(open(sys.argv[1]))
 # Create a preferably long-lived app instance which maintains a token cache.
 app = msal.PublicClientApplication(
     config["client_id"], authority=config["authority"],
-    # token_cache=...  # Default cache is in memory only.
+    token_cache=cache,  # Default cache is in memory only.
                        # You can learn how to use SerializableTokenCache from
                        # https://msal-python.rtfd.io/en/latest/#msal.SerializableTokenCache
     )
