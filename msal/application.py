@@ -293,6 +293,8 @@ class ClientApplication(object):
             nonce=None,
             domain_hint=None,  # type: Optional[str]
             claims_challenge=None,
+            code_challenge=None,
+            code_challenge_method=None,
             **kwargs):
         """Constructs a URL for you to start a Authorization Code Grant.
 
@@ -330,6 +332,11 @@ class ClientApplication(object):
              in the form of a claims_challenge directive in the www-authenticate header to be
              returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
              It is a string of a JSON object which contains lists of claims being requested from these locations.
+        :param code_challenge:
+            A challenge derived from the code verifier that is sent in the
+            authorization request, to be verified against later. Please refer: https://tools.ietf.org/html/rfc7636
+        :param code_challenge_method:
+            A method that was used to derive code challenge. Please refer: https://tools.ietf.org/html/rfc7636
 
         :return: The authorization url as a string.
         """
@@ -365,6 +372,8 @@ class ClientApplication(object):
             domain_hint=domain_hint,
             claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
+            code_challenge=code_challenge,
+            code_challenge_method=code_challenge_method,
             )
 
     def acquire_token_by_authorization_code(
@@ -377,6 +386,7 @@ class ClientApplication(object):
                 # values MUST be identical.
             nonce=None,
             claims_challenge=None,
+            code_verifier=None,
             **kwargs):
         """The second half of the Authorization Code Grant.
 
@@ -408,6 +418,10 @@ class ClientApplication(object):
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
+        :param code_verifier:
+             A cryptographically random string that is used to correlate the
+            authorization request to the token request. Please refer: https://tools.ietf.org/html/rfc7636
+
         :return: A dict representing the json response from AAD:
 
             - A successful response would contain "access_token" key,
@@ -431,7 +445,8 @@ class ClientApplication(object):
             data=dict(
                 kwargs.pop("data", {}),
                 claims=_merge_claims_challenge_and_capabilities(
-                    self._client_capabilities, claims_challenge)),
+                    self._client_capabilities, claims_challenge),
+                code_verifier=code_verifier),
             nonce=nonce,
             **kwargs)
 
