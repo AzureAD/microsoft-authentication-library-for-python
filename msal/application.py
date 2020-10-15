@@ -755,7 +755,7 @@ class ClientApplication(object):
                 on_obtaining_tokens=lambda event: self.token_cache.add(dict(
                     event,
                     environment=authority.instance,
-                    add_account=False,  # To honor a concurrent remove_account()
+                    skip_account_creation=True,  # To honor a concurrent remove_account()
                     )),
                 scope=scopes,
                 headers={
