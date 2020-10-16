@@ -462,6 +462,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     def _obtain_token(
             self, grant_type, params=None, data=None,
             also_save_rt=False,
+            on_obtaining_tokens=None,
             *args, **kwargs):
         _data = data.copy()  # to prevent side effect
         resp = super(Client, self)._obtain_token(
@@ -481,7 +482,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                 #       but our obtain_token_by_authorization_code(...) encourages
                 #       app developer to still explicitly provide a scope here.
                 scope = _data.get("scope")
-            self.on_obtaining_tokens({
+            (on_obtaining_tokens or self.on_obtaining_tokens)({
                 "client_id": self.client_id,
                 "scope": scope,
                 "token_endpoint": self.configuration["token_endpoint"],
@@ -495,6 +496,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             rt_getter=lambda token_item: token_item["refresh_token"],
             on_removing_rt=None,
             on_updating_rt=None,
+            on_obtaining_tokens=None,
             **kwargs):
         # type: (Union[str, dict], Union[str, list, set, tuple], Callable) -> dict
         """This is an overload which will trigger token storage callbacks.
