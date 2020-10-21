@@ -21,7 +21,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +193,18 @@ class ClientApplication(object):
             Default value is None, means it will not be passed to Microsoft.
         :param list[str] client_capabilities: (optional)
             Allows configuration of one or more client capabilities, e.g. ["CP1"].
+
+            Client capability is meant to inform the Microsoft identity platform
+            (STS) what this client is capable for,
+            so STS can decide to turn on certain features.
+            For example, if client is capable to handle *claims challenge*,
+            STS can then issue CAE access tokens to resources
+            knowing when the resource emits *claims challenge*
+            the client will be capable to handle.
+
+            Implementation details:
+            Client capability is implemented using "claims" parameter on the wire,
+            for now.
             MSAL will combine them into
             `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_
             which you will later provide via one of the acquire-token request.
@@ -264,7 +276,8 @@ class ClientApplication(object):
             default_body=default_body,
             client_assertion=client_assertion,
             client_assertion_type=client_assertion_type,
-            on_obtaining_tokens=self.token_cache.add,
+            on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                event, environment=authority.instance)),
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
 
@@ -275,7 +288,7 @@ class ClientApplication(object):
             login_hint=None,  # type: Optional[str]
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
-            response_type="code",  # Can be "token" if you use Implicit Grant
+            response_type="code",  # Could be "token" if you use Implicit Grant
             prompt=None,
             nonce=None,
             domain_hint=None,  # type: Optional[str]
@@ -292,7 +305,11 @@ class ClientApplication(object):
             Address to return to upon receiving a response from the authority.
         :param str response_type:
             Default value is "code" for an OAuth2 Authorization Code grant.
-            You can use other content such as "id_token".
+
+            You could use other content such as "id_token" or "token",
+            which would trigger an Implicit Grant, but that is
+            `not recommended <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-implicit-grant-flow#is-the-implicit-grant-suitable-for-my-app>`_.
+
         :param str prompt:
             By default, no prompt value will be sent, not even "none".
             You will have to specify a value explicitly.
@@ -735,6 +752,11 @@ class ClientApplication(object):
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 on_removing_rt=rt_remover or self.token_cache.remove_rt,
+                on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                    event,
+                    environment=authority.instance,
+                    skip_account_creation=True,  # To honor a concurrent remove_account()
+                    )),
                 scope=scopes,
                 headers={
                     CLIENT_REQUEST_ID: correlation_id or _get_new_correlation_id(),
@@ -936,7 +958,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
         logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
         wstrust_result = wst_send_request(
-            username, password, user_realm_result.get("cloud_audience_urn"),
+            username, password,
+            user_realm_result.get("cloud_audience_urn", "urn:federation:MicrosoftOnline"),
             wstrust_endpoint.get("address",
                 # Fallback to an AAD supplied endpoint
                 user_realm_result.get("federation_active_auth_url")),

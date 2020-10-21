@@ -126,6 +126,8 @@ class TokenCache(object):
         environment = realm = None
         if "token_endpoint" in event:
             _, environment, realm = canonicalize(event["token_endpoint"])
+        if "environment" in event:  # Always available unless in legacy test cases
+            environment = event["environment"]  # Set by application.py
         response = event.get("response", {})
         data = event.get("data", {})
         access_token = response.get("access_token")
@@ -170,7 +172,7 @@ class TokenCache(object):
                     at["key_id"] = data.get("key_id")
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
-            if client_info:
+            if client_info and not event.get("skip_account_creation"):
                 account = {
                     "home_account_id": home_account_id,
                     "environment": environment,
