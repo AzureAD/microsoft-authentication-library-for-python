@@ -109,7 +109,7 @@ class ClientApplication(object):
             http_client=None,
             verify=True, proxies=None, timeout=None,
             client_claims=None, app_name=None, app_version=None,
-            client_capabilities=None):
+            client_capabilities=None, extra_headers=None):
         """Create an instance of application.
 
         :param str client_id: Your app has a client_id after you register it on AAD.
@@ -191,6 +191,11 @@ class ClientApplication(object):
         :param app_version: (optional)
             You can provide your application version for Microsoft telemetry purposes.
             Default value is None, means it will not be passed to Microsoft.
+        :param dict extra_headers: (optional)
+            Allows you to pass extra headers to each OAuth client request,
+            adding them to the client session. msal uses requests.Session to requesting,
+            so more information you can find here:
+            https://requests.readthedocs.io/en/master/user/advanced/#session-objects
         :param list[str] client_capabilities: (optional)
             Allows configuration of one or more client capabilities, e.g. ["CP1"].
 
@@ -230,6 +235,7 @@ class ClientApplication(object):
                 self.http_client, validate_authority=validate_authority)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
+        self._extra_headers = extra_headers
         self.client = self._build_client(client_credential, self.authority)
         self.authority_groups = None
 
@@ -245,6 +251,10 @@ class ClientApplication(object):
             default_headers['x-app-name'] = self.app_name
         if self.app_version:
             default_headers['x-app-ver'] = self.app_version
+        if self._extra_headers:
+            for k, v in self._extra_headers.items():
+                if k not in default_headers:
+                    default_headers[k] = v
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
             assert ("private_key" in client_credential
