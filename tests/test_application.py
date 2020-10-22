@@ -39,6 +39,33 @@ class TestHelperExtractCerts(unittest.TestCase):  # It is used by SNI scenario
         self.assertEqual(["my_cert1", "my_cert2"], extract_certs(pem))
 
 
+class TestEncryptedKeyAsClientCredential(unittest.TestCase):
+    # Internally, we use serialization.load_pem_private_key() to load an encrypted private key with a passphrase
+    # This function takes in encrypted key in bytes and passphrase in bytes too
+    # Our code handles such a conversion, adding test cases to verify such a conversion is needed
+
+    def test_encyrpted_key_in_bytes_and_string_password_should_error(self):
+        private_key = b"""
+        -----BEGIN ENCRYPTED PRIVATE KEY-----
+        test_private_key
+        -----END ENCRYPTED PRIVATE KEY-----
+        """
+        with self.assertRaises(TypeError):
+            # Using a unicode string for Python 2 to identify it as a string and not default to bytes
+            serialization.load_pem_private_key(
+                private_key, password=u"string_password", backend=default_backend())
+
+    def test_encyrpted_key_is_string_and_bytes_password_should_error(self):
+        private_key = u"""
+        -----BEGIN ENCRYPTED PRIVATE KEY-----
+        test_private_key
+        -----END ENCRYPTED PRIVATE KEY-----
+        """
+        with self.assertRaises(TypeError):
+            serialization.load_pem_private_key(
+                private_key, password=b"byte_password", backend=default_backend())
+
+
 class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
 
     def setUp(self):

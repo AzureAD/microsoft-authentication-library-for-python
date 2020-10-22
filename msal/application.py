@@ -1,6 +1,11 @@
 import functools
 import json
 import time
+
+import six
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+
 try:  # Python 2
     from urlparse import urljoin
 except:  # Python 3
@@ -124,6 +129,7 @@ class ClientApplication(object):
                     "private_key": "...-----BEGIN PRIVATE KEY-----...",
                     "thumbprint": "A1B2C3D4E5F6...",
                     "public_certificate": "...-----BEGIN CERTIFICATE-----..." (Optional. See below.)
+                    "passphrase": "Passphrase if the private_key is encrypted (Optional)"
                 }
 
             *Added in version 0.5.0*:
@@ -252,8 +258,21 @@ class ClientApplication(object):
             headers = {}
             if 'public_certificate' in client_credential:
                 headers["x5c"] = extract_certs(client_credential['public_certificate'])
+            if not client_credential.get("passphrase"):
+                unencrypted_private_key = client_credential['private_key']
+            else:
+                if isinstance(client_credential['private_key'], six.text_type):
+                    private_key = client_credential['private_key'].encode(encoding="utf-8")
+                else:
+                    private_key = client_credential['private_key']
+                if isinstance(client_credential['passphrase'], six.text_type):
+                    password = client_credential['passphrase'].encode(encoding="utf-8")
+                else:
+                    password = client_credential['passphrase']
+                unencrypted_private_key = serialization.load_pem_private_key(
+                    private_key, password=password, backend=default_backend())
             assertion = JwtAssertionCreator(
-                client_credential["private_key"], algorithm="RS256",
+                unencrypted_private_key, algorithm="RS256",
                 sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
             client_assertion = assertion.create_regenerative_assertion(
                 audience=authority.token_endpoint, issuer=self.client_id,

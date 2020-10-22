@@ -74,6 +74,8 @@ setup(
     install_requires=[
         'requests>=2.0.0,<3',
         'PyJWT[crypto]>=1.0.0,<2',
+        'six>=1.6',
+        'cryptography>=2.1.4'
     ]
 )
 
