@@ -5,8 +5,6 @@ It starts a web server to listen redirect_uri, waiting for auth code.
 It optionally opens a browser window to guide a human user to manually login.
 After obtaining an auth code, the web server will automatically shut down.
 """
-
-import argparse
 import webbrowser
 import logging
 
@@ -17,8 +15,6 @@ except ImportError:  # Fall back to Python 2
     from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
     from urlparse import urlparse, parse_qs
     from urllib import urlencode
-
-from .oauth2 import Client
 
 
 logger = logging.getLogger(__name__)
@@ -95,17 +91,24 @@ class AuthCodeReceiver(BaseHTTPRequestHandler):
         self.wfile.write(body.encode("utf-8"))
 
 
+# Note: Manually use or test this module by:
+#       python -m path.to.this.file -h
 if __name__ == '__main__':
+    import argparse
+    from .oauth2 import Client
     logging.basicConfig(level=logging.INFO)
     p = parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=__doc__ + "The auth code received will be shown at stdout.")
-    p.add_argument('endpoint',
-        help="The auth endpoint for your app. For example: "
-            "https://login.microsoftonline.com/your_tenant/oauth2/authorize")
+    p.add_argument(
+        '--endpoint', help="The auth endpoint for your app.",
+        default="https://login.microsoftonline.com/common/oauth2/v2.0/authorize")
     p.add_argument('client_id', help="The client_id of your application")
-    p.add_argument('redirect_port', type=int, help="The port in redirect_uri")
+    p.add_argument('--port', type=int, default=8000, help="The port in redirect_uri")
+    p.add_argument('--scope', default=None, help="The scope list")
     args = parser.parse_args()
-    client = Client(args.client_id, authorization_endpoint=args.endpoint)
-    auth_uri = client.build_auth_request_uri("code")
-    print(obtain_auth_code(args.redirect_port, auth_uri))
+    client = Client({"authorization_endpoint": args.endpoint}, args.client_id)
+    auth_uri = client.build_auth_request_uri(
+        "code", scope=args.scope, redirect_uri="http://localhost:%d" % args.port)
+    print(obtain_auth_code(args.port, auth_uri))
 
