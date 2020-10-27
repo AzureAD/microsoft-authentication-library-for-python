@@ -19,7 +19,7 @@ except ImportError:  # Fall back to Python 2
 
 logger = logging.getLogger(__name__)
 
-def obtain_auth_code(listen_port, auth_uri=None, text=None, timeout=None):
+def obtain_auth_code(listen_port, auth_uri=None, text=None, timeout=None, state=None):
     """This function will start a web server listening on http://localhost:port
     and then you need to open a browser on this device and visit your auth_uri.
     When interaction finishes, this function will return the auth code,
@@ -33,6 +33,8 @@ def obtain_auth_code(listen_port, auth_uri=None, text=None, timeout=None):
     :param text: If provided (together with auth_uri),
         this function will render a landing page with ``text``, for testing purpose.
     :param timeout: In seconds. None means wait indefinitely.
+    :param state: If provided, we will ignore incoming requests with mismatched state.
+        You need to make sure your auth_uri would also use the same state.
     :return: Hang until it receives and then return the auth code, or None when timeout.
     """
     exit_hint = "Visit http://localhost:{p}?code=exit to abort".format(p=listen_port)
@@ -46,6 +48,7 @@ def obtain_auth_code(listen_port, auth_uri=None, text=None, timeout=None):
         browse(page)
     server = TimedHttpServer(("", int(listen_port)), AuthCodeHandler)
     server.timeout = timeout
+    server.state = state
     try:
         server.authcode = None
         while not server.authcode:
@@ -77,9 +80,12 @@ class AuthCodeHandler(BaseHTTPRequestHandler):
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
         qs = parse_qs(urlparse(self.path).query)
         if qs.get('code'):  # Then store it into the server instance
-            ac = self.server.authcode = qs['code'][0]
-            self._send_full_response('Authcode:\n{}'.format(ac))
-            # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
+            if self.server.state != qs.get("state", [None])[0]:
+                self._send_full_response("State mismatch", is_ok=False)
+            else:
+                ac = self.server.authcode = qs['code'][0]
+                self._send_full_response('Authcode:\n{}'.format(ac))
+                # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
         elif qs.get('text') and qs.get('link'):  # Then display a landing page
             self._send_full_response(
                 '<a href={link}>{text}</a><hr/>{exit_hint}'.format(
@@ -127,11 +133,15 @@ if __name__ == '__main__':
     p.add_argument('--scope', default=None, help="The scope list")
     args = parser.parse_args()
     client = Client({"authorization_endpoint": args.endpoint}, args.client_id)
+    state = "placeholder"
     auth_uri = client.build_auth_request_uri(
-        "code", scope=args.scope, redirect_uri="http://localhost:%d" % args.port)
+        "code", scope=args.scope, redirect_uri="http://localhost:%d" % args.port,
+        state=state,
+        )
     print(obtain_auth_code(
         args.port,
         auth_uri=auth_uri,
         text="Open this link to sign in. You may use incognito window",
+        state=state,
         ))
 
