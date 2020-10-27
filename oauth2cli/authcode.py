@@ -19,7 +19,7 @@ except ImportError:  # Fall back to Python 2
 
 logger = logging.getLogger(__name__)
 
-def obtain_auth_code(listen_port, auth_uri=None, timeout=None):
+def obtain_auth_code(listen_port, auth_uri=None, text=None, timeout=None):
     """This function will start a web server listening on http://localhost:port
     and then you need to open a browser on this device and visit your auth_uri.
     When interaction finishes, this function will return the auth code,
@@ -30,17 +30,19 @@ def obtain_auth_code(listen_port, auth_uri=None, timeout=None):
         Unless the authorization server supports dynamic port,
         you need to use the same port when you register with your app.
     :param auth_uri: If provided, this function will try to open a local browser.
+    :param text: If provided (together with auth_uri),
+        this function will render a landing page with ``text``, for testing purpose.
     :param timeout: In seconds. None means wait indefinitely.
     :return: Hang until it receives and then return the auth code, or None when timeout.
     """
     exit_hint = "Visit http://localhost:{p}?code=exit to abort".format(p=listen_port)
-    logger.warning(exit_hint)
+    logger.debug(exit_hint)
     if auth_uri:
         page = "http://localhost:{p}?{q}".format(p=listen_port, q=urlencode({
-            "text": "Open this link to sign in. You may use incognito window",
+            "text": text,
             "link": auth_uri,
             "exit_hint": exit_hint,
-            }))
+            })) if text else auth_uri
         browse(page)
     server = TimedHttpServer(("", int(listen_port)), AuthCodeHandler)
     server.timeout = timeout
@@ -127,5 +129,9 @@ if __name__ == '__main__':
     client = Client({"authorization_endpoint": args.endpoint}, args.client_id)
     auth_uri = client.build_auth_request_uri(
         "code", scope=args.scope, redirect_uri="http://localhost:%d" % args.port)
-    print(obtain_auth_code(args.port, auth_uri))
+    print(obtain_auth_code(
+        args.port,
+        auth_uri=auth_uri,
+        text="Open this link to sign in. You may use incognito window",
+        ))
 
