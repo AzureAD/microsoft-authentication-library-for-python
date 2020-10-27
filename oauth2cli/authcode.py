@@ -19,7 +19,7 @@ except ImportError:  # Fall back to Python 2
 
 logger = logging.getLogger(__name__)
 
-def obtain_auth_code(listen_port, auth_uri=None):
+def obtain_auth_code(listen_port, auth_uri=None, timeout=None):
     """This function will start a web server listening on http://localhost:port
     and then you need to open a browser on this device and visit your auth_uri.
     When interaction finishes, this function will return the auth code,
@@ -30,7 +30,8 @@ def obtain_auth_code(listen_port, auth_uri=None):
         Unless the authorization server supports dynamic port,
         you need to use the same port when you register with your app.
     :param auth_uri: If provided, this function will try to open a local browser.
-    :return: Hang indefinitely, until it receives and then return the auth code.
+    :param timeout: In seconds. None means wait indefinitely.
+    :return: Hang until it receives and then return the auth code, or None when timeout.
     """
     exit_hint = "Visit http://localhost:{p}?code=exit to abort".format(p=listen_port)
     logger.warning(exit_hint)
@@ -41,7 +42,8 @@ def obtain_auth_code(listen_port, auth_uri=None):
             "exit_hint": exit_hint,
             }))
         browse(page)
-    server = HTTPServer(("", int(listen_port)), AuthCodeReceiver)
+    server = TimedHttpServer(("", int(listen_port)), AuthCodeHandler)
+    server.timeout = timeout
     try:
         server.authcode = None
         while not server.authcode:
@@ -49,6 +51,8 @@ def obtain_auth_code(listen_port, auth_uri=None):
             # https://docs.python.org/2/library/basehttpserver.html#more-examples
             server.handle_request()
         return server.authcode
+    except AuthCodeTimeoutError:
+        logger.info("No auth code received in last %d second(s)", server.timeout)
     finally:
         server.server_close()
 
@@ -65,7 +69,7 @@ def browse(auth_uri):
     logger.info("Please open a browser on THIS device to visit: %s" % auth_uri)
     controller.open(auth_uri)
 
-class AuthCodeReceiver(BaseHTTPRequestHandler):
+class AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # For flexibility, we choose to not check self.path matching redirect_uri
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
@@ -89,6 +93,19 @@ class AuthCodeReceiver(BaseHTTPRequestHandler):
         self.send_header('Content-type', content_type)
         self.end_headers()
         self.wfile.write(body.encode("utf-8"))
+
+class AuthCodeTimeoutError(RuntimeError):
+    pass
+
+class TimedHttpServer(HTTPServer):
+    """handle_timeout() will be triggered when no request comes in self.timeout seconds.
+    See https://docs.python.org/3/library/socketserver.html#socketserver.BaseServer.handle_timeout
+    """
+    def handle_timeout(self):
+        # We choose to not call self.server_close() here,
+        # because it would cause a socket.error exception in handle_request(),
+        # and likely end up the server being server_close() twice, which smells.
+        raise AuthCodeTimeoutError()
 
 
 # Note: Manually use or test this module by:
