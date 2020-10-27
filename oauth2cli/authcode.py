@@ -75,7 +75,9 @@ class AuthCodeHandler(BaseHTTPRequestHandler):
                 self._send_full_response("State mismatch", is_ok=False)
             else:
                 ac = self.server.authcode = qs['code'][0]
-                self._send_full_response('Authcode:\n{}'.format(ac))
+                logger.debug("Got auth code: %s", ac)
+                self._send_full_response(
+                    'Authentication complete. You can close this window.')
                 # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
         elif qs.get('text') and qs.get('link'):  # Then display a landing page
             self._send_full_response(
