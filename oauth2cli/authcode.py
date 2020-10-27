@@ -7,6 +7,7 @@ After obtaining an auth code, the web server will automatically shut down.
 """
 import webbrowser
 import logging
+from contextlib import contextmanager
 
 try:  # Python 3
     from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -19,47 +20,37 @@ except ImportError:  # Fall back to Python 2
 
 logger = logging.getLogger(__name__)
 
-def obtain_auth_code(listen_port, auth_uri=None, text=None, timeout=None, state=None):
-    """This function will start a web server listening on http://localhost:port
-    and then you need to open a browser on this device and visit your auth_uri.
-    When interaction finishes, this function will return the auth code,
-    and then shut down the local web server.
 
-    :param listen_port:
-        The local web server will listen at http://localhost:<listen_port>
-        Unless the authorization server supports dynamic port,
-        you need to use the same port when you register with your app.
-    :param auth_uri: If provided, this function will try to open a local browser.
-    :param text: If provided (together with auth_uri),
-        this function will render a landing page with ``text``, for testing purpose.
-    :param timeout: In seconds. None means wait indefinitely.
-    :param state: If provided, we will ignore incoming requests with mismatched state.
-        You need to make sure your auth_uri would also use the same state.
-    :return: Hang until it receives and then return the auth code, or None when timeout.
+def obtain_auth_code(listen_port, **kwargs):  # For backward compatibility
+    with AuthCodeReceiver(listen_port) as receiver:
+        return receiver.get_auth_code(**kwargs)
+
+
+@contextmanager
+def AuthCodeReceiver(port=0):
+    """This function will return a web server listening on http://localhost:port
+    Such server will automatically be shut down at the end.
+
+    :param port:
+        The local web server will listen at http://localhost:<port>
+        You need to use the same port when you register with your app.
+        If your authorization server supports dynamic port, you can use port=0 here.
+        Port 0 means to select an arbitrary unused port, per this official example:
+        https://docs.python.org/2.7/library/socketserver.html#asynchronous-mixins
+
+    :return:
+        An instance of the web server.  You can then call ``server.get_auth_code()``
+        which will hang until it receives and then return the auth code,
+        or None when timeout.
+        You need to open a browser on this device and visit your auth_uri.
     """
-    exit_hint = "Visit http://localhost:{p}?code=exit to abort".format(p=listen_port)
-    logger.debug(exit_hint)
-    if auth_uri:
-        page = "http://localhost:{p}?{q}".format(p=listen_port, q=urlencode({
-            "text": text,
-            "link": auth_uri,
-            "exit_hint": exit_hint,
-            })) if text else auth_uri
-        browse(page)
-    server = TimedHttpServer(("", int(listen_port)), AuthCodeHandler)
-    server.timeout = timeout
-    server.state = state
+    server = TimedHttpServer(("", port), AuthCodeHandler)
+    server.redirect_uri = "http://localhost:%d" % server.current_port()
     try:
-        server.authcode = None
-        while not server.authcode:
-            # Derived from
-            # https://docs.python.org/2/library/basehttpserver.html#more-examples
-            server.handle_request()
-        return server.authcode
-    except AuthCodeTimeoutError:
-        logger.info("No auth code received in last %d second(s)", server.timeout)
-    finally:
+        yield server  # Caller can then use its redirect_uri and get_auth_code()
+    finally:  # Ensure the server will be closed
         server.server_close()
+
 
 def browse(auth_uri):
     controller = webbrowser.get()  # Get a default controller
@@ -115,6 +106,44 @@ class TimedHttpServer(HTTPServer):
         # and likely end up the server being server_close() twice, which smells.
         raise AuthCodeTimeoutError()
 
+    def current_port(self):
+        # https://docs.python.org/2.7/library/socketserver.html#SocketServer.BaseServer.server_address
+        return self.server_address[1]
+
+    def get_auth_code(self, auth_uri=None, text=None, timeout=None, state=None):
+        """Wait and return the auth code, or None when timeout.
+
+        :param auth_uri: If provided, this function will try to open a local browser.
+        :param text: If provided (together with auth_uri),
+            this function will render a landing page with ``text``, for testing purpose.
+        :param timeout: In seconds. None means wait indefinitely.
+        :param state: If provided, we will ignore incoming requests with mismatched state.
+            You need to make sure your auth_uri would also use the same state.
+        """
+        listen_port = self.current_port()
+        exit_hint = "Visit http://localhost:{p}?code=exit to abort".format(p=listen_port)
+        logger.debug(exit_hint)
+        if auth_uri:
+            page = "http://localhost:{p}?{q}".format(p=listen_port, q=urlencode({
+                "text": text,
+                "link": auth_uri,
+                "exit_hint": exit_hint,
+                })) if text else auth_uri
+            browse(page)
+
+        self.timeout = timeout
+        self.state = state
+        self.authcode = None
+        try:
+            while not self.authcode:
+                # Derived from
+                # https://docs.python.org/2/library/basehttpserver.html#more-examples
+                self.handle_request()
+            return self.authcode
+        except AuthCodeTimeoutError:
+            logger.info("No auth code received in last %d second(s)", self.timeout)
+
+
 
 # Note: Manually use or test this module by:
 #       python -m path.to.this.file -h
@@ -129,19 +158,21 @@ if __name__ == '__main__':
         '--endpoint', help="The auth endpoint for your app.",
         default="https://login.microsoftonline.com/common/oauth2/v2.0/authorize")
     p.add_argument('client_id', help="The client_id of your application")
-    p.add_argument('--port', type=int, default=8000, help="The port in redirect_uri")
+    p.add_argument('--port', type=int, default=0, help="The port in redirect_uri")
     p.add_argument('--scope', default=None, help="The scope list")
     args = parser.parse_args()
     client = Client({"authorization_endpoint": args.endpoint}, args.client_id)
-    state = "placeholder"
-    auth_uri = client.build_auth_request_uri(
-        "code", scope=args.scope, redirect_uri="http://localhost:%d" % args.port,
-        state=state,
-        )
-    print(obtain_auth_code(
-        args.port,
-        auth_uri=auth_uri,
-        text="Open this link to sign in. You may use incognito window",
-        state=state,
-        ))
+
+    ## This pattern is for backward compatibility, only supports pre-defined port
+    # print(obtain_auth_code(args.port, auth_uri=client.build_auth_request_uri(
+    #     "code", scope=args.scope, redirect_uri="http://localhost:%d" % args.port)))
+
+    # This is the recommended pattern, which supports dynamic port
+    with AuthCodeReceiver(port=args.port) as receiver:
+        auth_uri = client.build_auth_request_uri(
+            "code", scope=args.scope, redirect_uri=receiver.redirect_uri)
+        print(receiver.get_auth_code(
+            auth_uri=auth_uri,
+            text="Open this link to sign in. You may use incognito window",
+            ))
 
