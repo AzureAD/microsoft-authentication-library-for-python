@@ -1,11 +1,6 @@
 import functools
 import json
 import time
-
-import six
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
-
 try:  # Python 2
     from urlparse import urljoin
 except:  # Python 3
@@ -93,6 +88,14 @@ def _merge_claims_challenge_and_capabilities(capabilities, claims_challenge):
     for key in ["access_token"]:  # We could add "id_token" if we'd decide to
         claims_dict.setdefault(key, {}).update(xms_cc={"values": capabilities})
     return json.dumps(claims_dict)
+
+
+def _str2bytes(raw):
+    # A conversion based on duck-typing rather than six.text_type
+    try:
+        return raw.encode(encoding="utf-8")
+    except:
+        return raw
 
 
 class ClientApplication(object):
@@ -261,16 +264,13 @@ class ClientApplication(object):
             if not client_credential.get("passphrase"):
                 unencrypted_private_key = client_credential['private_key']
             else:
-                if isinstance(client_credential['private_key'], six.text_type):
-                    private_key = client_credential['private_key'].encode(encoding="utf-8")
-                else:
-                    private_key = client_credential['private_key']
-                if isinstance(client_credential['passphrase'], six.text_type):
-                    password = client_credential['passphrase'].encode(encoding="utf-8")
-                else:
-                    password = client_credential['passphrase']
+                from cryptography.hazmat.primitives import serialization
+                from cryptography.hazmat.backends import default_backend
                 unencrypted_private_key = serialization.load_pem_private_key(
-                    private_key, password=password, backend=default_backend())
+                    _str2bytes(client_credential["private_key"]),
+                    _str2bytes(client_credential["passphrase"]),
+                    backend=default_backend(),  # It was a required param until 2020
+                    )
             assertion = JwtAssertionCreator(
                 unencrypted_private_key, algorithm="RS256",
                 sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
