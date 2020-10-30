@@ -83,7 +83,7 @@ class Authority(object):
             openid_config = tenant_discovery(
                 tenant_discovery_endpoint,
                 self.http_client)
-        except ValueError:  # json.decoder.JSONDecodeError in Py3 subclasses this
+        except ValueError:
             raise ValueError(
                 "Unable to get authority configuration for {}. "
                 "Authority would typically be in a format of "
@@ -140,8 +140,17 @@ def instance_discovery(url, http_client, **kwargs):
 def tenant_discovery(tenant_discovery_endpoint, http_client, **kwargs):
     # Returns Openid Configuration
     resp = http_client.get(tenant_discovery_endpoint, **kwargs)
-    payload = json.loads(resp.text)
-    if 'authorization_endpoint' in payload and 'token_endpoint' in payload:
-        return payload
-    raise MsalServiceError(status_code=resp.status_code, **payload)
+    if resp.status_code == 200:
+        payload = json.loads(resp.text)  # It could raise ValueError
+        if 'authorization_endpoint' in payload and 'token_endpoint' in payload:
+            return payload  # Happy path
+        raise ValueError("OIDC Discovery does not provide enough information")
+    if 400 <= resp.status_code < 500:
+        # Nonexist tenant would hit this path
+        # e.g. https://login.microsoftonline.com/nonexist_tenant/v2.0/.well-known/openid-configuration
+        raise ValueError("OIDC Discovery endpoint rejects our request")
+    # Transient network error would hit this path
+    resp.raise_for_status()
+    raise RuntimeError(  # A fallback here, in case resp.raise_for_status() is no-op
+        "Unable to complete OIDC Discovery: %d, %s" % (resp.status_code, resp.text))
 
