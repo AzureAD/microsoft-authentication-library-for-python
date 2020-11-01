@@ -151,6 +151,14 @@ class ClientApplication(object):
             "The provided signature value did not match the expected signature value",
             you may try use only the leaf cert (in PEM/str format) instead.
 
+            **NEW**
+            it can also be a completly pre-signed JWT that you've assembled yourself
+            simply pass a container containing only the key "jwt", like this:
+
+                {
+                    "jwt": "..."
+                }
+
         :param dict client_claims:
             *Added in version 0.5.0*:
             It is a dictionary of extra claims that would be signed by
@@ -256,28 +264,33 @@ class ClientApplication(object):
             default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
-            assert ("private_key" in client_credential
-                    and "thumbprint" in client_credential)
+            assert (("private_key" in client_credential
+                    and "thumbprint" in client_credential) or
+                    "jwt" in client_credential)
             headers = {}
-            if 'public_certificate' in client_credential:
-                headers["x5c"] = extract_certs(client_credential['public_certificate'])
-            if not client_credential.get("passphrase"):
-                unencrypted_private_key = client_credential['private_key']
+            if 'jwt' in client_credential:
+                client_assertion = client_credential['jwt']
+                client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
             else:
-                from cryptography.hazmat.primitives import serialization
-                from cryptography.hazmat.backends import default_backend
-                unencrypted_private_key = serialization.load_pem_private_key(
-                    _str2bytes(client_credential["private_key"]),
-                    _str2bytes(client_credential["passphrase"]),
-                    backend=default_backend(),  # It was a required param until 2020
-                    )
-            assertion = JwtAssertionCreator(
-                unencrypted_private_key, algorithm="RS256",
-                sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
-            client_assertion = assertion.create_regenerative_assertion(
-                audience=authority.token_endpoint, issuer=self.client_id,
-                additional_claims=self.client_claims or {})
-            client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
+                if 'public_certificate' in client_credential:
+                    headers["x5c"] = extract_certs(client_credential['public_certificate'])
+                if not client_credential.get("passphrase"):
+                    unencrypted_private_key = client_credential['private_key']
+                else:
+                    from cryptography.hazmat.primitives import serialization
+                    from cryptography.hazmat.backends import default_backend
+                    unencrypted_private_key = serialization.load_pem_private_key(
+                        _str2bytes(client_credential["private_key"]),
+                        _str2bytes(client_credential["passphrase"]),
+                        backend=default_backend(),  # It was a required param until 2020
+                        )
+                assertion = JwtAssertionCreator(
+                    unencrypted_private_key, algorithm="RS256",
+                    sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
+                client_assertion = assertion.create_regenerative_assertion(
+                    audience=authority.token_endpoint, issuer=self.client_id,
+                    additional_claims=self.client_claims or {})
+                client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
         else:
             default_body['client_secret'] = client_credential
         server_configuration = {
