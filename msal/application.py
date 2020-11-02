@@ -21,7 +21,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.5.1"
+__version__ = "1.6.0"
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +131,8 @@ class ClientApplication(object):
                 {
                     "private_key": "...-----BEGIN PRIVATE KEY-----...",
                     "thumbprint": "A1B2C3D4E5F6...",
-                    "public_certificate": "...-----BEGIN CERTIFICATE-----..." (Optional. See below.)
-                    "passphrase": "Passphrase if the private_key is encrypted (Optional)"
+                    "public_certificate": "...-----BEGIN CERTIFICATE-----... (Optional. See below.)",
+                    "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
                 }
 
             *Added in version 0.5.0*:
