@@ -1,6 +1,7 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
 from msal.application import *
+from msal.application import _str2bytes
 import msal
 from msal.application import _merge_claims_challenge_and_capabilities
 from tests import unittest
@@ -37,6 +38,14 @@ class TestHelperExtractCerts(unittest.TestCase):  # It is used by SNI scenario
         -----END CERTIFICATE-----
         """
         self.assertEqual(["my_cert1", "my_cert2"], extract_certs(pem))
+
+
+class TestBytesConversion(unittest.TestCase):
+    def test_string_to_bytes(self):
+        self.assertEqual(type(_str2bytes("some string")), type(b"bytes"))
+
+    def test_bytes_to_bytes(self):
+        self.assertEqual(type(_str2bytes(b"some bytes")), type(b"bytes"))
 
 
 class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):

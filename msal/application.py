@@ -21,7 +21,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.5.1"
+__version__ = "1.6.0"
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,14 @@ def _merge_claims_challenge_and_capabilities(capabilities, claims_challenge):
     return json.dumps(claims_dict)
 
 
+def _str2bytes(raw):
+    # A conversion based on duck-typing rather than six.text_type
+    try:
+        return raw.encode(encoding="utf-8")
+    except:
+        return raw
+
+
 class ClientApplication(object):
 
     ACQUIRE_TOKEN_SILENT_ID = "84"
@@ -123,7 +131,8 @@ class ClientApplication(object):
                 {
                     "private_key": "...-----BEGIN PRIVATE KEY-----...",
                     "thumbprint": "A1B2C3D4E5F6...",
-                    "public_certificate": "...-----BEGIN CERTIFICATE-----..." (Optional. See below.)
+                    "public_certificate": "...-----BEGIN CERTIFICATE-----... (Optional. See below.)",
+                    "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
                 }
 
             *Added in version 0.5.0*:
@@ -252,8 +261,18 @@ class ClientApplication(object):
             headers = {}
             if 'public_certificate' in client_credential:
                 headers["x5c"] = extract_certs(client_credential['public_certificate'])
+            if not client_credential.get("passphrase"):
+                unencrypted_private_key = client_credential['private_key']
+            else:
+                from cryptography.hazmat.primitives import serialization
+                from cryptography.hazmat.backends import default_backend
+                unencrypted_private_key = serialization.load_pem_private_key(
+                    _str2bytes(client_credential["private_key"]),
+                    _str2bytes(client_credential["passphrase"]),
+                    backend=default_backend(),  # It was a required param until 2020
+                    )
             assertion = JwtAssertionCreator(
-                client_credential["private_key"], algorithm="RS256",
+                unencrypted_private_key, algorithm="RS256",
                 sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
             client_assertion = assertion.create_regenerative_assertion(
                 audience=authority.token_endpoint, issuer=self.client_id,
