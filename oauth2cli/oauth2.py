@@ -15,6 +15,7 @@ import sys
 import functools
 import random
 import string
+import hashlib
 
 import requests
 
@@ -258,6 +259,21 @@ class BaseClient(object):
         return sequence  # as-is
 
 
+def _generate_pkce_code_verifier(length=43):
+    assert 43 <= length <= 128
+    verifier = "".join(  # https://tools.ietf.org/html/rfc7636#section-4.1
+        random.sample(string.ascii_letters + string.digits + "-._~", length))
+    code_challenge = (
+        # https://tools.ietf.org/html/rfc7636#section-4.2
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .rstrip(b"="))  # Required by https://tools.ietf.org/html/rfc7636#section-3
+    return {
+        "code_verifier": verifier,
+        "transformation": "S256",  # In Python, sha256 is always available
+        "code_challenge": code_challenge,
+        }
+
+
 class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     """This is the main API for oauth2 client.
 
@@ -401,6 +417,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         you can use :func:`~obtain_token_by_auth_code_flow()`
         to complete the authentication/authorization.
 
+        This method also provides PKCE protection automatically.
+
         :param list scope:
             It is a list of case-sensitive strings.
             Some ID provider can accept empty string to represent default scope.
@@ -440,14 +458,19 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             # Implicit grant would cause auth response coming back in #fragment,
             # but fragment won't reach a web service.
             raise ValueError('response_type="token ..." is not allowed')
+        pkce = _generate_pkce_code_verifier()
         flow = {  # These data are required by obtain_token_by_auth_code_flow()
             "state": state or "".join(random.sample(string.ascii_letters, 16)),
             "redirect_uri": redirect_uri,
             "scope": scope,
             }
         auth_uri = self._build_auth_request_uri(
-            response_type, **dict(flow, **kwargs))
+            response_type,
+            code_challenge=pkce["code_challenge"],
+            code_challenge_method=pkce["transformation"],
+            **dict(flow, **kwargs))
         flow["auth_uri"] = auth_uri
+        flow["code_verifier"] = pkce["code_verifier"]
         return flow
 
     def obtain_token_by_auth_code_flow(
@@ -458,6 +481,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             **kwargs):
         """With the auth_response being redirected back,
         validate it against auth_code_flow, and then obtain tokens.
+
+        Internally, it implements PKCE to mitigate the auth code interception attack.
 
         :param dict auth_code_flow:
             The same dict returned by :func:`~initiate_auth_code_flow()`.
@@ -513,6 +538,10 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                     # It is both unnecessary and harmless, per RFC 6749.
                     # We use the same scope already used in auth request uri,
                     # thus token cache can know what scope the tokens are for.
+                data=dict(  # Extract and update the data
+                    kwargs.pop("data", {}),
+                    code_verifier=auth_code_flow["code_verifier"],
+                    ),
                 **kwargs)
         if auth_response.get("error"):  # It means the first leg encountered error
             # Here we do NOT return original auth_response as-is, to prevent a
