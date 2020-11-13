@@ -63,7 +63,11 @@ class JwtAssertionCreator(AssertionCreator):
 
         Args:
 
-            key (str): The key for signing, e.g. a base64 encoded private key.
+            key (str):
+                An unencrypted private key for signing, in a base64 encoded string.
+                It can also be a cryptography ``PrivateKey`` object,
+                which is how you can work with a previously-encrypted key.
+                See also https://github.com/jpadilla/pyjwt/pull/525
             algorithm (str):
                 "RS256", etc.. See https://pyjwt.readthedocs.io/en/latest/algorithms.html
                 RSA and ECDSA algorithms require "pip install cryptography".
