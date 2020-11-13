@@ -8,6 +8,7 @@ After obtaining an auth code, the web server will automatically shut down.
 import webbrowser
 import logging
 import socket
+from string import Template
 
 try:  # Python 3
     from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -21,11 +22,15 @@ except ImportError:  # Fall back to Python 2
 logger = logging.getLogger(__name__)
 
 
-def obtain_auth_code(listen_port, auth_uri=None):  # For backward compatibility
+def obtain_auth_code(listen_port, auth_uri=None):  # Historically only used in testing
     with AuthCodeReceiver(port=listen_port) as receiver:
         return receiver.get_auth_response(
             auth_uri=auth_uri,
-            text="Open this link to sign in. You may use incognito window",
+            welcome_template="""<html><body>
+                Open this link to <a href='$auth_uri'>Sign In</a>
+                (You may want to use incognito window)
+                <hr><a href='$abort_uri'>Abort</a>
+                </body></html>""",
             ).get("code")
 
 
@@ -43,26 +48,27 @@ def _browse(auth_uri):
     controller.open(auth_uri)
 
 
+def _qs2kv(qs):
+    """Flatten parse_qs()'s single-item lists into the item itself"""
+    return {k: v[0] if isinstance(v, list) and len(v) == 1 else v
+        for k, v in qs.items()}
+
+
 class _AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # For flexibility, we choose to not check self.path matching redirect_uri
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
         qs = parse_qs(urlparse(self.path).query)
         if qs.get('code') or qs.get("error"):  # So, it is an auth response
-            # Then store it into the server instance
-            self.server.auth_response = qs
-            logger.debug("Got auth response: %s", qs)
+            self.server.auth_response = _qs2kv(qs)
+            logger.debug("Got auth response: %s", self.server.auth_response)
+            template = (self.server.success_template
+                if "code" in qs else self.server.error_template)
             self._send_full_response(
-                'Authentication complete. You can close this window.')
+                template.safe_substitute(**self.server.auth_response))
             # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
-        elif qs.get('text') and qs.get('link'):  # Then display a landing page
-            self._send_full_response(
-                '<a href={link}>{text}</a><hr/>{exit_hint}'.format(
-                link=qs['link'][0], text=qs['text'][0],
-                exit_hint=qs.get("exit_hint", [''])[0],
-                ))
         else:
-            self._send_full_response("This web service serves your redirect_uri")
+            self._send_full_response(self.server.welcome_page)
 
     def _send_full_response(self, body, is_ok=True):
         self.send_response(200 if is_ok else 400)
@@ -120,7 +126,8 @@ class AuthCodeReceiver(object):
         # https://docs.python.org/2.7/library/socketserver.html#SocketServer.BaseServer.server_address
         return self._server.server_address[1]
 
-    def get_auth_response(self, auth_uri=None, text=None, timeout=None, state=None):
+    def get_auth_response(self, auth_uri=None, text=None, timeout=None, state=None,
+            welcome_template=None, success_template=None, error_template=None):
         """Wait and return the auth response, or None when timeout.
 
         :param str auth_uri:
@@ -133,6 +140,19 @@ class AuthCodeReceiver(object):
         :param str state:
             You may provide the state you used in auth_url,
             then we will use it to validate incoming response.
+        :param str welcome_template:
+            If provided, your end user will see it instead of the auth_uri.
+            When present, it shall be a plaintext or html template following
+            `Python Template string syntax <https://docs.python.org/3/library/string.html#template-strings>`_,
+            and include some of these placeholders: $auth_uri and $abort_uri.
+        :param str success_template:
+            The page will be displayed when authentication was largely successful.
+            Placeholders can be any of these:
+            https://tools.ietf.org/html/rfc6749#section-5.1
+        :param str error_template:
+            The page will be displayed when authentication encountered error.
+            Placeholders can be any of these:
+            https://tools.ietf.org/html/rfc6749#section-5.2
         :return:
             The auth response of the first leg of Auth Code flow,
             typically {"code": "...", "state": "..."} or {"error": "...", ...}
@@ -140,16 +160,17 @@ class AuthCodeReceiver(object):
             and https://openid.net/specs/openid-connect-core-1_0.html#AuthResponse
             Returns None when the state was mismatched, or when timeout occurred.
         """
-        location = "http://localhost:{p}".format(p=self.get_port())  # For testing
-        exit_hint = "Abort by visit {loc}?error=abort".format(loc=location)
-        logger.debug(exit_hint)
+        welcome_uri = "http://localhost:{p}".format(p=self.get_port())
+        abort_uri = "{loc}?error=abort".format(loc=welcome_uri)
+        logger.debug("Abort by visit %s", abort_uri)
+        self._server.welcome_page = Template(welcome_template or "").safe_substitute(
+            auth_uri=auth_uri, abort_uri=abort_uri)
         if auth_uri:
-            page = "{loc}?{q}".format(loc=location, q=urlencode({
-                "text": text,
-                "link": auth_uri,
-                "exit_hint": exit_hint,
-                })) if text else auth_uri
-            _browse(page)
+            _browse(welcome_uri if welcome_template else auth_uri)
+        self._server.success_template = Template(success_template or
+            "Authentication completed. You can close this window now.")
+        self._server.error_template = Template(error_template or
+            "Authentication failed. $error: $error_description. ($error_uri)")
 
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
         self._server.auth_response = {}  # Shared with _AuthCodeHandler
@@ -158,13 +179,11 @@ class AuthCodeReceiver(object):
             # https://docs.python.org/2/library/basehttpserver.html#more-examples
             self._server.handle_request()
             if self._server.auth_response:
-                if state and state != self._server.auth_response.get("state", [None])[0]:
+                if state and state != self._server.auth_response.get("state"):
                     logger.debug("State mismatch. Ignoring this noise.")
                 else:
                     break
-        return {  # Normalize unnecessary lists into single values
-            k: v[0] if isinstance(v, list) and len(v) == 1 else v
-            for k, v in self._server.auth_response.items()}
+        return self._server.auth_response
 
     def close(self):
         """Either call this eventually; or use the entire class as context manager"""
@@ -201,7 +220,10 @@ if __name__ == '__main__':
             redirect_uri="http://{h}:{p}".format(h=args.host, p=receiver.get_port()))
         print(json.dumps(receiver.get_auth_response(
             auth_uri=auth_uri,
-            text="Open this link to sign in. You may use incognito window",
+            welcome_template=
+                "<a href='$auth_uri'>Sign In</a>, or <a href='$abort_uri'>Abort</a",
+            error_template="Oh no. $error",
+            success_template="Oh yeah. Got $code",
             timeout=60,
             ), indent=4))
 
