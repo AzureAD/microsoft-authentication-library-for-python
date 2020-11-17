@@ -13,6 +13,8 @@ import time
 import base64
 import sys
 import functools
+import random
+import string
 
 import requests
 
@@ -129,6 +131,10 @@ class BaseClient(object):
                 This does not apply if you have chosen to pass your own Http client.
 
         """
+        if not server_configuration:
+            raise ValueError("Missing input parameter server_configuration")
+        if not client_id:
+            raise ValueError("Missing input parameter client_id")
         self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
@@ -353,30 +359,9 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                     return result
                 time.sleep(1)  # Shorten each round, to make exit more responsive
 
-    def build_auth_request_uri(
+    def _build_auth_request_uri(
             self,
             response_type, redirect_uri=None, scope=None, state=None, **kwargs):
-        """Generate an authorization uri to be visited by resource owner.
-
-        Later when the response reaches your redirect_uri,
-        you can use parse_auth_response() to check the returned state.
-
-        This method could be named build_authorization_request_uri() instead,
-        but then there would be a build_authentication_request_uri() in the OIDC
-        subclass doing almost the same thing. So we use a loose term "auth" here.
-
-        :param response_type:
-            Must be "code" when you are using Authorization Code Grant,
-            "token" when you are using Implicit Grant, or other
-            (possibly space-delimited) strings as registered extension value.
-            See https://tools.ietf.org/html/rfc6749#section-3.1.1
-        :param redirect_uri: Optional. Server will use the pre-registered one.
-        :param scope: It is a space-delimited, case-sensitive string.
-            Some ID provider can accept empty string to represent default scope.
-        :param state: Recommended. An opaque value used by the client to
-            maintain state between the request and callback.
-        :param kwargs: Other parameters, typically defined in OpenID Connect.
-        """
         if "authorization_endpoint" not in self.configuration:
             raise ValueError("authorization_endpoint not found in configuration")
         authorization_endpoint = self.configuration["authorization_endpoint"]
@@ -386,6 +371,131 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         sep = '&' if '?' in authorization_endpoint else '?'
         return "%s%s%s" % (authorization_endpoint, sep, urlencode(params))
 
+    def build_auth_request_uri(
+            self,
+            response_type, redirect_uri=None, scope=None, state=None, **kwargs):
+        # This method could be named build_authorization_request_uri() instead,
+        # but then there would be a build_authentication_request_uri() in the OIDC
+        # subclass doing almost the same thing. So we use a loose term "auth" here.
+        """Generate an authorization uri to be visited by resource owner.
+
+        Parameters are the same as another method :func:`initiate_auth_code_flow()`,
+        whose functionality is a superset of this method.
+
+        :return: The auth uri as a string.
+        """
+        warnings.warn("Use initiate_auth_code_flow() instead. ", DeprecationWarning)
+        return self._build_auth_request_uri(
+            response_type, redirect_uri=redirect_uri, scope=scope, state=state,
+            **kwargs)
+
+    def initiate_auth_code_flow(
+        # The name is influenced by OIDC
+        # https://openid.net/specs/openid-connect-core-1_0.html#CodeFlowAuth
+            self,
+            scope=None, redirect_uri=None, state=None,
+            **kwargs):
+        """Initiate an auth code flow.
+
+        Later when the response reaches your redirect_uri,
+        you can use :func:`~obtain_token_by_auth_code_flow()`
+        to complete the authentication/authorization.
+
+        :param list scope:
+            It is a list of case-sensitive strings.
+            Some ID provider can accept empty string to represent default scope.
+        :param str redirect_uri:
+            Optional. If not specified, server will use the pre-registered one.
+        :param str state:
+            An opaque value used by the client to
+            maintain state between the request and callback.
+            If absent, this library will automatically generate one internally.
+        :param kwargs: Other parameters, typically defined in OpenID Connect.
+
+        :return:
+            The auth code flow. It is a dict in this form::
+
+                {
+                    "auth_uri": "https://...",  // Guide user to visit this
+                    "state": "...",  // You may choose to verify it by yourself,
+                                     // or just let obtain_token_by_auth_code_flow()
+                                     // do that for you.
+                    "...": "...",  // Everything else are reserved and internal
+                }
+
+            The caller is expected to::
+
+            1. somehow store this content, typically inside the current session,
+            2. guide the end user (i.e. resource owner) to visit that auth_uri,
+            3. and then relay this dict and subsequent auth response to
+               :func:`~obtain_token_by_auth_code_flow()`.
+        """
+        response_type = kwargs.pop("response_type", "code")  # Auth Code flow
+            # Must be "code" when you are using Authorization Code Grant.
+            # The "token" for Implicit Grant is not applicable thus not allowed.
+            # It could theoretically be other
+            # (possibly space-delimited) strings as registered extension value.
+            # See https://tools.ietf.org/html/rfc6749#section-3.1.1
+        if "token" in response_type:
+            # Implicit grant would cause auth response coming back in #fragment,
+            # but fragment won't reach a web service.
+            raise ValueError('response_type="token ..." is not allowed')
+        flow = {  # These data are required by obtain_token_by_auth_code_flow()
+            "state": state or "".join(random.sample(string.ascii_letters, 16)),
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+            }
+        auth_uri = self._build_auth_request_uri(
+            response_type, **dict(flow, **kwargs))
+        flow["auth_uri"] = auth_uri
+        return flow
+
+    def obtain_token_by_auth_code_flow(
+            self,
+            auth_code_flow,
+            auth_response,
+            scope=None,
+            **kwargs):
+        """With the auth_response being redirected back,
+        validate it against auth_code_flow, and then obtain tokens.
+
+        :param dict auth_code_flow:
+            The same dict returned by :func:`~initiate_auth_code_flow()`.
+        :param dict auth_response:
+            A dict based on query string received from auth server.
+        :param scope:
+            You don't usually need to use scope parameter here.
+            Some Identity Provider allows you to provide
+            a subset of what you specified during :func:`~initiate_auth_code_flow`.
+
+        :return:
+            * A dict containing "access_token" and/or "id_token", among others,
+              depends on what scope was used.
+              (See https://tools.ietf.org/html/rfc6749#section-5.1)
+            * A dict containing "error", optionally "error_description", "error_uri".
+              (It is either `this <https://tools.ietf.org/html/rfc6749#section-4.1.2.1>`_
+              or `that <https://tools.ietf.org/html/rfc6749#section-5.2>`_
+        """
+        if auth_code_flow.get("state") != auth_response.get("state"):
+            raise ValueError("state mismatch: {} vs {}".format(
+                auth_code_flow.get("state"), auth_response.get("state")))
+        if auth_response.get("error"):  # It means the first leg encountered error
+            return auth_response
+        if scope and set(scope) - set(auth_code_flow.get("scope", [])):
+            raise ValueError(
+                "scope must be None or a subset of %s" % auth_code_flow.get("scope"))
+        assert auth_response.get("code"), "First leg's response should have code"
+        return self._obtain_token_by_authorization_code(
+            auth_response["code"],
+            redirect_uri=auth_code_flow.get("redirect_uri"),
+                # Required, if "redirect_uri" parameter was included in the
+                # authorization request, and their values MUST be identical.
+            scope=scope or auth_code_flow.get("scope"),
+                # It is both unnecessary and harmless, per RFC 6749.
+                # We use the same scope already used in auth request uri,
+                # thus token cache can know what scope the tokens are for.
+            **kwargs)
+
     @staticmethod
     def parse_auth_response(params, state=None):
         """Parse the authorization response being redirected back.
@@ -394,6 +504,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         :param state: REQUIRED if the state parameter was present in the client
             authorization request. This function will compare it with response.
         """
+        warnings.warn(
+            "Use obtain_token_by_auth_code_flow() instead", DeprecationWarning)
         if not isinstance(params, dict):
             params = parse_qs(params)
         if params.get('state') != state:
@@ -408,6 +520,9 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         but it can also be used by a device-side native app (Public Client).
         See more detail at https://tools.ietf.org/html/rfc6749#section-4.1.3
 
+        You are encouraged to use its higher level method
+        :func:`~obtain_token_by_auth_code_flow` instead.
+
         :param code: The authorization code received from authorization server.
         :param redirect_uri:
             Required, if the "redirect_uri" parameter was included in the
@@ -417,6 +532,13 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             We suggest to use the same scope already used in auth request uri,
             so that this library can link the obtained tokens with their scope.
         """
+        warnings.warn(
+            "Use obtain_token_by_auth_code_flow() instead", DeprecationWarning)
+        return self._obtain_token_by_authorization_code(
+            code, redirect_uri=redirect_uri, scope=scope, **kwargs)
+
+    def _obtain_token_by_authorization_code(
+            self, code, redirect_uri=None, scope=None, **kwargs):
         data = kwargs.pop("data", {})
         data.update(code=code, redirect_uri=redirect_uri)
         if scope:

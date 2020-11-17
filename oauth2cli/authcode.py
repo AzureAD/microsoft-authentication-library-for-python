@@ -210,16 +210,17 @@ if __name__ == '__main__':
     args = parser.parse_args()
     client = Client({"authorization_endpoint": args.endpoint}, args.client_id)
     with AuthCodeReceiver(port=args.port) as receiver:
-        auth_uri = client.build_auth_request_uri(
-            "code",
+        flow = client.initiate_auth_code_flow(
             scope=args.scope.split() if args.scope else None,
-            redirect_uri="http://{h}:{p}".format(h=args.host, p=receiver.get_port()))
+            redirect_uri="http://{h}:{p}".format(h=args.host, p=receiver.get_port()),
+            )
         print(json.dumps(receiver.get_auth_response(
-            auth_uri=auth_uri,
+            auth_uri=flow["auth_uri"],
             welcome_template=
                 "<a href='$auth_uri'>Sign In</a>, or <a href='$abort_uri'>Abort</a",
             error_template="Oh no. $error",
             success_template="Oh yeah. Got $code",
             timeout=60,
+            state=flow["state"],  # Optional
             ), indent=4))
 
