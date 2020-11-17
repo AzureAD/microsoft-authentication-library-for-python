@@ -126,16 +126,12 @@ class AuthCodeReceiver(object):
         # https://docs.python.org/2.7/library/socketserver.html#SocketServer.BaseServer.server_address
         return self._server.server_address[1]
 
-    def get_auth_response(self, auth_uri=None, text=None, timeout=None, state=None,
+    def get_auth_response(self, auth_uri=None, timeout=None, state=None,
             welcome_template=None, success_template=None, error_template=None):
         """Wait and return the auth response, or None when timeout.
 
         :param str auth_uri:
             If provided, this function will try to open a local browser.
-        :param str text:
-            If provided (together with auth_uri),
-            this function will render a landing page with ``text`` in your browser.
-            This can be used to make testing more readable.
         :param int timeout: In seconds. None means wait indefinitely.
         :param str state:
             You may provide the state you used in auth_url,
