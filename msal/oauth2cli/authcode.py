@@ -126,16 +126,12 @@ class AuthCodeReceiver(object):
         # https://docs.python.org/2.7/library/socketserver.html#SocketServer.BaseServer.server_address
         return self._server.server_address[1]
 
-    def get_auth_response(self, auth_uri=None, text=None, timeout=None, state=None,
+    def get_auth_response(self, auth_uri=None, timeout=None, state=None,
             welcome_template=None, success_template=None, error_template=None):
         """Wait and return the auth response, or None when timeout.
 
         :param str auth_uri:
             If provided, this function will try to open a local browser.
-        :param str text:
-            If provided (together with auth_uri),
-            this function will render a landing page with ``text`` in your browser.
-            This can be used to make testing more readable.
         :param int timeout: In seconds. None means wait indefinitely.
         :param str state:
             You may provide the state you used in auth_url,
@@ -214,16 +210,17 @@ if __name__ == '__main__':
     args = parser.parse_args()
     client = Client({"authorization_endpoint": args.endpoint}, args.client_id)
     with AuthCodeReceiver(port=args.port) as receiver:
-        auth_uri = client.build_auth_request_uri(
-            "code",
+        flow = client.initiate_auth_code_flow(
             scope=args.scope.split() if args.scope else None,
-            redirect_uri="http://{h}:{p}".format(h=args.host, p=receiver.get_port()))
+            redirect_uri="http://{h}:{p}".format(h=args.host, p=receiver.get_port()),
+            )
         print(json.dumps(receiver.get_auth_response(
-            auth_uri=auth_uri,
+            auth_uri=flow["auth_uri"],
             welcome_template=
                 "<a href='$auth_uri'>Sign In</a>, or <a href='$abort_uri'>Abort</a",
             error_template="Oh no. $error",
             success_template="Oh yeah. Got $code",
             timeout=60,
+            state=flow["state"],  # Optional
             ), indent=4))
 
