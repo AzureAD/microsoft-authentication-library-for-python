@@ -475,26 +475,55 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             * A dict containing "error", optionally "error_description", "error_uri".
               (It is either `this <https://tools.ietf.org/html/rfc6749#section-4.1.2.1>`_
               or `that <https://tools.ietf.org/html/rfc6749#section-5.2>`_
+            * Most client-side data error would result in ValueError exception.
+              So the usage pattern could be without any protocol details::
+
+                def authorize():  # A controller in a web app
+                    try:
+                        result = client.obtain_token_by_auth_code_flow(
+                            session.get("flow", {}), auth_resp)
+                        if "error" in result:
+                            return render_template("error.html", result)
+                        store_tokens()
+                    except ValueError:  # Usually caused by CSRF
+                        pass  # Simply ignore them
+                    return redirect(url_for("index"))
         """
+        assert isinstance(auth_code_flow, dict) and isinstance(auth_response, dict)
+            # This is app developer's error which we do NOT want to map to ValueError
+        if not auth_code_flow.get("state"):
+            # initiate_auth_code_flow() already guarantees a state to be available.
+            # This check will also allow a web app to blindly call this method with
+            # obtain_token_by_auth_code_flow(session.get("flow", {}), auth_resp)
+            # which further simplifies their usage.
+            raise ValueError("state missing from auth_code_flow")
         if auth_code_flow.get("state") != auth_response.get("state"):
             raise ValueError("state mismatch: {} vs {}".format(
                 auth_code_flow.get("state"), auth_response.get("state")))
-        if auth_response.get("error"):  # It means the first leg encountered error
-            return auth_response
         if scope and set(scope) - set(auth_code_flow.get("scope", [])):
             raise ValueError(
                 "scope must be None or a subset of %s" % auth_code_flow.get("scope"))
-        assert auth_response.get("code"), "First leg's response should have code"
-        return self._obtain_token_by_authorization_code(
-            auth_response["code"],
-            redirect_uri=auth_code_flow.get("redirect_uri"),
-                # Required, if "redirect_uri" parameter was included in the
-                # authorization request, and their values MUST be identical.
-            scope=scope or auth_code_flow.get("scope"),
-                # It is both unnecessary and harmless, per RFC 6749.
-                # We use the same scope already used in auth request uri,
-                # thus token cache can know what scope the tokens are for.
-            **kwargs)
+        if auth_response.get("code"):  # i.e. the first leg was successful
+            return self._obtain_token_by_authorization_code(
+                auth_response["code"],
+                redirect_uri=auth_code_flow.get("redirect_uri"),
+                    # Required, if "redirect_uri" parameter was included in the
+                    # authorization request, and their values MUST be identical.
+                scope=scope or auth_code_flow.get("scope"),
+                    # It is both unnecessary and harmless, per RFC 6749.
+                    # We use the same scope already used in auth request uri,
+                    # thus token cache can know what scope the tokens are for.
+                **kwargs)
+        if auth_response.get("error"):  # It means the first leg encountered error
+            # Here we do NOT return original auth_response as-is, to prevent a
+            # potential {..., "access_token": "attacker's AT"} input being leaked
+            error = {"error": auth_response["error"]}
+            if auth_response.get("error_description"):
+                error["error_description"] = auth_response["error_description"]
+            if auth_response.get("error_uri"):
+                error["error_uri"] = auth_response["error_uri"]
+            return error
+        raise ValueError('auth_response must contain either "code" or "error"')
 
     @staticmethod
     def parse_auth_response(params, state=None):
