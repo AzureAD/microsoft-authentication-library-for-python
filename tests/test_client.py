@@ -180,6 +180,21 @@ class TestClient(Oauth2TestCase):
                 #TBD: data={"resource": CONFIG.get("resource")},  # MSFT AAD v1 only
             self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 
+    def test_auth_code_flow_error_response(self):
+        with self.assertRaisesRegexp(ValueError, "state missing"):
+            self.client.obtain_token_by_auth_code_flow({}, {"code": "foo"})
+        with self.assertRaisesRegexp(ValueError, "state mismatch"):
+            self.client.obtain_token_by_auth_code_flow({"state": "1"}, {"state": "2"})
+        with self.assertRaisesRegexp(ValueError, "scope"):
+            self.client.obtain_token_by_auth_code_flow(
+                {"state": "s", "scope": ["foo"]}, {"state": "s"}, scope=["bar"])
+        self.assertEqual(
+            {"error": "foo", "error_uri": "bar"},
+            self.client.obtain_token_by_auth_code_flow(
+                {"state": "s"},
+                {"state": "s", "error": "foo", "error_uri": "bar", "access_token": "fake"}),
+            "We should not leak malicious input into our output")
+
     @unittest.skipUnless(
         CONFIG.get("openid_configuration", {}).get("device_authorization_endpoint"),
         "device_authorization_endpoint is missing")
