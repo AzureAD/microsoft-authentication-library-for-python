@@ -222,6 +222,24 @@ class TokenCacheTestCase(unittest.TestCase):
             {}).get("key_id")
         self.assertEqual(my_key_id, cached_key_id, "AT should be bound to the key")
 
+    def test_old_rt_data_with_wrong_key_should_still_be_salvaged_into_new_rt(self):
+        sample = {
+            'client_id': 'my_client_id',
+            'credential_type': 'RefreshToken',
+            'environment': 'login.example.com',
+            'home_account_id': "uid.utid",
+            'secret': 'a refresh token',
+            'target': 's2 s1 s3',
+            }
+        new_rt = "this is a new RT"
+        self.cache._cache["RefreshToken"] = {"wrong-key": sample}
+        self.cache.modify(
+            self.cache.CredentialType.REFRESH_TOKEN, sample, {"secret": new_rt})
+        self.assertEqual(
+            dict(sample, secret=new_rt),
+            self.cache._cache["RefreshToken"].get(
+                'uid.utid-login.example.com-refreshtoken-my_client_id--s2 s1 s3')
+            )
 
 class SerializableTokenCacheTestCase(TokenCacheTestCase):
     # Run all inherited test methods, and have extra check in tearDown()
