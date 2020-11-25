@@ -173,10 +173,11 @@ class Client(oauth2.Client):
         return flow
 
     def obtain_token_by_auth_code_flow(self, auth_code_flow, auth_response, **kwargs):
-        """Validate the auth_response being redirected back, and then obtain tokens.
-        and obtain ID token which can be used for user sign in.
+        """Validate the auth_response being redirected back, and then obtain tokens,
+        including ID token which can be used for user sign in.
 
-        It provides nonce protection out-of-the-box.
+        Internally, it implements nonce to mitigate replay attack.
+        It also implements PKCE to mitigate the auth code interception attack.
 
         See :func:`oauth2.Client.obtain_token_by_auth_code_flow` in parent class
         for descriptions on other parameters and return value.
