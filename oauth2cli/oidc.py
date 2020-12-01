@@ -60,7 +60,7 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
             err = "3. The aud (audience) Claim must contain this client's client_id."
     # Per specs:
     # 6. If the ID Token is received via direct communication between
-    # the Client and the Token Endpoint (which it is in this flow),
+    # the Client and the Token Endpoint (which it is during _obtain_token()),
     # the TLS server validation MAY be used to validate the issuer
     # in place of checking the token signature.
     if _now > decoded["exp"]:
