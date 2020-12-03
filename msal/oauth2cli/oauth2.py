@@ -3,9 +3,9 @@
 
 import json
 try:
-    from urllib.parse import urlencode, parse_qs, quote_plus
+    from urllib.parse import urlencode, parse_qs, quote_plus, urlparse
 except ImportError:
-    from urlparse import parse_qs
+    from urlparse import parse_qs, urlparse
     from urllib import urlencode, quote_plus
 import logging
 import warnings
@@ -18,6 +18,13 @@ import string
 import hashlib
 
 import requests
+
+from .authcode import AuthCodeReceiver as _AuthCodeReceiver
+
+try:
+    PermissionError  # Available in Python 3
+except:
+    from socket import error as PermissionError  # Workaround for Python 2
 
 
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
@@ -259,6 +266,11 @@ class BaseClient(object):
         return sequence  # as-is
 
 
+def _scope_set(scope):
+    assert scope is None or isinstance(scope, (list, set, tuple))
+    return set(scope) if scope else set([])
+
+
 def _generate_pkce_code_verifier(length=43):
     assert 43 <= length <= 128
     verifier = "".join(  # https://tools.ietf.org/html/rfc7636#section-4.1
@@ -488,10 +500,12 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             The same dict returned by :func:`~initiate_auth_code_flow()`.
         :param dict auth_response:
             A dict based on query string received from auth server.
+
         :param scope:
             You don't usually need to use scope parameter here.
             Some Identity Provider allows you to provide
             a subset of what you specified during :func:`~initiate_auth_code_flow`.
+        :type scope: collections.Iterable[str]
 
         :return:
             * A dict containing "access_token" and/or "id_token", among others,
@@ -553,6 +567,82 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                 error["error_uri"] = auth_response["error_uri"]
             return error
         raise ValueError('auth_response must contain either "code" or "error"')
+
+    def obtain_token_by_browser(
+        # Name influenced by RFC 8252: "native apps should (use) ... user's browser"
+            self,
+            scope=None,
+            extra_scope_to_consent=None,
+            redirect_uri=None,
+            timeout=None,
+            welcome_template=None,
+            success_template=None,
+            auth_params=None,
+            **kwargs):
+        """A native app can use this method to obtain token via a local browser.
+
+        Internally, it implements PKCE to mitigate the auth code interception attack.
+
+        :param scope: A list of scopes that you would like to obtain token for.
+        :type scope: collections.Iterable[str]
+
+        :param extra_scope_to_consent:
+            Some IdP allows you to include more scopes for end user to consent.
+            The access token returned by this method will NOT include those scopes,
+            but the refresh token would record those extra consent,
+            so that your future :func:`~obtain_token_by_refresh_token()` call
+            would be able to obtain token for those additional scopes, silently.
+        :type scope: collections.Iterable[str]
+
+        :param string redirect_uri:
+            The redirect_uri to be sent via auth request to Identity Provider (IdP),
+            to indicate where an auth response would come back to.
+            Such as ``http://127.0.0.1:0`` (default) or ``http://localhost:1234``.
+
+            If port 0 is specified, this method will choose a system-allocated port,
+            then the actual redirect_uri will contain that port.
+            To use this behavior, your IdP would need to accept such dynamic port.
+
+            Per HTTP convention, if port number is absent, it would mean port 80,
+            although you probably want to specify port 0 in this context.
+
+        :param dict auth_params:
+            These parameters will be sent to authorization_endpoint.
+
+        :param int timeout: In seconds. None means wait indefinitely.
+        :return: Same as :func:`~obtain_token_by_auth_code_flow()`
+        """
+        _redirect_uri = urlparse(redirect_uri or "http://127.0.0.1:0")
+        if not _redirect_uri.hostname:
+            raise ValueError("redirect_uri should contain hostname")
+        if _redirect_uri.scheme == "https":
+            raise ValueError("Our local loopback server will not use https")
+        listen_port = _redirect_uri.port if _redirect_uri.port is not None else 80
+            # This implementation allows port-less redirect_uri to mean port 80
+        try:
+            with _AuthCodeReceiver(port=listen_port) as receiver:
+                flow = self.initiate_auth_code_flow(
+                    redirect_uri="http://{host}:{port}".format(
+                            host=_redirect_uri.hostname, port=receiver.get_port(),
+                        ) if _redirect_uri.port is not None else "http://{host}".format(
+                            host=_redirect_uri.hostname
+                        ),  # This implementation uses port-less redirect_uri as-is
+                    scope=_scope_set(scope) | _scope_set(extra_scope_to_consent),
+                    **(auth_params or {}))
+                auth_response = receiver.get_auth_response(
+                    auth_uri=flow["auth_uri"],
+                    state=flow["state"],  # Optional but we choose to do it upfront
+                    timeout=timeout,
+                    welcome_template=welcome_template,
+                    success_template=success_template,
+                    )
+        except PermissionError:
+            if 0 < listen_port < 1024:
+                self.logger.error(
+                    "Can't listen on port %s. You may try port 0." % listen_port)
+            raise
+        return self.obtain_token_by_auth_code_flow(
+            flow, auth_response, scope=scope, **kwargs)
 
     @staticmethod
     def parse_auth_response(params, state=None):
