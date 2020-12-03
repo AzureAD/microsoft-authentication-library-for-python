@@ -161,6 +161,7 @@ class TestClient(Oauth2TestCase):
             flow = self.client.initiate_auth_code_flow(
                 redirect_uri="http://localhost:%d" % receiver.get_port(),
                 scope=CONFIG.get("scope"),
+                login_hint=CONFIG.get("username"),  # To skip the account selector
                 )
             auth_response = receiver.get_auth_response(
                 auth_uri=flow["auth_uri"],
@@ -194,6 +195,25 @@ class TestClient(Oauth2TestCase):
                 {"state": "s"},
                 {"state": "s", "error": "foo", "error_uri": "bar", "access_token": "fake"}),
             "We should not leak malicious input into our output")
+
+    @unittest.skipUnless(
+        "authorization_endpoint" in CONFIG.get("openid_configuration", {}),
+        "authorization_endpoint missing")
+    def test_obtain_token_by_browser(self):
+        result = self.client.obtain_token_by_browser(
+            scope=CONFIG.get("scope"),
+            redirect_uri=CONFIG.get("redirect_uri"),
+            welcome_template="""<html><body>
+                authorization_endpoint = {a}, client_id = {i}
+                <a href="$auth_uri">Sign In</a> or <a href="$abort_uri">Abort</a>
+                </body></html>""".format(
+                    a=CONFIG["openid_configuration"]["authorization_endpoint"],
+                    i=CONFIG.get("client_id")),
+            success_template="<strong>Done. You can close this window now.</strong>",
+            login_hint=CONFIG.get("username"),  # To skip the account selector
+            timeout=60,
+            )
+        self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 
     @unittest.skipUnless(
         CONFIG.get("openid_configuration", {}).get("device_authorization_endpoint"),

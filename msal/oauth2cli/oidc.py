@@ -60,7 +60,7 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
             err = "3. The aud (audience) Claim must contain this client's client_id."
     # Per specs:
     # 6. If the ID Token is received via direct communication between
-    # the Client and the Token Endpoint (which it is in this flow),
+    # the Client and the Token Endpoint (which it is during _obtain_token()),
     # the TLS server validation MAY be used to validate the issuer
     # in place of checking the token signature.
     if _now > decoded["exp"]:
@@ -192,4 +192,51 @@ class Client(oauth2.Client):
                     'The nonce in id token ("%s") should match our nonce ("%s")' %
                     (nonce_in_id_token, expected_hash))
         return result
+
+    def obtain_token_by_browser(
+            self,
+            display=None,
+            prompt=None,
+            max_age=None,
+            ui_locales=None,
+            id_token_hint=None,  # It is relevant,
+                # because this library exposes raw ID token
+            login_hint=None,
+            acr_values=None,
+            **kwargs):
+        """A native app can use this method to obtain token via a local browser.
+
+        Internally, it implements nonce to mitigate replay attack.
+        It also implements PKCE to mitigate the auth code interception attack.
+
+        :param string display: Defined in
+            `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+        :param string prompt: Defined in
+            `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+        :param int max_age: Defined in
+            `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+        :param string ui_locales: Defined in
+            `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+        :param string id_token_hint: Defined in
+            `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+        :param string login_hint: Defined in
+            `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+        :param string acr_values: Defined in
+            `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+
+        See :func:`oauth2.Client.obtain_token_by_browser` in parent class
+        for descriptions on other parameters and return value.
+        """
+        filtered_params = {k:v for k, v in dict(
+            prompt=prompt,
+            display=display,
+            max_age=max_age,
+            ui_locales=ui_locales,
+            id_token_hint=id_token_hint,
+            login_hint=login_hint,
+            acr_values=acr_values,
+            ).items() if v is not None}  # Filter out None values
+        return super(Client, self).obtain_token_by_browser(
+            auth_params=dict(kwargs.pop("auth_params", {}), **filtered_params),
+            **kwargs)
 
