@@ -107,6 +107,7 @@ class ClientApplication(object):
     ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID = "622"
     ACQUIRE_TOKEN_FOR_CLIENT_ID = "730"
     ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID = "832"
+    ACQUIRE_TOKEN_INTERACTIVE = "169"
     GET_ACCOUNTS_ID = "902"
     REMOVE_ACCOUNT_ID = "903"
 
@@ -318,7 +319,6 @@ class ClientApplication(object):
 
         :param list scope:
             It is a list of case-sensitive strings.
-            Some ID provider can accept empty string to represent default scope.
         :param str redirect_uri:
             Optional. If not specified, server will use the pre-registered one.
         :param str state:
@@ -997,6 +997,78 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             raise ValueError("Public Client should not possess credentials")
         super(PublicClientApplication, self).__init__(
             client_id, client_credential=None, **kwargs)
+
+    def acquire_token_interactive(
+            self,
+            scopes,  # type: list[str]
+            prompt=None,
+            login_hint=None,  # type: Optional[str]
+            domain_hint=None,  # type: Optional[str]
+            claims_challenge=None,
+            timeout=None,
+            port=None,
+            **kwargs):
+        """Acquire token interactively i.e. via a local browser.
+
+        :param list scope:
+            It is a list of case-sensitive strings.
+        :param str prompt:
+            By default, no prompt value will be sent, not even "none".
+            You will have to specify a value explicitly.
+            Its valid values are defined in Open ID Connect specs
+            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+        :param str login_hint:
+            Optional. Identifier of the user. Generally a User Principal Name (UPN).
+        :param domain_hint:
+            Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
+            If included, it will skip the email-based discovery process that user goes
+            through on the sign-in page, leading to a slightly more streamlined user experience.
+            More information on possible values
+            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
+
+        :param int timeout:
+            This method will block the current thread.
+            This parameter specifies the timeout value in seconds.
+            Default value ``None`` means wait indefinitely.
+
+        :param int port:
+            The port to be used to listen to an incoming auth response.
+            By default we will use a system-allocated port.
+            (The rest of the redirect_uri is hard coded as ``http://localhost``.)
+
+        :return:
+            - A dict containing no "error" key,
+              and typically contains an "access_token" key,
+              if cache lookup succeeded.
+            - A dict containing an "error" key, when token refresh failed.
+        """
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        claims = _merge_claims_challenge_and_capabilities(
+            self._client_capabilities, claims_challenge)
+        return self.client.obtain_token_by_browser(
+            scope=decorate_scope(scopes, self.client_id) if scopes else None,
+            redirect_uri="http://localhost:{port}".format(
+                # Hardcode the host, for now. AAD portal rejects 127.0.0.1 anyway
+                port=port or 0),
+            prompt=prompt,
+            login_hint=login_hint,
+            domain_hint=domain_hint,
+            timeout=timeout,
+            auth_params={"claims": claims},
+            data=dict(kwargs.pop("data", {}), claims=claims),
+            headers={
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_INTERACTIVE),
+                },
+            **kwargs)
 
     def initiate_device_flow(self, scopes=None, **kwargs):
         """Initiate a Device Flow instance,
