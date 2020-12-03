@@ -26,5 +26,6 @@ class MinimalResponse(object):  # Not for production use
         self._raw_resp = requests_resp
 
     def raise_for_status(self):
-        if self._raw_resp:
+        if self._raw_resp is not None:  # Turns out `if requests.response` won't work
+                                        # cause it would be True when 200<=status<400
             self._raw_resp.raise_for_status()

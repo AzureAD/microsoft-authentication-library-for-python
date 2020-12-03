@@ -33,7 +33,10 @@ try:
     from xml.etree import cElementTree as ET
 except ImportError:
     from xml.etree import ElementTree as ET
+import logging
 
+
+logger = logging.getLogger(__name__)
 
 def _xpath_of_root(route_to_leaf):
     # Construct an xpath suitable to find a root node which has a specified leaf
@@ -41,8 +44,14 @@ def _xpath_of_root(route_to_leaf):
 
 
 def send_request(mex_endpoint, http_client, **kwargs):
-    mex_document = http_client.get(mex_endpoint, **kwargs).text
-    return Mex(mex_document).get_wstrust_username_password_endpoint()
+    mex_resp = http_client.get(mex_endpoint, **kwargs)
+    mex_resp.raise_for_status()
+    try:
+        return Mex(mex_resp.text).get_wstrust_username_password_endpoint()
+    except ET.ParseError:
+        logger.exception(
+            "Malformed MEX document: %s, %s", mex_resp.status_code, mex_resp.text)
+        raise
 
 
 class Mex(object):
