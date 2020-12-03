@@ -516,9 +516,14 @@ class WorldWideTestCase(LabBasedTestCase):
         self._test_username_password(**config)
 
     def test_adfs2019_fed_user(self):
-        config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2019")
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password(**config)
+        try:
+            config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2019")
+            config["password"] = self.get_lab_user_secret(config["lab_name"])
+            self._test_username_password(**config)
+        except requests.exceptions.HTTPError:
+            if os.getenv("TRAVIS"):
+                self.skipTest("MEX endpoint in our test environment tends to fail")
+            raise
 
     def test_ropc_adfs2019_onprem(self):
         # Configuration is derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.7.0/tests/Microsoft.Identity.Test.Common/TestConstants.cs#L250-L259
