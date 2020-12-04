@@ -77,6 +77,9 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body.encode("utf-8"))
 
+    def log_message(self, format, *args):
+        logger.debug(format, *args)  # To override the default log-to-stderr behavior
+
 
 class _AuthCodeHttpServer(HTTPServer):
     def handle_timeout(self):
