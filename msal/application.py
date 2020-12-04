@@ -1059,9 +1059,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 port=port or 0),
             prompt=prompt,
             login_hint=login_hint,
-            domain_hint=domain_hint,
             timeout=timeout,
-            auth_params={"claims": claims},
+            auth_params={
+                "claims": claims,
+                "domain_hint": domain_hint,
+                },
             data=dict(kwargs.pop("data", {}), claims=claims),
             headers={
                 CLIENT_REQUEST_ID: _get_new_correlation_id(),
