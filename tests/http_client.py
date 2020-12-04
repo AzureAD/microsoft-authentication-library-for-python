@@ -10,11 +10,13 @@ class MinimalHttpClient:
         self.timeout = timeout
 
     def post(self, url, params=None, data=None, headers=None, **kwargs):
+        assert not kwargs, "Our stack shouldn't leak extra kwargs: %s" % kwargs
         return MinimalResponse(requests_resp=self.session.post(
             url, params=params, data=data, headers=headers,
             timeout=self.timeout))
 
     def get(self, url, params=None, headers=None, **kwargs):
+        assert not kwargs, "Our stack shouldn't leak extra kwargs: %s" % kwargs
         return MinimalResponse(requests_resp=self.session.get(
             url, params=params, headers=headers, timeout=self.timeout))
 
