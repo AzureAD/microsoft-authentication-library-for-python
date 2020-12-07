@@ -9,7 +9,7 @@ import time
 
 import requests
 
-from msal.oauth2cli import Client, JwtSigner
+from msal.oauth2cli import Client, JwtSigner, AuthCodeReceiver
 from msal.oauth2cli.authcode import obtain_auth_code
 from tests import unittest, Oauth2TestCase
 from tests.http_client import MinimalHttpClient, MinimalResponse
@@ -154,6 +154,68 @@ class TestClient(Oauth2TestCase):
         self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 
     @unittest.skipUnless(
+        "authorization_endpoint" in CONFIG.get("openid_configuration", {}),
+        "authorization_endpoint missing")
+    def test_auth_code_flow(self):
+        with AuthCodeReceiver(port=CONFIG.get("listen_port")) as receiver:
+            flow = self.client.initiate_auth_code_flow(
+                redirect_uri="http://localhost:%d" % receiver.get_port(),
+                scope=CONFIG.get("scope"),
+                login_hint=CONFIG.get("username"),  # To skip the account selector
+                )
+            auth_response = receiver.get_auth_response(
+                auth_uri=flow["auth_uri"],
+                state=flow["state"],  # Optional but recommended
+                timeout=120,
+                welcome_template="""<html><body>
+                    authorization_endpoint = {a}, client_id = {i}
+                    <a href="$auth_uri">Sign In</a> or <a href="$abort_uri">Abort</a>
+                    </body></html>""".format(
+                        a=CONFIG["openid_configuration"]["authorization_endpoint"],
+                        i=CONFIG.get("client_id")),
+                )
+            self.assertIsNotNone(
+                auth_response.get("code"), "Error: {}, Detail: {}".format(
+                    auth_response.get("error"), auth_response))
+            result = self.client.obtain_token_by_auth_code_flow(flow, auth_response)
+                #TBD: data={"resource": CONFIG.get("resource")},  # MSFT AAD v1 only
+            self.assertLoosely(result, lambda: self.assertIn('access_token', result))
+
+    def test_auth_code_flow_error_response(self):
+        with self.assertRaisesRegexp(ValueError, "state missing"):
+            self.client.obtain_token_by_auth_code_flow({}, {"code": "foo"})
+        with self.assertRaisesRegexp(ValueError, "state mismatch"):
+            self.client.obtain_token_by_auth_code_flow({"state": "1"}, {"state": "2"})
+        with self.assertRaisesRegexp(ValueError, "scope"):
+            self.client.obtain_token_by_auth_code_flow(
+                {"state": "s", "scope": ["foo"]}, {"state": "s"}, scope=["bar"])
+        self.assertEqual(
+            {"error": "foo", "error_uri": "bar"},
+            self.client.obtain_token_by_auth_code_flow(
+                {"state": "s"},
+                {"state": "s", "error": "foo", "error_uri": "bar", "access_token": "fake"}),
+            "We should not leak malicious input into our output")
+
+    @unittest.skipUnless(
+        "authorization_endpoint" in CONFIG.get("openid_configuration", {}),
+        "authorization_endpoint missing")
+    def test_obtain_token_by_browser(self):
+        result = self.client.obtain_token_by_browser(
+            scope=CONFIG.get("scope"),
+            redirect_uri=CONFIG.get("redirect_uri"),
+            welcome_template="""<html><body>
+                authorization_endpoint = {a}, client_id = {i}
+                <a href="$auth_uri">Sign In</a> or <a href="$abort_uri">Abort</a>
+                </body></html>""".format(
+                    a=CONFIG["openid_configuration"]["authorization_endpoint"],
+                    i=CONFIG.get("client_id")),
+            success_template="<strong>Done. You can close this window now.</strong>",
+            login_hint=CONFIG.get("username"),  # To skip the account selector
+            timeout=60,
+            )
+        self.assertLoosely(result, lambda: self.assertIn('access_token', result))
+
+    @unittest.skipUnless(
         CONFIG.get("openid_configuration", {}).get("device_authorization_endpoint"),
         "device_authorization_endpoint is missing")
     def test_device_flow(self):
@@ -223,7 +285,7 @@ class TestRefreshTokenCallbacks(unittest.TestCase):
 
 class TestSessionAccessibility(unittest.TestCase):
     def test_accessing_session_property_for_backward_compatibility(self):
-        client = Client({}, "client_id")
+        client = Client({"token_endpoint": "https://example.com"}, "client_id")
         client.session
         client.session.close()
         client.session = "something"

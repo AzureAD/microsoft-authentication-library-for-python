@@ -234,8 +234,9 @@ class TokenCache(object):
         with self._lock:
             if new_key_value_pairs:  # Update with them
                 entries = self._cache.setdefault(credential_type, {})
-                entry = entries.setdefault(key, {})  # Create it if not yet exist
-                entry.update(new_key_value_pairs)
+                entries[key] = dict(
+                    old_entry,  # Do not use entries[key] b/c it might not exist
+                    **new_key_value_pairs)
             else:  # Remove old_entry
                 self._cache.setdefault(credential_type, {}).pop(key, None)
 

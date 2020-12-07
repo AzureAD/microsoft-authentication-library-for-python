@@ -8,6 +8,7 @@ import requests
 
 import msal
 from tests.http_client import MinimalHttpClient
+from msal.oauth2cli import AuthCodeReceiver
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -297,14 +298,16 @@ def get_lab_app(
 
     Get it from environment variables if defined, otherwise fall back to use MSI.
     """
+    logger.info(
+        "Reading ENV variables %s and %s for lab app defined at "
+        "https://docs.msidlab.com/accounts/confidentialclient.html",
+        env_client_id, env_client_secret)
     if os.getenv(env_client_id) and os.getenv(env_client_secret):
         # A shortcut mainly for running tests on developer's local development machine
         # or it could be setup on Travis CI
         #   https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
         # Data came from here
         # https://docs.msidlab.com/accounts/confidentialclient.html
-        logger.info("Using lab app defined by ENV variables %s and %s",
-                env_client_id, env_client_secret)
         client_id = os.getenv(env_client_id)
         client_secret = os.getenv(env_client_secret)
     else:
@@ -399,6 +402,78 @@ class LabBasedTestCase(E2eTestCase):
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, scope, username=None)
 
+    def _test_acquire_token_by_auth_code_flow(
+            self, client_id=None, authority=None, port=None, scope=None,
+            username_uri="",  # But you would want to provide one
+            **ignored):
+        assert client_id and authority and scope
+        self.app = msal.ClientApplication(
+            client_id, authority=authority, http_client=MinimalHttpClient())
+        with AuthCodeReceiver(port=port) as receiver:
+            flow = self.app.initiate_auth_code_flow(
+                redirect_uri="http://localhost:%d" % receiver.get_port(),
+                scopes=scope,
+                )
+            auth_response = receiver.get_auth_response(
+                auth_uri=flow["auth_uri"], state=flow["state"], timeout=60,
+                welcome_template="""<html><body><h1>{id}</h1><ol>
+    <li>Get a username from the upn shown at <a href="{username_uri}">here</a></li>
+    <li>Get its password from https://aka.ms/GetLabUserSecret?Secret=msidlabXYZ
+        (replace the lab name with the labName from the link above).</li>
+    <li><a href="$auth_uri">Sign In</a> or <a href="$abort_uri">Abort</a></li>
+    </ol></body></html>""".format(id=self.id(), username_uri=username_uri),
+                )
+        self.assertIsNotNone(
+            auth_response.get("code"), "Error: {}, Detail: {}".format(
+                auth_response.get("error"), auth_response))
+        result = self.app.acquire_token_by_auth_code_flow(flow, auth_response)
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result.get("id_token_claims"), indent=4),
+            )
+        self.assertIn(
+            "access_token", result,
+            "{error}: {error_description}".format(
+                # Note: No interpolation here, cause error won't always present
+                error=result.get("error"),
+                error_description=result.get("error_description")))
+        self.assertCacheWorksForUser(result, scope, username=None)
+
+    def _test_acquire_token_interactive(
+            self, client_id=None, authority=None, scope=None, port=None,
+            username_uri="",  # But you would want to provide one
+            **ignored):
+        assert client_id and authority and scope
+        self.app = msal.PublicClientApplication(
+            client_id, authority=authority, http_client=MinimalHttpClient())
+        result = self.app.acquire_token_interactive(
+            scope,
+            timeout=60,
+            port=port,
+            welcome_template=  # This is an undocumented feature for testing
+                """<html><body><h1>{id}</h1><ol>
+    <li>Get a username from the upn shown at <a href="{username_uri}">here</a></li>
+    <li>Get its password from https://aka.ms/GetLabUserSecret?Secret=msidlabXYZ
+        (replace the lab name with the labName from the link above).</li>
+    <li><a href="$auth_uri">Sign In</a> or <a href="$abort_uri">Abort</a></li>
+    </ol></body></html>""".format(id=self.id(), username_uri=username_uri),
+            )
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result.get("id_token_claims"), indent=4),
+            )
+        self.assertIn(
+            "access_token", result,
+            "{error}: {error_description}".format(
+                # Note: No interpolation here, cause error won't always present
+                error=result.get("error"),
+                error_description=result.get("error_description")))
+        self.assertCacheWorksForUser(result, scope, username=None)
+
     def _test_acquire_token_obo(self, config_pca, config_cca):
         # 1. An app obtains a token representing a user, for our mid-tier service
         pca = msal.PublicClientApplication(
@@ -474,9 +549,21 @@ class WorldWideTestCase(LabBasedTestCase):
         self._test_username_password(**config)
 
     def test_adfs2019_fed_user(self):
-        config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2019")
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password(**config)
+        try:
+            config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2019")
+            config["password"] = self.get_lab_user_secret(config["lab_name"])
+            self._test_username_password(**config)
+        except requests.exceptions.HTTPError:
+            if os.getenv("TRAVIS"):
+                self.skipTest("MEX endpoint in our test environment tends to fail")
+            raise
+
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    def test_cloud_acquire_token_interactive(self):
+        config = self.get_lab_user(usertype="cloud")
+        self._test_acquire_token_interactive(
+            username_uri="https://msidlab.com/api/user?usertype=cloud",
+            **config)
 
     def test_ropc_adfs2019_onprem(self):
         # Configuration is derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.7.0/tests/Microsoft.Identity.Test.Common/TestConstants.cs#L250-L259
@@ -499,6 +586,26 @@ class WorldWideTestCase(LabBasedTestCase):
         config["scope"] = self.adfs2019_scopes
         config["port"] = 8080
         self._test_acquire_token_by_auth_code(**config)
+
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    def test_adfs2019_onprem_acquire_token_by_auth_code_flow(self):
+        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
+        config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
+        config["scope"] = self.adfs2019_scopes
+        config["port"] = 8080
+        self._test_acquire_token_by_auth_code_flow(
+            username_uri="https://msidlab.com/api/user?usertype=onprem&federationprovider=ADFSv2019",
+            **config)
+
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    def test_adfs2019_onprem_acquire_token_interactive(self):
+        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
+        config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
+        config["scope"] = self.adfs2019_scopes
+        config["port"] = 8080
+        self._test_acquire_token_interactive(
+            username_uri="https://msidlab.com/api/user?usertype=onprem&federationprovider=ADFSv2019",
+            **config)
 
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CLIENT_SECRET"),
@@ -545,6 +652,17 @@ class WorldWideTestCase(LabBasedTestCase):
             client_id=config["appId"],
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
             scope=config["defaultScopes"].split(','),
+            )
+
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    def test_b2c_acquire_token_by_auth_code_flow(self):
+        config = self.get_lab_app_object(azureenvironment="azureb2ccloud")
+        self._test_acquire_token_by_auth_code_flow(
+            authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
+            client_id=config["appId"],
+            port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
+            scope=config["defaultScopes"].split(','),
+            username_uri="https://msidlab.com/api/user?usertype=b2c&b2cprovider=local",
             )
 
     def test_b2c_acquire_token_by_ropc(self):

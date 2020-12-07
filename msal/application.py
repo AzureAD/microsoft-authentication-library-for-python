@@ -21,7 +21,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,7 @@ class ClientApplication(object):
     ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID = "622"
     ACQUIRE_TOKEN_FOR_CLIENT_ID = "730"
     ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID = "832"
+    ACQUIRE_TOKEN_INTERACTIVE = "169"
     GET_ACCOUNTS_ID = "902"
     REMOVE_ACCOUNT_ID = "903"
 
@@ -300,6 +301,78 @@ class ClientApplication(object):
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
 
+    def initiate_auth_code_flow(
+            self,
+            scopes,  # type: list[str]
+            redirect_uri=None,
+            state=None,  # Recommended by OAuth2 for CSRF protection
+            prompt=None,
+            login_hint=None,  # type: Optional[str]
+            domain_hint=None,  # type: Optional[str]
+            claims_challenge=None,
+            ):
+        """Initiate an auth code flow.
+
+        Later when the response reaches your redirect_uri,
+        you can use :func:`~acquire_token_by_auth_code_flow()`
+        to complete the authentication/authorization.
+
+        :param list scope:
+            It is a list of case-sensitive strings.
+        :param str redirect_uri:
+            Optional. If not specified, server will use the pre-registered one.
+        :param str state:
+            An opaque value used by the client to
+            maintain state between the request and callback.
+            If absent, this library will automatically generate one internally.
+        :param str prompt:
+            By default, no prompt value will be sent, not even "none".
+            You will have to specify a value explicitly.
+            Its valid values are defined in Open ID Connect specs
+            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+        :param str login_hint:
+            Optional. Identifier of the user. Generally a User Principal Name (UPN).
+        :param domain_hint:
+            Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
+            If included, it will skip the email-based discovery process that user goes
+            through on the sign-in page, leading to a slightly more streamlined user experience.
+            More information on possible values
+            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+
+        :return:
+            The auth code flow. It is a dict in this form::
+
+                {
+                    "auth_uri": "https://...",  // Guide user to visit this
+                    "state": "...",  // You may choose to verify it by yourself,
+                                     // or just let acquire_token_by_auth_code_flow()
+                                     // do that for you.
+                    "...": "...",  // Everything else are reserved and internal
+                }
+
+            The caller is expected to::
+
+            1. somehow store this content, typically inside the current session,
+            2. guide the end user (i.e. resource owner) to visit that auth_uri,
+            3. and then relay this dict and subsequent auth response to
+               :func:`~acquire_token_by_auth_code_flow()`.
+        """
+        client = Client(
+            {"authorization_endpoint": self.authority.authorization_endpoint},
+            self.client_id,
+            http_client=self.http_client)
+        flow = client.initiate_auth_code_flow(
+            redirect_uri=redirect_uri, state=state, login_hint=login_hint,
+            prompt=prompt,
+            scope=decorate_scope(scopes, self.client_id),
+            domain_hint=domain_hint,
+            claims=_merge_claims_challenge_and_capabilities(
+                self._client_capabilities, claims_challenge),
+            )
+        flow["claims_challenge"] = claims_challenge
+        return flow
+
     def get_authorization_request_url(
             self,
             scopes,  # type: list[str]
@@ -385,6 +458,73 @@ class ClientApplication(object):
             claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
             )
+
+    def acquire_token_by_auth_code_flow(
+            self, auth_code_flow, auth_response, scopes=None, **kwargs):
+        """Validate the auth response being redirected back, and obtain tokens.
+
+        It automatically provides nonce protection.
+
+        :param dict auth_code_flow:
+            The same dict returned by :func:`~initiate_auth_code_flow()`.
+        :param dict auth_response:
+            A dict of the query string received from auth server.
+        :param list[str] scopes:
+            Scopes requested to access a protected API (a resource).
+
+            Most of the time, you can leave it empty.
+
+            If you requested user consent for multiple resources, here you will
+            need to provide a subset of what you required in
+            :func:`~initiate_auth_code_flow()`.
+
+            OAuth2 was designed mostly for singleton services,
+            where tokens are always meant for the same resource and the only
+            changes are in the scopes.
+            In AAD, tokens can be issued for multiple 3rd party resources.
+            You can ask authorization code for multiple resources,
+            but when you redeem it, the token is for only one intended
+            recipient, called audience.
+            So the developer need to specify a scope so that we can restrict the
+            token to be issued for the corresponding audience.
+
+        :return:
+            * A dict containing "access_token" and/or "id_token", among others,
+              depends on what scope was used.
+              (See https://tools.ietf.org/html/rfc6749#section-5.1)
+            * A dict containing "error", optionally "error_description", "error_uri".
+              (It is either `this <https://tools.ietf.org/html/rfc6749#section-4.1.2.1>`_
+              or `that <https://tools.ietf.org/html/rfc6749#section-5.2>`_)
+            * Most client-side data error would result in ValueError exception.
+              So the usage pattern could be without any protocol details::
+
+                def authorize():  # A controller in a web app
+                    try:
+                        result = msal_app.acquire_token_by_auth_code_flow(
+                            session.get("flow", {}), request.args)
+                        if "error" in result:
+                            return render_template("error.html", result)
+                        use(result)  # Token(s) are available in result and cache
+                    except ValueError:  # Usually caused by CSRF
+                        pass  # Simply ignore them
+                    return redirect(url_for("index"))
+        """
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        return self.client.obtain_token_by_auth_code_flow(
+            auth_code_flow,
+            auth_response,
+            scope=decorate_scope(scopes, self.client_id) if scopes else None,
+            headers={
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
+                },
+            data=dict(
+                kwargs.pop("data", {}),
+                claims=_merge_claims_challenge_and_capabilities(
+                    self._client_capabilities,
+                    auth_code_flow.pop("claims_challenge", None))),
+            **kwargs)
 
     def acquire_token_by_authorization_code(
             self,
@@ -857,6 +997,80 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             raise ValueError("Public Client should not possess credentials")
         super(PublicClientApplication, self).__init__(
             client_id, client_credential=None, **kwargs)
+
+    def acquire_token_interactive(
+            self,
+            scopes,  # type: list[str]
+            prompt=None,
+            login_hint=None,  # type: Optional[str]
+            domain_hint=None,  # type: Optional[str]
+            claims_challenge=None,
+            timeout=None,
+            port=None,
+            **kwargs):
+        """Acquire token interactively i.e. via a local browser.
+
+        :param list scope:
+            It is a list of case-sensitive strings.
+        :param str prompt:
+            By default, no prompt value will be sent, not even "none".
+            You will have to specify a value explicitly.
+            Its valid values are defined in Open ID Connect specs
+            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+        :param str login_hint:
+            Optional. Identifier of the user. Generally a User Principal Name (UPN).
+        :param domain_hint:
+            Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
+            If included, it will skip the email-based discovery process that user goes
+            through on the sign-in page, leading to a slightly more streamlined user experience.
+            More information on possible values
+            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
+
+        :param int timeout:
+            This method will block the current thread.
+            This parameter specifies the timeout value in seconds.
+            Default value ``None`` means wait indefinitely.
+
+        :param int port:
+            The port to be used to listen to an incoming auth response.
+            By default we will use a system-allocated port.
+            (The rest of the redirect_uri is hard coded as ``http://localhost``.)
+
+        :return:
+            - A dict containing no "error" key,
+              and typically contains an "access_token" key,
+              if cache lookup succeeded.
+            - A dict containing an "error" key, when token refresh failed.
+        """
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        claims = _merge_claims_challenge_and_capabilities(
+            self._client_capabilities, claims_challenge)
+        return self.client.obtain_token_by_browser(
+            scope=decorate_scope(scopes, self.client_id) if scopes else None,
+            redirect_uri="http://localhost:{port}".format(
+                # Hardcode the host, for now. AAD portal rejects 127.0.0.1 anyway
+                port=port or 0),
+            prompt=prompt,
+            login_hint=login_hint,
+            timeout=timeout,
+            auth_params={
+                "claims": claims,
+                "domain_hint": domain_hint,
+                },
+            data=dict(kwargs.pop("data", {}), claims=claims),
+            headers={
+                CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                    self.ACQUIRE_TOKEN_INTERACTIVE),
+                },
+            **kwargs)
 
     def initiate_device_flow(self, scopes=None, **kwargs):
         """Initiate a Device Flow instance,

@@ -10,11 +10,13 @@ class MinimalHttpClient:
         self.timeout = timeout
 
     def post(self, url, params=None, data=None, headers=None, **kwargs):
+        assert not kwargs, "Our stack shouldn't leak extra kwargs: %s" % kwargs
         return MinimalResponse(requests_resp=self.session.post(
             url, params=params, data=data, headers=headers,
             timeout=self.timeout))
 
     def get(self, url, params=None, headers=None, **kwargs):
+        assert not kwargs, "Our stack shouldn't leak extra kwargs: %s" % kwargs
         return MinimalResponse(requests_resp=self.session.get(
             url, params=params, headers=headers, timeout=self.timeout))
 
@@ -26,5 +28,6 @@ class MinimalResponse(object):  # Not for production use
         self._raw_resp = requests_resp
 
     def raise_for_status(self):
-        if self._raw_resp:
+        if self._raw_resp is not None:  # Turns out `if requests.response` won't work
+                                        # cause it would be True when 200<=status<400
             self._raw_resp.raise_for_status()
