@@ -376,7 +376,6 @@ class ClientApplication(object):
     def get_authorization_request_url(
             self,
             scopes,  # type: list[str]
-            # additional_scope=None,  # type: Optional[list]
             login_hint=None,  # type: Optional[str]
             state=None,  # Recommended by OAuth2 for CSRF protection
             redirect_uri=None,
@@ -424,14 +423,6 @@ class ClientApplication(object):
              It is a string of a JSON object which contains lists of claims being requested from these locations.
 
         :return: The authorization url as a string.
-        """
-        """ # TBD: this would only be meaningful in a new acquire_token_interactive()
-        :param additional_scope: Additional scope is a concept only in AAD.
-            It refers to other resources you might want to prompt to consent
-            for in the same interaction, but for which you won't get back a
-            token for in this particular operation.
-            (Under the hood, we simply merge scope and additional_scope before
-            sending them on the wire.)
         """
         authority = kwargs.pop("authority", None)  # Historically we support this
         if authority:
@@ -1007,6 +998,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             claims_challenge=None,
             timeout=None,
             port=None,
+            extra_scopes_to_consent=None,
             **kwargs):
         """Acquire token interactively i.e. via a local browser.
 
@@ -1043,6 +1035,12 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             By default we will use a system-allocated port.
             (The rest of the redirect_uri is hard coded as ``http://localhost``.)
 
+        :param list extra_scopes_to_consent:
+            "Extra scopes to consent" is a concept only available in AAD.
+            It refers to other resources you might want to prompt to consent for,
+            in the same interaction, but for which you won't get back a
+            token for in this particular operation.
+
         :return:
             - A dict containing no "error" key,
               and typically contains an "access_token" key,
@@ -1054,6 +1052,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             self._client_capabilities, claims_challenge)
         return self.client.obtain_token_by_browser(
             scope=decorate_scope(scopes, self.client_id) if scopes else None,
+            extra_scope_to_consent=extra_scopes_to_consent,
             redirect_uri="http://localhost:{port}".format(
                 # Hardcode the host, for now. AAD portal rejects 127.0.0.1 anyway
                 port=port or 0),
