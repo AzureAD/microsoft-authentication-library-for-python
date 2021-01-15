@@ -9,6 +9,15 @@ import jwt
 
 logger = logging.getLogger(__name__)
 
+
+def _str2bytes(raw):
+    # A conversion based on duck-typing rather than six.text_type
+    try:  # Assuming it is a string
+        return raw.encode(encoding="utf-8")
+    except:  # Otherwise we treat it as bytes and return it as-is
+        return raw
+
+
 class AssertionCreator(object):
     def create_normal_assertion(
             self, audience, issuer, subject, expires_at=None, expires_in=600,
@@ -103,8 +112,9 @@ class JwtAssertionCreator(AssertionCreator):
             payload['nbf'] = not_before
         payload.update(additional_claims or {})
         try:
-            return jwt.encode(
+            str_or_bytes = jwt.encode(  # PyJWT 1 returns bytes, PyJWT 2 returns str
                 payload, self.key, algorithm=self.algorithm, headers=self.headers)
+            return _str2bytes(str_or_bytes)  # We normalize them into bytes
         except:
             if self.algorithm.startswith("RS") or self.algorithm.starswith("ES"):
                 logger.exception(
