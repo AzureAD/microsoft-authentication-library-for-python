@@ -30,7 +30,7 @@ setup(
     ],
     packages=['oauth2cli'],
     install_requires=[
-        'requests>=2.0.0',
-        'PyJWT>=1.0.0',
+        'requests>=2.0.0,<3',
+        'PyJWT>=1.0.0,<3',
     ]
 )
