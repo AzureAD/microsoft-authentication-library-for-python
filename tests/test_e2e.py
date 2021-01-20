@@ -153,13 +153,13 @@ class FileBasedTestCase(E2eTestCase):
         self.skipUnlessWithConfig(["client_id", "username", "password", "scope"])
         self._test_username_password(**self.config)
 
-    def _get_app_and_auth_code(self, **kwargs):
+    def _get_app_and_auth_code(self, scopes=None, **kwargs):
         return _get_app_and_auth_code(
             self.config["client_id"],
             client_secret=self.config.get("client_secret"),
             authority=self.config.get("authority"),
             port=self.config.get("listen_port", 44331),
-            scopes=self.config["scope"],
+            scopes=scopes or self.config["scope"],
             **kwargs)
 
     def _test_auth_code(self, auth_kwargs, token_kwargs):
@@ -202,11 +202,15 @@ class FileBasedTestCase(E2eTestCase):
             "sshcrt": "true",
             }
 
-        (self.app, ac, redirect_uri) = self._get_app_and_auth_code()
+        scopes = [  # Only this scope would result in an SSH-Cert
+            "https://pas.windows.net/CheckMyAccess/Linux/user_impersonation"]
+        (self.app, ac, redirect_uri) = self._get_app_and_auth_code(scopes=scopes)
 
         result = self.app.acquire_token_by_authorization_code(
-            ac, self.config["scope"], redirect_uri=redirect_uri, data=data1,
+            ac, scopes, redirect_uri=redirect_uri, data=data1,
             params=ssh_test_slice)
+        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
+            result.get("error"), result.get("error_description")))
         self.assertEqual("ssh-cert", result["token_type"])
         logger.debug("%s.cache = %s",
             self.id(), json.dumps(self.app.token_cache._cache, indent=4))
@@ -214,7 +218,7 @@ class FileBasedTestCase(E2eTestCase):
         # acquire_token_silent() needs to be passed the same key to work
         account = self.app.get_accounts()[0]
         result_from_cache = self.app.acquire_token_silent(
-            self.config["scope"], account=account, data=data1)
+            scopes, account=account, data=data1)
         self.assertIsNotNone(result_from_cache)
         self.assertEqual(
             result['access_token'], result_from_cache['access_token'],
@@ -222,7 +226,7 @@ class FileBasedTestCase(E2eTestCase):
 
         # refresh_token grant can fetch an ssh-cert bound to a different key
         refreshed_ssh_cert = self.app.acquire_token_silent(
-            self.config["scope"], account=account, params=ssh_test_slice,
+            scopes, account=account, params=ssh_test_slice,
             data={"token_type": "ssh-cert", "key_id": "key2", "req_cnf": JWK2})
         self.assertIsNotNone(refreshed_ssh_cert)
         self.assertEqual(refreshed_ssh_cert["token_type"], "ssh-cert")
