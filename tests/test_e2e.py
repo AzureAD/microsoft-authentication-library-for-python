@@ -3,6 +3,7 @@ import os
 import json
 import time
 import unittest
+import sys
 
 import requests
 
@@ -11,7 +12,7 @@ from tests.http_client import MinimalHttpClient
 from msal.oauth2cli import AuthCodeReceiver
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG if "-v" in sys.argv else logging.INFO)
 
 
 def _get_app_and_auth_code(
