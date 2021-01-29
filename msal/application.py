@@ -56,7 +56,9 @@ CLIENT_REQUEST_ID = 'client-request-id'
 CLIENT_CURRENT_TELEMETRY = 'x-client-current-telemetry'
 
 def _get_new_correlation_id():
-    return str(uuid.uuid4())
+    correlation_id = str(uuid.uuid4())
+    logger.debug("Generates correlation_id: %s", correlation_id)
+    return correlation_id
 
 
 def _build_current_telemetry_request_header(public_api_id, force_refresh=False):
@@ -1233,6 +1235,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         return self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
