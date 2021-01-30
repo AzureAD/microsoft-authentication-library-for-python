@@ -10,6 +10,9 @@ on:
 
 jobs:
   build:
+    env:
+      # Fake a TRAVIS env so that the pre-existing test cases would behave like before
+      TRAVIS: true
 
     runs-on: ubuntu-latest
     strategy:
