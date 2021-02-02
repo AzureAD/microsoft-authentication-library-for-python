@@ -13,6 +13,11 @@ jobs:
     env:
       # Fake a TRAVIS env so that the pre-existing test cases would behave like before
       TRAVIS: true
+      LAB_APP_CLIENT_ID: ${{ secrets.LAB_APP_CLIENT_ID }}
+      LAB_APP_CLIENT_SECRET: ${{ secrets.LAB_APP_CLIENT_SECRET }}
+      LAB_OBO_CLIENT_SECRET: ${{ secrets.LAB_OBO_CLIENT_SECRET }}
+      LAB_OBO_CONFIDENTIAL_CLIENT_ID: ${{ secrets.LAB_OBO_CONFIDENTIAL_CLIENT_ID }}
+      LAB_OBO_PUBLIC_CLIENT_ID: ${{ secrets.LAB_OBO_PUBLIC_CLIENT_ID }}
 
     runs-on: ubuntu-latest
     strategy:
