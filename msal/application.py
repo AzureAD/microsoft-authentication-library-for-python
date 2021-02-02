@@ -441,16 +441,20 @@ class ClientApplication(object):
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id,
             http_client=self.http_client)
-        return client.build_auth_request_uri(
-            response_type=response_type,
-            redirect_uri=redirect_uri, state=state, login_hint=login_hint,
-            prompt=prompt,
-            scope=decorate_scope(scopes, self.client_id),
-            nonce=nonce,
-            domain_hint=domain_hint,
-            claims=_merge_claims_challenge_and_capabilities(
-                self._client_capabilities, claims_challenge),
-            )
+        warnings.warn(
+            "Change your get_authorization_request_url() "
+            "to initiate_auth_code_flow()", DeprecationWarning)
+        with warnings.catch_warnings(record=True):
+            return client.build_auth_request_uri(
+                response_type=response_type,
+                redirect_uri=redirect_uri, state=state, login_hint=login_hint,
+                prompt=prompt,
+                scope=decorate_scope(scopes, self.client_id),
+                nonce=nonce,
+                domain_hint=domain_hint,
+                claims=_merge_claims_challenge_and_capabilities(
+                    self._client_capabilities, claims_challenge),
+                )
 
     def acquire_token_by_auth_code_flow(
             self, auth_code_flow, auth_response, scopes=None, **kwargs):
@@ -572,20 +576,24 @@ class ClientApplication(object):
         # really empty.
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        return self.client.obtain_token_by_authorization_code(
-            code, redirect_uri=redirect_uri,
-            scope=decorate_scope(scopes, self.client_id),
-            headers={
-                CLIENT_REQUEST_ID: _get_new_correlation_id(),
-                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                    self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
-                },
-            data=dict(
-                kwargs.pop("data", {}),
-                claims=_merge_claims_challenge_and_capabilities(
-                    self._client_capabilities, claims_challenge)),
-            nonce=nonce,
-            **kwargs)
+        warnings.warn(
+            "Change your acquire_token_by_authorization_code() "
+            "to acquire_token_by_auth_code_flow()", DeprecationWarning)
+        with warnings.catch_warnings(record=True):
+            return self.client.obtain_token_by_authorization_code(
+                code, redirect_uri=redirect_uri,
+                scope=decorate_scope(scopes, self.client_id),
+                headers={
+                    CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                    CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                        self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
+                    },
+                data=dict(
+                    kwargs.pop("data", {}),
+                    claims=_merge_claims_challenge_and_capabilities(
+                        self._client_capabilities, claims_challenge)),
+                nonce=nonce,
+                **kwargs)
 
     def get_accounts(self, username=None):
         """Get a list of accounts which previously signed in, i.e. exists in cache.
