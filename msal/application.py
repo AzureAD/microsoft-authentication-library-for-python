@@ -977,8 +977,7 @@ class ClientApplication(object):
             rt_getter=lambda rt: rt,
             on_updating_rt=False,
             on_removing_rt=lambda rt_item: None,  # No OP
-            **kwargs
-            )
+            **kwargs)
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
