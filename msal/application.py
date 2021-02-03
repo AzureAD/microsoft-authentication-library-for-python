@@ -952,7 +952,7 @@ class ClientApplication(object):
                     "you must include a string parameter named 'key_id' "
                     "which identifies the key in the 'req_cnf' argument.")
 
-    def acquire_token_by_refresh_token(self, refresh_token, scopes):
+    def acquire_token_by_refresh_token(self, refresh_token, scopes, **kwargs):
         """Acquire token(s) based on a refresh token (RT) obtained from elsewhere.
 
         You use this method only when you have old RTs from elsewhere,
@@ -975,6 +975,7 @@ class ClientApplication(object):
             * A dict contains "error" and some other keys, when error happened.
             * A dict contains no "error" key means migration was successful.
         """
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         return self.client.obtain_token_by_refresh_token(
             refresh_token,
             scope=decorate_scope(scopes, self.client_id),
@@ -986,7 +987,7 @@ class ClientApplication(object):
             rt_getter=lambda rt: rt,
             on_updating_rt=False,
             on_removing_rt=lambda rt_item: None,  # No OP
-            )
+            **kwargs)
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
@@ -1305,4 +1306,3 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID),
                 },
             **kwargs)
-
