@@ -55,12 +55,14 @@ if not result:
     print("A local browser window will be open for you to sign in. CTRL+C to cancel.")
     result = app.acquire_token_interactive(
         config["scope"],
-        login_hint=config.get("username"),  # You can use this parameter to pre-fill
+        login_hint=config.get("username"),  # Optional.
+            # If you know the username ahead of time, this parameter can pre-fill
             # the username (or email address) field of the sign-in page for the user,
-            # if you know the username ahead of time.
             # Often, apps use this parameter during reauthentication,
             # after already extracting the username from an earlier sign-in
             # by using the preferred_username claim from returned id_token_claims.
+
+        #prompt="select_account",  # Optional. It forces to show account selector page
         )
 
 if "access_token" in result:
