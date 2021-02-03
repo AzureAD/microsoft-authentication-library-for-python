@@ -620,13 +620,13 @@ class WorldWideTestCase(LabBasedTestCase):
 
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CLIENT_SECRET"),
-        "Need LAB_OBO_CLIENT SECRET from https://msidlabs.vault.azure.net/secrets/TodoListServiceV2-OBO/c58ba97c34ca4464886943a847d1db56")
+        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
-        "Confidential client id can be found here https://docs.msidlab.com/flows/onbehalfofflow.html")
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
     @unittest.skipUnless(
         os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"),
-        "Public client id can be found here https://docs.msidlab.com/flows/onbehalfofflow.html")
+        "Need LAB_OBO_PUBLIC_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
     def test_acquire_token_obo(self):
         config = self.get_lab_user(usertype="cloud")
 
