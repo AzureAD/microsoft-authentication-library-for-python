@@ -47,7 +47,7 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     if _now + skew < decoded.get("nbf", _now - 1):  # nbf is optional per JWT specs
         # This is not an ID token validation, but a JWT validation
         # https://tools.ietf.org/html/rfc7519#section-4.1.5
-        err = "0. The ID token is not yet valid"
+        err = "0. The ID token is not yet valid."
     if issuer and issuer != decoded["iss"]:
         # https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationResponse
         err = ('2. The Issuer Identifier for the OpenID Provider, "%s", '
@@ -57,7 +57,11 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
         valid_aud = client_id in decoded["aud"] if isinstance(
             decoded["aud"], list) else client_id == decoded["aud"]
         if not valid_aud:
-            err = "3. The aud (audience) Claim must contain this client's client_id."
+            err = (
+                "3. The aud (audience) claim must contain this client's client_id "
+                '"%s", case-sensitively. Was your client_id in wrong casing?'
+                # Some IdP accepts wrong casing request but issues right casing IDT
+                ) % client_id
     # Per specs:
     # 6. If the ID Token is received via direct communication between
     # the Client and the Token Endpoint (which it is during _obtain_token()),
@@ -67,9 +71,9 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
         err = "9. The current time MUST be before the time represented by the exp Claim."
     if nonce and nonce != decoded.get("nonce"):
         err = ("11. Nonce must be the same value "
-            "as the one that was sent in the Authentication Request")
+            "as the one that was sent in the Authentication Request.")
     if err:
-        raise RuntimeError("%s id_token was: %s" % (
+        raise RuntimeError("%s The id_token was: %s" % (
             err, json.dumps(decoded, indent=2)))
     return decoded
 
