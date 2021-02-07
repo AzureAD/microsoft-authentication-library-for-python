@@ -33,19 +33,9 @@ def obtain_auth_code(listen_port, auth_uri=None):  # Historically only used in t
             ).get("code")
 
 
-def _browse(auth_uri):
+def _browse(auth_uri):  # throws ImportError, possibly webbrowser.Error in future
     import webbrowser  # Lazy import. Some distro may not have this.
-    controller = webbrowser.get()  # Get a default controller
-    # Some Linux Distro does not setup default browser properly,
-    # so we try to explicitly use some popular browser, if we found any.
-    for browser in ["chrome", "firefox", "safari", "windows-default"]:
-        try:
-            controller = webbrowser.get(browser)
-            break
-        except webbrowser.Error:
-            pass  # This browser is not installed. Try next one.
-    logger.info("Please open a browser on THIS device to visit: %s" % auth_uri)
-    controller.open(auth_uri)
+    return webbrowser.open(auth_uri)  # Use default browser. Customizable by $BROWSER
 
 
 def _qs2kv(qs):
@@ -130,14 +120,16 @@ class AuthCodeReceiver(object):
         return self._server.server_address[1]
 
     def get_auth_response(self, auth_uri=None, timeout=None, state=None,
-            welcome_template=None, success_template=None, error_template=None):
-        """Wait and return the auth response, or None when timeout.
+            welcome_template=None, success_template=None, error_template=None,
+            auth_uri_callback=None,
+            ):
+        """Wait and return the auth response. Raise RuntimeError when timeout.
 
         :param str auth_uri:
             If provided, this function will try to open a local browser.
         :param int timeout: In seconds. None means wait indefinitely.
         :param str state:
-            You may provide the state you used in auth_url,
+            You may provide the state you used in auth_uri,
             then we will use it to validate incoming response.
         :param str welcome_template:
             If provided, your end user will see it instead of the auth_uri.
@@ -152,6 +144,10 @@ class AuthCodeReceiver(object):
             The page will be displayed when authentication encountered error.
             Placeholders can be any of these:
             https://tools.ietf.org/html/rfc6749#section-5.2
+        :param callable auth_uri_callback:
+            A function with the shape of lambda auth_uri: ...
+            When a browser was unable to be launch, this function will be called,
+            so that the app could tell user to manually visit the auth_uri.
         :return:
             The auth response of the first leg of Auth Code flow,
             typically {"code": "...", "state": "..."} or {"error": "...", ...}
@@ -164,8 +160,31 @@ class AuthCodeReceiver(object):
         logger.debug("Abort by visit %s", abort_uri)
         self._server.welcome_page = Template(welcome_template or "").safe_substitute(
             auth_uri=auth_uri, abort_uri=abort_uri)
-        if auth_uri:
-            _browse(welcome_uri if welcome_template else auth_uri)
+        if auth_uri:  # Now attempt to open a local browser to visit it
+            _uri = welcome_uri if welcome_template else auth_uri
+            logger.info("Open a browser on this device to visit: %s" % _uri)
+            browser_opened = False
+            try:
+                browser_opened = _browse(_uri)
+            except:  # Had to use broad except, because the potential
+                     # webbrowser.Error is purposely undefined outside of _browse().
+                # Absorb and proceed. Because browser could be manually run elsewhere.
+                logger.exception("_browse(...) unsuccessful")
+            if not browser_opened:
+                if not auth_uri_callback:
+                    logger.warning(
+                        "Found no browser in current environment. "
+                        "If this program is being run inside a container "
+                        "which has access to host network "
+                        "(i.e. started by `docker run --net=host -it ...`), "
+                        "you can use browser on host to visit the following link. "
+                        "Otherwise, this auth attempt would either timeout "
+                        "(current timeout setting is {timeout}) "
+                        "or be aborted by CTRL+C. Auth URI: {auth_uri}".format(
+                            auth_uri=_uri, timeout=timeout))
+                else:  # Then it is the auth_uri_callback()'s job to inform the user
+                    auth_uri_callback(_uri)
+
         self._server.success_template = Template(success_template or
             "Authentication completed. You can close this window now.")
         self._server.error_template = Template(error_template or
