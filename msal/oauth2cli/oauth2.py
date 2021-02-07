@@ -580,6 +580,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             welcome_template=None,
             success_template=None,
             auth_params=None,
+            auth_uri_callback=None,
             **kwargs):
         """A native app can use this method to obtain token via a local browser.
 
@@ -637,6 +638,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                     timeout=timeout,
                     welcome_template=welcome_template,
                     success_template=success_template,
+                    auth_uri_callback=auth_uri_callback,
                     )
         except PermissionError:
             if 0 < listen_port < 1024:
