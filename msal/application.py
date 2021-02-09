@@ -21,7 +21,7 @@ from .token_cache import TokenCache
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,9 @@ CLIENT_REQUEST_ID = 'client-request-id'
 CLIENT_CURRENT_TELEMETRY = 'x-client-current-telemetry'
 
 def _get_new_correlation_id():
-    return str(uuid.uuid4())
+    correlation_id = str(uuid.uuid4())
+    logger.debug("Generates correlation_id: %s", correlation_id)
+    return correlation_id
 
 
 def _build_current_telemetry_request_header(public_api_id, force_refresh=False):
@@ -439,16 +441,20 @@ class ClientApplication(object):
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id,
             http_client=self.http_client)
-        return client.build_auth_request_uri(
-            response_type=response_type,
-            redirect_uri=redirect_uri, state=state, login_hint=login_hint,
-            prompt=prompt,
-            scope=decorate_scope(scopes, self.client_id),
-            nonce=nonce,
-            domain_hint=domain_hint,
-            claims=_merge_claims_challenge_and_capabilities(
-                self._client_capabilities, claims_challenge),
-            )
+        warnings.warn(
+            "Change your get_authorization_request_url() "
+            "to initiate_auth_code_flow()", DeprecationWarning)
+        with warnings.catch_warnings(record=True):
+            return client.build_auth_request_uri(
+                response_type=response_type,
+                redirect_uri=redirect_uri, state=state, login_hint=login_hint,
+                prompt=prompt,
+                scope=decorate_scope(scopes, self.client_id),
+                nonce=nonce,
+                domain_hint=domain_hint,
+                claims=_merge_claims_challenge_and_capabilities(
+                    self._client_capabilities, claims_challenge),
+                )
 
     def acquire_token_by_auth_code_flow(
             self, auth_code_flow, auth_response, scopes=None, **kwargs):
@@ -570,20 +576,24 @@ class ClientApplication(object):
         # really empty.
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        return self.client.obtain_token_by_authorization_code(
-            code, redirect_uri=redirect_uri,
-            scope=decorate_scope(scopes, self.client_id),
-            headers={
-                CLIENT_REQUEST_ID: _get_new_correlation_id(),
-                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                    self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
-                },
-            data=dict(
-                kwargs.pop("data", {}),
-                claims=_merge_claims_challenge_and_capabilities(
-                    self._client_capabilities, claims_challenge)),
-            nonce=nonce,
-            **kwargs)
+        warnings.warn(
+            "Change your acquire_token_by_authorization_code() "
+            "to acquire_token_by_auth_code_flow()", DeprecationWarning)
+        with warnings.catch_warnings(record=True):
+            return self.client.obtain_token_by_authorization_code(
+                code, redirect_uri=redirect_uri,
+                scope=decorate_scope(scopes, self.client_id),
+                headers={
+                    CLIENT_REQUEST_ID: _get_new_correlation_id(),
+                    CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
+                        self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
+                    },
+                data=dict(
+                    kwargs.pop("data", {}),
+                    claims=_merge_claims_challenge_and_capabilities(
+                        self._client_capabilities, claims_challenge)),
+                nonce=nonce,
+                **kwargs)
 
     def get_accounts(self, username=None):
         """Get a list of accounts which previously signed in, i.e. exists in cache.
@@ -942,7 +952,7 @@ class ClientApplication(object):
                     "you must include a string parameter named 'key_id' "
                     "which identifies the key in the 'req_cnf' argument.")
 
-    def acquire_token_by_refresh_token(self, refresh_token, scopes):
+    def acquire_token_by_refresh_token(self, refresh_token, scopes, **kwargs):
         """Acquire token(s) based on a refresh token (RT) obtained from elsewhere.
 
         You use this method only when you have old RTs from elsewhere,
@@ -965,6 +975,7 @@ class ClientApplication(object):
             * A dict contains "error" and some other keys, when error happened.
             * A dict contains no "error" key means migration was successful.
         """
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         return self.client.obtain_token_by_refresh_token(
             refresh_token,
             scope=decorate_scope(scopes, self.client_id),
@@ -976,7 +987,7 @@ class ClientApplication(object):
             rt_getter=lambda rt: rt,
             on_updating_rt=False,
             on_removing_rt=lambda rt_item: None,  # No OP
-            )
+            **kwargs)
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
@@ -1233,6 +1244,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
+        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         return self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
@@ -1294,4 +1306,3 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID),
                 },
             **kwargs)
-

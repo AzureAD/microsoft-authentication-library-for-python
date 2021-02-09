@@ -99,8 +99,8 @@ class BaseClient(object):
             client_secret (str):  Triggers HTTP AUTH for Confidential Client
             client_assertion (bytes, callable):
                 The client assertion to authenticate this client, per RFC 7521.
-                It can be a raw SAML2 assertion (this method will encode it for you),
-                or a raw JWT assertion.
+                It can be a raw SAML2 assertion (we will base64 encode it for you),
+                or a raw JWT assertion in bytes (which we will relay to http layer).
                 It can also be a callable (recommended),
                 so that we will do lazy creation of an assertion.
             client_assertion_type (str):
@@ -198,7 +198,9 @@ class BaseClient(object):
                     self.default_body["client_assertion_type"], lambda a: a)
             _data["client_assertion"] = encoder(
                 self.client_assertion()  # Do lazy on-the-fly computation
-                if callable(self.client_assertion) else self.client_assertion)
+                if callable(self.client_assertion) else self.client_assertion
+                )   # The type is bytes, which is preferrable. See also:
+                    # https://github.com/psf/requests/issues/4503#issuecomment-455001070
 
         _data.update(self.default_body)  # It may contain authen parameters
         _data.update(data or {})  # So the content in data param prevails
@@ -578,6 +580,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             welcome_template=None,
             success_template=None,
             auth_params=None,
+            auth_uri_callback=None,
             **kwargs):
         """A native app can use this method to obtain token via a local browser.
 
@@ -635,6 +638,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                     timeout=timeout,
                     welcome_template=welcome_template,
                     success_template=success_template,
+                    auth_uri_callback=auth_uri_callback,
                     )
         except PermissionError:
             if 0 < listen_port < 1024:

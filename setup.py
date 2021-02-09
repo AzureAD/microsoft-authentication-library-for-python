@@ -73,7 +73,7 @@ setup(
         # See https://stackoverflow.com/a/14211600/728675 for more detail
     install_requires=[
         'requests>=2.0.0,<3',
-        'PyJWT[crypto]>=1.0.0,<2',
+        'PyJWT[crypto]>=1.0.0,<3',
 
         'cryptography>=0.6,<4',
             # load_pem_private_key() is available since 0.6
