@@ -822,6 +822,7 @@ class ClientApplication(object):
             force_refresh=False,  # type: Optional[boolean]
             claims_challenge=None,
             **kwargs):
+        access_token_from_cache = None
         if not (force_refresh or claims_challenge):  # Bypass AT when desired or using claims
             query={
                     "client_id": self.client_id,
@@ -839,17 +840,27 @@ class ClientApplication(object):
             now = time.time()
             for entry in matches:
                 expires_in = int(entry["expires_on"]) - now
-                if expires_in < 5*60:
+                if expires_in < 5*60:  # Then consider it expired
                     continue  # Removal is not necessary, it will be overwritten
                 logger.debug("Cache hit an AT")
-                return {  # Mimic a real response
+                access_token_from_cache = {  # Mimic a real response
                     "access_token": entry["secret"],
                     "token_type": entry.get("token_type", "Bearer"),
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
-        return self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
+                if "refresh_on" in entry and int(entry["refresh_on"]) < now:  # aging
+                    break  # With a fallback in hand, we break here to go refresh
+                return access_token_from_cache  # It is still good as new
+        try:
+            result = self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, decorate_scope(scopes, self.client_id), account,
                 force_refresh=force_refresh, claims_challenge=claims_challenge, **kwargs)
+            if (result and "error" not in result) or (not access_token_from_cache):
+                return result
+        except:  # The exact HTTP exception is transportation-layer dependent
+            logger.exception("Refresh token failed")  # Potential AAD outage?
+        return access_token_from_cache
+
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self, authority, scopes, account, **kwargs):
