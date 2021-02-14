@@ -23,8 +23,14 @@ def _get_app_and_auth_code(
         scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
         **kwargs):
     from msal.oauth2cli.authcode import obtain_auth_code
-    app = msal.ClientApplication(
-        client_id, client_secret, authority=authority, http_client=MinimalHttpClient())
+    if client_secret:
+        app = msal.ConfidentialClientApplication(
+            client_id,
+            client_credential=client_secret,
+            authority=authority, http_client=MinimalHttpClient())
+    else:
+        app = msal.PublicClientApplication(
+            client_id, authority=authority, http_client=MinimalHttpClient())
     redirect_uri = "http://localhost:%d" % port
     ac = obtain_auth_code(port, auth_uri=app.get_authorization_request_url(
         scopes, redirect_uri=redirect_uri, **kwargs))
