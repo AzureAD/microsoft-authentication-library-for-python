@@ -1013,6 +1013,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             **kwargs):
         """Acquire token interactively i.e. via a local browser.
 
+        Prerequisite: In Azure Portal, configure the Redirect URI of your
+        "Mobile and Desktop application" as ``http://localhost``.
+
         :param list scope:
             It is a list of case-sensitive strings.
         :param str prompt:
