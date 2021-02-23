@@ -170,6 +170,9 @@ class TokenCache(object):
                     }
                 if data.get("key_id"):  # It happens in SSH-cert or POP scenario
                     at["key_id"] = data.get("key_id")
+                if "refresh_in" in response:
+                    refresh_in = response["refresh_in"]  # It is an integer
+                    at["refresh_on"] = str(now + refresh_in)  # Schema wants a string
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
             if client_info and not event.get("skip_account_creation"):
