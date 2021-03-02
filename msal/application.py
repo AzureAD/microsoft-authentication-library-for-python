@@ -926,12 +926,9 @@ class ClientApplication(object):
             logger.debug("Cache attempts an RT")
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
-                on_removing_rt=(rt_remover or self.token_cache.remove_rt)
-                    if  # we can remove a RT when a single scope is an exact match
-                        len(scopes) == 1
-                        and set(entry.get("target", "").split()) <= set(scopes)
-                    else  # otherwise keep the RT as it might work for a subset of scopes
-                        lambda rt_item: None,  # No OP
+                on_removing_rt=lambda rt_item: None,  # Disable RT removal,
+                    # because an invalid_grant could be caused by new MFA policy,
+                    # the RT could still be useful for other MFA-less scope or tenant
                 on_obtaining_tokens=lambda event: self.token_cache.add(dict(
                     event,
                     environment=authority.instance,
