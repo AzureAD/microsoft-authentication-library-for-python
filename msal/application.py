@@ -918,11 +918,20 @@ class ClientApplication(object):
         client = self._build_client(self.client_credential, authority)
 
         response = None  # A distinguishable value to mean cache is empty
-        for entry in matches:
+        for entry in sorted(  # Since unfit RTs would not be aggressively removed,
+                              # we start from newer RTs which are more likely fit.
+                matches,
+                key=lambda e: int(e.get("last_modification_time", "0")),
+                reverse=True):
             logger.debug("Cache attempts an RT")
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
-                on_removing_rt=rt_remover or self.token_cache.remove_rt,
+                on_removing_rt=(rt_remover or self.token_cache.remove_rt)
+                    if  # we can remove a RT when a single scope is an exact match
+                        len(scopes) == 1
+                        and set(entry.get("target", "").split()) <= set(scopes)
+                    else  # otherwise keep the RT as it might work for a subset of scopes
+                        lambda rt_item: None,  # No OP
                 on_obtaining_tokens=lambda event: self.token_cache.add(dict(
                     event,
                     environment=authority.instance,
