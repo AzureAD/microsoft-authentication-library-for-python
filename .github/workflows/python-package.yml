@@ -8,6 +8,9 @@ on:
   pull_request:
     branches: [ dev ]
 
+    # This guards against unknown PR until a community member vet it and label it.
+    types: [ labeled ]
+
 jobs:
   ci:
     env:
