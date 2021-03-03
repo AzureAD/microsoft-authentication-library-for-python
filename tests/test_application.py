@@ -73,8 +73,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
             self.client_id, authority=self.authority_url, token_cache=self.cache)
 
     def test_cache_empty_will_be_returned_as_None(self):
-        self.assertEqual(
-            None, self.app.acquire_token_silent(['cache_miss'], self.account))
+        self.app.token_cache = msal.SerializableTokenCache()  # Reset it to empty
         self.assertEqual(
             None, self.app.acquire_token_silent_with_error(['cache_miss'], self.account))
 
