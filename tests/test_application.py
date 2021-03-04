@@ -353,19 +353,23 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         # a.k.a. Return unexpired token that is not above token refresh expiration threshold
         access_token = "An access token prepopulated into cache"
         self.populate_cache(access_token=access_token, expires_in=900, refresh_in=450)
-        self.assertEqual(
-            access_token,
-            self.app.acquire_token_silent(['s1'], self.account).get("access_token"))
+        result = self.app.acquire_token_silent(['s1'], self.account)
+        self.assertEqual(access_token, result.get("access_token"))
+        self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
 
     def test_aging_token_and_available_aad_should_return_new_token(self):
         # a.k.a. Attempt to refresh unexpired token when AAD available
         self.populate_cache(access_token="old AT", expires_in=3599, refresh_in=-1)
         new_access_token = "new AT"
-        self.app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family = (
-            lambda *args, **kwargs: {"access_token": new_access_token})
-        self.assertEqual(
-            new_access_token,
-            self.app.acquire_token_silent(['s1'], self.account).get("access_token"))
+        def mock_post(*args, **kwargs):
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": new_access_token,
+                "refresh_in": 123,
+                }))
+        self.app.http_client.post = mock_post
+        result = self.app.acquire_token_silent(['s1'], self.account)
+        self.assertEqual(new_access_token, result.get("access_token"))
+        self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
 
     def test_aging_token_and_unavailable_aad_should_return_old_token(self):
         # a.k.a. Attempt refresh unexpired token when AAD unavailable
@@ -392,9 +396,13 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         # a.k.a. Attempt refresh expired token when AAD available
         self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
         new_access_token = "new AT"
-        self.app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family = (
-            lambda *args, **kwargs: {"access_token": new_access_token})
-        self.assertEqual(
-            new_access_token,
-            self.app.acquire_token_silent(['s1'], self.account).get("access_token"))
+        def mock_post(*args, **kwargs):
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": new_access_token,
+                "refresh_in": 123,
+                }))
+        self.app.http_client.post = mock_post
+        result = self.app.acquire_token_silent(['s1'], self.account)
+        self.assertEqual(new_access_token, result.get("access_token"))
+        self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
 
