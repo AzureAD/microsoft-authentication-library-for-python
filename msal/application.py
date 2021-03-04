@@ -100,6 +100,12 @@ def _str2bytes(raw):
         return raw
 
 
+def _clean_up(result):
+    if isinstance(result, dict):
+        result.pop("refresh_in", None)  # MSAL handled refresh_in, customers need not
+    return result
+
+
 class ClientApplication(object):
 
     ACQUIRE_TOKEN_SILENT_ID = "84"
@@ -507,7 +513,7 @@ class ClientApplication(object):
                     return redirect(url_for("index"))
         """
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        return self.client.obtain_token_by_auth_code_flow(
+        return _clean_up(self.client.obtain_token_by_auth_code_flow(
             auth_code_flow,
             auth_response,
             scope=decorate_scope(scopes, self.client_id) if scopes else None,
@@ -521,7 +527,7 @@ class ClientApplication(object):
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities,
                     auth_code_flow.pop("claims_challenge", None))),
-            **kwargs)
+            **kwargs))
 
     def acquire_token_by_authorization_code(
             self,
@@ -580,7 +586,7 @@ class ClientApplication(object):
             "Change your acquire_token_by_authorization_code() "
             "to acquire_token_by_auth_code_flow()", DeprecationWarning)
         with warnings.catch_warnings(record=True):
-            return self.client.obtain_token_by_authorization_code(
+            return _clean_up(self.client.obtain_token_by_authorization_code(
                 code, redirect_uri=redirect_uri,
                 scope=decorate_scope(scopes, self.client_id),
                 headers={
@@ -593,7 +599,7 @@ class ClientApplication(object):
                     claims=_merge_claims_challenge_and_capabilities(
                         self._client_capabilities, claims_challenge)),
                 nonce=nonce,
-                **kwargs)
+                **kwargs))
 
     def get_accounts(self, username=None):
         """Get a list of accounts which previously signed in, i.e. exists in cache.
@@ -855,12 +861,12 @@ class ClientApplication(object):
             result = self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, decorate_scope(scopes, self.client_id), account,
                 force_refresh=force_refresh, claims_challenge=claims_challenge, **kwargs)
+            result = _clean_up(result)
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
         except:  # The exact HTTP exception is transportation-layer dependent
             logger.exception("Refresh token failed")  # Potential AAD outage?
         return access_token_from_cache
-
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self, authority, scopes, account, **kwargs):
@@ -993,7 +999,7 @@ class ClientApplication(object):
             * A dict contains no "error" key means migration was successful.
         """
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        return self.client.obtain_token_by_refresh_token(
+        return _clean_up(self.client.obtain_token_by_refresh_token(
             refresh_token,
             scope=decorate_scope(scopes, self.client_id),
             headers={
@@ -1004,7 +1010,7 @@ class ClientApplication(object):
             rt_getter=lambda rt: rt,
             on_updating_rt=False,
             on_removing_rt=lambda rt_item: None,  # No OP
-            **kwargs)
+            **kwargs))
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
@@ -1081,7 +1087,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         claims = _merge_claims_challenge_and_capabilities(
             self._client_capabilities, claims_challenge)
-        return self.client.obtain_token_by_browser(
+        return _clean_up(self.client.obtain_token_by_browser(
             scope=decorate_scope(scopes, self.client_id) if scopes else None,
             extra_scope_to_consent=extra_scopes_to_consent,
             redirect_uri="http://localhost:{port}".format(
@@ -1100,7 +1106,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_INTERACTIVE),
                 },
-            **kwargs)
+            **kwargs))
 
     def initiate_device_flow(self, scopes=None, **kwargs):
         """Initiate a Device Flow instance,
@@ -1143,7 +1149,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        return self.client.obtain_token_by_device_flow(
+        return _clean_up(self.client.obtain_token_by_device_flow(
             flow,
             data=dict(
                 kwargs.pop("data", {}),
@@ -1159,7 +1165,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID),
                 },
-            **kwargs)
+            **kwargs))
 
     def acquire_token_by_username_password(
             self, username, password, scopes, claims_challenge=None, **kwargs):
@@ -1197,15 +1203,15 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[CLIENT_REQUEST_ID])
             if user_realm_result.get("account_type") == "Federated":
-                return self._acquire_token_by_username_password_federated(
+                return _clean_up(self._acquire_token_by_username_password_federated(
                     user_realm_result, username, password, scopes=scopes,
                     data=data,
-                    headers=headers, **kwargs)
-        return self.client.obtain_token_by_username_password(
+                    headers=headers, **kwargs))
+        return _clean_up(self.client.obtain_token_by_username_password(
                 username, password, scope=scopes,
                 headers=headers,
                 data=data,
-                **kwargs)
+                **kwargs))
 
     def _acquire_token_by_username_password_federated(
             self, user_realm_result, username, password, scopes=None, **kwargs):
@@ -1265,7 +1271,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # TBD: force_refresh behavior
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        return self.client.obtain_token_for_client(
+        return _clean_up(self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers={
                 CLIENT_REQUEST_ID: _get_new_correlation_id(),
@@ -1276,7 +1282,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 kwargs.pop("data", {}),
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
-            **kwargs)
+            **kwargs))
 
     def acquire_token_on_behalf_of(self, user_assertion, scopes, claims_challenge=None, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
@@ -1306,7 +1312,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
-        return self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
+        return _clean_up(self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
             scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
@@ -1325,4 +1331,4 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
                     self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID),
                 },
-            **kwargs)
+            **kwargs))
