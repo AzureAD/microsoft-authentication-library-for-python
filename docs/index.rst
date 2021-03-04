@@ -28,14 +28,6 @@ MSAL proposes a clean separation between
 They are implemented as two separated classes,
 with different methods for different authentication scenarios.
 
-ClientApplication
------------------------
-
-.. autoclass:: msal.ClientApplication
-   :members:
-   :inherited-members:
-
-
 PublicClientApplication
 -----------------------
 
