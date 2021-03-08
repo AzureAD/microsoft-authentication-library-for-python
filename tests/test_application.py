@@ -73,8 +73,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
             self.client_id, authority=self.authority_url, token_cache=self.cache)
 
     def test_cache_empty_will_be_returned_as_None(self):
-        self.assertEqual(
-            None, self.app.acquire_token_silent(['cache_miss'], self.account))
+        self.app.token_cache = msal.SerializableTokenCache()  # Reset it to empty
         self.assertEqual(
             None, self.app.acquire_token_silent_with_error(['cache_miss'], self.account))
 
@@ -319,3 +318,91 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
 
     def test_both_claims_and_capabilities_none(self):
         self.assertEqual(_merge_claims_challenge_and_capabilities(None, None), None)
+
+
+class TestApplicationForRefreshInBehaviors(unittest.TestCase):
+    """The following test cases were based on design doc here
+    https://identitydivision.visualstudio.com/DevEx/_git/AuthLibrariesApiReview?path=%2FRefreshAtExpirationPercentage%2Foverview.md&version=GBdev&_a=preview&anchor=scenarios
+    """
+    def setUp(self):
+        self.authority_url = "https://login.microsoftonline.com/common"
+        self.authority = msal.authority.Authority(
+            self.authority_url, MinimalHttpClient())
+        self.scopes = ["s1", "s2"]
+        self.uid = "my_uid"
+        self.utid = "my_utid"
+        self.account = {"home_account_id": "{}.{}".format(self.uid, self.utid)}
+        self.rt = "this is a rt"
+        self.cache = msal.SerializableTokenCache()
+        self.client_id = "my_app"
+        self.app = ClientApplication(
+            self.client_id, authority=self.authority_url, token_cache=self.cache)
+
+    def populate_cache(self, access_token="at", expires_in=86400, refresh_in=43200):
+        self.cache.add({
+            "client_id": self.client_id,
+            "scope": self.scopes,
+            "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
+            "response": TokenCacheTestCase.build_response(
+                access_token=access_token,
+                expires_in=expires_in, refresh_in=refresh_in,
+                uid=self.uid, utid=self.utid, refresh_token=self.rt),
+            })
+
+    def test_fresh_token_should_be_returned_from_cache(self):
+        # a.k.a. Return unexpired token that is not above token refresh expiration threshold
+        access_token = "An access token prepopulated into cache"
+        self.populate_cache(access_token=access_token, expires_in=900, refresh_in=450)
+        result = self.app.acquire_token_silent(['s1'], self.account)
+        self.assertEqual(access_token, result.get("access_token"))
+        self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+
+    def test_aging_token_and_available_aad_should_return_new_token(self):
+        # a.k.a. Attempt to refresh unexpired token when AAD available
+        self.populate_cache(access_token="old AT", expires_in=3599, refresh_in=-1)
+        new_access_token = "new AT"
+        def mock_post(*args, **kwargs):
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": new_access_token,
+                "refresh_in": 123,
+                }))
+        self.app.http_client.post = mock_post
+        result = self.app.acquire_token_silent(['s1'], self.account)
+        self.assertEqual(new_access_token, result.get("access_token"))
+        self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+
+    def test_aging_token_and_unavailable_aad_should_return_old_token(self):
+        # a.k.a. Attempt refresh unexpired token when AAD unavailable
+        old_at = "old AT"
+        self.populate_cache(access_token=old_at, expires_in=3599, refresh_in=-1)
+        self.app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family = (
+            lambda *args, **kwargs: {"error": "sth went wrong"})
+        self.assertEqual(
+            old_at,
+            self.app.acquire_token_silent(['s1'], self.account).get("access_token"))
+
+    def test_expired_token_and_unavailable_aad_should_return_error(self):
+        # a.k.a. Attempt refresh expired token when AAD unavailable
+        self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
+        error = "something went wrong"
+        self.app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family = (
+            lambda *args, **kwargs: {"error": error})
+        self.assertEqual(
+            error,
+            self.app.acquire_token_silent_with_error(  # This variant preserves error
+                ['s1'], self.account).get("error"))
+
+    def test_expired_token_and_available_aad_should_return_new_token(self):
+        # a.k.a. Attempt refresh expired token when AAD available
+        self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
+        new_access_token = "new AT"
+        def mock_post(*args, **kwargs):
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": new_access_token,
+                "refresh_in": 123,
+                }))
+        self.app.http_client.post = mock_post
+        result = self.app.acquire_token_silent(['s1'], self.account)
+        self.assertEqual(new_access_token, result.get("access_token"))
+        self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+

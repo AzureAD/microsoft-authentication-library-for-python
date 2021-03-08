@@ -148,9 +148,9 @@ class TokenCache(object):
         target = ' '.join(event.get("scope", []))  # Per schema, we don't sort it
 
         with self._lock:
+            now = int(time.time() if now is None else now)
 
             if access_token:
-                now = int(time.time() if now is None else now)
                 expires_in = int(  # AADv1-like endpoint returns a string
 			response.get("expires_in", 3599))
                 ext_expires_in = int(  # AADv1-like endpoint returns a string
@@ -170,6 +170,9 @@ class TokenCache(object):
                     }
                 if data.get("key_id"):  # It happens in SSH-cert or POP scenario
                     at["key_id"] = data.get("key_id")
+                if "refresh_in" in response:
+                    refresh_in = response["refresh_in"]  # It is an integer
+                    at["refresh_on"] = str(now + refresh_in)  # Schema wants a string
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
             if client_info and not event.get("skip_account_creation"):
@@ -209,6 +212,7 @@ class TokenCache(object):
                     "environment": environment,
                     "client_id": event.get("client_id"),
                     "target": target,  # Optional per schema though
+                    "last_modification_time": str(now),  # Optional. Schema defines it as a string.
                     }
                 if "foci" in response:
                     rt["family_id"] = response["foci"]
@@ -246,8 +250,10 @@ class TokenCache(object):
 
     def update_rt(self, rt_item, new_rt):
         assert rt_item.get("credential_type") == self.CredentialType.REFRESH_TOKEN
-        return self.modify(
-            self.CredentialType.REFRESH_TOKEN, rt_item, {"secret": new_rt})
+        return self.modify(self.CredentialType.REFRESH_TOKEN, rt_item, {
+            "secret": new_rt,
+            "last_modification_time": str(int(time.time())),  # Optional. Schema defines it as a string.
+            })
 
     def remove_at(self, at_item):
         assert at_item.get("credential_type") == self.CredentialType.ACCESS_TOKEN
