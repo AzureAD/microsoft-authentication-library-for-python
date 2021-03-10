@@ -325,7 +325,7 @@ class ClientApplication(object):
         you can use :func:`~acquire_token_by_auth_code_flow()`
         to complete the authentication/authorization.
 
-        :param list scope:
+        :param list scopes:
             It is a list of case-sensitive strings.
         :param str redirect_uri:
             Optional. If not specified, server will use the pre-registered one.
@@ -1039,7 +1039,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         Prerequisite: In Azure Portal, configure the Redirect URI of your
         "Mobile and Desktop application" as ``http://localhost``.
 
-        :param list scope:
+        :param list scopes:
             It is a list of case-sensitive strings.
         :param str prompt:
             By default, no prompt value will be sent, not even "none".
