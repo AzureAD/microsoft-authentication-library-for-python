@@ -102,10 +102,12 @@ class E2eTestCase(unittest.TestCase):
 
     def _test_username_password(self,
             authority=None, client_id=None, username=None, password=None, scope=None,
+            client_secret=None,  # Since MSAL 1.11, confidential client has ROPC too
             **ignored):
         assert authority and client_id and username and password and scope
-        self.app = msal.PublicClientApplication(
-            client_id, authority=authority, http_client=MinimalHttpClient())
+        self.app = msal.ClientApplication(
+            client_id, authority=authority, http_client=MinimalHttpClient(),
+            client_credential=client_secret)
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
         self.assertLoosely(result)
@@ -649,6 +651,34 @@ class WorldWideTestCase(LabBasedTestCase):
         config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
 
         self._test_acquire_token_obo(config_pca, config_cca)
+
+    def test_acquire_token_by_client_secret(self):
+        # This is copied from ArlingtonCloudTestCase's same test case
+        try:
+            config = self.get_lab_user(usertype="cloud", publicClient="no")
+        except requests.exceptions.HTTPError:
+            self.skipTest("The lab does not provide confidential app for testing")
+        else:
+            config["client_secret"] = self.get_lab_user_secret("TBD")  # TODO
+            self._test_acquire_token_by_client_secret(**config)
+
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CLIENT_SECRET"),
+        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+    def test_confidential_client_acquire_token_by_username_password(self):
+        # This approach won't work:
+        #       config = self.get_lab_user(usertype="cloud", publicClient="no")
+        # so we repurpose the obo confidential app to test ROPC
+        config = self.get_lab_user(usertype="cloud")
+        config["password"] = self.get_lab_user_secret(config["lab_name"])
+        # Swap in the OBO confidential app
+        config["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
+        config["scope"] = ["https://graph.microsoft.com/.default"]
+        config["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+        self._test_username_password(**config)
 
     def _build_b2c_authority(self, policy):
         base = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com"
