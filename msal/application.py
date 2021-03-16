@@ -241,6 +241,13 @@ class ClientApplication(object):
             # But you can patch that (https://github.com/psf/requests/issues/3341):
             self.http_client.request = functools.partial(
                 self.http_client.request, timeout=timeout)
+
+            # Enable a minimal retry. Better than nothing.
+            # https://github.com/psf/requests/blob/v2.25.1/requests/adapters.py#L94-L108
+            a = requests.adapters.HTTPAdapter(max_retries=1)
+            self.http_client.mount("http://", a)
+            self.http_client.mount("https://", a)
+
         self.app_name = app_name
         self.app_version = app_version
         self.authority = Authority(
