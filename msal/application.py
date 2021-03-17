@@ -1080,8 +1080,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
         :return:
             - A dict containing no "error" key,
-              and typically contains an "access_token" key,
-              if cache lookup succeeded.
+              and typically contains an "access_token" key.
             - A dict containing an "error" key, when token refresh failed.
         """
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
