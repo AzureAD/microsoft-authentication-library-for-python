@@ -5,6 +5,14 @@ import random
 import string
 import warnings
 import hashlib
+try:
+    from functools import lru_cache
+except:
+    def lru_cache():
+        def dummy_decorator(func):
+            return func
+        return dummy_decorator
+
 
 from . import oauth2
 
@@ -32,51 +40,115 @@ def decode_part(raw, encoding="utf-8"):
 
 base64decode = decode_part  # Obsolete. For backward compatibility only.
 
-def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None):
-    """Decodes and validates an id_token and returns its claims as a dictionary.
+
+def decode_id_token(
+        id_token, audiences=None, issuer=None, nonce=None,
+        keys=None, algorithms=None,
+        _now=None,  # Only for unit testing purpose
+        _keys_cache={},  # Mutable dict used as an internal cache for this function
+        client_id=None,  # Backward compatibility. Use audiences instead.
+        ):
+    """Decode and validate an id_token, return claims as a dictionary.
+
+    This method is a lower level helper. You don't normally need to use this.
+    Use this method :class:`oidc.Client.decode_id_token` instead.
+
+    This method uses keyword-parameters, to allow arbitrary parameter order.
 
     ID token claims would at least contain: "iss", "sub", "aud", "exp", "iat",
     per `specs <https://openid.net/specs/openid-connect-core-1_0.html#IDToken>`_
     and it may contain other optional content such as "preferred_username",
     `maybe more <https://openid.net/specs/openid-connect-core-1_0.html#Claims>`_
+
+    :param dict keys: A {"kid": JWK, ...} mapping.
+    :param list algorithms: Algorithms accepted by underlying JWT library.
     """
-    decoded = json.loads(decode_part(id_token.split('.')[1]))
-    err = None  # https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
-    _now = int(now or time.time())
-    skew = 120  # 2 minutes
+    # Based on https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
+
+    claims = json.loads(decode_part(id_token.split('.')[1]))
+
+    if client_id and not audiences:
+        warnings.warn("Use ``audiences=[client_id]`` instead", DeprecationWarning)
+        audiences = [client_id]
+
+    if audiences:  # Mismatching audience is a common error, so we check it first
+        assert "aud" in claims, '"aud" is a required claim per OIDC specs'
+        audiences_in_claim = set(claims["aud"]) if isinstance(
+            # The aud claim can contain a list of strings or a single string
+            # https://openid.net/specs/openid-connect-core-1_0.html#IDToken
+            claims["aud"], list) else set([claims["aud"]])
+        if not set(audiences) & audiences_in_claim:
+            raise ValueError(
+                "3. The aud claim ({}) and your expected audiences ({}) "
+                "should have intersection, case-sensitively. "
+                # Some IdP accepts wrong casing request but issues right casing IDT
+                "You should not attempt to decode/validate tokens "  # It is a FAQ
+                "that were not issued to your app.".format(claims["aud"], audiences))
+
+    if issuer and issuer != claims.get("iss"):  # "iss" is a required field,
+        # however this implementation allows caller to opt out of this check.
+        raise ValueError(
+            '2. The Issuer Identifier for the OpenID Provider, "{}", '
+            '(which is typically obtained during Discovery), '
+            'MUST exactly match the value of the iss (issuer) Claim, "{}".'
+            .format(issuer, claims.get("iss")))
+
+    if nonce and nonce != claims.get("nonce"):
+        raise ValueError(
+            "11. Nonce in token ({}) should match expected value ({})".format(
+            claims.get("nonce"), nonce))
+
+    _now = int(_now or time.time())
+    skew = 120  # in seconds
     TIME_SUGGESTION = "Make sure your computer's time and time zone are both correct."
-    if _now + skew < decoded.get("nbf", _now - 1):  # nbf is optional per JWT specs
+    if "nbf" in claims and _now + skew < claims["nbf"]:  # nbf is optional per JWT specs
         # This is not an ID token validation, but a JWT validation
         # https://tools.ietf.org/html/rfc7519#section-4.1.5
-        err = "0. The ID token is not yet valid. " + TIME_SUGGESTION
-    if issuer and issuer != decoded["iss"]:
-        # https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationResponse
-        err = ('2. The Issuer Identifier for the OpenID Provider, "%s", '
-            "(which is typically obtained during Discovery), "
-            "MUST exactly match the value of the iss (issuer) Claim.") % issuer
-    if client_id:
-        valid_aud = client_id in decoded["aud"] if isinstance(
-            decoded["aud"], list) else client_id == decoded["aud"]
-        if not valid_aud:
-            err = (
-                "3. The aud (audience) claim must contain this client's client_id "
-                '"%s", case-sensitively. Was your client_id in wrong casing?'
-                # Some IdP accepts wrong casing request but issues right casing IDT
-                ) % client_id
-    # Per specs:
-    # 6. If the ID Token is received via direct communication between
-    # the Client and the Token Endpoint (which it is during _obtain_token()),
-    # the TLS server validation MAY be used to validate the issuer
-    # in place of checking the token signature.
-    if _now - skew > decoded["exp"]:
-        err = "9. The ID token already expires. " + TIME_SUGGESTION
-    if nonce and nonce != decoded.get("nonce"):
-        err = ("11. Nonce must be the same value "
-            "as the one that was sent in the Authentication Request.")
-    if err:
-        raise RuntimeError("%s Current epoch = %s.  The id_token was: %s" % (
-            err, _now, json.dumps(decoded, indent=2)))
-    return decoded
+        raise ValueError("JWT (nbf={}) is not yet valid. {}".format(
+            claims["nbf"], TIME_SUGGESTION))
+    if not ("exp" in claims and _now - skew < claims["exp"]):
+        raise ValueError("9. Token expired at {}, current time is {}. {}".format(
+            claims.get("exp"), _now, TIME_SUGGESTION))
+
+    # We delay the signature validation to the end, so that those more common
+    # "aud" failure etc. won't be masked by a blanket "Invalid signature".
+    if keys and algorithms:
+        # We allow the signature validation to be optional.  Per specs:
+        # 6. If the ID Token is received via direct communication between
+        # the Client and the Token Endpoint (which it is during _obtain_token()),
+        # the TLS server validation MAY be used to validate the issuer
+        # in place of checking the token signature.
+        import jwt  # Lazy import. Run "pip install pyjwt[crypto]" to install.
+            # https://renzolucioni.com/verifying-jwts-with-jwks-and-pyjwt/
+            # String JWK since PyJWT 1.5.2 https://github.com/jpadilla/pyjwt/pull/202
+            # Dict JWK since PR 511 in PyJWT 2.0.0
+            # https://github.com/jpadilla/pyjwt/releases/tag/2.0.0
+            #
+            # Future Alternative:
+            # pip install python-jose, which supports JWK set of RFC7517
+            # https://github.com/mpdavis/python-jose/blob/3.2.0/jose/jws.py#L232-L238
+
+        # Pre-process keys into _key_cache for PyJWT. Not needed if we use python-jose
+        for kid, jwk in keys.items():
+            if kid not in _keys_cache:
+                _keys_cache[kid] = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+
+        # Choose the needed key
+        kid = json.loads(decode_part(id_token.split('.')[0])).get("kid")
+        if kid not in _keys_cache:
+            raise ValueError("Unknown kid: {}".format(kid))
+        key = _keys_cache[kid]
+
+        try:
+            jwt.decode(id_token, key, algorithms=algorithms, options={
+                "verify_aud": False,  # We will have flexible logic elsewhere
+                })
+        except jwt.InvalidAlgorithmError:
+            raise ValueError("Invalid algorithm. Run pip install pyjwt[crypto]")
+        except jwt.InvalidSignatureError:
+            raise ValueError("Invalid signature")
+
+    return claims
 
 
 def _nonce_hash(nonce):
@@ -103,11 +175,41 @@ class Client(oauth2.Client):
     See its specs at https://openid.net/connect/
     """
 
-    def decode_id_token(self, id_token, nonce=None):
-        """See :func:`~decode_id_token`."""
+    @lru_cache()
+    def _get_jwks(self, ttl_hash=None):
+        """Return {kid: jwk} of current IdP"""
+        del ttl_hash  # Learned from https://stackoverflow.com/a/55900800/728675
+        return {key["kid"]: key for key in json.loads(
+            self._http_client.get(self.configuration["jwks_uri"]).text)["keys"]}
+
+    def decode_id_token(self, id_token, audiences=None, issuer=None):
+        """Decode and validate ID token, also validate its signature.
+
+        You do *not* need to use this method
+        to validate ID token obtained freshly by any other methods of this class.
+        Those methods already validate ID token for you.
+
+        You only need to use this method on ID tokens obtained from elsewhere.
+
+        :param audiences:
+            By default, we validate id token's aud claim containing client_id.
+            In rare case that your IdP would issue an alias in the aud claim,
+            the caller would need to either provide all the aliases here,
+            or use an empty list to disable this check.
+        """
+        assert "jwks_uri" in self.configuration, "Required field in OIDC Discovery"
+        assert "id_token_signing_alg_values_supported" in self.configuration
+        assert "issuer" in self.configuration, "Required field in OIDC Discovery"
         return decode_id_token(
-            id_token, nonce=nonce,
-            client_id=self.client_id, issuer=self.configuration.get("issuer"))
+            id_token,
+            audiences=audiences or [self.client_id],
+            issuer=issuer or self.configuration["issuer"],
+            keys=self._get_jwks(
+                # Although the specs mentions verifier to do on-demand key loading
+                # https://openid.net/specs/openid-connect-core-1_0.html#RotateEncKeys
+                # We do periodic update, good enough assuming IdP allows lead time.
+                ttl_hash=int(time.time() / 3600)),  # Hourly update
+            algorithms=self.configuration["id_token_signing_alg_values_supported"])
 
     def _obtain_token(self, grant_type, *args, **kwargs):
         """The result will also contain one more key "id_token_claims",
@@ -115,7 +217,8 @@ class Client(oauth2.Client):
         """
         ret = super(Client, self)._obtain_token(grant_type, *args, **kwargs)
         if "id_token" in ret:
-            ret["id_token_claims"] = self.decode_id_token(ret["id_token"])
+            # Does not need to validate a fresh ID token's signature or audience
+            ret["id_token_claims"] = decode_id_token(ret["id_token"])
         return ret
 
     def build_auth_request_uri(self, response_type, nonce=None, **kwargs):

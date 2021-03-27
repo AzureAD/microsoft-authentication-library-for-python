@@ -132,9 +132,12 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
             Authority._domains_without_user_realm_discovery = set([])
 
 
-@patch("msal.authority.tenant_discovery", return_value={
+@patch("msal.authority.tenant_discovery", return_value={  # OIDC Discovery specs
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com",
+    "id_token_signing_alg_values_supported": ["RS256"],
+    "jwks_uri": "https://contoso.com/keys",
     })
 @patch("msal.authority._instance_discovery")
 @patch.object(msal.ClientApplication, "_get_instance_metadata", return_value=[])

@@ -679,6 +679,10 @@ class ClientApplication(object):
             "device_authorization_endpoint":
                 authority.device_authorization_endpoint or
                 urljoin(authority.token_endpoint, "devicecode"),
+            "issuer": authority._issuer,
+            "id_token_signing_alg_values_supported":
+                authority._id_token_signing_alg_values_supported,
+            "jwks_uri": authority._jwks_uri,
             }
         central_client = _ClientWithCcsRoutingInfo(
             central_configuration,
@@ -1663,6 +1667,105 @@ class ClientApplication(object):
                 username=username,  # Useful in case IDT contains no such info
                 )),
             **kwargs)
+
+    ACR_PUBLIC_CLIENT = "0"
+    ACR_CONFIDENTIAL_CLIENT_WITH_SECRET = "1"
+    ACR_CONFIDENTIAL_CLIENT_WITH_CERTIFICATE = "2"
+    def decode_bearer_token(
+            self,
+            bearer_token,  # Although not advertised, this method can accept an IDT
+            scopes=None,  # If the bearer_token is an IDT, there won't be scp claims
+            tenant_id=None,
+            groups=None,
+            roles=None,
+            bearer=None,  # It is the bearer OF the token, represented as `azp` claim.
+                # a.k.a. Authorized party.  https://openid.net/specs/openid-connect-core-1_0.html
+                # a.k.a. the id of the app who obtained the token
+            bearer_auth_method_allowed=None,  # Indicates how the client was authenticated. For a public client, the value is "0". If client ID and client secret are used, the value is "1". If a client certificate was used for authentication, the value is "2"
+            user_auth_methods_allowed=None,  # TODO: Only in v1? What is counterpart in v2?
+                # a.k.a. amr in https://openid.net/specs/openid-connect-core-1_0.html
+                # Valid fields are defined
+                # https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens#the-amr-claim
+            audiences=None,
+            issuer=None,
+            ):
+        """Return validated claims from token as a dict.
+
+        Claims of Microsoft Access Token are defined in
+        `this doc <https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens#payload-claims>`_.
+        """
+        if not isinstance(self, ConfidentialClientApplication):
+            logger.warning(
+                "Conceptually, this decode_bearer_token() is meant to "
+                "be used in ConfidentialClientApplication only. "
+                "Not all apps should validate tokens. "
+                "Only in specific scenarios should apps validate a token. "
+                "https://learn.microsoft.com/en-us/azure/active-directory/develop/access-tokens#validate-tokens"
+                # However we implement it in base class because:
+                # 1. It is easier to test
+                # 2. Its implementation does not really need client_credential
+                )
+        claims = self.client.decode_id_token(
+            # MSFT AT claims https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens#payload-claims
+            # happens to be a superset of what an IDT validation needs
+            # https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
+            bearer_token,
+            audiences=audiences,
+            issuer=issuer,
+            )
+
+        consented_scopes = set(claims.get("scp", "").split())
+        unconsented_scopes = set(scopes or []) - consented_scopes
+        if unconsented_scopes:
+            raise ValueError(
+                'Required scope {} is not among consented scope {}'.format(
+                unconsented_scopes, consented_scopes))
+
+        user_roles = set(claims.get("roles", []))
+        unsatisfied_roles = set(roles or []) - user_roles
+        if unsatisfied_roles:
+            raise ValueError("Required role(s) {} not satisfied by user {}".format(
+                unsatisfied_roles, user_roles))
+
+        azp_field_name = {"1.0": "appid", "2.0": "azp"}.get(claims.get("ver"))
+        if bearer and bearer != claims.get(azp_field_name):
+            raise ValueError(
+                "The bearer {} (i.e. the client using the token) is not allowed"
+                .format(claims.get(azp_field_name)))
+
+        azpacr_field_name = {"1.0": "appidacr", "2.0": "azpacr"}.get(claims.get("ver"))
+        if bearer_auth_method_allowed and (
+            claims.get(azpacr_field_name) not in bearer_auth_method_allowed
+        ):
+            raise ValueError(
+                "Required authentication context reference (ACR) values {}, "
+                "but token contains {}".format(
+                bearer_auth_method_allowed, claims.get(azpacr_field_name)))
+
+        # TBD: Do we really need to check nonce?
+
+        if tenant_id and tenant_id != claims.get("tid"):
+            raise ValueError("Tenant {} is not allowed".format(claims.get("tid")))
+
+        user_auth_methods = set(claims.get("amr", []))
+        if user_auth_methods_allowed and not (
+                set(user_auth_methods_allowed) & user_auth_methods):
+            raise ValueError(  # TODO: ideally we should generate CA challenge. How?
+                "Required authentication method reference (AMR) values {}, "
+                "but token contains {}".format(
+                user_auth_methods_allowed, user_auth_methods))
+
+        if groups:
+            groups_in_claim = claims.get("groups", [])
+            if "groups:src1" in claims:
+                # TODO: https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens#payload-claims
+                pass
+            unsatisfied_groups = set(groups) - set(groups_in_claim)
+            if unsatisfied_groups:
+                raise ValueError("Required group(s) {} not satisfied in claim {}".format(
+                    unsatisfied_groups, groups_in_claim))
+
+        return claims
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app

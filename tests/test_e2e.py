@@ -643,6 +643,8 @@ class LabBasedTestCase(E2eTestCase):
             azure_region=None,  # Regional endpoint does not really support OBO.
                 # Here we just test regional apps won't adversely break OBO
             http_client=None,
+            audiences=None,
+            issuer=None,
             ):
         # 1. An app obtains a token representing a user, for our mid-tier service
         pca = msal.PublicClientApplication(
@@ -657,6 +659,10 @@ class LabBasedTestCase(E2eTestCase):
         self.assertIsNotNone(
             pca_result.get("access_token"),
             "PCA failed to get AT because %s" % json.dumps(pca_result, indent=2))
+        self.assertEqual(
+            # Here we are just unit-testing decode_bearer_token(). In reality,
+            # a public client should use id_token_claims instead of decode_bearer_token().
+            pca_result["id_token_claims"], pca.decode_bearer_token(pca_result["id_token"]))
 
         # 2. Our mid-tier service uses OBO to obtain a token for downstream service
         cca = msal.ConfidentialClientApplication(
@@ -669,6 +675,24 @@ class LabBasedTestCase(E2eTestCase):
                 # That's fine if OBO app uses short-lived msal instance per session.
                 # Otherwise, the OBO app need to implement a one-cache-per-user setup.
             )
+
+        claims = cca.decode_bearer_token(
+            pca_result["access_token"],
+            audiences=audiences,
+            issuer=issuer,
+            scopes=["user_impersonation"],  # Note: Can't use config_pca["scope"].
+                # The requested scope was in the form of "schema://resource/scope",
+                # the scopes in Access Token seems to be "scope" only.
+            tenant_id=config_cca["authority"].split("/")[-1],  # Hacky to get tenant
+            bearer=config_pca["client_id"],
+            #roles=["tester"],  # Lab's user account has no roles configured
+            #groups=["group1", "group2"],
+            bearer_auth_method_allowed=[
+                cca.ACR_PUBLIC_CLIENT, cca.ACR_CONFIDENTIAL_CLIENT_WITH_SECRET,
+                cca.ACR_CONFIDENTIAL_CLIENT_WITH_CERTIFICATE],
+            )
+        logger.debug("AT contains claims: {}".format(json.dumps(claims, indent=2)))
+
         cca_result = cca.acquire_token_on_behalf_of(
             pca_result['access_token'], config_cca["scope"])
         self.assertNotEqual(None, cca_result.get("access_token"), str(cca_result))
@@ -1031,7 +1055,17 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
         config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
         config_pca["scope"] = ["{app_uri}/files.read".format(app_uri=obo_app_object.get("identifierUris"))]
 
-        self._test_acquire_token_obo(config_pca, config_cca)
+        self._test_acquire_token_obo(
+            config_pca, config_cca,
+            issuer="https://sts.windows.net/{}/".format(  # V1 app seems to have STS as issuer
+                config_cca["authority"].split("/")[-1]),
+            audiences=[
+                # Arlington's confidential app happens to be a V1 app
+                # whose AT would contain a resource URI rather than a client_id
+                # See also https://learn.microsoft.com/en-us/azure/active-directory/develop/access-tokens#payload-claims
+                config_cca["client_id"],
+                "https://arlmsidlab1.us/IDLABS_APP_Confidential_Client",
+            ])
 
     def test_acquire_token_device_flow(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")

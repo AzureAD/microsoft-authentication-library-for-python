@@ -156,7 +156,7 @@ class TokenCache(object):
         id_token = response.get("id_token")
         id_token_claims = response.get("id_token_claims") or (  # Prefer the claims from broker
             # Only use decode_id_token() when necessary, it contains time-sensitive validation
-            decode_id_token(id_token, client_id=event["client_id"]) if id_token else {})
+            decode_id_token(id_token, audiences=[event["client_id"]]) if id_token else {})
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
         target = ' '.join(event.get("scope") or [])  # Per schema, we don't sort it

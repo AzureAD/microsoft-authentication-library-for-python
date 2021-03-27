@@ -130,6 +130,10 @@ class Authority(object):
         logger.debug("openid_config = %s", openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
+        self._issuer = openid_config["issuer"]
+        self._id_token_signing_alg_values_supported = openid_config[
+            "id_token_signing_alg_values_supported"]
+        self._jwks_uri = openid_config["jwks_uri"]
         self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
 
