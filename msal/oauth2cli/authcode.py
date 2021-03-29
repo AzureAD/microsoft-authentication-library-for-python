@@ -47,19 +47,19 @@ def is_wsl():
 
 def _browse(auth_uri):  # throws ImportError, possibly webbrowser.Error in future
     import webbrowser  # Lazy import. Some distro may not have this.
-    result = webbrowser.open(auth_uri)  # Use default browser. Customizable by $BROWSER
+    browser_opened = webbrowser.open(auth_uri)  # Use default browser. Customizable by $BROWSER
 
     # In WSL which doesn't have www-browser, try launching browser with PowerShell
-    if not result and is_wsl():
+    if not browser_opened and is_wsl():
         try:
             import subprocess
             # https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe
             # Ampersand (&) should be quoted
             exit_code = subprocess.call(['powershell.exe', '-Command', 'Start-Process "{}"'.format(auth_uri)])
-            result = exit_code == 0
+            browser_opened = exit_code == 0
         except FileNotFoundError:  # WSL might be too old
             pass
-    return result
+    return browser_opened
 
 
 def _qs2kv(qs):
