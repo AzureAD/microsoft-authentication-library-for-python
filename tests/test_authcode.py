@@ -19,7 +19,8 @@ class TestUtil(unittest.TestCase):
             with patch("msal.oauth2cli.authcode.is_wsl", return_value=True):
                 with patch("subprocess.call", return_value=0) as call_mock:
                     self.assertTrue(_browse(auth_uri))
-                    call_mock.assert_called_with(['powershell.exe', '-Command', 'Start-Process "https://example.com/"'])
+                    call_mock.assert_called_with(
+                        ['powershell.exe', '-NoProfile', '-Command', 'Start-Process "https://example.com/"'])
 
                 with patch("subprocess.call", return_value=1):
                     self.assertFalse(_browse(auth_uri))

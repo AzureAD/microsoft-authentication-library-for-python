@@ -55,7 +55,8 @@ def _browse(auth_uri):  # throws ImportError, possibly webbrowser.Error in futur
             import subprocess
             # https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe
             # Ampersand (&) should be quoted
-            exit_code = subprocess.call(['powershell.exe', '-Command', 'Start-Process "{}"'.format(auth_uri)])
+            exit_code = subprocess.call(
+                ['powershell.exe', '-NoProfile', '-Command', 'Start-Process "{}"'.format(auth_uri)])
             browser_opened = exit_code == 0
         except FileNotFoundError:  # WSL might be too old
             pass
