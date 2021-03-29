@@ -7,6 +7,7 @@ from msal.application import _merge_claims_challenge_and_capabilities
 from tests import unittest
 from tests.test_token_cache import TokenCacheTestCase
 from tests.http_client import MinimalHttpClient, MinimalResponse
+from msal.telemetry import CLIENT_CURRENT_TELEMETRY, CLIENT_LAST_TELEMETRY
 
 
 logger = logging.getLogger(__name__)
@@ -282,7 +283,7 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
     def test_capabilities_and_id_token_claims_merge(self):
         client_capabilities = ["foo", "bar"]
         claims_challenge = '''{"id_token": {"auth_time": {"essential": true}}}'''
-        merged_claims = '''{"id_token": {"auth_time": {"essential": true}}, 
+        merged_claims = '''{"id_token": {"auth_time": {"essential": true}},
                         "access_token": {"xms_cc": {"values": ["foo", "bar"]}}}'''
         # Comparing  dictionaries as JSON object order differs based on python version
         self.assertEqual(
@@ -292,7 +293,7 @@ class TestApplicationForClientCapabilities(unittest.TestCase):
 
     def test_capabilities_and_id_token_claims_and_access_token_claims_merge(self):
         client_capabilities = ["foo", "bar"]
-        claims_challenge = '''{"id_token": {"auth_time": {"essential": true}}, 
+        claims_challenge = '''{"id_token": {"auth_time": {"essential": true}},
                  "access_token": {"nbf":{"essential":true, "value":"1563308371"}}}'''
         merged_claims = '''{"id_token": {"auth_time": {"essential": true}},
                         "access_token": {"nbf": {"essential": true, "value": "1563308371"},
@@ -324,19 +325,17 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
     """The following test cases were based on design doc here
     https://identitydivision.visualstudio.com/DevEx/_git/AuthLibrariesApiReview?path=%2FRefreshAtExpirationPercentage%2Foverview.md&version=GBdev&_a=preview&anchor=scenarios
     """
+    authority_url = "https://login.microsoftonline.com/common"
+    scopes = ["s1", "s2"]
+    uid = "my_uid"
+    utid = "my_utid"
+    account = {"home_account_id": "{}.{}".format(uid, utid)}
+    rt = "this is a rt"
+    client_id = "my_app"
+    app = ClientApplication(client_id, authority=authority_url)
+
     def setUp(self):
-        self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(
-            self.authority_url, MinimalHttpClient())
-        self.scopes = ["s1", "s2"]
-        self.uid = "my_uid"
-        self.utid = "my_utid"
-        self.account = {"home_account_id": "{}.{}".format(self.uid, self.utid)}
-        self.rt = "this is a rt"
-        self.cache = msal.SerializableTokenCache()
-        self.client_id = "my_app"
-        self.app = ClientApplication(
-            self.client_id, authority=self.authority_url, token_cache=self.cache)
+        self.app.token_cache = self.cache = msal.SerializableTokenCache()
 
     def populate_cache(self, access_token="at", expires_in=86400, refresh_in=43200):
         self.cache.add({
@@ -353,7 +352,11 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         # a.k.a. Return unexpired token that is not above token refresh expiration threshold
         access_token = "An access token prepopulated into cache"
         self.populate_cache(access_token=access_token, expires_in=900, refresh_in=450)
-        result = self.app.acquire_token_silent(['s1'], self.account)
+        result = self.app.acquire_token_silent(
+            ['s1'], self.account,
+            post=lambda url, *args, **kwargs:  # Utilize the undocumented test feature
+                self.fail("I/O shouldn't happen in cache hit AT scenario")
+            )
         self.assertEqual(access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
 
@@ -361,13 +364,13 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         # a.k.a. Attempt to refresh unexpired token when AAD available
         self.populate_cache(access_token="old AT", expires_in=3599, refresh_in=-1)
         new_access_token = "new AT"
-        def mock_post(*args, **kwargs):
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|84,4|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=200, text=json.dumps({
                 "access_token": new_access_token,
                 "refresh_in": 123,
                 }))
-        self.app.http_client.post = mock_post
-        result = self.app.acquire_token_silent(['s1'], self.account)
+        result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
         self.assertEqual(new_access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
 
@@ -375,34 +378,180 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         # a.k.a. Attempt refresh unexpired token when AAD unavailable
         old_at = "old AT"
         self.populate_cache(access_token=old_at, expires_in=3599, refresh_in=-1)
-        self.app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family = (
-            lambda *args, **kwargs: {"error": "sth went wrong"})
-        self.assertEqual(
-            old_at,
-            self.app.acquire_token_silent(['s1'], self.account).get("access_token"))
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|84,2|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=400, text=json.dumps({"error": error}))
+        result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
+        self.assertEqual(old_at, result.get("access_token"))
 
     def test_expired_token_and_unavailable_aad_should_return_error(self):
         # a.k.a. Attempt refresh expired token when AAD unavailable
         self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
         error = "something went wrong"
-        self.app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family = (
-            lambda *args, **kwargs: {"error": error})
-        self.assertEqual(
-            error,
-            self.app.acquire_token_silent_with_error(  # This variant preserves error
-                ['s1'], self.account).get("error"))
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|84,3|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=400, text=json.dumps({"error": error}))
+        result = self.app.acquire_token_silent_with_error(
+            ['s1'], self.account, post=mock_post)
+        self.assertEqual(error, result.get("error"), "Error should be returned")
 
     def test_expired_token_and_available_aad_should_return_new_token(self):
         # a.k.a. Attempt refresh expired token when AAD available
         self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
         new_access_token = "new AT"
-        def mock_post(*args, **kwargs):
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|84,3|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=200, text=json.dumps({
                 "access_token": new_access_token,
                 "refresh_in": 123,
                 }))
-        self.app.http_client.post = mock_post
-        result = self.app.acquire_token_silent(['s1'], self.account)
+        result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
         self.assertEqual(new_access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+
+
+class TestTelemetryMaintainingOfflineState(unittest.TestCase):
+    authority_url = "https://login.microsoftonline.com/common"
+    scopes = ["s1", "s2"]
+    uid = "my_uid"
+    utid = "my_utid"
+    account = {"home_account_id": "{}.{}".format(uid, utid)}
+    rt = "this is a rt"
+    client_id = "my_app"
+
+    def populate_cache(self, cache, access_token="at"):
+        cache.add({
+            "client_id": self.client_id,
+            "scope": self.scopes,
+            "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
+            "response": TokenCacheTestCase.build_response(
+                access_token=access_token,
+                uid=self.uid, utid=self.utid, refresh_token=self.rt),
+            })
+
+    def test_maintaining_offline_state_and_sending_them(self):
+        app = PublicClientApplication(
+            self.client_id,
+            authority=self.authority_url, token_cache=msal.SerializableTokenCache())
+        cached_access_token = "cached_at"
+        self.populate_cache(app.token_cache, access_token=cached_access_token)
+
+        result = app.acquire_token_silent(
+            self.scopes, self.account,
+            post=lambda url, *args, **kwargs:  # Utilize the undocumented test feature
+                self.fail("I/O shouldn't happen in cache hit AT scenario")
+            )
+        self.assertEqual(cached_access_token, result.get("access_token"))
+
+        error1 = "error_1"
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|622,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            self.assertEqual("4|1|||", (headers or {}).get(CLIENT_LAST_TELEMETRY),
+                "The previous cache hit should result in success counter value as 1")
+            return MinimalResponse(status_code=400, text=json.dumps({"error": error1}))
+        result = app.acquire_token_by_device_flow({  # It allows customizing correlation_id
+            "device_code": "123",
+            PublicClientApplication.DEVICE_FLOW_CORRELATION_ID: "id_1",
+            }, post=mock_post)
+        self.assertEqual(error1, result.get("error"))
+
+        error2 = "error_2"
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|622,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            self.assertEqual("4|1|622,id_1|error_1|", (headers or {}).get(CLIENT_LAST_TELEMETRY),
+                "The previous error should result in same success counter plus latest error info")
+            return MinimalResponse(status_code=400, text=json.dumps({"error": error2}))
+        result = app.acquire_token_by_device_flow({
+            "device_code": "123",
+            PublicClientApplication.DEVICE_FLOW_CORRELATION_ID: "id_2",
+            }, post=mock_post)
+        self.assertEqual(error2, result.get("error"))
+
+        at = "ensures the successful path (which includes the mock) been used"
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|622,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            self.assertEqual("4|1|622,id_1,622,id_2|error_1,error_2|", (headers or {}).get(CLIENT_LAST_TELEMETRY),
+                "The previous error should result in same success counter plus latest error info")
+            return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
+        result = app.acquire_token_by_device_flow({"device_code": "123"}, post=mock_post)
+        self.assertEqual(at, result.get("access_token"))
+
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|622,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            self.assertEqual("4|0|||", (headers or {}).get(CLIENT_LAST_TELEMETRY),
+                "The previous success should reset all offline telemetry counters")
+            return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
+        result = app.acquire_token_by_device_flow({"device_code": "123"}, post=mock_post)
+        self.assertEqual(at, result.get("access_token"))
+
+
+class TestTelemetryOnClientApplication(unittest.TestCase):
+    app = ClientApplication(
+        "client_id", authority="https://login.microsoftonline.com/common")
+
+    def test_acquire_token_by_auth_code_flow(self):
+        at = "this is an access token"
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|832,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
+        state = "foo"
+        result = self.app.acquire_token_by_auth_code_flow(
+            {"state": state, "code_verifier": "bar"}, {"state": state, "code": "012"},
+            post=mock_post)
+        self.assertEqual(at, result.get("access_token"))
+
+    def test_acquire_token_by_refresh_token(self):
+        at = "this is an access token"
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|85,1|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
+        result = self.app.acquire_token_by_refresh_token("rt", ["s"], post=mock_post)
+        self.assertEqual(at, result.get("access_token"))
+
+
+class TestTelemetryOnPublicClientApplication(unittest.TestCase):
+    app = PublicClientApplication(
+        "client_id", authority="https://login.microsoftonline.com/common")
+
+    # For now, acquire_token_interactive() is verified by code review.
+
+    def test_acquire_token_by_device_flow(self):
+        at = "this is an access token"
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|622,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
+        result = self.app.acquire_token_by_device_flow(
+            {"device_code": "123"}, post=mock_post)
+        self.assertEqual(at, result.get("access_token"))
+
+    def test_acquire_token_by_username_password(self):
+        at = "this is an access token"
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|301,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
+        result = self.app.acquire_token_by_username_password(
+            "username", "password", ["scope"], post=mock_post)
+        self.assertEqual(at, result.get("access_token"))
+
+
+class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
+    app = ConfidentialClientApplication(
+        "client_id", client_credential="secret",
+        authority="https://login.microsoftonline.com/common")
+
+    def test_acquire_token_for_client(self):
+        at = "this is an access token"
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|730,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
+        result = self.app.acquire_token_for_client(["scope"], post=mock_post)
+        self.assertEqual(at, result.get("access_token"))
+
+    def test_acquire_token_on_behalf_of(self):
+        at = "this is an access token"
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|523,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
+        result = self.app.acquire_token_on_behalf_of("assertion", ["s"], post=mock_post)
+        self.assertEqual(at, result.get("access_token"))
 
