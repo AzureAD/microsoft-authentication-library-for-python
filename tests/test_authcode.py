@@ -1,7 +1,7 @@
-from msal.oauth2cli.authcode import _browse
-
-from tests import unittest
 from unittest.mock import patch
+
+from msal.oauth2cli.authcode import _browse
+from tests import unittest
 
 
 class TestUtil(unittest.TestCase):
