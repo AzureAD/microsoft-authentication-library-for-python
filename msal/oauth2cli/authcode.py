@@ -40,8 +40,8 @@ def is_wsl():
     #   - WSL 2: '4.19.128-microsoft-standard'
     import platform
     uname = platform.uname()
-    platform_name = getattr(uname, 'system', None).lower()
-    release = getattr(uname, 'release', None).lower()
+    platform_name = getattr(uname, 'system', uname[0]).lower()
+    release = getattr(uname, 'release', uname[2]).lower()
     return platform_name == 'linux' and 'microsoft' in release
 
 
