@@ -33,9 +33,34 @@ def obtain_auth_code(listen_port, auth_uri=None):  # Historically only used in t
             ).get("code")
 
 
+def is_wsl():
+    # "Official" way of detecting WSL: https://github.com/Microsoft/WSL/issues/423#issuecomment-221627364
+    # Run `uname -a` to get 'release' without python
+    #   - WSL 1: '4.4.0-19041-Microsoft'
+    #   - WSL 2: '4.19.128-microsoft-standard'
+    import platform
+    uname = platform.uname()
+    platform_name = getattr(uname, 'system', uname[0]).lower()
+    release = getattr(uname, 'release', uname[2]).lower()
+    return platform_name == 'linux' and 'microsoft' in release
+
+
 def _browse(auth_uri):  # throws ImportError, possibly webbrowser.Error in future
     import webbrowser  # Lazy import. Some distro may not have this.
-    return webbrowser.open(auth_uri)  # Use default browser. Customizable by $BROWSER
+    browser_opened = webbrowser.open(auth_uri)  # Use default browser. Customizable by $BROWSER
+
+    # In WSL which doesn't have www-browser, try launching browser with PowerShell
+    if not browser_opened and is_wsl():
+        try:
+            import subprocess
+            # https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe
+            # Ampersand (&) should be quoted
+            exit_code = subprocess.call(
+                ['powershell.exe', '-NoProfile', '-Command', 'Start-Process "{}"'.format(auth_uri)])
+            browser_opened = exit_code == 0
+        except FileNotFoundError:  # WSL might be too old
+            pass
+    return browser_opened
 
 
 def _qs2kv(qs):
@@ -245,4 +270,3 @@ if __name__ == '__main__':
             timeout=60,
             state=flow["state"],  # Optional
             ), indent=4))
-
