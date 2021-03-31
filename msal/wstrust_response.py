@@ -88,5 +88,7 @@ def parse_token_by_re(raw_response):  # Returns the saml:assertion
         token_types = findall_content(rstr, "TokenType")
         tokens = findall_content(rstr, "RequestedSecurityToken")
         if token_types and tokens:
-            return {"token": tokens[0].encode('us-ascii'), "type": token_types[0]}
+            # Historically, we use "us-ascii" encoding, but it should be "utf-8"
+            # https://stackoverflow.com/questions/36658000/what-is-encoding-used-for-saml-conversations
+            return {"token": tokens[0].encode('utf-8'), "type": token_types[0]}
 
