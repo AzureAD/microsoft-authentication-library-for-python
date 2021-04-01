@@ -120,7 +120,7 @@ class ClientApplication(object):
 
         :param str client_id: Your app has a client_id after you register it on AAD.
 
-        :param str client_credential:
+        :param Union[str, dict] client_credential:
             For :class:`PublicClientApplication`, you simply use `None` here.
             For :class:`ConfidentialClientApplication`,
             it can be a string containing client secret,
@@ -1343,4 +1343,3 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             **kwargs))
         telemetry_context.update_telemetry(response)
         return response
-
