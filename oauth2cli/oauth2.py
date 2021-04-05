@@ -582,6 +582,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             error_template=None,
             auth_params=None,
             auth_uri_callback=None,
+            browser_name=None,
             **kwargs):
         """A native app can use this method to obtain token via a local browser.
 
@@ -614,6 +615,14 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             These parameters will be sent to authorization_endpoint.
 
         :param int timeout: In seconds. None means wait indefinitely.
+
+        :param str browser_name:
+            If you did
+            ``webbrowser.register("xyz", None, BackgroundBrowser("/path/to/browser"))``
+            beforehand, you can pass in the name "xyz" to use that browser.
+            The default value ``None`` means using default browser,
+            which is customizable by env var $BROWSER.
+
         :return: Same as :func:`~obtain_token_by_auth_code_flow()`
         """
         _redirect_uri = urlparse(redirect_uri or "http://127.0.0.1:0")
@@ -641,6 +650,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                     success_template=success_template,
                     error_template=error_template,
                     auth_uri_callback=auth_uri_callback,
+                    browser_name=browser_name,
                     )
         except PermissionError:
             if 0 < listen_port < 1024:

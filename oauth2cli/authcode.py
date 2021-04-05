@@ -45,9 +45,10 @@ def is_wsl():
     return platform_name == 'linux' and 'microsoft' in release
 
 
-def _browse(auth_uri):  # throws ImportError, possibly webbrowser.Error in future
+def _browse(auth_uri, browser_name=None):  # throws ImportError, webbrowser.Error
+    """Browse uri with named browser. Default browser is customizable by $BROWSER"""
     import webbrowser  # Lazy import. Some distro may not have this.
-    browser_opened = webbrowser.open(auth_uri)  # Use default browser. Customizable by $BROWSER
+    browser_opened = webbrowser.get(browser_name).open(auth_uri)
 
     # In WSL which doesn't have www-browser, try launching browser with PowerShell
     if not browser_opened and is_wsl():
@@ -147,6 +148,7 @@ class AuthCodeReceiver(object):
     def get_auth_response(self, auth_uri=None, timeout=None, state=None,
             welcome_template=None, success_template=None, error_template=None,
             auth_uri_callback=None,
+            browser_name=None,
             ):
         """Wait and return the auth response. Raise RuntimeError when timeout.
 
@@ -173,6 +175,12 @@ class AuthCodeReceiver(object):
             A function with the shape of lambda auth_uri: ...
             When a browser was unable to be launch, this function will be called,
             so that the app could tell user to manually visit the auth_uri.
+        :param str browser_name:
+            If you did
+            ``webbrowser.register("xyz", None, BackgroundBrowser("/path/to/browser"))``
+            beforehand, you can pass in the name "xyz" to use that browser.
+            The default value ``None`` means using default browser,
+            which is customizable by env var $BROWSER.
         :return:
             The auth response of the first leg of Auth Code flow,
             typically {"code": "...", "state": "..."} or {"error": "...", ...}
@@ -190,7 +198,7 @@ class AuthCodeReceiver(object):
             logger.info("Open a browser on this device to visit: %s" % _uri)
             browser_opened = False
             try:
-                browser_opened = _browse(_uri)
+                browser_opened = _browse(_uri, browser_name=browser_name)
             except:  # Had to use broad except, because the potential
                      # webbrowser.Error is purposely undefined outside of _browse().
                 # Absorb and proceed. Because browser could be manually run elsewhere.
