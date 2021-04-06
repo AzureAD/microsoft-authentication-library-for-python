@@ -12,8 +12,8 @@ Not sure whether this is the SDK you are looking for your app? There are other M
 
 Quick links:
 
-| [Getting Started](https://docs.microsoft.com/azure/active-directory/develop/quickstart-v2-python-webapp) | [Docs](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki) | [Samples](https://aka.ms/aaddevsamplesv2) | [Support](README.md#community-help-and-support)
-| --- | --- | --- | --- |
+| [Getting Started](https://docs.microsoft.com/azure/active-directory/develop/quickstart-v2-python-webapp) | [Docs](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki) | [Samples](https://aka.ms/aaddevsamplesv2) | [Support](README.md#community-help-and-support) | [Feedback](https://forms.office.com/r/TMjZkDbzjY) |
+| --- | --- | --- | --- | --- |
 
 ## Installation
 
@@ -125,6 +125,9 @@ Also browser existing issues to see if someone has had your question before.
 We recommend you use the "msal" tag so we can see it!
 Here is the latest Q&A on Stack Overflow for MSAL:
 [http://stackoverflow.com/questions/tagged/msal](http://stackoverflow.com/questions/tagged/msal)
+
+## Submit Feedback
+We'd like your thoughts on this library. Please complete [this short survey.](https://forms.office.com/r/TMjZkDbzjY)
 
 ## Security Reporting
 
