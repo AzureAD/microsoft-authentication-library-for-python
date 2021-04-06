@@ -804,6 +804,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
                 if not isinstance(token_item, string_types) else token_item,
             scope=scope,
             also_save_rt=on_updating_rt is False,
+            on_obtaining_tokens=on_obtaining_tokens,
             **kwargs)
         if resp.get('error') == 'invalid_grant':
             (on_removing_rt or self.on_removing_rt)(token_item)  # Discard old RT
