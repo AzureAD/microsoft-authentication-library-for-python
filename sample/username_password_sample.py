@@ -34,8 +34,9 @@ import msal
 config = json.load(open(sys.argv[1]))
 
 # Create a preferably long-lived app instance which maintains a token cache.
-app = msal.PublicClientApplication(
+app = msal.ClientApplication(
     config["client_id"], authority=config["authority"],
+    client_credential=config.get("client_secret"),
     # token_cache=...  # Default cache is in memory only.
                        # You can learn how to use SerializableTokenCache from
                        # https://msal-python.readthedocs.io/en/latest/#msal.SerializableTokenCache
