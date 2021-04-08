@@ -1025,6 +1025,91 @@ class ClientApplication(object):
         telemetry_context.update_telemetry(response)
         return response
 
+    def acquire_token_by_username_password(
+            self, username, password, scopes, claims_challenge=None, **kwargs):
+        """Gets a token for a given resource via user credentials.
+
+        See this page for constraints of Username Password Flow.
+        https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
+
+        :param str username: Typically a UPN in the form of an email address.
+        :param str password: The password.
+        :param list[str] scopes:
+            Scopes requested to access a protected API (a resource).
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
+        """
+        scopes = decorate_scope(scopes, self.client_id)
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)
+        headers = telemetry_context.generate_headers()
+        data = dict(
+            kwargs.pop("data", {}),
+            claims=_merge_claims_challenge_and_capabilities(
+                self._client_capabilities, claims_challenge))
+        if not self.authority.is_adfs:
+            user_realm_result = self.authority.user_realm_discovery(
+                username, correlation_id=headers[msal.telemetry.CLIENT_REQUEST_ID])
+            if user_realm_result.get("account_type") == "Federated":
+                response = _clean_up(self._acquire_token_by_username_password_federated(
+                    user_realm_result, username, password, scopes=scopes,
+                    data=data,
+                    headers=headers, **kwargs))
+                telemetry_context.update_telemetry(response)
+                return response
+        response = _clean_up(self.client.obtain_token_by_username_password(
+                username, password, scope=scopes,
+                headers=headers,
+                data=data,
+                **kwargs))
+        telemetry_context.update_telemetry(response)
+        return response
+
+    def _acquire_token_by_username_password_federated(
+            self, user_realm_result, username, password, scopes=None, **kwargs):
+        wstrust_endpoint = {}
+        if user_realm_result.get("federation_metadata_url"):
+            wstrust_endpoint = mex_send_request(
+                user_realm_result["federation_metadata_url"],
+                self.http_client)
+            if wstrust_endpoint is None:
+                raise ValueError("Unable to find wstrust endpoint from MEX. "
+                    "This typically happens when attempting MSA accounts. "
+                    "More details available here. "
+                    "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
+        logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
+        wstrust_result = wst_send_request(
+            username, password,
+            user_realm_result.get("cloud_audience_urn", "urn:federation:MicrosoftOnline"),
+            wstrust_endpoint.get("address",
+                # Fallback to an AAD supplied endpoint
+                user_realm_result.get("federation_active_auth_url")),
+            wstrust_endpoint.get("action"), self.http_client)
+        if not ("token" in wstrust_result and "type" in wstrust_result):
+            raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
+        GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
+        grant_type = {
+            SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
+            SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
+            WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
+            WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
+            }.get(wstrust_result.get("type"))
+        if not grant_type:
+            raise RuntimeError(
+                "RSTR returned unknown token type: %s", wstrust_result.get("type"))
+        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
+            grant_type, self.client.encode_saml_assertion)
+        return self.client.obtain_token_by_assertion(
+            wstrust_result["token"], grant_type, scope=scopes, **kwargs)
+
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
@@ -1175,91 +1260,6 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             **kwargs))
         telemetry_context.update_telemetry(response)
         return response
-
-    def acquire_token_by_username_password(
-            self, username, password, scopes, claims_challenge=None, **kwargs):
-        """Gets a token for a given resource via user credentials.
-
-        See this page for constraints of Username Password Flow.
-        https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
-
-        :param str username: Typically a UPN in the form of an email address.
-        :param str password: The password.
-        :param list[str] scopes:
-            Scopes requested to access a protected API (a resource).
-        :param claims_challenge:
-            The claims_challenge parameter requests specific claims requested by the resource provider
-            in the form of a claims_challenge directive in the www-authenticate header to be
-            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of claims being requested from these locations.
-
-        :return: A dict representing the json response from AAD:
-
-            - A successful response would contain "access_token" key,
-            - an error response would contain "error" and usually "error_description".
-        """
-        scopes = decorate_scope(scopes, self.client_id)
-        telemetry_context = self._build_telemetry_context(
-            self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)
-        headers = telemetry_context.generate_headers()
-        data = dict(
-            kwargs.pop("data", {}),
-            claims=_merge_claims_challenge_and_capabilities(
-                self._client_capabilities, claims_challenge))
-        if not self.authority.is_adfs:
-            user_realm_result = self.authority.user_realm_discovery(
-                username, correlation_id=headers[msal.telemetry.CLIENT_REQUEST_ID])
-            if user_realm_result.get("account_type") == "Federated":
-                response = _clean_up(self._acquire_token_by_username_password_federated(
-                    user_realm_result, username, password, scopes=scopes,
-                    data=data,
-                    headers=headers, **kwargs))
-                telemetry_context.update_telemetry(response)
-                return response
-        response = _clean_up(self.client.obtain_token_by_username_password(
-                username, password, scope=scopes,
-                headers=headers,
-                data=data,
-                **kwargs))
-        telemetry_context.update_telemetry(response)
-        return response
-
-    def _acquire_token_by_username_password_federated(
-            self, user_realm_result, username, password, scopes=None, **kwargs):
-        wstrust_endpoint = {}
-        if user_realm_result.get("federation_metadata_url"):
-            wstrust_endpoint = mex_send_request(
-                user_realm_result["federation_metadata_url"],
-                self.http_client)
-            if wstrust_endpoint is None:
-                raise ValueError("Unable to find wstrust endpoint from MEX. "
-                    "This typically happens when attempting MSA accounts. "
-                    "More details available here. "
-                    "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
-        logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
-        wstrust_result = wst_send_request(
-            username, password,
-            user_realm_result.get("cloud_audience_urn", "urn:federation:MicrosoftOnline"),
-            wstrust_endpoint.get("address",
-                # Fallback to an AAD supplied endpoint
-                user_realm_result.get("federation_active_auth_url")),
-            wstrust_endpoint.get("action"), self.http_client)
-        if not ("token" in wstrust_result and "type" in wstrust_result):
-            raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
-        GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
-        grant_type = {
-            SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
-            SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
-            WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
-            WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
-            }.get(wstrust_result.get("type"))
-        if not grant_type:
-            raise RuntimeError(
-                "RSTR returned unknown token type: %s", wstrust_result.get("type"))
-        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
-            grant_type, self.client.encode_saml_assertion)
-        return self.client.obtain_token_by_assertion(
-            wstrust_result["token"], grant_type, scope=scopes, **kwargs)
 
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
