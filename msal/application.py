@@ -602,7 +602,7 @@ class ClientApplication(object):
                         self._client_capabilities, claims_challenge)),
                 nonce=nonce,
                 **kwargs))
-            telemetry_context.update_telemetry(resposne)
+            telemetry_context.update_telemetry(response)
             return response
 
     def get_accounts(self, username=None):
