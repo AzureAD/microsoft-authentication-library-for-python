@@ -187,7 +187,12 @@ class ClientApplication(object):
             By default, an in-memory cache will be created and used.
         :param http_client: (optional)
             Your implementation of abstract class HttpClient <msal.oauth2cli.http.http_client>
-            Defaults to a requests session instance
+            Defaults to a requests session instance.
+            Since MSAL 1.11.0, the default session would be configured
+            to attempt one retry on connection error.
+            If you are providing your own http_client,
+            it will be your http_client's duty to decide whether to perform retry.
+
         :param verify: (optional)
             It will be passed to the
             `verify parameter in the underlying requests library
