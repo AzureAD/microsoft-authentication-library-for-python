@@ -145,7 +145,7 @@ class TokenCache(object):
             client_info["uid"] = id_token_claims.get("sub")
             home_account_id = id_token_claims.get("sub")
 
-        target = ' '.join(event.get("scope", []))  # Per schema, we don't sort it
+        target = ' '.join(event.get("scope") or [])  # Per schema, we don't sort it
 
         with self._lock:
             now = int(time.time() if now is None else now)

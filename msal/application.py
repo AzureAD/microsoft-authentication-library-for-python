@@ -8,7 +8,7 @@ except:  # Python 3
 import logging
 import sys
 import warnings
-import uuid
+from threading import Lock
 
 import requests
 
@@ -18,10 +18,11 @@ from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache
+import msal.telemetry
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.10.0"
+__version__ = "1.11.0"
 
 logger = logging.getLogger(__name__)
 
@@ -51,18 +52,6 @@ def decorate_scope(
     else:
         decorated = scope_set | reserved_scope
     return list(decorated)
-
-CLIENT_REQUEST_ID = 'client-request-id'
-CLIENT_CURRENT_TELEMETRY = 'x-client-current-telemetry'
-
-def _get_new_correlation_id():
-    correlation_id = str(uuid.uuid4())
-    logger.debug("Generates correlation_id: %s", correlation_id)
-    return correlation_id
-
-
-def _build_current_telemetry_request_header(public_api_id, force_refresh=False):
-    return "1|{},{}|".format(public_api_id, "1" if force_refresh else "0")
 
 
 def extract_certs(public_cert_content):
@@ -131,7 +120,7 @@ class ClientApplication(object):
 
         :param str client_id: Your app has a client_id after you register it on AAD.
 
-        :param str client_credential:
+        :param Union[str, dict] client_credential:
             For :class:`PublicClientApplication`, you simply use `None` here.
             For :class:`ConfidentialClientApplication`,
             it can be a string containing client secret,
@@ -187,7 +176,12 @@ class ClientApplication(object):
             By default, an in-memory cache will be created and used.
         :param http_client: (optional)
             Your implementation of abstract class HttpClient <msal.oauth2cli.http.http_client>
-            Defaults to a requests session instance
+            Defaults to a requests session instance.
+            Since MSAL 1.11.0, the default session would be configured
+            to attempt one retry on connection error.
+            If you are providing your own http_client,
+            it will be your http_client's duty to decide whether to perform retry.
+
         :param verify: (optional)
             It will be passed to the
             `verify parameter in the underlying requests library
@@ -241,6 +235,13 @@ class ClientApplication(object):
             # But you can patch that (https://github.com/psf/requests/issues/3341):
             self.http_client.request = functools.partial(
                 self.http_client.request, timeout=timeout)
+
+            # Enable a minimal retry. Better than nothing.
+            # https://github.com/psf/requests/blob/v2.25.1/requests/adapters.py#L94-L108
+            a = requests.adapters.HTTPAdapter(max_retries=1)
+            self.http_client.mount("http://", a)
+            self.http_client.mount("https://", a)
+
         self.app_name = app_name
         self.app_version = app_version
         self.authority = Authority(
@@ -250,6 +251,14 @@ class ClientApplication(object):
         self.token_cache = token_cache or TokenCache()
         self.client = self._build_client(client_credential, self.authority)
         self.authority_groups = None
+        self._telemetry_buffer = {}
+        self._telemetry_lock = Lock()
+
+    def _build_telemetry_context(
+            self, api_id, correlation_id=None, refresh_reason=None):
+        return msal.telemetry._TelemetryContext(
+            self._telemetry_buffer, self._telemetry_lock, api_id,
+            correlation_id=correlation_id, refresh_reason=refresh_reason)
 
     def _build_client(self, client_credential, authority):
         client_assertion = None
@@ -325,7 +334,7 @@ class ClientApplication(object):
         you can use :func:`~acquire_token_by_auth_code_flow()`
         to complete the authentication/authorization.
 
-        :param list scope:
+        :param list scopes:
             It is a list of case-sensitive strings.
         :param str redirect_uri:
             Optional. If not specified, server will use the pre-registered one.
@@ -513,21 +522,21 @@ class ClientApplication(object):
                     return redirect(url_for("index"))
         """
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        return _clean_up(self.client.obtain_token_by_auth_code_flow(
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)
+        response =_clean_up(self.client.obtain_token_by_auth_code_flow(
             auth_code_flow,
             auth_response,
             scope=decorate_scope(scopes, self.client_id) if scopes else None,
-            headers={
-                CLIENT_REQUEST_ID: _get_new_correlation_id(),
-                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                    self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
-                },
+            headers=telemetry_context.generate_headers(),
             data=dict(
                 kwargs.pop("data", {}),
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities,
                     auth_code_flow.pop("claims_challenge", None))),
             **kwargs))
+        telemetry_context.update_telemetry(response)
+        return response
 
     def acquire_token_by_authorization_code(
             self,
@@ -586,20 +595,20 @@ class ClientApplication(object):
             "Change your acquire_token_by_authorization_code() "
             "to acquire_token_by_auth_code_flow()", DeprecationWarning)
         with warnings.catch_warnings(record=True):
-            return _clean_up(self.client.obtain_token_by_authorization_code(
+            telemetry_context = self._build_telemetry_context(
+                self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)
+            response = _clean_up(self.client.obtain_token_by_authorization_code(
                 code, redirect_uri=redirect_uri,
                 scope=decorate_scope(scopes, self.client_id),
-                headers={
-                    CLIENT_REQUEST_ID: _get_new_correlation_id(),
-                    CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                        self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID),
-                    },
+                headers=telemetry_context.generate_headers(),
                 data=dict(
                     kwargs.pop("data", {}),
                     claims=_merge_claims_challenge_and_capabilities(
                         self._client_capabilities, claims_challenge)),
                 nonce=nonce,
                 **kwargs))
+            telemetry_context.update_telemetry(response)
+            return response
 
     def get_accounts(self, username=None):
         """Get a list of accounts which previously signed in, i.e. exists in cache.
@@ -728,7 +737,7 @@ class ClientApplication(object):
             - None when cache lookup does not yield a token.
         """
         result = self.acquire_token_silent_with_error(
-            scopes, account, authority, force_refresh,
+            scopes, account, authority=authority, force_refresh=force_refresh,
             claims_challenge=claims_challenge, **kwargs)
         return result if result and "error" not in result else None
 
@@ -773,7 +782,7 @@ class ClientApplication(object):
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        correlation_id = _get_new_correlation_id()
+        correlation_id = msal.telemetry._get_new_correlation_id()
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
@@ -844,9 +853,11 @@ class ClientApplication(object):
                 target=scopes,
                 query=query)
             now = time.time()
+            refresh_reason = msal.telemetry.AT_ABSENT
             for entry in matches:
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
+                    refresh_reason = msal.telemetry.AT_EXPIRED
                     continue  # Removal is not necessary, it will be overwritten
                 logger.debug("Cache hit an AT")
                 access_token_from_cache = {  # Mimic a real response
@@ -855,13 +866,18 @@ class ClientApplication(object):
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
                 if "refresh_on" in entry and int(entry["refresh_on"]) < now:  # aging
+                    refresh_reason = msal.telemetry.AT_AGING
                     break  # With a fallback in hand, we break here to go refresh
+                self._build_telemetry_context(-1).hit_an_access_token()
                 return access_token_from_cache  # It is still good as new
+        else:
+            refresh_reason = msal.telemetry.FORCE_REFRESH  # TODO: It could also mean claims_challenge
+        assert refresh_reason, "It should have been established at this point"
         try:
-            result = self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
+            result = _clean_up(self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, decorate_scope(scopes, self.client_id), account,
-                force_refresh=force_refresh, claims_challenge=claims_challenge, **kwargs)
-            result = _clean_up(result)
+                refresh_reason=refresh_reason, claims_challenge=claims_challenge,
+                **kwargs))
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
         except:  # The exact HTTP exception is transportation-layer dependent
@@ -915,7 +931,8 @@ class ClientApplication(object):
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
             rt_remover=None, break_condition=lambda response: False,
-            force_refresh=False, correlation_id=None, claims_challenge=None, **kwargs):
+            refresh_reason=None, correlation_id=None, claims_challenge=None,
+            **kwargs):
         matches = self.token_cache.find(
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
@@ -924,6 +941,9 @@ class ClientApplication(object):
         client = self._build_client(self.client_credential, authority)
 
         response = None  # A distinguishable value to mean cache is empty
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_SILENT_ID,
+            correlation_id=correlation_id, refresh_reason=refresh_reason)
         for entry in sorted(  # Since unfit RTs would not be aggressively removed,
                               # we start from newer RTs which are more likely fit.
                 matches,
@@ -941,16 +961,13 @@ class ClientApplication(object):
                     skip_account_creation=True,  # To honor a concurrent remove_account()
                     )),
                 scope=scopes,
-                headers={
-                    CLIENT_REQUEST_ID: correlation_id or _get_new_correlation_id(),
-                    CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                        self.ACQUIRE_TOKEN_SILENT_ID, force_refresh=force_refresh),
-                    },
+                headers=telemetry_context.generate_headers(),
                 data=dict(
                     kwargs.pop("data", {}),
                     claims=_merge_claims_challenge_and_capabilities(
                         self._client_capabilities, claims_challenge)),
                 **kwargs)
+            telemetry_context.update_telemetry(response)
             if "error" not in response:
                 return response
             logger.debug("Refresh failed. {error}: {error_description}".format(
@@ -999,18 +1016,104 @@ class ClientApplication(object):
             * A dict contains no "error" key means migration was successful.
         """
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        return _clean_up(self.client.obtain_token_by_refresh_token(
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_BY_REFRESH_TOKEN,
+            refresh_reason=msal.telemetry.FORCE_REFRESH)
+        response = _clean_up(self.client.obtain_token_by_refresh_token(
             refresh_token,
             scope=decorate_scope(scopes, self.client_id),
-            headers={
-                CLIENT_REQUEST_ID: _get_new_correlation_id(),
-                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                    self.ACQUIRE_TOKEN_BY_REFRESH_TOKEN),
-            },
+            headers=telemetry_context.generate_headers(),
             rt_getter=lambda rt: rt,
             on_updating_rt=False,
             on_removing_rt=lambda rt_item: None,  # No OP
             **kwargs))
+        telemetry_context.update_telemetry(response)
+        return response
+
+    def acquire_token_by_username_password(
+            self, username, password, scopes, claims_challenge=None, **kwargs):
+        """Gets a token for a given resource via user credentials.
+
+        See this page for constraints of Username Password Flow.
+        https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
+
+        :param str username: Typically a UPN in the form of an email address.
+        :param str password: The password.
+        :param list[str] scopes:
+            Scopes requested to access a protected API (a resource).
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
+        """
+        scopes = decorate_scope(scopes, self.client_id)
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)
+        headers = telemetry_context.generate_headers()
+        data = dict(
+            kwargs.pop("data", {}),
+            claims=_merge_claims_challenge_and_capabilities(
+                self._client_capabilities, claims_challenge))
+        if not self.authority.is_adfs:
+            user_realm_result = self.authority.user_realm_discovery(
+                username, correlation_id=headers[msal.telemetry.CLIENT_REQUEST_ID])
+            if user_realm_result.get("account_type") == "Federated":
+                response = _clean_up(self._acquire_token_by_username_password_federated(
+                    user_realm_result, username, password, scopes=scopes,
+                    data=data,
+                    headers=headers, **kwargs))
+                telemetry_context.update_telemetry(response)
+                return response
+        response = _clean_up(self.client.obtain_token_by_username_password(
+                username, password, scope=scopes,
+                headers=headers,
+                data=data,
+                **kwargs))
+        telemetry_context.update_telemetry(response)
+        return response
+
+    def _acquire_token_by_username_password_federated(
+            self, user_realm_result, username, password, scopes=None, **kwargs):
+        wstrust_endpoint = {}
+        if user_realm_result.get("federation_metadata_url"):
+            wstrust_endpoint = mex_send_request(
+                user_realm_result["federation_metadata_url"],
+                self.http_client)
+            if wstrust_endpoint is None:
+                raise ValueError("Unable to find wstrust endpoint from MEX. "
+                    "This typically happens when attempting MSA accounts. "
+                    "More details available here. "
+                    "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
+        logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
+        wstrust_result = wst_send_request(
+            username, password,
+            user_realm_result.get("cloud_audience_urn", "urn:federation:MicrosoftOnline"),
+            wstrust_endpoint.get("address",
+                # Fallback to an AAD supplied endpoint
+                user_realm_result.get("federation_active_auth_url")),
+            wstrust_endpoint.get("action"), self.http_client)
+        if not ("token" in wstrust_result and "type" in wstrust_result):
+            raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
+        GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
+        grant_type = {
+            SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
+            SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
+            WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
+            WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
+            }.get(wstrust_result.get("type"))
+        if not grant_type:
+            raise RuntimeError(
+                "RSTR returned unknown token type: %s", wstrust_result.get("type"))
+        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
+            grant_type, self.client.encode_saml_assertion)
+        return self.client.obtain_token_by_assertion(
+            wstrust_result["token"], grant_type, scope=scopes, **kwargs)
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
@@ -1039,7 +1142,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         Prerequisite: In Azure Portal, configure the Redirect URI of your
         "Mobile and Desktop application" as ``http://localhost``.
 
-        :param list scope:
+        :param list scopes:
             It is a list of case-sensitive strings.
         :param str prompt:
             By default, no prompt value will be sent, not even "none".
@@ -1080,14 +1183,15 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
         :return:
             - A dict containing no "error" key,
-              and typically contains an "access_token" key,
-              if cache lookup succeeded.
+              and typically contains an "access_token" key.
             - A dict containing an "error" key, when token refresh failed.
         """
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         claims = _merge_claims_challenge_and_capabilities(
             self._client_capabilities, claims_challenge)
-        return _clean_up(self.client.obtain_token_by_browser(
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_INTERACTIVE)
+        response = _clean_up(self.client.obtain_token_by_browser(
             scope=decorate_scope(scopes, self.client_id) if scopes else None,
             extra_scope_to_consent=extra_scopes_to_consent,
             redirect_uri="http://localhost:{port}".format(
@@ -1101,12 +1205,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 "domain_hint": domain_hint,
                 },
             data=dict(kwargs.pop("data", {}), claims=claims),
-            headers={
-                CLIENT_REQUEST_ID: _get_new_correlation_id(),
-                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                    self.ACQUIRE_TOKEN_INTERACTIVE),
-                },
+            headers=telemetry_context.generate_headers(),
             **kwargs))
+        telemetry_context.update_telemetry(response)
+        return response
 
     def initiate_device_flow(self, scopes=None, **kwargs):
         """Initiate a Device Flow instance,
@@ -1119,13 +1221,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "user_code" key, among others
             - an error response would contain some other readable key/value pairs.
         """
-        correlation_id = _get_new_correlation_id()
+        correlation_id = msal.telemetry._get_new_correlation_id()
         flow = self.client.initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
-            headers={
-                CLIENT_REQUEST_ID: correlation_id,
-                # CLIENT_CURRENT_TELEMETRY is not currently required
-                },
+            headers={msal.telemetry.CLIENT_REQUEST_ID: correlation_id},
             **kwargs)
         flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
         return flow
@@ -1149,7 +1248,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        return _clean_up(self.client.obtain_token_by_device_flow(
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID,
+            correlation_id=flow.get(self.DEVICE_FLOW_CORRELATION_ID))
+        response = _clean_up(self.client.obtain_token_by_device_flow(
             flow,
             data=dict(
                 kwargs.pop("data", {}),
@@ -1159,96 +1261,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge),
                 ),
-            headers={
-                CLIENT_REQUEST_ID:
-                    flow.get(self.DEVICE_FLOW_CORRELATION_ID) or _get_new_correlation_id(),
-                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                    self.ACQUIRE_TOKEN_BY_DEVICE_FLOW_ID),
-                },
+            headers=telemetry_context.generate_headers(),
             **kwargs))
-
-    def acquire_token_by_username_password(
-            self, username, password, scopes, claims_challenge=None, **kwargs):
-        """Gets a token for a given resource via user credentials.
-
-        See this page for constraints of Username Password Flow.
-        https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
-
-        :param str username: Typically a UPN in the form of an email address.
-        :param str password: The password.
-        :param list[str] scopes:
-            Scopes requested to access a protected API (a resource).
-        :param claims_challenge:
-            The claims_challenge parameter requests specific claims requested by the resource provider
-            in the form of a claims_challenge directive in the www-authenticate header to be
-            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of claims being requested from these locations.
-
-        :return: A dict representing the json response from AAD:
-
-            - A successful response would contain "access_token" key,
-            - an error response would contain "error" and usually "error_description".
-        """
-        scopes = decorate_scope(scopes, self.client_id)
-        headers = {
-            CLIENT_REQUEST_ID: _get_new_correlation_id(),
-            CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID),
-            }
-        data = dict(
-            kwargs.pop("data", {}),
-            claims=_merge_claims_challenge_and_capabilities(
-                self._client_capabilities, claims_challenge))
-        if not self.authority.is_adfs:
-            user_realm_result = self.authority.user_realm_discovery(
-                username, correlation_id=headers[CLIENT_REQUEST_ID])
-            if user_realm_result.get("account_type") == "Federated":
-                return _clean_up(self._acquire_token_by_username_password_federated(
-                    user_realm_result, username, password, scopes=scopes,
-                    data=data,
-                    headers=headers, **kwargs))
-        return _clean_up(self.client.obtain_token_by_username_password(
-                username, password, scope=scopes,
-                headers=headers,
-                data=data,
-                **kwargs))
-
-    def _acquire_token_by_username_password_federated(
-            self, user_realm_result, username, password, scopes=None, **kwargs):
-        wstrust_endpoint = {}
-        if user_realm_result.get("federation_metadata_url"):
-            wstrust_endpoint = mex_send_request(
-                user_realm_result["federation_metadata_url"],
-                self.http_client)
-            if wstrust_endpoint is None:
-                raise ValueError("Unable to find wstrust endpoint from MEX. "
-                    "This typically happens when attempting MSA accounts. "
-                    "More details available here. "
-                    "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
-        logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
-        wstrust_result = wst_send_request(
-            username, password,
-            user_realm_result.get("cloud_audience_urn", "urn:federation:MicrosoftOnline"),
-            wstrust_endpoint.get("address",
-                # Fallback to an AAD supplied endpoint
-                user_realm_result.get("federation_active_auth_url")),
-            wstrust_endpoint.get("action"), self.http_client)
-        if not ("token" in wstrust_result and "type" in wstrust_result):
-            raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
-        GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
-        grant_type = {
-            SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
-            SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
-            WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
-            WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
-            }.get(wstrust_result.get("type"))
-        if not grant_type:
-            raise RuntimeError(
-                "RSTR returned unknown token type: %s", wstrust_result.get("type"))
-        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
-            grant_type, self.client.encode_saml_assertion)
-        return self.client.obtain_token_by_assertion(
-            wstrust_result["token"], grant_type, scope=scopes, **kwargs)
+        telemetry_context.update_telemetry(response)
+        return response
 
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
@@ -1271,18 +1287,18 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         # TBD: force_refresh behavior
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        return _clean_up(self.client.obtain_token_for_client(
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_FOR_CLIENT_ID)
+        response = _clean_up(self.client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
-            headers={
-                CLIENT_REQUEST_ID: _get_new_correlation_id(),
-                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                    self.ACQUIRE_TOKEN_FOR_CLIENT_ID),
-                },
+            headers=telemetry_context.generate_headers(),
             data=dict(
                 kwargs.pop("data", {}),
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
             **kwargs))
+        telemetry_context.update_telemetry(response)
+        return response
 
     def acquire_token_on_behalf_of(self, user_assertion, scopes, claims_challenge=None, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
@@ -1310,9 +1326,11 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID)
         # The implementation is NOT based on Token Exchange
         # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
-        return _clean_up(self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
+        response = _clean_up(self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
             scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
@@ -1326,9 +1344,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 requested_token_use="on_behalf_of",
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
-            headers={
-                CLIENT_REQUEST_ID: _get_new_correlation_id(),
-                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                    self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID),
-                },
+            headers=telemetry_context.generate_headers(),
             **kwargs))
+        telemetry_context.update_telemetry(response)
+        return response
