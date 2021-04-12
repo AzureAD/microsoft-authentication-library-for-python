@@ -48,7 +48,11 @@ def is_wsl():
 def _browse(auth_uri, browser_name=None):  # throws ImportError, webbrowser.Error
     """Browse uri with named browser. Default browser is customizable by $BROWSER"""
     import webbrowser  # Lazy import. Some distro may not have this.
-    browser_opened = webbrowser.get(browser_name).open(auth_uri)
+    if browser_name:
+        browser_opened = webbrowser.get(browser_name).open(auth_uri)
+    else:
+        # This one can survive BROWSER=nonexist, while get(None).open(...) can not
+        browser_opened = webbrowser.open(auth_uri)
 
     # In WSL which doesn't have www-browser, try launching browser with PowerShell
     if not browser_opened and is_wsl():
