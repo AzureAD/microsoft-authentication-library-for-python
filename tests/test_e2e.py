@@ -58,6 +58,12 @@ class E2eTestCase(unittest.TestCase):
 
     def assertCacheWorksForUser(
             self, result_from_wire, scope, username=None, data=None):
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result_from_wire.get("id_token_claims"), indent=4),
+            )
         # You can filter by predefined username, or let end user to choose one
         accounts = self.app.get_accounts(username=username)
         self.assertNotEqual(0, len(accounts))
@@ -163,12 +169,6 @@ class E2eTestCase(unittest.TestCase):
     <li><a href="$auth_uri">Sign In</a> or <a href="$abort_uri">Abort</a></li>
     </ol></body></html>""".format(id=self.id(), username_uri=username_uri),
             data=data or {},
-            )
-        logger.debug(
-            "%s: cache = %s, id_token_claims = %s",
-            self.id(),
-            json.dumps(self.app.token_cache._cache, indent=4),
-            json.dumps(result.get("id_token_claims"), indent=4),
             )
         self.assertIn(
             "access_token", result,
