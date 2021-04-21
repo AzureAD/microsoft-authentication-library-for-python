@@ -58,6 +58,12 @@ class E2eTestCase(unittest.TestCase):
 
     def assertCacheWorksForUser(
             self, result_from_wire, scope, username=None, data=None):
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result_from_wire.get("id_token_claims"), indent=4),
+            )
         # You can filter by predefined username, or let end user to choose one
         accounts = self.app.get_accounts(username=username)
         self.assertNotEqual(0, len(accounts))
@@ -163,12 +169,6 @@ class E2eTestCase(unittest.TestCase):
     <li><a href="$auth_uri">Sign In</a> or <a href="$abort_uri">Abort</a></li>
     </ol></body></html>""".format(id=self.id(), username_uri=username_uri),
             data=data or {},
-            )
-        logger.debug(
-            "%s: cache = %s, id_token_claims = %s",
-            self.id(),
-            json.dumps(self.app.token_cache._cache, indent=4),
-            json.dumps(result.get("id_token_claims"), indent=4),
             )
         self.assertIn(
             "access_token", result,
@@ -401,7 +401,10 @@ class LabBasedTestCase(E2eTestCase):
     def get_lab_app_object(cls, **query):  # https://msidlab.com/swagger/index.html
         url = "https://msidlab.com/api/app"
         resp = cls.session.get(url, params=query)
-        return resp.json()[0]
+        result = resp.json()[0]
+        result["scopes"] = [  # Raw data has extra space, such as "s1, s2"
+            s.strip() for s in result["defaultScopes"].split(',')]
+        return result
 
     @classmethod
     def get_lab_user_secret(cls, lab_name="msidlab4"):
@@ -698,7 +701,7 @@ class WorldWideTestCase(LabBasedTestCase):
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
             client_id=config["appId"],
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
-            scope=config["defaultScopes"].split(','),
+            scope=config["scopes"],
             )
 
     @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
@@ -708,7 +711,7 @@ class WorldWideTestCase(LabBasedTestCase):
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
             client_id=config["appId"],
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
-            scope=config["defaultScopes"].split(','),
+            scope=config["scopes"],
             username_uri="https://msidlab.com/api/user?usertype=b2c&b2cprovider=local",
             )
 
@@ -719,7 +722,7 @@ class WorldWideTestCase(LabBasedTestCase):
             client_id=config["appId"],
             username="b2clocal@msidlabb2c.onmicrosoft.com",
             password=self.get_lab_user_secret("msidlabb2c"),
-            scope=config["defaultScopes"].split(','),
+            scope=config["scopes"],
             )
 
 
