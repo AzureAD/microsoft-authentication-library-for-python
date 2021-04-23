@@ -99,6 +99,12 @@ class E2eTestCase(unittest.TestCase):
             "We should get an AT from acquire_token_silent(...) call")
 
     def assertCacheWorksForApp(self, result_from_wire, scope):
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result_from_wire.get("id_token_claims"), indent=4),
+            )
         # Going to test acquire_token_silent(...) to locate an AT from cache
         result_from_cache = self.app.acquire_token_silent(scope, account=None)
         self.assertIsNotNone(result_from_cache)
@@ -345,7 +351,9 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
 def get_lab_app(
         env_client_id="LAB_APP_CLIENT_ID",
         env_client_secret="LAB_APP_CLIENT_SECRET",
-        ):
+        authority="https://login.microsoftonline.com/"
+            "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
+        **kwargs):
     """Returns the lab app as an MSAL confidential client.
 
     Get it from environment variables if defined, otherwise fall back to use MSI.
@@ -367,10 +375,12 @@ def get_lab_app(
                 env_client_id, env_client_secret)
         # See also https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API's.aspx
         raise unittest.SkipTest("MSI-based mechanism has not been implemented yet")
-    return msal.ConfidentialClientApplication(client_id, client_secret,
-            authority="https://login.microsoftonline.com/"
-                "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
-            http_client=MinimalHttpClient())
+    return msal.ConfidentialClientApplication(
+            client_id,
+            client_credential=client_secret,
+            authority=authority,
+            http_client=MinimalHttpClient(),
+            **kwargs)
 
 def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confidential client flow
     logger.info("Creating session")
@@ -724,6 +734,85 @@ class WorldWideTestCase(LabBasedTestCase):
             password=self.get_lab_user_secret("msidlabb2c"),
             scope=config["scopes"],
             )
+
+
+class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
+    region = "westus"
+
+    def test_acquire_token_for_client_should_hit_regional_endpoint(self):
+        """This is the only grant supported by regional endpoint, for now"""
+        self.app = get_lab_app(  # Regional endpoint only supports confidential client
+            ## Would fail the OIDC Discovery
+            #authority="https://westus2.login.microsoftonline.com/"
+            #    "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
+
+            #authority="https://westus.login.microsoft.com/microsoft.onmicrosoft.com",
+            #validate_authority=False,
+
+            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
+            region=self.region,  # Explicitly use this region, regardless of detection
+            )
+        scopes = ["https://graph.microsoft.com/.default"]
+        result = self.app.acquire_token_for_client(
+            scopes,
+            params={"AllowEstsRNonMsi": "true"},  # For testing regional endpoint
+            )
+        self.assertIn('access_token', result)
+        self.assertCacheWorksForApp(result, scopes)
+        # TODO: Test the request hit the regional endpoint self.region?
+
+
+class RegionalEndpointViaEnvVarTestCase(WorldWideRegionalEndpointTestCase):
+
+    def setUp(self):
+        os.environ["REGION_NAME"] = "eastus"
+
+    def tearDown(self):
+        del os.environ["REGION_NAME"]
+
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CLIENT_SECRET"),
+        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"),
+        "Need LAB_OBO_PUBLIC_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+    def test_cca_obo_should_bypass_regional_endpoint_therefore_still_work(self):
+        """We test OBO because it is implemented in sub class ConfidentialClientApplication"""
+        config = self.get_lab_user(usertype="cloud")
+
+        config_cca = {}
+        config_cca.update(config)
+        config_cca["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
+        config_cca["scope"] = ["https://graph.microsoft.com/.default"]
+        config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+
+        config_pca = {}
+        config_pca.update(config)
+        config_pca["client_id"] = os.getenv("LAB_OBO_PUBLIC_CLIENT_ID")
+        config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
+        config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
+
+        self._test_acquire_token_obo(config_pca, config_cca)
+
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CLIENT_SECRET"),
+        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+    def test_cca_ropc_should_bypass_regional_endpoint_therefore_still_work(self):
+        """We test ROPC because it is implemented in base class ClientApplication"""
+        config = self.get_lab_user(usertype="cloud")
+        config["password"] = self.get_lab_user_secret(config["lab_name"])
+        # We repurpose the obo confidential app to test ROPC
+        # Swap in the OBO confidential app
+        config["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
+        config["scope"] = ["https://graph.microsoft.com/.default"]
+        config["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+        self._test_username_password(**config)
 
 
 class ArlingtonCloudTestCase(LabBasedTestCase):

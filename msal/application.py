@@ -9,6 +9,7 @@ import logging
 import sys
 import warnings
 from threading import Lock
+import os
 
 import requests
 
@@ -108,6 +109,8 @@ class ClientApplication(object):
     GET_ACCOUNTS_ID = "902"
     REMOVE_ACCOUNT_ID = "903"
 
+    ATTEMPT_REGION_DISCOVERY = "TryAutoDetect"
+
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
@@ -115,7 +118,12 @@ class ClientApplication(object):
             http_client=None,
             verify=True, proxies=None, timeout=None,
             client_claims=None, app_name=None, app_version=None,
-            client_capabilities=None):
+            client_capabilities=None,
+            region=None,  # Note: We choose to add this param in this base class,
+                # despite it is currently only needed by ConfidentialClientApplication.
+                # This way, it holds the same positional param place for PCA,
+                # when we would eventually want to add this feature to PCA in future.
+            ):
         """Create an instance of application.
 
         :param str client_id: Your app has a client_id after you register it on AAD.
@@ -220,6 +228,25 @@ class ClientApplication(object):
             MSAL will combine them into
             `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_
             which you will later provide via one of the acquire-token request.
+
+        :param str region:
+            Added since MSAL Python 1.12.0.
+
+            If enabled, MSAL token requests would remain inside that region.
+            Currently, regional endpoint only supports using
+            ``acquire_token_for_client()`` for some scopes.
+
+            The default value is None, which means region support remains turned off.
+
+            App developer can opt in to regional endpoint,
+            by provide a region name, such as "westus", "eastus2".
+
+            An app running inside Azure VM can use a special keyword
+            ``ClientApplication.ATTEMPT_REGION_DISCOVERY`` to auto-detect region.
+            (Attempting this on a non-VM could hang indefinitely.
+            Make sure you configure a short timeout,
+            or provide a custom http_client which has a short timeout.
+            That way, the latency would be under your control.)
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -249,7 +276,10 @@ class ClientApplication(object):
                 self.http_client, validate_authority=validate_authority)
             # Here the self.authority is not the same type as authority in input
         self.token_cache = token_cache or TokenCache()
-        self.client = self._build_client(client_credential, self.authority)
+        self._region_configured = region
+        self._region_detected = None
+        self.client, self._regional_client = self._build_client(
+            client_credential, self.authority)
         self.authority_groups = None
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
@@ -259,6 +289,26 @@ class ClientApplication(object):
         return msal.telemetry._TelemetryContext(
             self._telemetry_buffer, self._telemetry_lock, api_id,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
+
+    def _detect_region(self):
+        return os.environ.get("REGION_NAME")  # TODO: or Call IMDS
+
+    def _get_regional_authority(self, central_authority):
+        self._region_detected = self._region_detected or self._detect_region()
+        if self._region_configured and self._region_detected != self._region_configured:
+            logger.warning('Region configured ({}) != region detected ({})'.format(
+                repr(self._region_configured), repr(self._region_detected)))
+        region_to_use = self._region_configured or self._region_detected
+        if region_to_use:
+            logger.info('Region to be used: {}'.format(repr(region_to_use)))
+            regional_host = ("{}.login.microsoft.com".format(region_to_use)
+                if central_authority.instance == "login.microsoftonline.com"
+                else "{}.{}".format(region_to_use, central_authority.instance))
+            return Authority(
+                "https://{}/{}".format(regional_host, central_authority.tenant),
+                self.http_client,
+                validate_authority=False)  # The central_authority has already been validated
+        return None
 
     def _build_client(self, client_credential, authority):
         client_assertion = None
@@ -298,15 +348,15 @@ class ClientApplication(object):
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
         else:
             default_body['client_secret'] = client_credential
-        server_configuration = {
+        central_configuration = {
             "authorization_endpoint": authority.authorization_endpoint,
             "token_endpoint": authority.token_endpoint,
             "device_authorization_endpoint":
                 authority.device_authorization_endpoint or
                 urljoin(authority.token_endpoint, "devicecode"),
             }
-        return Client(
-            server_configuration,
+        central_client = Client(
+            central_configuration,
             self.client_id,
             http_client=self.http_client,
             default_headers=default_headers,
@@ -317,6 +367,30 @@ class ClientApplication(object):
                 event, environment=authority.instance)),
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
+
+        regional_client = None
+        regional_authority = self._get_regional_authority(authority)
+        if regional_authority:
+            regional_configuration = {
+                "authorization_endpoint": regional_authority.authorization_endpoint,
+                "token_endpoint": regional_authority.token_endpoint,
+                "device_authorization_endpoint":
+                    regional_authority.device_authorization_endpoint or
+                    urljoin(regional_authority.token_endpoint, "devicecode"),
+                }
+            regional_client = Client(
+                regional_configuration,
+                self.client_id,
+                http_client=self.http_client,
+                default_headers=default_headers,
+                default_body=default_body,
+                client_assertion=client_assertion,
+                client_assertion_type=client_assertion_type,
+                on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                    event, environment=authority.instance)),
+                on_removing_rt=self.token_cache.remove_rt,
+                on_updating_rt=self.token_cache.update_rt)
+        return central_client, regional_client
 
     def initiate_auth_code_flow(
             self,
@@ -953,7 +1027,7 @@ class ClientApplication(object):
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
         logger.debug("Found %d RTs matching %s", len(matches), query)
-        client = self._build_client(self.client_credential, authority)
+        client, _ = self._build_client(self.client_credential, authority)
 
         response = None  # A distinguishable value to mean cache is empty
         telemetry_context = self._build_telemetry_context(
@@ -1304,7 +1378,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_FOR_CLIENT_ID)
-        response = _clean_up(self.client.obtain_token_for_client(
+        client = self._regional_client or self.client
+        response = _clean_up(client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers=telemetry_context.generate_headers(),
             data=dict(
