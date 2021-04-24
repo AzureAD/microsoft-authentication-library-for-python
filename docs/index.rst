@@ -35,12 +35,16 @@ PublicClientApplication
    :members:
    :inherited-members:
 
+   .. automethod:: __init__
+
 ConfidentialClientApplication
 -----------------------------
 
 .. autoclass:: msal.ConfidentialClientApplication
    :members:
    :inherited-members:
+
+   .. automethod:: __init__
 
 TokenCache
 ----------
