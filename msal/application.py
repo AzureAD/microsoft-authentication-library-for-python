@@ -9,7 +9,6 @@ import logging
 import sys
 import warnings
 from threading import Lock
-import os
 
 import requests
 
@@ -20,6 +19,7 @@ from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache
 import msal.telemetry
+from .region import _detect_region
 
 
 # The __init__.py will import this. Not the other way around.
@@ -261,7 +261,7 @@ class ClientApplication(object):
             # Requests, does not support session - wide timeout
             # But you can patch that (https://github.com/psf/requests/issues/3341):
             self.http_client.request = functools.partial(
-                self.http_client.request, timeout=timeout)
+                self.http_client.request, timeout=timeout or 2)
 
             # Enable a minimal retry. Better than nothing.
             # https://github.com/psf/requests/blob/v2.25.1/requests/adapters.py#L94-L108
@@ -290,11 +290,8 @@ class ClientApplication(object):
             self._telemetry_buffer, self._telemetry_lock, api_id,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
-    def _detect_region(self):
-        return os.environ.get("REGION_NAME")  # TODO: or Call IMDS
-
     def _get_regional_authority(self, central_authority):
-        self._region_detected = self._region_detected or self._detect_region()
+        self._region_detected = self._region_detected or _detect_region(self.http_client)
         if self._region_configured and self._region_detected != self._region_configured:
             logger.warning('Region configured ({}) != region detected ({})'.format(
                 repr(self._region_configured), repr(self._region_detected)))
@@ -369,27 +366,28 @@ class ClientApplication(object):
             on_updating_rt=self.token_cache.update_rt)
 
         regional_client = None
-        regional_authority = self._get_regional_authority(authority)
-        if regional_authority:
-            regional_configuration = {
-                "authorization_endpoint": regional_authority.authorization_endpoint,
-                "token_endpoint": regional_authority.token_endpoint,
-                "device_authorization_endpoint":
-                    regional_authority.device_authorization_endpoint or
-                    urljoin(regional_authority.token_endpoint, "devicecode"),
-                }
-            regional_client = Client(
-                regional_configuration,
-                self.client_id,
-                http_client=self.http_client,
-                default_headers=default_headers,
-                default_body=default_body,
-                client_assertion=client_assertion,
-                client_assertion_type=client_assertion_type,
-                on_obtaining_tokens=lambda event: self.token_cache.add(dict(
-                    event, environment=authority.instance)),
-                on_removing_rt=self.token_cache.remove_rt,
-                on_updating_rt=self.token_cache.update_rt)
+        if client_credential:  # Currently regional endpoint only serves some CCA flows
+            regional_authority = self._get_regional_authority(authority)
+            if regional_authority:
+                regional_configuration = {
+                    "authorization_endpoint": regional_authority.authorization_endpoint,
+                    "token_endpoint": regional_authority.token_endpoint,
+                    "device_authorization_endpoint":
+                        regional_authority.device_authorization_endpoint or
+                        urljoin(regional_authority.token_endpoint, "devicecode"),
+                    }
+                regional_client = Client(
+                    regional_configuration,
+                    self.client_id,
+                    http_client=self.http_client,
+                    default_headers=default_headers,
+                    default_body=default_body,
+                    client_assertion=client_assertion,
+                    client_assertion_type=client_assertion_type,
+                    on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                        event, environment=authority.instance)),
+                    on_removing_rt=self.token_cache.remove_rt,
+                    on_updating_rt=self.token_cache.update_rt)
         return central_client, regional_client
 
     def initiate_auth_code_flow(
