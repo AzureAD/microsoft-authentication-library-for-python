@@ -57,6 +57,9 @@
    type="text/css"
    id="style996">
 	<![CDATA[
+
+                #shape1029-46 path, #shape1029-46 text, #shape1029-46 tspan /* API App */ {fill:grey !important}
+
 		.st1 {fill:#008bfd;stroke:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:0.75}
 		.st2 {fill:#000000;font-family:Segoe UI;font-size:0.833336em}
 		.st3 {font-size:1em}

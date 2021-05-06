@@ -60,6 +60,13 @@
    type="text/css"
    id="style10">
 	<![CDATA[
+        #group1425-245 path, #group1425-245 text, /* SPA */
+        #group1073-1 path, #group1073-1 text, /* SPA */
+        #group1137-104 path, #group1137-104 text, #group1137-104 tspan, /* Mobile App */
+        #shape1129-90 path, #shape1129-90 text, /* Web API */
+        #shape1174-173 path, #shape1174-173 text /* Web API */
+        {fill:grey !important}
+
 		.st1 {fill:#008bfd;stroke:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:0.75}
 		.st2 {fill:#000000;font-family:Calibri;font-size:0.833336em}
 		.st3 {font-size:1em}
