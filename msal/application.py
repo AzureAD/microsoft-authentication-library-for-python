@@ -232,11 +232,22 @@ class ClientApplication(object):
         :param str region:
             Added since MSAL Python 1.12.0.
 
-            If enabled, MSAL token requests would remain inside that region.
-            Currently, regional endpoint only supports using
-            ``acquire_token_for_client()`` for some scopes.
+            As of 2021 May, regional service is only available for
+            ``acquire_token_for_client()`` sent by any of the following scenarios::
 
-            The default value is None, which means region support remains turned off.
+            1. An app powered by a capable MSAL
+               (MSAL Python 1.12+ will be provisioned)
+
+            2. An app with managed identity, which is formerly known as MSI.
+               (However MSAL Python does not support managed identity,
+               so this one does not apply.)
+
+            3. An app authenticated by Subject Name/Issuer (SNI).
+
+            4. An app which already onboard to the region's allow-list.
+
+            MSAL's default value is None, which means region behavior remains off.
+            If enabled, some of the MSAL traffic would remain inside that region.
 
             App developer can opt in to regional endpoint,
             by provide a region name, such as "westus", "eastus2".
@@ -261,7 +272,7 @@ class ClientApplication(object):
             # Requests, does not support session - wide timeout
             # But you can patch that (https://github.com/psf/requests/issues/3341):
             self.http_client.request = functools.partial(
-                self.http_client.request, timeout=timeout or 2)
+                self.http_client.request, timeout=timeout)
 
             # Enable a minimal retry. Better than nothing.
             # https://github.com/psf/requests/blob/v2.25.1/requests/adapters.py#L94-L108
@@ -291,11 +302,15 @@ class ClientApplication(object):
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
     def _get_regional_authority(self, central_authority):
-        self._region_detected = self._region_detected or _detect_region(self.http_client)
-        if self._region_configured and self._region_detected != self._region_configured:
+        is_region_specified = bool(self._region_configured
+            and self._region_configured != self.ATTEMPT_REGION_DISCOVERY)
+        self._region_detected = self._region_detected or _detect_region(
+            self.http_client if self._region_configured is not None else None)
+        if (is_region_specified and self._region_configured != self._region_detected):
             logger.warning('Region configured ({}) != region detected ({})'.format(
                 repr(self._region_configured), repr(self._region_detected)))
-        region_to_use = self._region_configured or self._region_detected
+        region_to_use = (
+            self._region_configured if is_region_specified else self._region_detected)
         if region_to_use:
             logger.info('Region to be used: {}'.format(repr(region_to_use)))
             regional_host = ("{}.login.microsoft.com".format(region_to_use)

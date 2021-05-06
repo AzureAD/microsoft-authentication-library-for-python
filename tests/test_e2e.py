@@ -27,7 +27,7 @@ def _get_app_and_auth_code(
         app = msal.ConfidentialClientApplication(
             client_id,
             client_credential=client_secret,
-            authority=authority, http_client=MinimalHttpClient(timeout=2))
+            authority=authority, http_client=MinimalHttpClient())
     else:
         app = msal.PublicClientApplication(
             client_id, authority=authority, http_client=MinimalHttpClient())
@@ -292,7 +292,7 @@ class FileBasedTestCase(E2eTestCase):
             self.config["client_id"],
             client_credential=self.config.get("client_secret"),
             authority=self.config.get("authority"),
-            http_client=MinimalHttpClient(timeout=2))
+            http_client=MinimalHttpClient())
         scope = self.config.get("scope", [])
         result = self.app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
@@ -307,7 +307,7 @@ class FileBasedTestCase(E2eTestCase):
         self.app = msal.ConfidentialClientApplication(
             self.config['client_id'],
             {"private_key": private_key, "thumbprint": client_cert["thumbprint"]},
-            http_client=MinimalHttpClient(timeout=2))
+            http_client=MinimalHttpClient())
         scope = self.config.get("scope", [])
         result = self.app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
@@ -330,7 +330,7 @@ class FileBasedTestCase(E2eTestCase):
                 "thumbprint": self.config["thumbprint"],
                 "public_certificate": public_certificate,
                 },
-            http_client=MinimalHttpClient(timeout=2))
+            http_client=MinimalHttpClient())
         scope = self.config.get("scope", [])
         result = self.app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
@@ -379,7 +379,7 @@ def get_lab_app(
             client_id,
             client_credential=client_secret,
             authority=authority,
-            http_client=MinimalHttpClient(timeout=2),
+            http_client=MinimalHttpClient(),
             **kwargs)
 
 def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confidential client flow
@@ -528,7 +528,7 @@ class LabBasedTestCase(E2eTestCase):
             config_cca["client_id"],
             client_credential=config_cca["client_secret"],
             authority=config_cca["authority"],
-            http_client=MinimalHttpClient(timeout=2),
+            http_client=MinimalHttpClient(),
             # token_cache= ...,  # Default token cache is all-tokens-store-in-memory.
                 # That's fine if OBO app uses short-lived msal instance per session.
                 # Otherwise, the OBO app need to implement a one-cache-per-user setup.
@@ -556,7 +556,7 @@ class LabBasedTestCase(E2eTestCase):
         assert client_id and client_secret and authority and scope
         app = msal.ConfidentialClientApplication(
             client_id, client_credential=client_secret, authority=authority,
-            http_client=MinimalHttpClient(timeout=2))
+            http_client=MinimalHttpClient())
         result = app.acquire_token_for_client(scope)
         self.assertIsNotNone(result.get("access_token"), "Got %s instead" % result)
 
@@ -758,7 +758,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
         scopes = ["https://graph.microsoft.com/.default"]
         result = self.app.acquire_token_for_client(
             scopes,
-            params={"AllowEstsRNonMsi": "true"},  # For testing regional endpoint
+            params={"AllowEstsRNonMsi": "true"},  # For testing regional endpoint. It will be removed once MSAL Python 1.12+ has been onboard to ESTS-R
             )
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scopes)
@@ -855,7 +855,7 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
             usertype="cloud", azureenvironment=self.environment, publicClient="no")
         app = msal.ConfidentialClientApplication(
             config['client_id'], authority=config['authority'],
-            http_client=MinimalHttpClient(timeout=2))
+            http_client=MinimalHttpClient())
         result = app.acquire_token_silent(scopes=config['scope'], account=None)
         self.assertEqual(result, None)
         # Note: An alias in this region is no longer accepting HTTPS traffic.
