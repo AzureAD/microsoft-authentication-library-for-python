@@ -24,8 +24,10 @@ MSAL Python supports some of them.
 
   .. raw:: html
 
-    <!-- Derived from http://www.image-map.net/ but we had to manually add unique map id -->
-    <img src="https://docs.microsoft.com/en-us/azure/active-directory/develop/media/scenarios/scenarios-with-users.svg" usemap="#public-map">
+    <!-- Original diagram came from https://docs.microsoft.com/en-us/azure/active-directory/develop/media/scenarios/scenarios-with-users.svg -->
+    <!-- Don't know how to include images into Sphinx, so we host it from github repo instead -->
+    <img src="https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-for-python/dev/docs/scenarios-with-users.svg"
+        usemap="#public-map"><!-- Derived from http://www.image-map.net/ but we had to manually add unique map id -->
     <map name="public-map">
         <area target="_blank" coords="110,150,59,94" shape="rect"
             alt="Web app" title="Web app" href="https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-v2-python-webapp">
@@ -42,9 +44,10 @@ MSAL Python supports some of them.
 
   .. raw:: html
 
-    <!-- Derived from http://www.image-map.net/ but we had to manually add unique map id -->
-    <img src="https://docs.microsoft.com/en-us/azure/active-directory/develop/media/scenarios/daemon-app.svg" usemap="#confidential-map">
-
+    <!-- Original diagram came from https://docs.microsoft.com/en-us/azure/active-directory/develop/media/scenarios/daemon-app.svg -->
+    <!-- Don't know how to include images into Sphinx, so we host it from github repo instead -->
+    <img src="https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-for-python/dev/docs/daemon-app.svg"
+        usemap="#confidential-map"><!-- Derived from http://www.image-map.net/ but we had to manually add unique map id -->
     <map name="confidential-map">
         <area target="_blank" coords="48,1,165,260" shape="rect"
             alt="Daemon App acquires token for themselves" title="Daemon App acquires token for themselves" href="https://github.com/Azure-Samples/ms-identity-python-daemon">
