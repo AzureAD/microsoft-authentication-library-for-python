@@ -758,7 +758,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
             #validate_authority=False,
 
             authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
-            region=self.region,  # Explicitly use this region, regardless of detection
+            azure_region=self.region,  # Explicitly use this region, regardless of detection
             timeout=2,  # Short timeout makes this test case responsive on non-VM
             )
         scopes = ["https://graph.microsoft.com/.default"]
