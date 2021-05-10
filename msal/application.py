@@ -119,7 +119,7 @@ class ClientApplication(object):
             verify=True, proxies=None, timeout=None,
             client_claims=None, app_name=None, app_version=None,
             client_capabilities=None,
-            region=None,  # Note: We choose to add this param in this base class,
+            azure_region=None,  # Note: We choose to add this param in this base class,
                 # despite it is currently only needed by ConfidentialClientApplication.
                 # This way, it holds the same positional param place for PCA,
                 # when we would eventually want to add this feature to PCA in future.
@@ -229,7 +229,7 @@ class ClientApplication(object):
             `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_
             which you will later provide via one of the acquire-token request.
 
-        :param str region:
+        :param str azure_region:
             Added since MSAL Python 1.12.0.
 
             As of 2021 May, regional service is only available for
@@ -301,7 +301,7 @@ class ClientApplication(object):
                 raise
 
         self.token_cache = token_cache or TokenCache()
-        self._region_configured = region
+        self._region_configured = azure_region
         self._region_detected = None
         self.client, self._regional_client = self._build_client(
             client_credential, self.authority)
