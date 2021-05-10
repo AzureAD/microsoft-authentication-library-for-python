@@ -353,6 +353,7 @@ def get_lab_app(
         env_client_secret="LAB_APP_CLIENT_SECRET",
         authority="https://login.microsoftonline.com/"
             "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
+        timeout=None,
         **kwargs):
     """Returns the lab app as an MSAL confidential client.
 
@@ -379,7 +380,7 @@ def get_lab_app(
             client_id,
             client_credential=client_secret,
             authority=authority,
-            http_client=MinimalHttpClient(),
+            http_client=MinimalHttpClient(timeout=timeout),
             **kwargs)
 
 def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confidential client flow
@@ -754,6 +755,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
 
             authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
             region=self.region,  # Explicitly use this region, regardless of detection
+            timeout=2,  # Short timeout makes this test case responsive on non-VM
             )
         scopes = ["https://graph.microsoft.com/.default"]
         result = self.app.acquire_token_for_client(
