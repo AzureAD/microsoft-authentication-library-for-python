@@ -282,10 +282,24 @@ class ClientApplication(object):
 
         self.app_name = app_name
         self.app_version = app_version
-        self.authority = Authority(
+
+        # Here the self.authority will not be the same type as authority in input
+        try:
+            self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
                 self.http_client, validate_authority=validate_authority)
-            # Here the self.authority is not the same type as authority in input
+        except ValueError:  # Those are explicit authority validation errors
+            raise
+        except Exception:  # The rest are typically connection errors
+            if validate_authority and region:
+                # Since caller opts in to use region, here we tolerate connection
+                # errors happened during authority validation at non-region endpoint
+                self.authority = Authority(
+                    authority or "https://login.microsoftonline.com/common/",
+                    self.http_client, validate_authority=False)
+            else:
+                raise
+
         self.token_cache = token_cache or TokenCache()
         self._region_configured = region
         self._region_detected = None
