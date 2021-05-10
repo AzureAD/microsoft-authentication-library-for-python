@@ -4,11 +4,15 @@ import json
 import time
 import unittest
 import sys
+try:
+    from unittest.mock import patch, ANY
+except:
+    from mock import patch, ANY
 
 import requests
 
 import msal
-from tests.http_client import MinimalHttpClient
+from tests.http_client import MinimalHttpClient, MinimalResponse
 from msal.oauth2cli import AuthCodeReceiver
 
 logger = logging.getLogger(__name__)
@@ -758,13 +762,21 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
             timeout=2,  # Short timeout makes this test case responsive on non-VM
             )
         scopes = ["https://graph.microsoft.com/.default"]
+
+        with patch.object(  # Test the request hit the regional endpoint
+                self.app.http_client, "post", return_value=MinimalResponse(
+                status_code=400, text='{"error": "mock"}')) as mocked_method:
+            self.app.acquire_token_for_client(scopes)
+            mocked_method.assert_called_with(
+                'https://westus.login.microsoft.com/{}/oauth2/v2.0/token'.format(
+                    self.app.authority.tenant),
+                params=ANY, data=ANY, headers=ANY)
         result = self.app.acquire_token_for_client(
             scopes,
             params={"AllowEstsRNonMsi": "true"},  # For testing regional endpoint. It will be removed once MSAL Python 1.12+ has been onboard to ESTS-R
             )
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scopes)
-        # TODO: Test the request hit the regional endpoint self.region?
 
 
 class RegionalEndpointViaEnvVarTestCase(WorldWideRegionalEndpointTestCase):
