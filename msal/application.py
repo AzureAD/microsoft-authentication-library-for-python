@@ -256,7 +256,7 @@ class ClientApplication(object):
             ``az account list-locations -o table``, or referencing to
             `this doc <https://docs.microsoft.com/en-us/dotnet/api/microsoft.azure.management.resourcemanager.fluent.core.region?view=azure-dotnet>`_.
 
-            An app running inside Azure VM can use a special keyword
+            An app running inside Azure Functions and Azure VM can use a special keyword
             ``ClientApplication.ATTEMPT_REGION_DISCOVERY`` to auto-detect region.
             (Attempting this on a non-VM could hang indefinitely.
             Make sure you configure a short timeout,
