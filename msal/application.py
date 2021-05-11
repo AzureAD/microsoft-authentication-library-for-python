@@ -249,8 +249,11 @@ class ClientApplication(object):
             MSAL's default value is None, which means region behavior remains off.
             If enabled, some of the MSAL traffic would remain inside that region.
 
-            App developer can opt in to regional endpoint,
-            by provide a region name, such as "westus", "eastus2".
+            App developer can opt in to a regional endpoint,
+            by provide its region name, such as "westus", "eastus2".
+            You can find a full list of regions by running
+            ``az account list-locations -o table``, or referencing to
+            `this doc <https://docs.microsoft.com/en-us/dotnet/api/microsoft.azure.management.resourcemanager.fluent.core.region?view=azure-dotnet>`_.
 
             An app running inside Azure VM can use a special keyword
             ``ClientApplication.ATTEMPT_REGION_DISCOVERY`` to auto-detect region.
