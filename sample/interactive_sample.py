@@ -63,6 +63,8 @@ if not result:
             # by using the preferred_username claim from returned id_token_claims.
 
         #prompt="select_account",  # Optional. It forces to show account selector page
+        #prompt="create",  # Optional. It brings user to a self-service sign-up flow.
+            # Prerequisite: https://docs.microsoft.com/en-us/azure/active-directory/external-identities/self-service-sign-up-user-flow
         )
 
 if "access_token" in result:
