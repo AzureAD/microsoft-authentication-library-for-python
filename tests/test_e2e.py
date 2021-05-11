@@ -750,15 +750,13 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
     def test_acquire_token_for_client_should_hit_regional_endpoint(self):
         """This is the only grant supported by regional endpoint, for now"""
         self.app = get_lab_app(  # Regional endpoint only supports confidential client
-            ## Would fail the OIDC Discovery
-            #authority="https://westus2.login.microsoftonline.com/"
-            #    "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
 
+            ## FWIW, the MSAL<1.12 versions could use this to achieve similar result
             #authority="https://westus.login.microsoft.com/microsoft.onmicrosoft.com",
             #validate_authority=False,
-
             authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
             azure_region=self.region,  # Explicitly use this region, regardless of detection
+
             timeout=2,  # Short timeout makes this test case responsive on non-VM
             )
         scopes = ["https://graph.microsoft.com/.default"]

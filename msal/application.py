@@ -109,7 +109,7 @@ class ClientApplication(object):
     GET_ACCOUNTS_ID = "902"
     REMOVE_ACCOUNT_ID = "903"
 
-    ATTEMPT_REGION_DISCOVERY = "TryAutoDetect"
+    ATTEMPT_REGION_DISCOVERY = True  # "TryAutoDetect"
 
     def __init__(
             self, client_id,
@@ -242,7 +242,8 @@ class ClientApplication(object):
                (However MSAL Python does not support managed identity,
                so this one does not apply.)
 
-            3. An app authenticated by Subject Name/Issuer (SNI).
+            3. An app authenticated by
+               `Subject Name/Issuer (SNI) <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_.
 
             4. An app which already onboard to the region's allow-list.
 
@@ -258,10 +259,22 @@ class ClientApplication(object):
 
             An app running inside Azure Functions and Azure VM can use a special keyword
             ``ClientApplication.ATTEMPT_REGION_DISCOVERY`` to auto-detect region.
-            (Attempting this on a non-VM could hang indefinitely.
-            Make sure you configure a short timeout,
-            or provide a custom http_client which has a short timeout.
-            That way, the latency would be under your control.)
+
+            .. note::
+
+                Setting ``azure_region`` to non-``None`` for an app running
+                outside of Azure Function/VM could hang indefinitely.
+
+                You should consider opting in/out region behavior on-demand,
+                by loading ``azure_region=None`` or ``azure_region="westus"``
+                or ``azure_region=True`` (which means opt-in and auto-detect)
+                from your per-deployment configuration, and then do
+                ``app = ConfidentialClientApplication(..., azure_region=azure_region)``.
+
+                Alternatively, you can configure a short timeout,
+                or provide a custom http_client which has a short timeout.
+                That way, the latency would be under your control,
+                but still less performant than opting out of region feature.
         """
         self.client_id = client_id
         self.client_credential = client_credential

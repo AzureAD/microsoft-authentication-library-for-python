@@ -29,7 +29,12 @@ def _detect_region_of_azure_vm(http_client):
         )
     logger.info(
         "Connecting to IMDS {}. "
-        "You may want to use a shorter timeout on your http_client".format(url))
+        "It may take a while if you are running outside of Azure. "
+        "You should consider opting in/out region behavior on-demand, "
+        'by loading a boolean flag "is_deployed_in_azure" '
+        'from your per-deployment config and then do '
+        '"app = ConfidentialClientApplication(..., '
+        'azure_region=is_deployed_in_azure)"'.format(url))
     try:
         # https://docs.microsoft.com/en-us/azure/virtual-machines/windows/instance-metadata-service?tabs=linux#instance-metadata
         resp = http_client.get(url, headers={"Metadata": "true"})
