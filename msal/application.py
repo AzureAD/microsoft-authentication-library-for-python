@@ -18,7 +18,7 @@ from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache
-import msal.telemetry
+from . import telemetry
 
 
 # The __init__.py will import this. Not the other way around.
@@ -251,7 +251,7 @@ class ClientApplication(object):
 
     def _build_telemetry_context(
             self, api_id, correlation_id=None, refresh_reason=None):
-        return msal.telemetry._TelemetryContext(
+        return telemetry._TelemetryContext(
             self._telemetry_buffer, self._telemetry_lock, api_id,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
@@ -777,7 +777,7 @@ class ClientApplication(object):
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
-        correlation_id = msal.telemetry._get_new_correlation_id()
+        correlation_id = telemetry._get_new_correlation_id()
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
         # the_authority = Authority(
@@ -848,11 +848,11 @@ class ClientApplication(object):
                 target=scopes,
                 query=query)
             now = time.time()
-            refresh_reason = msal.telemetry.AT_ABSENT
+            refresh_reason = telemetry.AT_ABSENT
             for entry in matches:
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
-                    refresh_reason = msal.telemetry.AT_EXPIRED
+                    refresh_reason = telemetry.AT_EXPIRED
                     continue  # Removal is not necessary, it will be overwritten
                 logger.debug("Cache hit an AT")
                 access_token_from_cache = {  # Mimic a real response
@@ -861,12 +861,12 @@ class ClientApplication(object):
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     }
                 if "refresh_on" in entry and int(entry["refresh_on"]) < now:  # aging
-                    refresh_reason = msal.telemetry.AT_AGING
+                    refresh_reason = telemetry.AT_AGING
                     break  # With a fallback in hand, we break here to go refresh
                 self._build_telemetry_context(-1).hit_an_access_token()
                 return access_token_from_cache  # It is still good as new
         else:
-            refresh_reason = msal.telemetry.FORCE_REFRESH  # TODO: It could also mean claims_challenge
+            refresh_reason = telemetry.FORCE_REFRESH  # TODO: It could also mean claims_challenge
         assert refresh_reason, "It should have been established at this point"
         try:
             result = _clean_up(self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
@@ -1013,7 +1013,7 @@ class ClientApplication(object):
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_REFRESH_TOKEN,
-            refresh_reason=msal.telemetry.FORCE_REFRESH)
+            refresh_reason=telemetry.FORCE_REFRESH)
         response = _clean_up(self.client.obtain_token_by_refresh_token(
             refresh_token,
             scope=decorate_scope(scopes, self.client_id),
@@ -1131,10 +1131,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A successful response would contain "user_code" key, among others
             - an error response would contain some other readable key/value pairs.
         """
-        correlation_id = msal.telemetry._get_new_correlation_id()
+        correlation_id = telemetry._get_new_correlation_id()
         flow = self.client.initiate_device_flow(
             scope=decorate_scope(scopes or [], self.client_id),
-            headers={msal.telemetry.CLIENT_REQUEST_ID: correlation_id},
+            headers={telemetry.CLIENT_REQUEST_ID: correlation_id},
             **kwargs)
         flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
         return flow
@@ -1208,7 +1208,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 self._client_capabilities, claims_challenge))
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
-                username, correlation_id=headers[msal.telemetry.CLIENT_REQUEST_ID])
+                username, correlation_id=headers[telemetry.CLIENT_REQUEST_ID])
             if user_realm_result.get("account_type") == "Federated":
                 response = _clean_up(self._acquire_token_by_username_password_federated(
                     user_realm_result, username, password, scopes=scopes,
