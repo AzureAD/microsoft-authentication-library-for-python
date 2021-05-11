@@ -247,7 +247,8 @@ class ClientApplication(object):
             4. An app which already onboard to the region's allow-list.
 
             MSAL's default value is None, which means region behavior remains off.
-            If enabled, some of the MSAL traffic would remain inside that region.
+            If enabled, the `acquire_token_for_client()`-relevant traffic
+            would remain inside that region.
 
             App developer can opt in to a regional endpoint,
             by provide its region name, such as "westus", "eastus2".
