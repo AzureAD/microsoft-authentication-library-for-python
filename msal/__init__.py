@@ -31,5 +31,6 @@ from .application import (
     ConfidentialClientApplication,
     PublicClientApplication,
     )
+from .oauth2cli.oidc import Prompt
 from .token_cache import TokenCache, SerializableTokenCache
 
