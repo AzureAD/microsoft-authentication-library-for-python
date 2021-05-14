@@ -83,6 +83,19 @@ def _nonce_hash(nonce):
     return hashlib.sha256(nonce.encode("ascii")).hexdigest()
 
 
+class Prompt(object):
+    """This class defines the constant strings for prompt parameter.
+
+    The values are based on
+    https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+    """
+    NONE = "none"
+    LOGIN = "login"
+    CONSENT = "consent"
+    SELECT_ACCOUNT = "select_account"
+    CREATE = "create"  # Defined in https://openid.net/specs/openid-connect-prompt-create-1_0.html#PromptParameter
+
+
 class Client(oauth2.Client):
     """OpenID Connect is a layer on top of the OAuth2.
 
@@ -217,6 +230,8 @@ class Client(oauth2.Client):
             `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
         :param string prompt: Defined in
             `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
+            You can find the valid string values defined in :class:`oidc.Prompt`.
+
         :param int max_age: Defined in
             `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
         :param string ui_locales: Defined in
@@ -232,7 +247,7 @@ class Client(oauth2.Client):
         for descriptions on other parameters and return value.
         """
         filtered_params = {k:v for k, v in dict(
-            prompt=prompt,
+            prompt=" ".join(prompt) if isinstance(prompt, (list, tuple)) else prompt,
             display=display,
             max_age=max_age,
             ui_locales=ui_locales,
