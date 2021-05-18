@@ -27,33 +27,6 @@ __version__ = "1.11.0"
 
 logger = logging.getLogger(__name__)
 
-def decorate_scope(
-        scopes, client_id,
-        reserved_scope=frozenset(['openid', 'profile', 'offline_access'])):
-    if not isinstance(scopes, (list, set, tuple)):
-        raise ValueError("The input scopes should be a list, tuple, or set")
-    scope_set = set(scopes)  # Input scopes is typically a list. Copy it to a set.
-    if scope_set & reserved_scope:
-        # These scopes are reserved for the API to provide good experience.
-        # We could make the developer pass these and then if they do they will
-        # come back asking why they don't see refresh token or user information.
-        raise ValueError(
-            "API does not accept {} value as user-provided scopes".format(
-                reserved_scope))
-    if client_id in scope_set:
-        if len(scope_set) > 1:
-            # We make developers pass their client id, so that they can express
-            # the intent that they want the token for themselves (their own
-            # app).
-            # If we do not restrict them to passing only client id then they
-            # could write code where they expect an id token but end up getting
-            # access_token.
-            raise ValueError("Client Id can only be provided as a single scope")
-        decorated = set(reserved_scope)  # Make a writable copy
-    else:
-        decorated = scope_set | reserved_scope
-    return list(decorated)
-
 
 def extract_certs(public_cert_content):
     # Parses raw public certificate file contents and returns a list of strings
@@ -123,6 +96,7 @@ class ClientApplication(object):
                 # despite it is currently only needed by ConfidentialClientApplication.
                 # This way, it holds the same positional param place for PCA,
                 # when we would eventually want to add this feature to PCA in future.
+            exclude_scopes=None,
             ):
         """Create an instance of application.
 
@@ -275,11 +249,28 @@ class ClientApplication(object):
                 or provide a custom http_client which has a short timeout.
                 That way, the latency would be under your control,
                 but still less performant than opting out of region feature.
+        :param list[str] exclude_scopes: (optional)
+            Historically MSAL hardcodes `offline_access` scope,
+            which would allow your app to have prolonged access to user's data.
+            If that is unnecessary or undesirable for your app,
+            now you can use this parameter to supply an exclusion list of scopes,
+            such as ``exclude_scopes = ["offline_access"]``.
         """
         self.client_id = client_id
         self.client_credential = client_credential
         self.client_claims = client_claims
         self._client_capabilities = client_capabilities
+
+        if exclude_scopes and not isinstance(exclude_scopes, list):
+            raise ValueError(
+                "Invalid exclude_scopes={}. It need to be a list of strings.".format(
+                repr(exclude_scopes)))
+        self._exclude_scopes = frozenset(exclude_scopes or [])
+        if "openid" in self._exclude_scopes:
+            raise ValueError(
+                'Invalid exclude_scopes={}. You can not opt out "openid" scope'.format(
+                repr(exclude_scopes)))
+
         if http_client:
             self.http_client = http_client
         else:
@@ -325,6 +316,34 @@ class ClientApplication(object):
         self.authority_groups = None
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
+
+    def _decorate_scope(
+            self, scopes,
+            reserved_scope=frozenset(['openid', 'profile', 'offline_access'])):
+        if not isinstance(scopes, (list, set, tuple)):
+            raise ValueError("The input scopes should be a list, tuple, or set")
+        scope_set = set(scopes)  # Input scopes is typically a list. Copy it to a set.
+        if scope_set & reserved_scope:
+            # These scopes are reserved for the API to provide good experience.
+            # We could make the developer pass these and then if they do they will
+            # come back asking why they don't see refresh token or user information.
+            raise ValueError(
+                "API does not accept {} value as user-provided scopes".format(
+                    reserved_scope))
+        if self.client_id in scope_set:
+            if len(scope_set) > 1:
+                # We make developers pass their client id, so that they can express
+                # the intent that they want the token for themselves (their own
+                # app).
+                # If we do not restrict them to passing only client id then they
+                # could write code where they expect an id token but end up getting
+                # access_token.
+                raise ValueError("Client Id can only be provided as a single scope")
+            decorated = set(reserved_scope)  # Make a writable copy
+        else:
+            decorated = scope_set | reserved_scope
+        decorated -= self._exclude_scopes
+        return list(decorated)
 
     def _build_telemetry_context(
             self, api_id, correlation_id=None, refresh_reason=None):
@@ -505,7 +524,7 @@ class ClientApplication(object):
         flow = client.initiate_auth_code_flow(
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             prompt=prompt,
-            scope=decorate_scope(scopes, self.client_id),
+            scope=self._decorate_scope(scopes),
             domain_hint=domain_hint,
             claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
@@ -587,7 +606,7 @@ class ClientApplication(object):
                 response_type=response_type,
                 redirect_uri=redirect_uri, state=state, login_hint=login_hint,
                 prompt=prompt,
-                scope=decorate_scope(scopes, self.client_id),
+                scope=self._decorate_scope(scopes),
                 nonce=nonce,
                 domain_hint=domain_hint,
                 claims=_merge_claims_challenge_and_capabilities(
@@ -650,7 +669,7 @@ class ClientApplication(object):
         response =_clean_up(self.client.obtain_token_by_auth_code_flow(
             auth_code_flow,
             auth_response,
-            scope=decorate_scope(scopes, self.client_id) if scopes else None,
+            scope=self._decorate_scope(scopes) if scopes else None,
             headers=telemetry_context.generate_headers(),
             data=dict(
                 kwargs.pop("data", {}),
@@ -722,7 +741,7 @@ class ClientApplication(object):
                 self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)
             response = _clean_up(self.client.obtain_token_by_authorization_code(
                 code, redirect_uri=redirect_uri,
-                scope=decorate_scope(scopes, self.client_id),
+                scope=self._decorate_scope(scopes),
                 headers=telemetry_context.generate_headers(),
                 data=dict(
                     kwargs.pop("data", {}),
@@ -757,6 +776,13 @@ class ClientApplication(object):
             lowercase_username = username.lower()
             accounts = [a for a in accounts
                 if a["username"].lower() == lowercase_username]
+            if not accounts:
+                logger.warning((
+                    "get_accounts(username='{}') finds no account. "
+                    "If tokens were acquired without 'profile' scope, "
+                    "they would contain no username for filtering. "
+                    "Consider calling get_accounts(username=None) instead."
+                    ).format(username))
         # Does not further filter by existing RTs here. It probably won't matter.
         # Because in most cases Accounts and RTs co-exist.
         # Even in the rare case when an RT is revoked and then removed,
@@ -1013,7 +1039,7 @@ class ClientApplication(object):
         assert refresh_reason, "It should have been established at this point"
         try:
             result = _clean_up(self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-                authority, decorate_scope(scopes, self.client_id), account,
+                authority, self._decorate_scope(scopes), account,
                 refresh_reason=refresh_reason, claims_challenge=claims_challenge,
                 **kwargs))
             if (result and "error" not in result) or (not access_token_from_cache):
@@ -1159,7 +1185,7 @@ class ClientApplication(object):
             refresh_reason=msal.telemetry.FORCE_REFRESH)
         response = _clean_up(self.client.obtain_token_by_refresh_token(
             refresh_token,
-            scope=decorate_scope(scopes, self.client_id),
+            scope=self._decorate_scope(scopes),
             headers=telemetry_context.generate_headers(),
             rt_getter=lambda rt: rt,
             on_updating_rt=False,
@@ -1190,7 +1216,7 @@ class ClientApplication(object):
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        scopes = decorate_scope(scopes, self.client_id)
+        scopes = self._decorate_scope(scopes)
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)
         headers = telemetry_context.generate_headers()
@@ -1251,7 +1277,13 @@ class ClientApplication(object):
         self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
             grant_type, self.client.encode_saml_assertion)
         return self.client.obtain_token_by_assertion(
-            wstrust_result["token"], grant_type, scope=scopes, **kwargs)
+            wstrust_result["token"], grant_type, scope=scopes,
+            on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                event,
+                environment=self.authority.instance,
+                username=username,  # Useful in case IDT contains no such info
+                )),
+            **kwargs)
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
@@ -1330,7 +1362,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_INTERACTIVE)
         response = _clean_up(self.client.obtain_token_by_browser(
-            scope=decorate_scope(scopes, self.client_id) if scopes else None,
+            scope=self._decorate_scope(scopes) if scopes else None,
             extra_scope_to_consent=extra_scopes_to_consent,
             redirect_uri="http://localhost:{port}".format(
                 # Hardcode the host, for now. AAD portal rejects 127.0.0.1 anyway
@@ -1361,7 +1393,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         """
         correlation_id = msal.telemetry._get_new_correlation_id()
         flow = self.client.initiate_device_flow(
-            scope=decorate_scope(scopes or [], self.client_id),
+            scope=self._decorate_scope(scopes or []),
             headers={msal.telemetry.CLIENT_REQUEST_ID: correlation_id},
             **kwargs)
         flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
@@ -1472,7 +1504,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         response = _clean_up(self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
-            scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
+            scope=self._decorate_scope(scopes),  # Decoration is used for:
                 # 1. Explicitly requesting an RT, without relying on AAD default
                 #    behavior, even though it currently still issues an RT.
                 # 2. Requesting an IDT (which would otherwise be unavailable)
