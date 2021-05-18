@@ -84,6 +84,7 @@ setup(
             # We will go with "<4" for now, which is also what our another dependency,
             # pyjwt, currently use.
 
+        "mock;python_version<'3.3'",
     ]
 )
 
