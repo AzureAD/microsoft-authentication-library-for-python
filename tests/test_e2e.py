@@ -4,11 +4,15 @@ import json
 import time
 import unittest
 import sys
+try:
+    from unittest.mock import patch, ANY
+except:
+    from mock import patch, ANY
 
 import requests
 
 import msal
-from tests.http_client import MinimalHttpClient
+from tests.http_client import MinimalHttpClient, MinimalResponse
 from msal.oauth2cli import AuthCodeReceiver
 
 logger = logging.getLogger(__name__)
@@ -58,6 +62,12 @@ class E2eTestCase(unittest.TestCase):
 
     def assertCacheWorksForUser(
             self, result_from_wire, scope, username=None, data=None):
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result_from_wire.get("id_token_claims"), indent=4),
+            )
         # You can filter by predefined username, or let end user to choose one
         accounts = self.app.get_accounts(username=username)
         self.assertNotEqual(0, len(accounts))
@@ -76,10 +86,15 @@ class E2eTestCase(unittest.TestCase):
                 result_from_wire['access_token'], result_from_cache['access_token'],
                 "We should get a cached AT")
 
-        # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
-        self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
+        if "refresh_token" in result_from_wire:
+            # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
+            self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
         result_from_cache = self.app.acquire_token_silent(
             scope, account=account, data=data or {})
+        if "refresh_token" not in result_from_wire:
+            self.assertEqual(
+                result_from_cache["access_token"], result_from_wire["access_token"],
+                "The previously cached AT should be returned")
         self.assertIsNotNone(result_from_cache,
                 "We should get a result from acquire_token_silent(...) call")
         self.assertIsNotNone(
@@ -93,6 +108,12 @@ class E2eTestCase(unittest.TestCase):
             "We should get an AT from acquire_token_silent(...) call")
 
     def assertCacheWorksForApp(self, result_from_wire, scope):
+        logger.debug(
+            "%s: cache = %s, id_token_claims = %s",
+            self.id(),
+            json.dumps(self.app.token_cache._cache, indent=4),
+            json.dumps(result_from_wire.get("id_token_claims"), indent=4),
+            )
         # Going to test acquire_token_silent(...) to locate an AT from cache
         result_from_cache = self.app.acquire_token_silent(scope, account=None)
         self.assertIsNotNone(result_from_cache)
@@ -111,10 +132,9 @@ class E2eTestCase(unittest.TestCase):
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
         self.assertLoosely(result)
-        # self.assertEqual(None, result.get("error"), str(result))
         self.assertCacheWorksForUser(
             result, scope,
-            username=username if ".b2clogin.com" not in authority else None,
+            username=username,  # Our implementation works even when "profile" scope was not requested, or when profile claims is unavailable in B2C
             )
 
     def _test_device_flow(
@@ -163,12 +183,6 @@ class E2eTestCase(unittest.TestCase):
     <li><a href="$auth_uri">Sign In</a> or <a href="$abort_uri">Abort</a></li>
     </ol></body></html>""".format(id=self.id(), username_uri=username_uri),
             data=data or {},
-            )
-        logger.debug(
-            "%s: cache = %s, id_token_claims = %s",
-            self.id(),
-            json.dumps(self.app.token_cache._cache, indent=4),
-            json.dumps(result.get("id_token_claims"), indent=4),
             )
         self.assertIn(
             "access_token", result,
@@ -345,7 +359,10 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
 def get_lab_app(
         env_client_id="LAB_APP_CLIENT_ID",
         env_client_secret="LAB_APP_CLIENT_SECRET",
-        ):
+        authority="https://login.microsoftonline.com/"
+            "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
+        timeout=None,
+        **kwargs):
     """Returns the lab app as an MSAL confidential client.
 
     Get it from environment variables if defined, otherwise fall back to use MSI.
@@ -367,16 +384,21 @@ def get_lab_app(
                 env_client_id, env_client_secret)
         # See also https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API's.aspx
         raise unittest.SkipTest("MSI-based mechanism has not been implemented yet")
-    return msal.ConfidentialClientApplication(client_id, client_secret,
-            authority="https://login.microsoftonline.com/"
-                "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
-            http_client=MinimalHttpClient())
+    return msal.ConfidentialClientApplication(
+            client_id,
+            client_credential=client_secret,
+            authority=authority,
+            http_client=MinimalHttpClient(timeout=timeout),
+            **kwargs)
 
 def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confidential client flow
     logger.info("Creating session")
-    lab_token = lab_app.acquire_token_for_client(scopes)
+    result = lab_app.acquire_token_for_client(scopes)
+    assert result.get("access_token"), \
+        "Unable to obtain token for lab. Encountered {}: {}".format(
+            result.get("error"), result.get("error_description"))
     session = requests.Session()
-    session.headers.update({"Authorization": "Bearer %s" % lab_token["access_token"]})
+    session.headers.update({"Authorization": "Bearer %s" % result["access_token"]})
     session.hooks["response"].append(lambda r, *args, **kwargs: r.raise_for_status())
     return session
 
@@ -401,7 +423,10 @@ class LabBasedTestCase(E2eTestCase):
     def get_lab_app_object(cls, **query):  # https://msidlab.com/swagger/index.html
         url = "https://msidlab.com/api/app"
         resp = cls.session.get(url, params=query)
-        return resp.json()[0]
+        result = resp.json()[0]
+        result["scopes"] = [  # Raw data has extra space, such as "s1, s2"
+            s.strip() for s in result["defaultScopes"].split(',')]
+        return result
 
     @classmethod
     def get_lab_user_secret(cls, lab_name="msidlab4"):
@@ -528,11 +553,13 @@ class LabBasedTestCase(E2eTestCase):
         #    Assuming you already did that (which is not shown in this test case),
         #    the following part shows one of the ways to obtain an AT from cache.
         username = cca_result.get("id_token_claims", {}).get("preferred_username")
-        self.assertEqual(config_cca["username"], username)
-        if username:  # A precaution so that we won't use other user's token
-            account = cca.get_accounts(username=username)[0]
-            result = cca.acquire_token_silent(config_cca["scope"], account)
-            self.assertEqual(cca_result["access_token"], result["access_token"])
+        if username:  # It means CCA have requested an IDT w/ "profile" scope
+            self.assertEqual(config_cca["username"], username)
+        accounts = cca.get_accounts(username=username)
+        assert len(accounts) == 1, "App is expected to partition token cache per user"
+        account = accounts[0]
+        result = cca.acquire_token_silent(config_cca["scope"], account)
+        self.assertEqual(cca_result["access_token"], result["access_token"])
 
     def _test_acquire_token_by_client_secret(
             self, client_id=None, client_secret=None, authority=None, scope=None,
@@ -698,7 +725,7 @@ class WorldWideTestCase(LabBasedTestCase):
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
             client_id=config["appId"],
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
-            scope=config["defaultScopes"].split(','),
+            scope=config["scopes"],
             )
 
     @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
@@ -708,7 +735,7 @@ class WorldWideTestCase(LabBasedTestCase):
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
             client_id=config["appId"],
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
-            scope=config["defaultScopes"].split(','),
+            scope=config["scopes"],
             username_uri="https://msidlab.com/api/user?usertype=b2c&b2cprovider=local",
             )
 
@@ -719,8 +746,94 @@ class WorldWideTestCase(LabBasedTestCase):
             client_id=config["appId"],
             username="b2clocal@msidlabb2c.onmicrosoft.com",
             password=self.get_lab_user_secret("msidlabb2c"),
-            scope=config["defaultScopes"].split(','),
+            scope=config["scopes"],
             )
+
+
+class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
+    region = "westus"
+
+    def test_acquire_token_for_client_should_hit_regional_endpoint(self):
+        """This is the only grant supported by regional endpoint, for now"""
+        self.app = get_lab_app(  # Regional endpoint only supports confidential client
+
+            ## FWIW, the MSAL<1.12 versions could use this to achieve similar result
+            #authority="https://westus.login.microsoft.com/microsoft.onmicrosoft.com",
+            #validate_authority=False,
+            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
+            azure_region=self.region,  # Explicitly use this region, regardless of detection
+
+            timeout=2,  # Short timeout makes this test case responsive on non-VM
+            )
+        scopes = ["https://graph.microsoft.com/.default"]
+
+        with patch.object(  # Test the request hit the regional endpoint
+                self.app.http_client, "post", return_value=MinimalResponse(
+                status_code=400, text='{"error": "mock"}')) as mocked_method:
+            self.app.acquire_token_for_client(scopes)
+            mocked_method.assert_called_with(
+                'https://westus.login.microsoft.com/{}/oauth2/v2.0/token'.format(
+                    self.app.authority.tenant),
+                params=ANY, data=ANY, headers=ANY)
+        result = self.app.acquire_token_for_client(
+            scopes,
+            params={"AllowEstsRNonMsi": "true"},  # For testing regional endpoint. It will be removed once MSAL Python 1.12+ has been onboard to ESTS-R
+            )
+        self.assertIn('access_token', result)
+        self.assertCacheWorksForApp(result, scopes)
+
+
+class RegionalEndpointViaEnvVarTestCase(WorldWideRegionalEndpointTestCase):
+
+    def setUp(self):
+        os.environ["REGION_NAME"] = "eastus"
+
+    def tearDown(self):
+        del os.environ["REGION_NAME"]
+
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CLIENT_SECRET"),
+        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"),
+        "Need LAB_OBO_PUBLIC_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+    def test_cca_obo_should_bypass_regional_endpoint_therefore_still_work(self):
+        """We test OBO because it is implemented in sub class ConfidentialClientApplication"""
+        config = self.get_lab_user(usertype="cloud")
+
+        config_cca = {}
+        config_cca.update(config)
+        config_cca["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
+        config_cca["scope"] = ["https://graph.microsoft.com/.default"]
+        config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+
+        config_pca = {}
+        config_pca.update(config)
+        config_pca["client_id"] = os.getenv("LAB_OBO_PUBLIC_CLIENT_ID")
+        config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
+        config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
+
+        self._test_acquire_token_obo(config_pca, config_cca)
+
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CLIENT_SECRET"),
+        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
+    @unittest.skipUnless(
+        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+    def test_cca_ropc_should_bypass_regional_endpoint_therefore_still_work(self):
+        """We test ROPC because it is implemented in base class ClientApplication"""
+        config = self.get_lab_user(usertype="cloud")
+        config["password"] = self.get_lab_user_secret(config["lab_name"])
+        # We repurpose the obo confidential app to test ROPC
+        # Swap in the OBO confidential app
+        config["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
+        config["scope"] = ["https://graph.microsoft.com/.default"]
+        config["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+        self._test_username_password(**config)
 
 
 class ArlingtonCloudTestCase(LabBasedTestCase):

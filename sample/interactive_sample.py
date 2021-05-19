@@ -62,7 +62,9 @@ if not result:
             # after already extracting the username from an earlier sign-in
             # by using the preferred_username claim from returned id_token_claims.
 
-        #prompt="select_account",  # Optional. It forces to show account selector page
+        #prompt=msal.Prompt.SELECT_ACCOUNT,  # Or simply "select_account". Optional. It forces to show account selector page
+        #prompt=msal.Prompt.CREATE,  # Or simply "create". Optional. It brings user to a self-service sign-up flow.
+            # Prerequisite: https://docs.microsoft.com/en-us/azure/active-directory/external-identities/self-service-sign-up-user-flow
         )
 
 if "access_token" in result:

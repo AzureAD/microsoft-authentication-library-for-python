@@ -19,39 +19,13 @@ from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache
 import msal.telemetry
+from .region import _detect_region
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.11.0"
+__version__ = "1.12.0"
 
 logger = logging.getLogger(__name__)
-
-def decorate_scope(
-        scopes, client_id,
-        reserved_scope=frozenset(['openid', 'profile', 'offline_access'])):
-    if not isinstance(scopes, (list, set, tuple)):
-        raise ValueError("The input scopes should be a list, tuple, or set")
-    scope_set = set(scopes)  # Input scopes is typically a list. Copy it to a set.
-    if scope_set & reserved_scope:
-        # These scopes are reserved for the API to provide good experience.
-        # We could make the developer pass these and then if they do they will
-        # come back asking why they don't see refresh token or user information.
-        raise ValueError(
-            "API does not accept {} value as user-provided scopes".format(
-                reserved_scope))
-    if client_id in scope_set:
-        if len(scope_set) > 1:
-            # We make developers pass their client id, so that they can express
-            # the intent that they want the token for themselves (their own
-            # app).
-            # If we do not restrict them to passing only client id then they
-            # could write code where they expect an id token but end up getting
-            # access_token.
-            raise ValueError("Client Id can only be provided as a single scope")
-        decorated = set(reserved_scope)  # Make a writable copy
-    else:
-        decorated = scope_set | reserved_scope
-    return list(decorated)
 
 
 def extract_certs(public_cert_content):
@@ -108,6 +82,8 @@ class ClientApplication(object):
     GET_ACCOUNTS_ID = "902"
     REMOVE_ACCOUNT_ID = "903"
 
+    ATTEMPT_REGION_DISCOVERY = True  # "TryAutoDetect"
+
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
@@ -115,7 +91,13 @@ class ClientApplication(object):
             http_client=None,
             verify=True, proxies=None, timeout=None,
             client_claims=None, app_name=None, app_version=None,
-            client_capabilities=None):
+            client_capabilities=None,
+            azure_region=None,  # Note: We choose to add this param in this base class,
+                # despite it is currently only needed by ConfidentialClientApplication.
+                # This way, it holds the same positional param place for PCA,
+                # when we would eventually want to add this feature to PCA in future.
+            exclude_scopes=None,
+            ):
         """Create an instance of application.
 
         :param str client_id: Your app has a client_id after you register it on AAD.
@@ -220,11 +202,75 @@ class ClientApplication(object):
             MSAL will combine them into
             `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter`_
             which you will later provide via one of the acquire-token request.
+
+        :param str azure_region:
+            Added since MSAL Python 1.12.0.
+
+            As of 2021 May, regional service is only available for
+            ``acquire_token_for_client()`` sent by any of the following scenarios::
+
+            1. An app powered by a capable MSAL
+               (MSAL Python 1.12+ will be provisioned)
+
+            2. An app with managed identity, which is formerly known as MSI.
+               (However MSAL Python does not support managed identity,
+               so this one does not apply.)
+
+            3. An app authenticated by
+               `Subject Name/Issuer (SNI) <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_.
+
+            4. An app which already onboard to the region's allow-list.
+
+            MSAL's default value is None, which means region behavior remains off.
+            If enabled, the `acquire_token_for_client()`-relevant traffic
+            would remain inside that region.
+
+            App developer can opt in to a regional endpoint,
+            by provide its region name, such as "westus", "eastus2".
+            You can find a full list of regions by running
+            ``az account list-locations -o table``, or referencing to
+            `this doc <https://docs.microsoft.com/en-us/dotnet/api/microsoft.azure.management.resourcemanager.fluent.core.region?view=azure-dotnet>`_.
+
+            An app running inside Azure Functions and Azure VM can use a special keyword
+            ``ClientApplication.ATTEMPT_REGION_DISCOVERY`` to auto-detect region.
+
+            .. note::
+
+                Setting ``azure_region`` to non-``None`` for an app running
+                outside of Azure Function/VM could hang indefinitely.
+
+                You should consider opting in/out region behavior on-demand,
+                by loading ``azure_region=None`` or ``azure_region="westus"``
+                or ``azure_region=True`` (which means opt-in and auto-detect)
+                from your per-deployment configuration, and then do
+                ``app = ConfidentialClientApplication(..., azure_region=azure_region)``.
+
+                Alternatively, you can configure a short timeout,
+                or provide a custom http_client which has a short timeout.
+                That way, the latency would be under your control,
+                but still less performant than opting out of region feature.
+        :param list[str] exclude_scopes: (optional)
+            Historically MSAL hardcodes `offline_access` scope,
+            which would allow your app to have prolonged access to user's data.
+            If that is unnecessary or undesirable for your app,
+            now you can use this parameter to supply an exclusion list of scopes,
+            such as ``exclude_scopes = ["offline_access"]``.
         """
         self.client_id = client_id
         self.client_credential = client_credential
         self.client_claims = client_claims
         self._client_capabilities = client_capabilities
+
+        if exclude_scopes and not isinstance(exclude_scopes, list):
+            raise ValueError(
+                "Invalid exclude_scopes={}. It need to be a list of strings.".format(
+                repr(exclude_scopes)))
+        self._exclude_scopes = frozenset(exclude_scopes or [])
+        if "openid" in self._exclude_scopes:
+            raise ValueError(
+                'Invalid exclude_scopes={}. You can not opt out "openid" scope'.format(
+                repr(exclude_scopes)))
+
         if http_client:
             self.http_client = http_client
         else:
@@ -244,21 +290,92 @@ class ClientApplication(object):
 
         self.app_name = app_name
         self.app_version = app_version
-        self.authority = Authority(
+
+        # Here the self.authority will not be the same type as authority in input
+        try:
+            self.authority = Authority(
                 authority or "https://login.microsoftonline.com/common/",
                 self.http_client, validate_authority=validate_authority)
-            # Here the self.authority is not the same type as authority in input
+        except ValueError:  # Those are explicit authority validation errors
+            raise
+        except Exception:  # The rest are typically connection errors
+            if validate_authority and azure_region:
+                # Since caller opts in to use region, here we tolerate connection
+                # errors happened during authority validation at non-region endpoint
+                self.authority = Authority(
+                    authority or "https://login.microsoftonline.com/common/",
+                    self.http_client, validate_authority=False)
+            else:
+                raise
+
         self.token_cache = token_cache or TokenCache()
-        self.client = self._build_client(client_credential, self.authority)
+        self._region_configured = azure_region
+        self._region_detected = None
+        self.client, self._regional_client = self._build_client(
+            client_credential, self.authority)
         self.authority_groups = None
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
+
+    def _decorate_scope(
+            self, scopes,
+            reserved_scope=frozenset(['openid', 'profile', 'offline_access'])):
+        if not isinstance(scopes, (list, set, tuple)):
+            raise ValueError("The input scopes should be a list, tuple, or set")
+        scope_set = set(scopes)  # Input scopes is typically a list. Copy it to a set.
+        if scope_set & reserved_scope:
+            # These scopes are reserved for the API to provide good experience.
+            # We could make the developer pass these and then if they do they will
+            # come back asking why they don't see refresh token or user information.
+            raise ValueError(
+                "API does not accept {} value as user-provided scopes".format(
+                    reserved_scope))
+        if self.client_id in scope_set:
+            if len(scope_set) > 1:
+                # We make developers pass their client id, so that they can express
+                # the intent that they want the token for themselves (their own
+                # app).
+                # If we do not restrict them to passing only client id then they
+                # could write code where they expect an id token but end up getting
+                # access_token.
+                raise ValueError("Client Id can only be provided as a single scope")
+            decorated = set(reserved_scope)  # Make a writable copy
+        else:
+            decorated = scope_set | reserved_scope
+        decorated -= self._exclude_scopes
+        return list(decorated)
 
     def _build_telemetry_context(
             self, api_id, correlation_id=None, refresh_reason=None):
         return msal.telemetry._TelemetryContext(
             self._telemetry_buffer, self._telemetry_lock, api_id,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
+
+    def _get_regional_authority(self, central_authority):
+        is_region_specified = bool(self._region_configured
+            and self._region_configured != self.ATTEMPT_REGION_DISCOVERY)
+        self._region_detected = self._region_detected or _detect_region(
+            self.http_client if self._region_configured is not None else None)
+        if (is_region_specified and self._region_configured != self._region_detected):
+            logger.warning('Region configured ({}) != region detected ({})'.format(
+                repr(self._region_configured), repr(self._region_detected)))
+        region_to_use = (
+            self._region_configured if is_region_specified else self._region_detected)
+        if region_to_use:
+            logger.info('Region to be used: {}'.format(repr(region_to_use)))
+            regional_host = ("{}.login.microsoft.com".format(region_to_use)
+                if central_authority.instance in (
+                    # The list came from https://github.com/AzureAD/microsoft-authentication-library-for-python/pull/358/files#r629400328
+                    "login.microsoftonline.com",
+                    "login.windows.net",
+                    "sts.windows.net",
+                    )
+                else "{}.{}".format(region_to_use, central_authority.instance))
+            return Authority(
+                "https://{}/{}".format(regional_host, central_authority.tenant),
+                self.http_client,
+                validate_authority=False)  # The central_authority has already been validated
+        return None
 
     def _build_client(self, client_credential, authority):
         client_assertion = None
@@ -298,15 +415,15 @@ class ClientApplication(object):
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
         else:
             default_body['client_secret'] = client_credential
-        server_configuration = {
+        central_configuration = {
             "authorization_endpoint": authority.authorization_endpoint,
             "token_endpoint": authority.token_endpoint,
             "device_authorization_endpoint":
                 authority.device_authorization_endpoint or
                 urljoin(authority.token_endpoint, "devicecode"),
             }
-        return Client(
-            server_configuration,
+        central_client = Client(
+            central_configuration,
             self.client_id,
             http_client=self.http_client,
             default_headers=default_headers,
@@ -317,6 +434,31 @@ class ClientApplication(object):
                 event, environment=authority.instance)),
             on_removing_rt=self.token_cache.remove_rt,
             on_updating_rt=self.token_cache.update_rt)
+
+        regional_client = None
+        if client_credential:  # Currently regional endpoint only serves some CCA flows
+            regional_authority = self._get_regional_authority(authority)
+            if regional_authority:
+                regional_configuration = {
+                    "authorization_endpoint": regional_authority.authorization_endpoint,
+                    "token_endpoint": regional_authority.token_endpoint,
+                    "device_authorization_endpoint":
+                        regional_authority.device_authorization_endpoint or
+                        urljoin(regional_authority.token_endpoint, "devicecode"),
+                    }
+                regional_client = Client(
+                    regional_configuration,
+                    self.client_id,
+                    http_client=self.http_client,
+                    default_headers=default_headers,
+                    default_body=default_body,
+                    client_assertion=client_assertion,
+                    client_assertion_type=client_assertion_type,
+                    on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                        event, environment=authority.instance)),
+                    on_removing_rt=self.token_cache.remove_rt,
+                    on_updating_rt=self.token_cache.update_rt)
+        return central_client, regional_client
 
     def initiate_auth_code_flow(
             self,
@@ -382,7 +524,7 @@ class ClientApplication(object):
         flow = client.initiate_auth_code_flow(
             redirect_uri=redirect_uri, state=state, login_hint=login_hint,
             prompt=prompt,
-            scope=decorate_scope(scopes, self.client_id),
+            scope=self._decorate_scope(scopes),
             domain_hint=domain_hint,
             claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
@@ -464,7 +606,7 @@ class ClientApplication(object):
                 response_type=response_type,
                 redirect_uri=redirect_uri, state=state, login_hint=login_hint,
                 prompt=prompt,
-                scope=decorate_scope(scopes, self.client_id),
+                scope=self._decorate_scope(scopes),
                 nonce=nonce,
                 domain_hint=domain_hint,
                 claims=_merge_claims_challenge_and_capabilities(
@@ -527,7 +669,7 @@ class ClientApplication(object):
         response =_clean_up(self.client.obtain_token_by_auth_code_flow(
             auth_code_flow,
             auth_response,
-            scope=decorate_scope(scopes, self.client_id) if scopes else None,
+            scope=self._decorate_scope(scopes) if scopes else None,
             headers=telemetry_context.generate_headers(),
             data=dict(
                 kwargs.pop("data", {}),
@@ -599,7 +741,7 @@ class ClientApplication(object):
                 self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)
             response = _clean_up(self.client.obtain_token_by_authorization_code(
                 code, redirect_uri=redirect_uri,
-                scope=decorate_scope(scopes, self.client_id),
+                scope=self._decorate_scope(scopes),
                 headers=telemetry_context.generate_headers(),
                 data=dict(
                     kwargs.pop("data", {}),
@@ -634,6 +776,13 @@ class ClientApplication(object):
             lowercase_username = username.lower()
             accounts = [a for a in accounts
                 if a["username"].lower() == lowercase_username]
+            if not accounts:
+                logger.warning((
+                    "get_accounts(username='{}') finds no account. "
+                    "If tokens were acquired without 'profile' scope, "
+                    "they would contain no username for filtering. "
+                    "Consider calling get_accounts(username=None) instead."
+                    ).format(username))
         # Does not further filter by existing RTs here. It probably won't matter.
         # Because in most cases Accounts and RTs co-exist.
         # Even in the rare case when an RT is revoked and then removed,
@@ -642,10 +791,25 @@ class ClientApplication(object):
         return accounts
 
     def _find_msal_accounts(self, environment):
-        return [a for a in self.token_cache.find(
-            TokenCache.CredentialType.ACCOUNT, query={"environment": environment})
+        grouped_accounts = {
+            a.get("home_account_id"):  # Grouped by home tenant's id
+                {  # These are minimal amount of non-tenant-specific account info
+                    "home_account_id": a.get("home_account_id"),
+                    "environment": a.get("environment"),
+                    "username": a.get("username"),
+
+                    # The following fields for backward compatibility, for now
+                    "authority_type": a.get("authority_type"),
+                    "local_account_id": a.get("local_account_id"),  # Tenant-specific
+                    "realm": a.get("realm"),  # Tenant-specific
+                }
+            for a in self.token_cache.find(
+                TokenCache.CredentialType.ACCOUNT,
+                query={"environment": environment})
             if a["authority_type"] in (
-                TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)]
+                TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)
+            }
+        return list(grouped_accounts.values())
 
     def _get_authority_aliases(self, instance):
         if not self.authority_groups:
@@ -875,7 +1039,7 @@ class ClientApplication(object):
         assert refresh_reason, "It should have been established at this point"
         try:
             result = _clean_up(self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-                authority, decorate_scope(scopes, self.client_id), account,
+                authority, self._decorate_scope(scopes), account,
                 refresh_reason=refresh_reason, claims_challenge=claims_challenge,
                 **kwargs))
             if (result and "error" not in result) or (not access_token_from_cache):
@@ -938,7 +1102,7 @@ class ClientApplication(object):
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
         logger.debug("Found %d RTs matching %s", len(matches), query)
-        client = self._build_client(self.client_credential, authority)
+        client, _ = self._build_client(self.client_credential, authority)
 
         response = None  # A distinguishable value to mean cache is empty
         telemetry_context = self._build_telemetry_context(
@@ -1021,7 +1185,7 @@ class ClientApplication(object):
             refresh_reason=msal.telemetry.FORCE_REFRESH)
         response = _clean_up(self.client.obtain_token_by_refresh_token(
             refresh_token,
-            scope=decorate_scope(scopes, self.client_id),
+            scope=self._decorate_scope(scopes),
             headers=telemetry_context.generate_headers(),
             rt_getter=lambda rt: rt,
             on_updating_rt=False,
@@ -1052,7 +1216,7 @@ class ClientApplication(object):
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        scopes = decorate_scope(scopes, self.client_id)
+        scopes = self._decorate_scope(scopes)
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)
         headers = telemetry_context.generate_headers()
@@ -1113,7 +1277,13 @@ class ClientApplication(object):
         self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
             grant_type, self.client.encode_saml_assertion)
         return self.client.obtain_token_by_assertion(
-            wstrust_result["token"], grant_type, scope=scopes, **kwargs)
+            wstrust_result["token"], grant_type, scope=scopes,
+            on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                event,
+                environment=self.authority.instance,
+                username=username,  # Useful in case IDT contains no such info
+                )),
+            **kwargs)
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
@@ -1192,7 +1362,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_INTERACTIVE)
         response = _clean_up(self.client.obtain_token_by_browser(
-            scope=decorate_scope(scopes, self.client_id) if scopes else None,
+            scope=self._decorate_scope(scopes) if scopes else None,
             extra_scope_to_consent=extra_scopes_to_consent,
             redirect_uri="http://localhost:{port}".format(
                 # Hardcode the host, for now. AAD portal rejects 127.0.0.1 anyway
@@ -1223,7 +1393,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         """
         correlation_id = msal.telemetry._get_new_correlation_id()
         flow = self.client.initiate_device_flow(
-            scope=decorate_scope(scopes or [], self.client_id),
+            scope=self._decorate_scope(scopes or []),
             headers={msal.telemetry.CLIENT_REQUEST_ID: correlation_id},
             **kwargs)
         flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
@@ -1289,7 +1459,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_FOR_CLIENT_ID)
-        response = _clean_up(self.client.obtain_token_for_client(
+        client = self._regional_client or self.client
+        response = _clean_up(client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers=telemetry_context.generate_headers(),
             data=dict(
@@ -1333,7 +1504,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         response = _clean_up(self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
-            scope=decorate_scope(scopes, self.client_id),  # Decoration is used for:
+            scope=self._decorate_scope(scopes),  # Decoration is used for:
                 # 1. Explicitly requesting an RT, without relying on AAD default
                 #    behavior, even though it currently still issues an RT.
                 # 2. Requesting an IDT (which would otherwise be unavailable)
