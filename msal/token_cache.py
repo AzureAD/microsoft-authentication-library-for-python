@@ -113,7 +113,7 @@ class TokenCache(object):
             return self.__add(event, now=now)
         finally:
             wipe(event.get("response", {}), (  # These claims were useful during __add()
-                "access_token", "refresh_token", "username"))
+                "access_token", "refresh_token", "id_token", "username"))
             wipe(event, ["username"])  # Needed for federated ROPC
             logger.debug("event=%s", json.dumps(
             # We examined and concluded that this log won't have Log Injection risk,
