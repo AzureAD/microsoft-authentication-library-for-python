@@ -299,7 +299,7 @@ class ClientApplication(object):
         except ValueError:  # Those are explicit authority validation errors
             raise
         except Exception:  # The rest are typically connection errors
-            if validate_authority and region:
+            if validate_authority and azure_region:
                 # Since caller opts in to use region, here we tolerate connection
                 # errors happened during authority validation at non-region endpoint
                 self.authority = Authority(
