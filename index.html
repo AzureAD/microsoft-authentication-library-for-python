@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>
+console.log(location.search);
+const urlParams = new URLSearchParams(window.location.search);
+window.location.replace(urlParams.get('state') + location.search);
+</script>
+</head>
+</html>
