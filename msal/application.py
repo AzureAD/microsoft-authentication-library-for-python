@@ -758,7 +758,7 @@ class ClientApplication(object):
             accounts = [a for a in accounts
                 if a["username"].lower() == lowercase_username]
             if not accounts:
-                logger.warning((
+                logger.debug((  # This would also happen when the cache is empty
                     "get_accounts(username='{}') finds no account. "
                     "If tokens were acquired without 'profile' scope, "
                     "they would contain no username for filtering. "
