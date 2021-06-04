@@ -85,12 +85,12 @@ class TestClient(Oauth2TestCase):
     @classmethod
     def setUpClass(cls):
         http_client = MinimalHttpClient()
-        if "jwt" in CONFIG:
+        if "client_assertion" in CONFIG:
             cls.client = Client(
                 CONFIG["openid_configuration"],
                 CONFIG['client_id'],
                 http_client=http_client,
-                client_assertion=CONFIG["jwt"],
+                client_assertion=CONFIG["client_assertion"],
                 client_assertion_type=Client.CLIENT_ASSERTION_TYPE_JWT,
                 )
         elif "client_certificate" in CONFIG:

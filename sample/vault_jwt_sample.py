@@ -106,7 +106,7 @@ def make_vault_jwt():
 authority = "https://login.microsoftonline.com/%s" % config['tenant']
 
 app = msal.ConfidentialClientApplication(
-        config['client_id'], authority=authority, client_credential={"jwt": make_vault_jwt()}
+        config['client_id'], authority=authority, client_credential={"client_assertion": make_vault_jwt()}
       )
 
 # The pattern to acquire a token looks like this.

@@ -278,10 +278,10 @@ class FileBasedTestCase(E2eTestCase):
         self.assertCacheWorksForApp(result, scope)
 
     def test_pre_signed_jwt_authentication(self):
-        self.skipUnlessWithConfig(["client_id", "jwt"])
+        self.skipUnlessWithConfig(["client_id", "client_assertion"])
         self.app = msal.ConfidentialClientApplication(
             self.config['client_id'], authority=self.config["authority"],
-            client_credential={"jwt": self.config["jwt"]},
+            client_credential={"client_assertion": self.config["client_assertion"]},
             http_client=MinimalHttpClient())
         scope = self.config.get("scope", [])
         result = self.app.acquire_token_for_client(scope)

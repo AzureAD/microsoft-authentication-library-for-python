@@ -153,10 +153,10 @@ class ClientApplication(object):
 
             **NEW**
             it can also be a completly pre-signed JWT that you've assembled yourself
-            simply pass a container containing only the key "jwt", like this:
+            simply pass a container containing only the key "client_assertion", like this:
 
                 {
-                    "jwt": "..."
+                    "client_assertion": "..."
                 }
 
         :param dict client_claims:
@@ -266,10 +266,10 @@ class ClientApplication(object):
         if isinstance(client_credential, dict):
             assert (("private_key" in client_credential
                     and "thumbprint" in client_credential) or
-                    "jwt" in client_credential)
+                    "client_assertion" in client_credential)
             headers = {}
-            if 'jwt' in client_credential:
-                client_assertion = client_credential['jwt']
+            if 'client_assertion' in client_credential:
+                client_assertion = client_credential['client_assertion']
                 client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
             else:
                 if 'public_certificate' in client_credential:
