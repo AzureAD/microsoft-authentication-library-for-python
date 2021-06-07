@@ -151,12 +151,12 @@ class ClientApplication(object):
             "The provided signature value did not match the expected signature value",
             you may try use only the leaf cert (in PEM/str format) instead.
 
-            **NEW**
-            it can also be a completly pre-signed JWT that you've assembled yourself
-            simply pass a container containing only the key "client_assertion", like this:
+            *Added in version 1.13.0*:
+            It can also be a completly pre-signed assertion that you've assembled yourself.
+            Simply pass a container containing only the key "client_assertion", like this:
 
                 {
-                    "client_assertion": "..."
+                    "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
                 }
 
         :param dict client_claims:
@@ -267,11 +267,11 @@ class ClientApplication(object):
             assert (("private_key" in client_credential
                     and "thumbprint" in client_credential) or
                     "client_assertion" in client_credential)
-            headers = {}
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
             if 'client_assertion' in client_credential:
                 client_assertion = client_credential['client_assertion']
             else:
+                headers = {}
                 if 'public_certificate' in client_credential:
                     headers["x5c"] = extract_certs(client_credential['public_certificate'])
                 if not client_credential.get("passphrase"):
