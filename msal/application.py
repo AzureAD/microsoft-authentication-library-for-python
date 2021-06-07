@@ -1087,9 +1087,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 requested_token_use="on_behalf_of",
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
-            headers={
-                CLIENT_REQUEST_ID: _get_new_correlation_id(),
-                CLIENT_CURRENT_TELEMETRY: _build_current_telemetry_request_header(
-                    self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID),
-                },
-            **kwargs)
+            headers=telemetry_context.generate_headers(),
+            **kwargs))
+        telemetry_context.update_telemetry(response)
+        return response
