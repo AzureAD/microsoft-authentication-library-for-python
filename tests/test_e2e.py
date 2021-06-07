@@ -344,6 +344,16 @@ class FileBasedTestCase(E2eTestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
+    def test_client_assertion(self):
+        self.skipUnlessWithConfig(["client_id", "client_assertion"])
+        self.app = msal.ConfidentialClientApplication(
+            self.config['client_id'], authority=self.config["authority"],
+            client_credential={"client_assertion": self.config["client_assertion"]},
+            http_client=MinimalHttpClient())
+        scope = self.config.get("scope", [])
+        result = self.app.acquire_token_for_client(scope)
+        self.assertIn('access_token', result)
+        self.assertCacheWorksForApp(result, scope)
 
 @unittest.skipUnless(os.path.exists(CONFIG), "Optional %s not found" % CONFIG)
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
@@ -882,4 +892,3 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
