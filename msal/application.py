@@ -268,9 +268,9 @@ class ClientApplication(object):
                     and "thumbprint" in client_credential) or
                     "client_assertion" in client_credential)
             headers = {}
+            client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
             if 'client_assertion' in client_credential:
                 client_assertion = client_credential['client_assertion']
-                client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
             else:
                 if 'public_certificate' in client_credential:
                     headers["x5c"] = extract_certs(client_credential['public_certificate'])
@@ -290,7 +290,6 @@ class ClientApplication(object):
                 client_assertion = assertion.create_regenerative_assertion(
                     audience=authority.token_endpoint, issuer=self.client_id,
                     additional_claims=self.client_claims or {})
-                client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
         else:
             default_body['client_secret'] = client_credential
         server_configuration = {
