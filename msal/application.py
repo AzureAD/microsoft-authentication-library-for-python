@@ -153,7 +153,7 @@ class ClientApplication(object):
 
             *Added in version 1.13.0*:
             It can also be a completly pre-signed assertion that you've assembled yourself.
-            Simply pass a container containing only the key "client_assertion", like this:
+            Simply pass a container containing only the key "client_assertion", like this::
 
                 {
                     "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
@@ -1093,4 +1093,3 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID),
                 },
             **kwargs)
-
