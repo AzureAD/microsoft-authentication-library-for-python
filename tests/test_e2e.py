@@ -277,7 +277,7 @@ class FileBasedTestCase(E2eTestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
-    def test_pre_signed_jwt_authentication(self):
+    def test_client_assertion(self):
         self.skipUnlessWithConfig(["client_id", "client_assertion"])
         self.app = msal.ConfidentialClientApplication(
             self.config['client_id'], authority=self.config["authority"],
@@ -614,4 +614,3 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
