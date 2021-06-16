@@ -1,10 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<meta charset="UTF-8">
 <script>
-console.log(location.search);
 const urlParams = new URLSearchParams(window.location.search);
-window.location.replace(urlParams.get('state') + location.search);
+console.log(urlParams.get('state'));
+let cloudShellUrls = /https:\/\/gateway\d+\.\w+\.console\.azure\.com\/n\/cc-\w+\/cc-\w+\/proxy\//;
+if(urlParams.get('state').match(cloudShellUrls)){
+  window.location.replace(urlParams.get('state') + location.search);
+}
 </script>
 </head>
+<body>
+Unsupported redirect_uri <!-- This will show when the redirection did not happen -->
+</body>
 </html>
