@@ -385,7 +385,7 @@ class ClientApplication(object):
                 validate_authority=False)  # The central_authority has already been validated
         return None
 
-    def _build_client(self, client_credential, authority):
+    def _build_client(self, client_credential, authority, skip_regional_client=False):
         client_assertion = None
         client_assertion_type = None
         default_headers = {
@@ -448,7 +448,8 @@ class ClientApplication(object):
             on_updating_rt=self.token_cache.update_rt)
 
         regional_client = None
-        if client_credential:  # Currently regional endpoint only serves some CCA flows
+        if (client_credential  # Currently regional endpoint only serves some CCA flows
+                and not skip_regional_client):
             regional_authority = self._get_regional_authority(authority)
             if regional_authority:
                 regional_configuration = {
@@ -1114,9 +1115,13 @@ class ClientApplication(object):
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
         logger.debug("Found %d RTs matching %s", len(matches), query)
-        client, _ = self._build_client(self.client_credential, authority)
 
         response = None  # A distinguishable value to mean cache is empty
+        if not matches:  # Then exit early to avoid expensive operations
+            return response
+        client, _ = self._build_client(
+            # Potentially expensive if building regional client
+            self.client_credential, authority, skip_regional_client=True)
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_SILENT_ID,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
