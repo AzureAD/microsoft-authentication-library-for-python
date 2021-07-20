@@ -23,7 +23,7 @@ from .region import _detect_region
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.12.0"
+__version__ = "1.13.0"
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +130,14 @@ class ClientApplication(object):
             So, if your attempt ends up with an error AADSTS700027 -
             "The provided signature value did not match the expected signature value",
             you may try use only the leaf cert (in PEM/str format) instead.
+
+            *Added in version 1.13.0*:
+            It can also be a completly pre-signed assertion that you've assembled yourself.
+            Simply pass a container containing only the key "client_assertion", like this::
+
+                {
+                    "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
+                }
 
         :param dict client_claims:
             *Added in version 0.5.0*:
@@ -377,7 +385,7 @@ class ClientApplication(object):
                 validate_authority=False)  # The central_authority has already been validated
         return None
 
-    def _build_client(self, client_credential, authority):
+    def _build_client(self, client_credential, authority, skip_regional_client=False):
         client_assertion = None
         client_assertion_type = None
         default_headers = {
@@ -391,28 +399,32 @@ class ClientApplication(object):
             default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
-            assert ("private_key" in client_credential
-                    and "thumbprint" in client_credential)
-            headers = {}
-            if 'public_certificate' in client_credential:
-                headers["x5c"] = extract_certs(client_credential['public_certificate'])
-            if not client_credential.get("passphrase"):
-                unencrypted_private_key = client_credential['private_key']
-            else:
-                from cryptography.hazmat.primitives import serialization
-                from cryptography.hazmat.backends import default_backend
-                unencrypted_private_key = serialization.load_pem_private_key(
-                    _str2bytes(client_credential["private_key"]),
-                    _str2bytes(client_credential["passphrase"]),
-                    backend=default_backend(),  # It was a required param until 2020
-                    )
-            assertion = JwtAssertionCreator(
-                unencrypted_private_key, algorithm="RS256",
-                sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
-            client_assertion = assertion.create_regenerative_assertion(
-                audience=authority.token_endpoint, issuer=self.client_id,
-                additional_claims=self.client_claims or {})
+            assert (("private_key" in client_credential
+                    and "thumbprint" in client_credential) or
+                    "client_assertion" in client_credential)
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
+            if 'client_assertion' in client_credential:
+                client_assertion = client_credential['client_assertion']
+            else:
+                headers = {}
+                if 'public_certificate' in client_credential:
+                    headers["x5c"] = extract_certs(client_credential['public_certificate'])
+                if not client_credential.get("passphrase"):
+                    unencrypted_private_key = client_credential['private_key']
+                else:
+                    from cryptography.hazmat.primitives import serialization
+                    from cryptography.hazmat.backends import default_backend
+                    unencrypted_private_key = serialization.load_pem_private_key(
+                        _str2bytes(client_credential["private_key"]),
+                        _str2bytes(client_credential["passphrase"]),
+                        backend=default_backend(),  # It was a required param until 2020
+                        )
+                assertion = JwtAssertionCreator(
+                    unencrypted_private_key, algorithm="RS256",
+                    sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
+                client_assertion = assertion.create_regenerative_assertion(
+                    audience=authority.token_endpoint, issuer=self.client_id,
+                    additional_claims=self.client_claims or {})
         else:
             default_body['client_secret'] = client_credential
         central_configuration = {
@@ -436,7 +448,8 @@ class ClientApplication(object):
             on_updating_rt=self.token_cache.update_rt)
 
         regional_client = None
-        if client_credential:  # Currently regional endpoint only serves some CCA flows
+        if (client_credential  # Currently regional endpoint only serves some CCA flows
+                and not skip_regional_client):
             regional_authority = self._get_regional_authority(authority)
             if regional_authority:
                 regional_configuration = {
@@ -777,7 +790,7 @@ class ClientApplication(object):
             accounts = [a for a in accounts
                 if a["username"].lower() == lowercase_username]
             if not accounts:
-                logger.warning((
+                logger.debug((  # This would also happen when the cache is empty
                     "get_accounts(username='{}') finds no account. "
                     "If tokens were acquired without 'profile' scope, "
                     "they would contain no username for filtering. "
@@ -1102,9 +1115,13 @@ class ClientApplication(object):
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
         logger.debug("Found %d RTs matching %s", len(matches), query)
-        client, _ = self._build_client(self.client_credential, authority)
 
         response = None  # A distinguishable value to mean cache is empty
+        if not matches:  # Then exit early to avoid expensive operations
+            return response
+        client, _ = self._build_client(
+            # Potentially expensive if building regional client
+            self.client_credential, authority, skip_regional_client=True)
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_SILENT_ID,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
