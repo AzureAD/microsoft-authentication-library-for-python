@@ -1,3 +1,16 @@
+"""If the following ENV VAR are available, many end-to-end test cases would run.
+LAB_APP_CLIENT_SECRET=...
+LAB_OBO_CLIENT_SECRET=...
+LAB_APP_CLIENT_ID=...
+LAB_OBO_PUBLIC_CLIENT_ID=...
+LAB_OBO_CONFIDENTIAL_CLIENT_ID=...
+"""
+try:
+    from dotenv import load_dotenv  # Use this only in local dev machine
+    load_dotenv()  # take environment variables from .env.
+except:
+    pass
+
 import logging
 import os
 import json
