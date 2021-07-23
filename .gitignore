@@ -57,3 +57,5 @@ docs/_build/
 # The test configuration file(s) could potentially contain credentials
 tests/config.json
 
+
+.env
