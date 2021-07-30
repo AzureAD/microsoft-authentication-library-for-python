@@ -703,14 +703,17 @@ class WorldWideTestCase(LabBasedTestCase):
         self._test_acquire_token_obo(config_pca, config_cca)
 
     def test_acquire_token_by_client_secret(self):
-        # This is copied from ArlingtonCloudTestCase's same test case
-        try:
-            config = self.get_lab_user(usertype="cloud", publicClient="no")
-        except requests.exceptions.HTTPError:
-            self.skipTest("The lab does not provide confidential app for testing")
-        else:
-            config["client_secret"] = self.get_lab_user_secret("TBD")  # TODO
-            self._test_acquire_token_by_client_secret(**config)
+        # Vastly different than ArlingtonCloudTestCase.test_acquire_token_by_client_secret()
+        _app = self.get_lab_app_object(
+            publicClient="no", signinAudience="AzureAdMyOrg")
+        self._test_acquire_token_by_client_secret(
+            client_id=_app["appId"],
+            client_secret=self.get_lab_user_secret(
+                _app["clientSecret"].split("/")[-1]),
+            authority="{}{}.onmicrosoft.com".format(
+                _app["authority"], _app["labName"].lower().rstrip(".com")),
+            scope=["https://graph.microsoft.com/.default"],
+            )
 
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CLIENT_SECRET"),
