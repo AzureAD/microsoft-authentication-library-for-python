@@ -558,6 +558,7 @@ class ClientApplication(object):
             login_hint=None,  # type: Optional[str]
             domain_hint=None,  # type: Optional[str]
             claims_challenge=None,
+            max_age=None,
             ):
         """Initiate an auth code flow.
 
@@ -588,6 +589,17 @@ class ClientApplication(object):
             `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
             `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
 
+        :param int max_age:
+            OPTIONAL. Maximum Authentication Age.
+            Specifies the allowable elapsed time in seconds
+            since the last time the End-User was actively authenticated.
+            If the elapsed time is greater than this value,
+            Microsoft identity platform will actively re-authenticate the End-User.
+
+            MSAL Python will also automatically validate the auth_time in ID token.
+
+            New in version 1.15.
+
         :return:
             The auth code flow. It is a dict in this form::
 
@@ -617,6 +629,7 @@ class ClientApplication(object):
             domain_hint=domain_hint,
             claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
+            max_age=max_age,
             )
         flow["claims_challenge"] = claims_challenge
         return flow
@@ -1403,6 +1416,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             timeout=None,
             port=None,
             extra_scopes_to_consent=None,
+            max_age=None,
             **kwargs):
         """Acquire token interactively i.e. via a local browser.
 
@@ -1448,6 +1462,17 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             in the same interaction, but for which you won't get back a
             token for in this particular operation.
 
+        :param int max_age:
+            OPTIONAL. Maximum Authentication Age.
+            Specifies the allowable elapsed time in seconds
+            since the last time the End-User was actively authenticated.
+            If the elapsed time is greater than this value,
+            Microsoft identity platform will actively re-authenticate the End-User.
+
+            MSAL Python will also automatically validate the auth_time in ID token.
+
+            New in version 1.15.
+
         :return:
             - A dict containing no "error" key,
               and typically contains an "access_token" key.
@@ -1466,6 +1491,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 port=port or 0),
             prompt=prompt,
             login_hint=login_hint,
+            max_age=max_age,
             timeout=timeout,
             auth_params={
                 "claims": claims,
