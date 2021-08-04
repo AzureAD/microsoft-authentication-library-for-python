@@ -14,6 +14,7 @@ import os
 import requests
 
 from .oauth2cli import Client, JwtAssertionCreator
+from .oauth2cli.oidc import decode_part
 from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
@@ -109,6 +110,34 @@ def _preferred_browser():
         except ImportError:
             pass  # We may still proceed
     return None
+
+
+class _ClientWithCcsRoutingInfo(Client):
+
+    def initiate_auth_code_flow(self, **kwargs):
+        return super(_ClientWithCcsRoutingInfo, self).initiate_auth_code_flow(
+            client_info=1,  # To be used as CSS Routing info
+            **kwargs)
+
+    def obtain_token_by_auth_code_flow(
+            self, auth_code_flow, auth_response, **kwargs):
+        # Note: the obtain_token_by_browser() is also covered by this
+        assert isinstance(auth_code_flow, dict) and isinstance(auth_response, dict)
+        headers = kwargs.pop("headers", {})
+        client_info = json.loads(
+            decode_part(auth_response["client_info"])
+            ) if auth_response.get("client_info") else {}
+        if "uid" in client_info and "utid" in client_info:
+            # Note: The value of X-AnchorMailbox is also case-insensitive
+            headers["X-AnchorMailbox"] = "Oid:{uid}@{utid}".format(**client_info)
+        return super(_ClientWithCcsRoutingInfo, self).obtain_token_by_auth_code_flow(
+            auth_code_flow, auth_response, headers=headers, **kwargs)
+
+    def obtain_token_by_username_password(self, username, password, **kwargs):
+        headers = kwargs.pop("headers", {})
+        headers["X-AnchorMailbox"] = "upn:{}".format(username)
+        return super(_ClientWithCcsRoutingInfo, self).obtain_token_by_username_password(
+            username, password, headers=headers, **kwargs)
 
 
 class ClientApplication(object):
@@ -481,7 +510,7 @@ class ClientApplication(object):
                 authority.device_authorization_endpoint or
                 urljoin(authority.token_endpoint, "devicecode"),
             }
-        central_client = Client(
+        central_client = _ClientWithCcsRoutingInfo(
             central_configuration,
             self.client_id,
             http_client=self.http_client,
@@ -506,7 +535,7 @@ class ClientApplication(object):
                         regional_authority.device_authorization_endpoint or
                         urljoin(regional_authority.token_endpoint, "devicecode"),
                     }
-                regional_client = Client(
+                regional_client = _ClientWithCcsRoutingInfo(
                     regional_configuration,
                     self.client_id,
                     http_client=self.http_client,
@@ -577,7 +606,7 @@ class ClientApplication(object):
             3. and then relay this dict and subsequent auth response to
                :func:`~acquire_token_by_auth_code_flow()`.
         """
-        client = Client(
+        client = _ClientWithCcsRoutingInfo(
             {"authorization_endpoint": self.authority.authorization_endpoint},
             self.client_id,
             http_client=self.http_client)
@@ -654,7 +683,7 @@ class ClientApplication(object):
             self.http_client
             ) if authority else self.authority
 
-        client = Client(
+        client = _ClientWithCcsRoutingInfo(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id,
             http_client=self.http_client)
@@ -1178,6 +1207,10 @@ class ClientApplication(object):
                 key=lambda e: int(e.get("last_modification_time", "0")),
                 reverse=True):
             logger.debug("Cache attempts an RT")
+            headers = telemetry_context.generate_headers()
+            if "home_account_id" in query:  # Then use it as CCS Routing info
+                headers["X-AnchorMailbox"] = "Oid:{}".format(  # case-insensitive value
+                    query["home_account_id"].replace(".", "@"))
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 on_removing_rt=lambda rt_item: None,  # Disable RT removal,
@@ -1189,7 +1222,7 @@ class ClientApplication(object):
                     skip_account_creation=True,  # To honor a concurrent remove_account()
                     )),
                 scope=scopes,
-                headers=telemetry_context.generate_headers(),
+                headers=headers,
                 data=dict(
                     kwargs.pop("data", {}),
                     claims=_merge_claims_challenge_and_capabilities(
