@@ -371,7 +371,7 @@ class ClientApplication(object):
             self._region_configured if is_region_specified else self._region_detected)
         if region_to_use:
             logger.info('Region to be used: {}'.format(repr(region_to_use)))
-            regional_host = ("{}.login.microsoft.com".format(region_to_use)
+            regional_host = ("{}.r.login.microsoftonline.com".format(region_to_use)
                 if central_authority.instance in (
                     # The list came from https://github.com/AzureAD/microsoft-authentication-library-for-python/pull/358/files#r629400328
                     "login.microsoftonline.com",

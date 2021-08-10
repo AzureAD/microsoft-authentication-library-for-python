@@ -798,7 +798,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
                 status_code=400, text='{"error": "mock"}')) as mocked_method:
             self.app.acquire_token_for_client(scopes)
             mocked_method.assert_called_with(
-                'https://westus.login.microsoft.com/{}/oauth2/v2.0/token'.format(
+                'https://westus.r.login.microsoftonline.com/{}/oauth2/v2.0/token'.format(
                     self.app.authority.tenant),
                 params=ANY, data=ANY, headers=ANY)
         result = self.app.acquire_token_for_client(
