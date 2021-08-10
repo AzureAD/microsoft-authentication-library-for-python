@@ -5,14 +5,9 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_region(http_client=None):
-    region = _detect_region_of_azure_function()  # It is cheap, so we do it always
-    if http_client and not region:
+    if http_client:
         return _detect_region_of_azure_vm(http_client)  # It could hang for minutes
-    return region
-
-
-def _detect_region_of_azure_function():
-    return os.environ.get("REGION_NAME")
+    return None
 
 
 def _detect_region_of_azure_vm(http_client):
