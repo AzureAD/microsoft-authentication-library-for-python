@@ -15,6 +15,7 @@ import requests
 
 from .oauth2cli import Client, JwtAssertionCreator
 from .oauth2cli.oidc import decode_part
+from .oauth2cli.authcode import AuthCodeReceiver as _AuthCodeReceiver
 from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
@@ -1581,26 +1582,70 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             self._client_capabilities, claims_challenge)
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_INTERACTIVE)
-        response = _clean_up(self.client.obtain_token_by_browser(
-            scope=self._decorate_scope(scopes) if scopes else None,
-            extra_scope_to_consent=extra_scopes_to_consent,
-            redirect_uri="http://localhost:{port}".format(
+        if _is_running_in_cloud_shell():
+            redirect_uri = "https://azuread.github.io/microsoft-authentication-library-for-python/"  # Need exact match, including the trailing slash.
+            receiver = _AuthCodeReceiver(
+                port=port or 0,
+                scheduled_actions=[(10, lambda: logger.warning(
+                    "Still waiting for the sign-in result. "
+                    "An experimental feature hint to app developer: "
+                    "This app could still sign in when running inside Cloud Shell, "
+                    "if its registration contains a Desktop app redirect_uri as: %s",
+                    redirect_uri))],
+                )
+            resp = self.http_client.post(  # Enable tunneling for the listening port
+                "http://localhost:8888/ports/{}/open".format(receiver.get_port()))
+            state = json.loads(resp.text)["url"]  # Record tunnel url as state
+            if not login_hint:  # Experimental: attempt to use current signed-in user
+                already_consented = "https://management.azure.com"
+                result = self._acquire_token_by_cloud_shell([already_consented])
+                if "access_token" in result:
+                    cloud_shell_claims = json.loads(decode_part(
+                        result["access_token"].split(".")[1]))
+                    login_hint = (
+                        # https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens
+                        cloud_shell_claims.get("preferred_username")  # In v2.0 AT
+                        or cloud_shell_claims.get("unique_name")  # In v1.0 AT
+                        or cloud_shell_claims.get("email")  # Undocumented but observable from a V1.0 AT
+                        ).split("#")[-1]  # Deal with "live.com#joe@contoso.com"
+        else:  # Non-CloudShell scenario
+            receiver = state = None
+            redirect_uri = "http://localhost:{port}".format(
                 # Hardcode the host, for now. AAD portal rejects 127.0.0.1 anyway
-                port=port or 0),
-            prompt=prompt,
-            login_hint=login_hint,
-            max_age=max_age,
-            timeout=timeout,
-            auth_params={
-                "claims": claims,
-                "domain_hint": domain_hint,
-                },
-            data=dict(kwargs.pop("data", {}), claims=claims),
-            headers=telemetry_context.generate_headers(),
-            browser_name=_preferred_browser(),
-            **kwargs))
-        telemetry_context.update_telemetry(response)
-        return response
+                port=port or 0)
+        try:
+            response = _clean_up(self.client.obtain_token_by_browser(
+                scope=self._decorate_scope(scopes) if scopes else None,
+                extra_scope_to_consent=extra_scopes_to_consent,
+                redirect_uri=redirect_uri,
+                prompt=prompt,
+                login_hint=login_hint,
+                max_age=max_age,
+                timeout=timeout,
+                success_template=kwargs.pop("success_template", """<html><body>
+<script>window.close()</script> <!--
+    Window can be closed if the tab was manually opened by clicking via Cloud Shell;
+    otherwise it will result in harmless error in browser console. -->
+<h3>Authenticaiton completed</h3>
+You can close this window now.
+</body></html>"""),
+                auth_params={
+                    "claims": claims,
+                    "domain_hint": domain_hint,
+                    "state": state,
+                    },
+                data=dict(kwargs.pop("data", {}), claims=claims),
+                headers=telemetry_context.generate_headers(),
+                browser_name=_preferred_browser(),
+                auth_uri_callback=lambda uri: logger.info(
+                    "Unable to open browser tab. Please visit this URL: %s", uri),
+                auth_code_receiver=receiver,
+                **kwargs))
+            telemetry_context.update_telemetry(response)
+            return response
+        finally:
+            if receiver:
+                receiver.close()
 
     def initiate_device_flow(self, scopes=None, **kwargs):
         """Initiate a Device Flow instance,
