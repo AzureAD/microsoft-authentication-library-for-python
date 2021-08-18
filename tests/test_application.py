@@ -5,7 +5,7 @@ from msal.application import _str2bytes
 import msal
 from msal.application import _merge_claims_challenge_and_capabilities
 from tests import unittest
-from tests.test_token_cache import TokenCacheTestCase
+from tests.test_token_cache import build_id_token, build_response
 from tests.http_client import MinimalHttpClient, MinimalResponse
 from msal.telemetry import CLIENT_CURRENT_TELEMETRY, CLIENT_LAST_TELEMETRY
 
@@ -66,7 +66,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
             "client_id": self.client_id,
             "scope": self.scopes,
             "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
-            "response": TokenCacheTestCase.build_response(
+            "response": build_response(
                 access_token="an expired AT to trigger refresh", expires_in=-99,
                 uid=self.uid, utid=self.utid, refresh_token=self.rt),
             })  # The add(...) helper populates correct home_account_id for future searching
@@ -125,9 +125,9 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             "client_id": self.preexisting_family_app_id,
             "scope": self.scopes,
             "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
-            "response": TokenCacheTestCase.build_response(
+            "response": build_response(
                 access_token="Siblings won't share AT. test_remove_account() will.",
-                id_token=TokenCacheTestCase.build_id_token(aud=self.preexisting_family_app_id),
+                id_token=build_id_token(aud=self.preexisting_family_app_id),
                 uid=self.uid, utid=self.utid, refresh_token=self.frt, foci="1"),
             })  # The add(...) helper populates correct home_account_id for future searching
 
@@ -153,8 +153,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             "client_id": app.client_id,
             "scope": self.scopes,
             "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
-            "response": TokenCacheTestCase.build_response(
-                uid=self.uid, utid=self.utid, refresh_token=rt),
+            "response": build_response(uid=self.uid, utid=self.utid, refresh_token=rt),
             })
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         def tester(url, data=None, **kwargs):
@@ -168,7 +167,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             self.assertEqual(
                 self.frt, data.get("refresh_token"), "Should attempt the FRT")
             return MinimalResponse(
-                status_code=200, text=json.dumps(TokenCacheTestCase.build_response(
+                status_code=200, text=json.dumps(build_response(
                     uid=self.uid, utid=self.utid, foci="1", access_token="at")))
         app = ClientApplication(
             "unknown_family_app", authority=self.authority_url, token_cache=self.cache)
@@ -246,7 +245,7 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
             "scope": self.scopes,
             "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(
                 self.environment_in_cache),
-            "response": TokenCacheTestCase.build_response(
+            "response": build_response(
                 uid=uid, utid=utid,
                 access_token=self.access_token, refresh_token="some refresh token"),
         })  # The add(...) helper populates correct home_account_id for future searching
@@ -342,7 +341,7 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
             "client_id": self.client_id,
             "scope": self.scopes,
             "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
-            "response": TokenCacheTestCase.build_response(
+            "response": build_response(
                 access_token=access_token,
                 expires_in=expires_in, refresh_in=refresh_in,
                 uid=self.uid, utid=self.utid, refresh_token=self.rt),
@@ -424,7 +423,7 @@ class TestTelemetryMaintainingOfflineState(unittest.TestCase):
             "client_id": self.client_id,
             "scope": self.scopes,
             "token_endpoint": "{}/oauth2/v2.0/token".format(self.authority_url),
-            "response": TokenCacheTestCase.build_response(
+            "response": build_response(
                 access_token=access_token,
                 uid=self.uid, utid=self.utid, refresh_token=self.rt),
             })
@@ -571,9 +570,9 @@ class TestClientApplicationWillGroupAccounts(unittest.TestCase):
                 "scope": scopes,
                 "token_endpoint":
                     "https://{}/{}/oauth2/v2.0/token".format(environment, tenant),
-                "response": TokenCacheTestCase.build_response(
+                "response": build_response(
                     uid=uid, utid=utid, access_token="at", refresh_token="rt",
-                    id_token=TokenCacheTestCase.build_id_token(
+                    id_token=build_id_token(
                         aud=client_id,
                         sub="oid_in_" + tenant,
                         preferred_username=username,
