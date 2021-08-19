@@ -21,6 +21,7 @@ from .wstrust_response import *
 from .token_cache import TokenCache
 import msal.telemetry
 from .region import _detect_region
+from .throttled_http_client import ThrottledHttpClient
 
 
 # The __init__.py will import this. Not the other way around.
@@ -336,6 +337,10 @@ class ClientApplication(object):
             a = requests.adapters.HTTPAdapter(max_retries=1)
             self.http_client.mount("http://", a)
             self.http_client.mount("https://", a)
+        self.http_client = ThrottledHttpClient(
+            self.http_client,
+            {}  # Hard code an in-memory cache, for now
+            )
 
         self.app_name = app_name
         self.app_version = app_version
@@ -433,6 +438,7 @@ class ClientApplication(object):
             "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
             "x-client-os": sys.platform,
             "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
+            "x-ms-lib-capability": "retry-after, h429",
         }
         if self.app_name:
             default_headers['x-app-name'] = self.app_name
