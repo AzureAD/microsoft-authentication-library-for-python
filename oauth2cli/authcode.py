@@ -104,7 +104,7 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         logger.debug(format, *args)  # To override the default log-to-stderr behavior
 
 
-class _AuthCodeHttpServer(HTTPServer):
+class _AuthCodeHttpServer(HTTPServer, object):
     def __init__(self, server_address, *args, **kwargs):
         _, port = server_address
         if port and (sys.platform == "win32" or is_wsl()):
