@@ -128,7 +128,13 @@ class ThrottledHttpClient(object):
                 3600*24 if 200 <= result.status_code < 300 else 0,
             )(http_client.get)
 
+        self._http_client = http_client
+
     # The following 2 methods have been defined dynamically by __init__()
     #def post(self, *args, **kwargs): pass
     #def get(self, *args, **kwargs): pass
+
+    def close(self):
+        """MSAL won't need this. But we allow throttled_http_client.close() anyway"""
+        return self._http_client.close()
 
