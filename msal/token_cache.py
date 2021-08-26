@@ -122,6 +122,19 @@ class TokenCache(object):
                 default=str,  # A workaround when assertion is in bytes in Python 3
                 ))
 
+    def __parse_account(self, response, id_token_claims):
+        """Return client_info and home_account_id"""
+        if "client_info" in response:  # It happens when client_info and profile are in request
+            client_info = json.loads(decode_part(response["client_info"]))
+            if "uid" in client_info and "utid" in client_info:
+                return client_info, "{uid}.{utid}".format(**client_info)
+            # https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/387
+        if id_token_claims:  # This would be an end user on ADFS-direct scenario
+            sub = id_token_claims["sub"]  # "sub" always exists, per OIDC specs
+            return {"uid": sub}, sub
+        # client_credentials flow will reach this code path
+        return {}, None
+
     def __add(self, event, now=None):
         # event typically contains: client_id, scope, token_endpoint,
         # response, params, data, grant_type
@@ -138,14 +151,7 @@ class TokenCache(object):
         id_token_claims = (
             decode_id_token(id_token, client_id=event["client_id"])
             if id_token else {})
-        client_info = {}
-        home_account_id = None  # It would remain None in client_credentials flow
-        if "client_info" in response:  # We asked for it, and AAD will provide it
-            client_info = json.loads(decode_part(response["client_info"]))
-            home_account_id = "{uid}.{utid}".format(**client_info)
-        elif id_token_claims:  # This would be an end user on ADFS-direct scenario
-            client_info["uid"] = id_token_claims.get("sub")
-            home_account_id = id_token_claims.get("sub")
+        client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
         target = ' '.join(event.get("scope") or [])  # Per schema, we don't sort it
 

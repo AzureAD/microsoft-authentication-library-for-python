@@ -11,52 +11,56 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 
+# NOTE: These helpers were once implemented as static methods in TokenCacheTestCase.
+#       That would cause other test files' "from ... import TokenCacheTestCase"
+#       to re-run all test cases in this file.
+#       Now we avoid that, by defining these helpers in module level.
+def build_id_token(
+        iss="issuer", sub="subject", aud="my_client_id", exp=None, iat=None,
+        **claims):  # AAD issues "preferred_username", ADFS issues "upn"
+    return "header.%s.signature" % base64.b64encode(json.dumps(dict({
+        "iss": iss,
+        "sub": sub,
+        "aud": aud,
+        "exp": exp or (time.time() + 100),
+        "iat": iat or time.time(),
+        }, **claims)).encode()).decode('utf-8')
+
+
+def build_response(  # simulate a response from AAD
+        uid=None, utid=None,  # If present, they will form client_info
+        access_token=None, expires_in=3600, token_type="some type",
+        **kwargs  # Pass-through: refresh_token, foci, id_token, error, refresh_in, ...
+        ):
+    response = {}
+    if uid and utid:  # Mimic the AAD behavior for "client_info=1" request
+        response["client_info"] = base64.b64encode(json.dumps({
+            "uid": uid, "utid": utid,
+            }).encode()).decode('utf-8')
+    if access_token:
+        response.update({
+            "access_token": access_token,
+            "expires_in": expires_in,
+            "token_type": token_type,
+            })
+    response.update(kwargs)  # Pass-through key-value pairs as top-level fields
+    return response
+
+
 class TokenCacheTestCase(unittest.TestCase):
-
-    @staticmethod
-    def build_id_token(
-            iss="issuer", sub="subject", aud="my_client_id", exp=None, iat=None,
-            **claims):  # AAD issues "preferred_username", ADFS issues "upn"
-        return "header.%s.signature" % base64.b64encode(json.dumps(dict({
-            "iss": iss,
-            "sub": sub,
-            "aud": aud,
-            "exp": exp or (time.time() + 100),
-            "iat": iat or time.time(),
-            }, **claims)).encode()).decode('utf-8')
-
-    @staticmethod
-    def build_response(  # simulate a response from AAD
-            uid=None, utid=None,  # If present, they will form client_info
-            access_token=None, expires_in=3600, token_type="some type",
-            **kwargs  # Pass-through: refresh_token, foci, id_token, error, refresh_in, ...
-            ):
-        response = {}
-        if uid and utid:  # Mimic the AAD behavior for "client_info=1" request
-            response["client_info"] = base64.b64encode(json.dumps({
-                "uid": uid, "utid": utid,
-                }).encode()).decode('utf-8')
-        if access_token:
-            response.update({
-                "access_token": access_token,
-                "expires_in": expires_in,
-                "token_type": token_type,
-                })
-        response.update(kwargs)  # Pass-through key-value pairs as top-level fields
-        return response
 
     def setUp(self):
         self.cache = TokenCache()
 
     def testAddByAad(self):
         client_id = "my_client_id"
-        id_token = self.build_id_token(
+        id_token = build_id_token(
             oid="object1234", preferred_username="John Doe", aud=client_id)
         self.cache.add({
             "client_id": client_id,
             "scope": ["s2", "s1", "s3"],  # Not in particular order
             "token_endpoint": "https://login.example.com/contoso/v2/token",
-            "response": self.build_response(
+            "response": build_response(
                 uid="uid", utid="utid",  # client_info
                 expires_in=3600, access_token="an access token",
                 id_token=id_token, refresh_token="a refresh token"),
@@ -125,12 +129,12 @@ class TokenCacheTestCase(unittest.TestCase):
 
     def testAddByAdfs(self):
         client_id = "my_client_id"
-        id_token = self.build_id_token(aud=client_id, upn="JaneDoe@example.com")
+        id_token = build_id_token(aud=client_id, upn="JaneDoe@example.com")
         self.cache.add({
             "client_id": client_id,
             "scope": ["s2", "s1", "s3"],  # Not in particular order
             "token_endpoint": "https://fs.msidlab8.com/adfs/oauth2/token",
-            "response": self.build_response(
+            "response": build_response(
                 uid=None, utid=None,  # ADFS will provide no client_info
                 expires_in=3600, access_token="an access token",
                 id_token=id_token, refresh_token="a refresh token"),
@@ -204,7 +208,7 @@ class TokenCacheTestCase(unittest.TestCase):
             "client_id": "my_client_id",
             "scope": ["s2", "s1", "s3"],  # Not in particular order
             "token_endpoint": "https://login.example.com/contoso/v2/token",
-            "response": self.build_response(
+            "response": build_response(
                 uid="uid", utid="utid",  # client_info
                 expires_in=3600, access_token="an access token",
                 refresh_token="a refresh token"),
@@ -219,7 +223,7 @@ class TokenCacheTestCase(unittest.TestCase):
             "client_id": "my_client_id",
             "scope": ["s2", "s1", "s3"],  # Not in particular order
             "token_endpoint": "https://login.example.com/contoso/v2/token",
-            "response": self.build_response(
+            "response": build_response(
                 uid="uid", utid="utid",  # client_info
                 expires_in=3600, refresh_in=1800, access_token="an access token",
                 ),  #refresh_token="a refresh token"),

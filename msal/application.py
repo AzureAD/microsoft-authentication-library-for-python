@@ -9,6 +9,7 @@ import logging
 import sys
 import warnings
 from threading import Lock
+import os
 
 import requests
 
@@ -20,10 +21,11 @@ from .wstrust_response import *
 from .token_cache import TokenCache
 import msal.telemetry
 from .region import _detect_region
+from .throttled_http_client import ThrottledHttpClient
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.13.0"
+__version__ = "1.14.0"
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,46 @@ def _clean_up(result):
     if isinstance(result, dict):
         result.pop("refresh_in", None)  # MSAL handled refresh_in, customers need not
     return result
+
+
+def _preferred_browser():
+    """Register Edge and return a name suitable for subsequent webbrowser.get(...)
+    when appropriate. Otherwise return None.
+    """
+    # On Linux, only Edge will provide device-based Conditional Access support
+    if sys.platform != "linux":  # On other platforms, we have no browser preference
+        return None
+    browser_path = "/usr/bin/microsoft-edge"  # Use a full path owned by sys admin
+    user_has_no_preference = "BROWSER" not in os.environ
+    user_wont_mind_edge = "microsoft-edge" in os.environ.get("BROWSER", "")  # Note:
+        # BROWSER could contain "microsoft-edge" or "/path/to/microsoft-edge".
+        # Python documentation (https://docs.python.org/3/library/webbrowser.html)
+        # does not document the name being implicitly register,
+        # so there is no public API to know whether the ENV VAR browser would work.
+        # Therefore, we would not bother examine the env var browser's type.
+        # We would just register our own Edge instance.
+    if (user_has_no_preference or user_wont_mind_edge) and os.path.exists(browser_path):
+        try:
+            import webbrowser  # Lazy import. Some distro may not have this.
+            browser_name = "msal-edge"  # Avoid popular name "microsoft-edge"
+                # otherwise `BROWSER="microsoft-edge"; webbrowser.get("microsoft-edge")`
+                # would return a GenericBrowser instance which won't work.
+            try:
+                registration_available = isinstance(
+                    webbrowser.get(browser_name), webbrowser.BackgroundBrowser)
+            except webbrowser.Error:
+                registration_available = False
+            if not registration_available:
+                logger.debug("Register %s with %s", browser_name, browser_path)
+                # By registering our own browser instance with our own name,
+                # rather than populating a process-wide BROWSER enn var,
+                # this approach does not have side effect on non-MSAL code path.
+                webbrowser.register(  # Even double-register happens to work fine
+                    browser_name, None, webbrowser.BackgroundBrowser(browser_path))
+            return browser_name
+        except ImportError:
+            pass  # We may still proceed
+    return None
 
 
 class ClientApplication(object):
@@ -295,6 +337,10 @@ class ClientApplication(object):
             a = requests.adapters.HTTPAdapter(max_retries=1)
             self.http_client.mount("http://", a)
             self.http_client.mount("https://", a)
+        self.http_client = ThrottledHttpClient(
+            self.http_client,
+            {}  # Hard code an in-memory cache, for now
+            )
 
         self.app_name = app_name
         self.app_version = app_version
@@ -371,7 +417,7 @@ class ClientApplication(object):
             self._region_configured if is_region_specified else self._region_detected)
         if region_to_use:
             logger.info('Region to be used: {}'.format(repr(region_to_use)))
-            regional_host = ("{}.login.microsoft.com".format(region_to_use)
+            regional_host = ("{}.r.login.microsoftonline.com".format(region_to_use)
                 if central_authority.instance in (
                     # The list came from https://github.com/AzureAD/microsoft-authentication-library-for-python/pull/358/files#r629400328
                     "login.microsoftonline.com",
@@ -392,6 +438,7 @@ class ClientApplication(object):
             "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
             "x-client-os": sys.platform,
             "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
+            "x-ms-lib-capability": "retry-after, h429",
         }
         if self.app_name:
             default_headers['x-app-name'] = self.app_name
@@ -1393,6 +1440,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 },
             data=dict(kwargs.pop("data", {}), claims=claims),
             headers=telemetry_context.generate_headers(),
+            browser_name=_preferred_browser(),
             **kwargs))
         telemetry_context.update_telemetry(response)
         return response

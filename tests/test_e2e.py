@@ -1,3 +1,16 @@
+"""If the following ENV VAR are available, many end-to-end test cases would run.
+LAB_APP_CLIENT_SECRET=...
+LAB_OBO_CLIENT_SECRET=...
+LAB_APP_CLIENT_ID=...
+LAB_OBO_PUBLIC_CLIENT_ID=...
+LAB_OBO_CONFIDENTIAL_CLIENT_ID=...
+"""
+try:
+    from dotenv import load_dotenv  # Use this only in local dev machine
+    load_dotenv()  # take environment variables from .env.
+except:
+    pass
+
 import logging
 import os
 import json
@@ -124,10 +137,15 @@ class E2eTestCase(unittest.TestCase):
     def _test_username_password(self,
             authority=None, client_id=None, username=None, password=None, scope=None,
             client_secret=None,  # Since MSAL 1.11, confidential client has ROPC too
+            azure_region=None,
+            http_client=None,
             **ignored):
         assert authority and client_id and username and password and scope
         self.app = msal.ClientApplication(
-            client_id, authority=authority, http_client=MinimalHttpClient(),
+            client_id, authority=authority,
+            http_client=http_client or MinimalHttpClient(),
+            azure_region=azure_region,  # Regional endpoint does not support ROPC.
+                # Here we just use it to test a regional app won't break ROPC.
             client_credential=client_secret)
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
@@ -528,11 +546,16 @@ class LabBasedTestCase(E2eTestCase):
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, scope, username=None)
 
-    def _test_acquire_token_obo(self, config_pca, config_cca):
+    def _test_acquire_token_obo(self, config_pca, config_cca,
+            azure_region=None,  # Regional endpoint does not really support OBO.
+                # Here we just test regional apps won't adversely break OBO
+            http_client=None,
+            ):
         # 1. An app obtains a token representing a user, for our mid-tier service
         pca = msal.PublicClientApplication(
             config_pca["client_id"], authority=config_pca["authority"],
-            http_client=MinimalHttpClient())
+            azure_region=azure_region,
+            http_client=http_client or MinimalHttpClient())
         pca_result = pca.acquire_token_by_username_password(
             config_pca["username"],
             config_pca["password"],
@@ -547,7 +570,8 @@ class LabBasedTestCase(E2eTestCase):
             config_cca["client_id"],
             client_credential=config_cca["client_secret"],
             authority=config_cca["authority"],
-            http_client=MinimalHttpClient(),
+            azure_region=azure_region,
+            http_client=http_client or MinimalHttpClient(),
             # token_cache= ...,  # Default token cache is all-tokens-store-in-memory.
                 # That's fine if OBO app uses short-lived msal instance per session.
                 # Otherwise, the OBO app need to implement a one-cache-per-user setup.
@@ -690,14 +714,17 @@ class WorldWideTestCase(LabBasedTestCase):
         self._test_acquire_token_obo(config_pca, config_cca)
 
     def test_acquire_token_by_client_secret(self):
-        # This is copied from ArlingtonCloudTestCase's same test case
-        try:
-            config = self.get_lab_user(usertype="cloud", publicClient="no")
-        except requests.exceptions.HTTPError:
-            self.skipTest("The lab does not provide confidential app for testing")
-        else:
-            config["client_secret"] = self.get_lab_user_secret("TBD")  # TODO
-            self._test_acquire_token_by_client_secret(**config)
+        # Vastly different than ArlingtonCloudTestCase.test_acquire_token_by_client_secret()
+        _app = self.get_lab_app_object(
+            publicClient="no", signinAudience="AzureAdMyOrg")
+        self._test_acquire_token_by_client_secret(
+            client_id=_app["appId"],
+            client_secret=self.get_lab_user_secret(
+                _app["clientSecret"].split("/")[-1]),
+            authority="{}{}.onmicrosoft.com".format(
+                _app["authority"], _app["labName"].lower().rstrip(".com")),
+            scope=["https://graph.microsoft.com/.default"],
+            )
 
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CLIENT_SECRET"),
@@ -762,6 +789,7 @@ class WorldWideTestCase(LabBasedTestCase):
 
 class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
     region = "westus"
+    timeout = 2  # Short timeout makes this test case responsive on non-VM
 
     def test_acquire_token_for_client_should_hit_regional_endpoint(self):
         """This is the only grant supported by regional endpoint, for now"""
@@ -782,7 +810,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
                 status_code=400, text='{"error": "mock"}')) as mocked_method:
             self.app.acquire_token_for_client(scopes)
             mocked_method.assert_called_with(
-                'https://westus.login.microsoft.com/{}/oauth2/v2.0/token'.format(
+                'https://westus.r.login.microsoftonline.com/{}/oauth2/v2.0/token'.format(
                     self.app.authority.tenant),
                 params=ANY, data=ANY, headers=ANY)
         result = self.app.acquire_token_for_client(
@@ -791,15 +819,6 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
             )
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scopes)
-
-
-class RegionalEndpointViaEnvVarTestCase(WorldWideRegionalEndpointTestCase):
-
-    def setUp(self):
-        os.environ["REGION_NAME"] = "eastus"
-
-    def tearDown(self):
-        del os.environ["REGION_NAME"]
 
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CLIENT_SECRET"),
@@ -826,7 +845,11 @@ class RegionalEndpointViaEnvVarTestCase(WorldWideRegionalEndpointTestCase):
         config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
         config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
 
-        self._test_acquire_token_obo(config_pca, config_cca)
+        self._test_acquire_token_obo(
+            config_pca, config_cca,
+            azure_region=self.region,
+            http_client=MinimalHttpClient(timeout=self.timeout),
+            )
 
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CLIENT_SECRET"),
@@ -843,7 +866,10 @@ class RegionalEndpointViaEnvVarTestCase(WorldWideRegionalEndpointTestCase):
         config["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
         config["scope"] = ["https://graph.microsoft.com/.default"]
         config["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
-        self._test_username_password(**config)
+        self._test_username_password(
+            azure_region=self.region,
+            http_client=MinimalHttpClient(timeout=self.timeout),
+            **config)
 
 
 class ArlingtonCloudTestCase(LabBasedTestCase):
