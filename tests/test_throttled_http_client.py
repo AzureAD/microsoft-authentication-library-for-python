@@ -35,6 +35,13 @@ class DummyHttpClient(object):
     def get(self, url, params=None, headers=None, **kwargs):
         return self._build_dummy_response()
 
+    def close(self):
+        raise CloseMethodCalled("Not used by MSAL, but our customers may use it")
+
+
+class CloseMethodCalled(Exception):
+    pass
+
 
 class TestHttpDecoration(unittest.TestCase):
 
@@ -162,4 +169,11 @@ class TestHttpDecoration(unittest.TestCase):
             "https://example.com", data={"grant_type": DEVICE_AUTH_GRANT})
         logger.debug(http_cache)
         self.assertNotEqual(resp1.text, resp2.text, "Should return a new response")
+
+    def test_throttled_http_client_should_provide_close(self):
+        http_cache = {}
+        http_client = DummyHttpClient(status_code=200)
+        http_client = ThrottledHttpClient(http_client, http_cache)
+        with self.assertRaises(CloseMethodCalled):
+            http_client.close()
 
