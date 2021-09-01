@@ -174,7 +174,7 @@ class ClientApplication(object):
             you may try use only the leaf cert (in PEM/str format) instead.
 
             *Added in version 1.13.0*:
-            It can also be a completly pre-signed assertion that you've assembled yourself.
+            It can also be a completely pre-signed assertion that you've assembled yourself.
             Simply pass a container containing only the key "client_assertion", like this::
 
                 {

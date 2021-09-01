@@ -199,7 +199,7 @@ class BaseClient(object):
             _data["client_assertion"] = encoder(
                 self.client_assertion()  # Do lazy on-the-fly computation
                 if callable(self.client_assertion) else self.client_assertion
-                )   # The type is bytes, which is preferrable. See also:
+                )   # The type is bytes, which is preferable. See also:
                     # https://github.com/psf/requests/issues/4503#issuecomment-455001070
 
         _data.update(self.default_body)  # It may contain authen parameters
@@ -840,4 +840,3 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         data = kwargs.pop("data", {})
         data.update(scope=scope, assertion=encoder(assertion))
         return self._obtain_token(grant_type, data=data, **kwargs)
-
