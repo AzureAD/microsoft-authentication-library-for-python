@@ -90,6 +90,8 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
                 template.safe_substitute(**self.server.auth_response))
             # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
         else:
+            # No query string. Not a valid request. Fill auth_response with anything as long as it is not empty.
+            self.server.auth_response = {"invalid_request": None}
             self._send_full_response(self.server.welcome_page)
 
     def _send_full_response(self, body, is_ok=True):
@@ -267,6 +269,11 @@ class AuthCodeReceiver(object):
                     logger.debug("State mismatch. Ignoring this noise.")
                 else:
                     break
+            else:
+                # self._server.auth_response is empty, meaning the server is shutdown
+                # before any request is handled.
+                logger.debug("Server is shutdown before any request is handled.")
+                break
         result.update(self._server.auth_response)  # Return via writable result param
 
     def close(self):
