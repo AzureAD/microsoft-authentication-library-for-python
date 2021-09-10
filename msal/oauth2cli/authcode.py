@@ -145,6 +145,7 @@ class AuthCodeReceiver(object):
             # TODO: But, it would treat "localhost" or "" as IPv4.
             # If pressed, we might just expose a family parameter to caller.
         self._server = Server((address, port or 0), _AuthCodeHandler)
+        self._closing = False
 
     def get_port(self):
         """The port this server actually listening to"""
@@ -258,7 +259,8 @@ class AuthCodeReceiver(object):
 
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
         self._server.auth_response = {}  # Shared with _AuthCodeHandler
-        while True:
+        while not self._closing:  # Otherwise, the handle_request() attempt
+                                  # would yield noisy ValueError trace
             # Derived from
             # https://docs.python.org/2/library/basehttpserver.html#more-examples
             self._server.handle_request()
@@ -271,6 +273,7 @@ class AuthCodeReceiver(object):
 
     def close(self):
         """Either call this eventually; or use the entire class as context manager"""
+        self._closing = True
         self._server.server_close()
 
     def __enter__(self):
