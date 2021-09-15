@@ -42,7 +42,7 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     """
     decoded = json.loads(decode_part(id_token.split('.')[1]))
     err = None  # https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
-    _now = now or time.time()
+    _now = int(now or time.time())
     skew = 120  # 2 minutes
     if _now + skew < decoded.get("nbf", _now - 1):  # nbf is optional per JWT specs
         # This is not an ID token validation, but a JWT validation
@@ -67,14 +67,14 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     # the Client and the Token Endpoint (which it is during _obtain_token()),
     # the TLS server validation MAY be used to validate the issuer
     # in place of checking the token signature.
-    if _now > decoded["exp"]:
+    if _now - skew > decoded["exp"]:
         err = "9. The current time MUST be before the time represented by the exp Claim."
     if nonce and nonce != decoded.get("nonce"):
         err = ("11. Nonce must be the same value "
             "as the one that was sent in the Authentication Request.")
     if err:
-        raise RuntimeError("%s The id_token was: %s" % (
-            err, json.dumps(decoded, indent=2)))
+        raise RuntimeError("%s Current epoch = %s.  The id_token was: %s" % (
+            err, _now, json.dumps(decoded, indent=2)))
     return decoded
 
 
@@ -187,6 +187,8 @@ class Client(oauth2.Client):
         flow = super(Client, self).initiate_auth_code_flow(
             scope=_scope, nonce=_nonce_hash(nonce), **kwargs)
         flow["nonce"] = nonce
+        if kwargs.get("max_age") is not None:
+            flow["max_age"] = kwargs["max_age"]
         return flow
 
     def obtain_token_by_auth_code_flow(self, auth_code_flow, auth_response, **kwargs):
@@ -208,6 +210,26 @@ class Client(oauth2.Client):
                 raise RuntimeError(
                     'The nonce in id token ("%s") should match our nonce ("%s")' %
                     (nonce_in_id_token, expected_hash))
+
+            if auth_code_flow.get("max_age") is not None:
+                auth_time = result.get("id_token_claims", {}).get("auth_time")
+                if not auth_time:
+                    raise RuntimeError(
+                        "13. max_age was requested, ID token should contain auth_time")
+                now = int(time.time())
+                skew = 120  # 2 minutes. Hardcoded, for now
+                if now - skew > auth_time + auth_code_flow["max_age"]:
+                    raise RuntimeError(
+                            "13. auth_time ({auth_time}) was requested, "
+                            "by using max_age ({max_age}) parameter, "
+                            "and now ({now}) too much time has elasped "
+                            "since last end-user authentication. "
+                            "The ID token was: {id_token}".format(
+                        auth_time=auth_time,
+                        max_age=auth_code_flow["max_age"],
+                        now=now,
+                        id_token=json.dumps(result["id_token_claims"], indent=2),
+                        ))
         return result
 
     def obtain_token_by_browser(
