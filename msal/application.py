@@ -115,6 +115,8 @@ def _preferred_browser():
 class _ClientWithCcsRoutingInfo(Client):
 
     def initiate_auth_code_flow(self, **kwargs):
+        if kwargs.get("login_hint"):  # eSTS could have utilized this as-is, but nope
+            kwargs["X-AnchorMailbox"] = "UPN:%s" % kwargs["login_hint"]
         return super(_ClientWithCcsRoutingInfo, self).initiate_auth_code_flow(
             client_info=1,  # To be used as CSS Routing info
             **kwargs)
@@ -1640,6 +1642,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
             headers=telemetry_context.generate_headers(),
+                # TBD: Expose a login_hint (or ccs_routing_hint) param for web app
             **kwargs))
         telemetry_context.update_telemetry(response)
         return response
