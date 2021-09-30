@@ -163,9 +163,9 @@ class TestHttpDecoration(unittest.TestCase):
         http_cache = {}
         http_client = DummyHttpClient(status_code=400)
         http_client = ThrottledHttpClient(http_client, http_cache)
-        resp1 = http_client.get(
+        resp1 = http_client.post(
             "https://example.com", data={"grant_type": DEVICE_AUTH_GRANT})
-        resp2 = http_client.get(
+        resp2 = http_client.post(
             "https://example.com", data={"grant_type": DEVICE_AUTH_GRANT})
         logger.debug(http_cache)
         self.assertNotEqual(resp1.text, resp2.text, "Should return a new response")
