@@ -75,14 +75,12 @@ setup(
         'requests>=2.0.0,<3',
         'PyJWT[crypto]>=1.0.0,<3',
 
-        'cryptography>=0.6,<4',
+        'cryptography>=0.6',
             # load_pem_private_key() is available since 0.6
             # https://github.com/pyca/cryptography/blob/master/CHANGELOG.rst#06---2014-09-29
             #
-            # Not sure what should be used as an upper bound here
+            # what should be used as an upper bound is specified here:
             # https://github.com/pyca/cryptography/issues/5532
-            # We will go with "<4" for now, which is also what our another dependency,
-            # pyjwt, currently use.
 
         "mock;python_version<'3.3'",
     ]
