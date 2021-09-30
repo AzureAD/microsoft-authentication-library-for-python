@@ -100,7 +100,7 @@ class ThrottledHttpClient(object):
                     # acquire_token_silent(..., force_refresh=True) pattern.
                     str(kwargs.get("params")) + str(kwargs.get("data"))),
                 ),
-            expires_in=lambda result=None, data=None, **ignored:
+            expires_in=lambda result=None, kwargs=None, **ignored:
                 60
                 if result.status_code == 400
                     # Here we choose to cache exact HTTP 400 errors only (rather than 4xx)
@@ -108,8 +108,9 @@ class ThrottledHttpClient(object):
                     # (https://datatracker.ietf.org/doc/html/rfc6749#section-5.2)
                     # Other 4xx errors might have different requirements e.g.
                     # "407 Proxy auth required" would need a key including http headers.
-                and not(  # Exclude Device Flow cause its retry is expected and regulated
-                    isinstance(data, dict) and data.get("grant_type") == DEVICE_AUTH_GRANT
+                and not(  # Exclude Device Flow whose retry is expected and regulated
+                    isinstance(kwargs.get("data"), dict)
+                    and kwargs["data"].get("grant_type") == DEVICE_AUTH_GRANT
                     )
                 and "retry-after" not in set(  # Leave it to the Retry-After decorator
                     h.lower() for h in getattr(result, "headers", {}).keys())
