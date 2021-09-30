@@ -516,8 +516,8 @@ class LabBasedTestCase(E2eTestCase):
             client_id, authority=authority, http_client=MinimalHttpClient())
         with AuthCodeReceiver(port=port) as receiver:
             flow = self.app.initiate_auth_code_flow(
+                scope,
                 redirect_uri="http://localhost:%d" % receiver.get_port(),
-                scopes=scope,
                 )
             auth_response = receiver.get_auth_response(
                 auth_uri=flow["auth_uri"], state=flow["state"], timeout=60,

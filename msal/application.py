@@ -14,6 +14,7 @@ import os
 import requests
 
 from .oauth2cli import Client, JwtAssertionCreator
+from .oauth2cli.oidc import decode_part
 from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
@@ -25,7 +26,7 @@ from .throttled_http_client import ThrottledHttpClient
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.14.0"
+__version__ = "1.15.0"
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,36 @@ def _preferred_browser():
     return None
 
 
+class _ClientWithCcsRoutingInfo(Client):
+
+    def initiate_auth_code_flow(self, **kwargs):
+        if kwargs.get("login_hint"):  # eSTS could have utilized this as-is, but nope
+            kwargs["X-AnchorMailbox"] = "UPN:%s" % kwargs["login_hint"]
+        return super(_ClientWithCcsRoutingInfo, self).initiate_auth_code_flow(
+            client_info=1,  # To be used as CSS Routing info
+            **kwargs)
+
+    def obtain_token_by_auth_code_flow(
+            self, auth_code_flow, auth_response, **kwargs):
+        # Note: the obtain_token_by_browser() is also covered by this
+        assert isinstance(auth_code_flow, dict) and isinstance(auth_response, dict)
+        headers = kwargs.pop("headers", {})
+        client_info = json.loads(
+            decode_part(auth_response["client_info"])
+            ) if auth_response.get("client_info") else {}
+        if "uid" in client_info and "utid" in client_info:
+            # Note: The value of X-AnchorMailbox is also case-insensitive
+            headers["X-AnchorMailbox"] = "Oid:{uid}@{utid}".format(**client_info)
+        return super(_ClientWithCcsRoutingInfo, self).obtain_token_by_auth_code_flow(
+            auth_code_flow, auth_response, headers=headers, **kwargs)
+
+    def obtain_token_by_username_password(self, username, password, **kwargs):
+        headers = kwargs.pop("headers", {})
+        headers["X-AnchorMailbox"] = "upn:{}".format(username)
+        return super(_ClientWithCcsRoutingInfo, self).obtain_token_by_username_password(
+            username, password, headers=headers, **kwargs)
+
+
 class ClientApplication(object):
 
     ACQUIRE_TOKEN_SILENT_ID = "84"
@@ -174,7 +205,7 @@ class ClientApplication(object):
             you may try use only the leaf cert (in PEM/str format) instead.
 
             *Added in version 1.13.0*:
-            It can also be a completly pre-signed assertion that you've assembled yourself.
+            It can also be a completely pre-signed assertion that you've assembled yourself.
             Simply pass a container containing only the key "client_assertion", like this::
 
                 {
@@ -481,7 +512,7 @@ class ClientApplication(object):
                 authority.device_authorization_endpoint or
                 urljoin(authority.token_endpoint, "devicecode"),
             }
-        central_client = Client(
+        central_client = _ClientWithCcsRoutingInfo(
             central_configuration,
             self.client_id,
             http_client=self.http_client,
@@ -506,7 +537,7 @@ class ClientApplication(object):
                         regional_authority.device_authorization_endpoint or
                         urljoin(regional_authority.token_endpoint, "devicecode"),
                     }
-                regional_client = Client(
+                regional_client = _ClientWithCcsRoutingInfo(
                     regional_configuration,
                     self.client_id,
                     http_client=self.http_client,
@@ -529,6 +560,7 @@ class ClientApplication(object):
             login_hint=None,  # type: Optional[str]
             domain_hint=None,  # type: Optional[str]
             claims_challenge=None,
+            max_age=None,
             ):
         """Initiate an auth code flow.
 
@@ -559,6 +591,17 @@ class ClientApplication(object):
             `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
             `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
 
+        :param int max_age:
+            OPTIONAL. Maximum Authentication Age.
+            Specifies the allowable elapsed time in seconds
+            since the last time the End-User was actively authenticated.
+            If the elapsed time is greater than this value,
+            Microsoft identity platform will actively re-authenticate the End-User.
+
+            MSAL Python will also automatically validate the auth_time in ID token.
+
+            New in version 1.15.
+
         :return:
             The auth code flow. It is a dict in this form::
 
@@ -577,7 +620,7 @@ class ClientApplication(object):
             3. and then relay this dict and subsequent auth response to
                :func:`~acquire_token_by_auth_code_flow()`.
         """
-        client = Client(
+        client = _ClientWithCcsRoutingInfo(
             {"authorization_endpoint": self.authority.authorization_endpoint},
             self.client_id,
             http_client=self.http_client)
@@ -588,6 +631,7 @@ class ClientApplication(object):
             domain_hint=domain_hint,
             claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
+            max_age=max_age,
             )
         flow["claims_challenge"] = claims_challenge
         return flow
@@ -654,7 +698,7 @@ class ClientApplication(object):
             self.http_client
             ) if authority else self.authority
 
-        client = Client(
+        client = _ClientWithCcsRoutingInfo(
             {"authorization_endpoint": the_authority.authorization_endpoint},
             self.client_id,
             http_client=self.http_client)
@@ -1178,6 +1222,10 @@ class ClientApplication(object):
                 key=lambda e: int(e.get("last_modification_time", "0")),
                 reverse=True):
             logger.debug("Cache attempts an RT")
+            headers = telemetry_context.generate_headers()
+            if "home_account_id" in query:  # Then use it as CCS Routing info
+                headers["X-AnchorMailbox"] = "Oid:{}".format(  # case-insensitive value
+                    query["home_account_id"].replace(".", "@"))
             response = client.obtain_token_by_refresh_token(
                 entry, rt_getter=lambda token_item: token_item["secret"],
                 on_removing_rt=lambda rt_item: None,  # Disable RT removal,
@@ -1189,7 +1237,7 @@ class ClientApplication(object):
                     skip_account_creation=True,  # To honor a concurrent remove_account()
                     )),
                 scope=scopes,
-                headers=telemetry_context.generate_headers(),
+                headers=headers,
                 data=dict(
                     kwargs.pop("data", {}),
                     claims=_merge_claims_challenge_and_capabilities(
@@ -1370,6 +1418,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             timeout=None,
             port=None,
             extra_scopes_to_consent=None,
+            max_age=None,
             **kwargs):
         """Acquire token interactively i.e. via a local browser.
 
@@ -1415,6 +1464,17 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             in the same interaction, but for which you won't get back a
             token for in this particular operation.
 
+        :param int max_age:
+            OPTIONAL. Maximum Authentication Age.
+            Specifies the allowable elapsed time in seconds
+            since the last time the End-User was actively authenticated.
+            If the elapsed time is greater than this value,
+            Microsoft identity platform will actively re-authenticate the End-User.
+
+            MSAL Python will also automatically validate the auth_time in ID token.
+
+            New in version 1.15.
+
         :return:
             - A dict containing no "error" key,
               and typically contains an "access_token" key.
@@ -1433,6 +1493,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 port=port or 0),
             prompt=prompt,
             login_hint=login_hint,
+            max_age=max_age,
             timeout=timeout,
             auth_params={
                 "claims": claims,
@@ -1581,6 +1642,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
             headers=telemetry_context.generate_headers(),
+                # TBD: Expose a login_hint (or ccs_routing_hint) param for web app
             **kwargs))
         telemetry_context.update_telemetry(response)
         return response
