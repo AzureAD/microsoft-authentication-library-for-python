@@ -7,6 +7,7 @@ After obtaining an auth code, the web server will automatically shut down.
 """
 import logging
 import socket
+import sys
 from string import Template
 import threading
 import time
@@ -144,6 +145,26 @@ class AuthCodeReceiver(object):
         Server = _AuthCodeHttpServer6 if ":" in address else _AuthCodeHttpServer
             # TODO: But, it would treat "localhost" or "" as IPv4.
             # If pressed, we might just expose a family parameter to caller.
+
+        if port:
+            # When port is explicitly specified, like 8400:
+            #   On non-Windows platforms (Linux, FreeBSD, etc.), allow_reuse_address should be set to True,
+            #   in order to avoid TIME_WAIT and SO_LINGER problem. This is the default behavior of HTTPServer,
+            #   and why allow_reuse_address gets set to True in the first place.
+
+            #   On Windows, this also allows port reuse, making multiple MSAL instances be
+            #   able to listen to the same port. On the other hand, Windows doesn't seem to have
+            #   TIME_WAIT and SO_LINGER problem by default without SO_EXCLUSIVEADDRUSE.
+            #   Therefore, allow_reuse_address should be disabled.
+            if sys.platform == "win32" or is_wsl():
+                Server.allow_reuse_address = False
+        else:
+            # When ephemeral port 0 is used, allow_reuse_address may cause an in-use port to be returned,
+            # causing EADDRINUSE long before the ephemeral port space has been exhausted.
+            # Also, since an ephemeral port is chosen, TIME_WAIT and SO_LINGER won't be a problem.
+            # Therefore, allow_reuse_address should be disabled.
+            Server.allow_reuse_address = False
+
         self._server = Server((address, port or 0), _AuthCodeHandler)
         self._closing = False
 
