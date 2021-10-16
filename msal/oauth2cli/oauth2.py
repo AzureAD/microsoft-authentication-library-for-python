@@ -3,9 +3,9 @@
 
 import json
 try:
-    from urllib.parse import urlencode, parse_qs, quote_plus, urlparse
+    from urllib.parse import urlencode, parse_qs, quote_plus, urlparse, urlunparse
 except ImportError:
-    from urlparse import parse_qs, urlparse
+    from urlparse import parse_qs, urlparse, urlunparse
     from urllib import urlencode, quote_plus
 import logging
 import warnings
@@ -573,16 +573,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     def obtain_token_by_browser(
         # Name influenced by RFC 8252: "native apps should (use) ... user's browser"
             self,
-            scope=None,
-            extra_scope_to_consent=None,
             redirect_uri=None,
-            timeout=None,
-            welcome_template=None,
-            success_template=None,
-            error_template=None,
-            auth_params=None,
-            auth_uri_callback=None,
-            browser_name=None,
+            auth_code_receiver=None,
             **kwargs):
         """A native app can use this method to obtain token via a local browser.
 
@@ -625,38 +617,64 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
 
         :return: Same as :func:`~obtain_token_by_auth_code_flow()`
         """
+        if auth_code_receiver:  # Then caller already knows the listen port
+            return self._obtain_token_by_browser(  # Use all input param as-is
+                auth_code_receiver, redirect_uri=redirect_uri, **kwargs)
+        # Otherwise we will listen on _redirect_uri.port
         _redirect_uri = urlparse(redirect_uri or "http://127.0.0.1:0")
         if not _redirect_uri.hostname:
             raise ValueError("redirect_uri should contain hostname")
-        if _redirect_uri.scheme == "https":
-            raise ValueError("Our local loopback server will not use https")
-        listen_port = _redirect_uri.port if _redirect_uri.port is not None else 80
-            # This implementation allows port-less redirect_uri to mean port 80
+        listen_port = (  # Conventionally, port-less uri would mean port 80
+            80 if _redirect_uri.port is None else _redirect_uri.port)
         try:
             with _AuthCodeReceiver(port=listen_port) as receiver:
-                flow = self.initiate_auth_code_flow(
-                    redirect_uri="http://{host}:{port}".format(
-                            host=_redirect_uri.hostname, port=receiver.get_port(),
-                        ) if _redirect_uri.port is not None else "http://{host}".format(
-                            host=_redirect_uri.hostname
-                        ),  # This implementation uses port-less redirect_uri as-is
-                    scope=_scope_set(scope) | _scope_set(extra_scope_to_consent),
-                    **(auth_params or {}))
-                auth_response = receiver.get_auth_response(
-                    auth_uri=flow["auth_uri"],
-                    state=flow["state"],  # Optional but we choose to do it upfront
-                    timeout=timeout,
-                    welcome_template=welcome_template,
-                    success_template=success_template,
-                    error_template=error_template,
-                    auth_uri_callback=auth_uri_callback,
-                    browser_name=browser_name,
-                    )
+                uri = redirect_uri if _redirect_uri.port != 0 else urlunparse((
+                    _redirect_uri.scheme,
+                    "{}:{}".format(_redirect_uri.hostname, receiver.get_port()),
+                    _redirect_uri.path,
+                    _redirect_uri.params,
+                    _redirect_uri.query,
+                    _redirect_uri.fragment,
+                    ))  # It could be slightly different than raw redirect_uri
+                self.logger.debug("Using {} as redirect_uri".format(uri))
+                return self._obtain_token_by_browser(
+                    receiver, redirect_uri=uri, **kwargs)
         except PermissionError:
-            if 0 < listen_port < 1024:
-                self.logger.error(
-                    "Can't listen on port %s. You may try port 0." % listen_port)
-            raise
+            raise ValueError(
+                "Can't listen on port %s. You may try port 0." % listen_port)
+
+    def _obtain_token_by_browser(
+            self,
+            auth_code_receiver,
+            scope=None,
+            extra_scope_to_consent=None,
+            redirect_uri=None,
+            timeout=None,
+            welcome_template=None,
+            success_template=None,
+            error_template=None,
+            auth_params=None,
+            auth_uri_callback=None,
+            browser_name=None,
+            **kwargs):
+        # Internally, it calls self.initiate_auth_code_flow() and
+        # self.obtain_token_by_auth_code_flow().
+        #
+        # Parameters are documented in public method obtain_token_by_browser().
+        flow = self.initiate_auth_code_flow(
+            redirect_uri=redirect_uri,
+            scope=_scope_set(scope) | _scope_set(extra_scope_to_consent),
+            **(auth_params or {}))
+        auth_response = auth_code_receiver.get_auth_response(
+            auth_uri=flow["auth_uri"],
+            state=flow["state"],  # Optional but we choose to do it upfront
+            timeout=timeout,
+            welcome_template=welcome_template,
+            success_template=success_template,
+            error_template=error_template,
+            auth_uri_callback=auth_uri_callback,
+            browser_name=browser_name,
+            )
         return self.obtain_token_by_auth_code_flow(
             flow, auth_response, scope=scope, **kwargs)
 
