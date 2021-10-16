@@ -29,6 +29,7 @@ from .throttled_http_client import ThrottledHttpClient
 __version__ = "1.15.0"
 
 logger = logging.getLogger(__name__)
+_CLOUD_SHELL_USER = "current_cloud_shell_user"
 
 
 def extract_certs(public_cert_content):
@@ -951,6 +952,19 @@ class ClientApplication(object):
         # Even in the rare case when an RT is revoked and then removed,
         # acquire_token_silent() would then yield no result,
         # apps would fall back to other acquire methods. This is the standard pattern.
+        if _is_running_in_cloud_shell():
+            # In Cloud Shell, user already signed in with an account.
+            # We pretend we have that account, for acquire_token_silent() to work.
+            # Note: If user acquire_token_by_xyz() using that account in MSAL later,
+            # the get_accounts() would return multiple accounts to calling app.
+            accounts.insert(0, {
+                "home_account_id": _CLOUD_SHELL_USER,
+                "environment": "",
+                "realm": "",
+                "local_account_id": _CLOUD_SHELL_USER,
+                "username": "Current Cloud Shell User",
+                "authority_type": TokenCache.AuthorityType.MSSTS,
+                })
         return accounts
 
     def _find_msal_accounts(self, environment):
@@ -1109,6 +1123,12 @@ class ClientApplication(object):
         """
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        if account and account.get("home_account_id") == _CLOUD_SHELL_USER:
+            # Since we don't currently store cloud shell tokens in MSAL's cache,
+            # we can have a shortcut here, and semantically bypass all those
+            # _acquire_token_silent_from_cache_and_possibly_refresh_it()
+            return self._acquire_token_by_cloud_shell(
+                scopes, data=kwargs.get("data", {}))
         correlation_id = msal.telemetry._get_new_correlation_id()
         if authority:
             warnings.warn("We haven't decided how/if this method will accept authority parameter")
@@ -1201,6 +1221,11 @@ class ClientApplication(object):
             refresh_reason = msal.telemetry.FORCE_REFRESH  # TODO: It could also mean claims_challenge
         assert refresh_reason, "It should have been established at this point"
         try:
+            ## When/if we will store Cloud Shell tokens into MSAL's token cache,
+            # then we will add the following code snippet here.
+            #if account and account.get("home_account_id") == _CLOUD_SHELL_USER:
+            #    result = self._acquire_token_by_cloud_shell(scopes, **kwargs)
+            #else:
             result = _clean_up(self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, self._decorate_scope(scopes), account,
                 refresh_reason=refresh_reason, claims_challenge=claims_challenge,
@@ -1210,6 +1235,18 @@ class ClientApplication(object):
         except:  # The exact HTTP exception is transportation-layer dependent
             logger.exception("Refresh token failed")  # Potential AAD outage?
         return access_token_from_cache
+
+    def _acquire_token_by_cloud_shell(self, scopes, **kwargs):
+        kwargs.pop("correlation_id", None)  # IMDS does not use correlation_id
+        resp = self.http_client.post(
+            "http://localhost:50342/oauth2/token",
+            data=dict(kwargs.pop("data", {}), resource=" ".join(scopes)),
+            headers=dict(kwargs.pop("headers", {}), Metadata="true"),
+            **kwargs)
+        if resp.status_code >= 300:
+            logger.debug("Cloud Shell IMDS error: %s", resp.text)
+        # Skip token cache, for now. The Cloud Shell IMDS has its own cache anyway.
+        return json.loads(resp.text)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self, authority, scopes, account, **kwargs):
