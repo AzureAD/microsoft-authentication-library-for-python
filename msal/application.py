@@ -112,6 +112,10 @@ def _preferred_browser():
     return None
 
 
+def _is_running_in_cloud_shell():
+    return os.environ.get("AZUREPS_HOST_ENVIRONMENT", "").startswith("cloud-shell")
+
+
 class _ClientWithCcsRoutingInfo(Client):
 
     def initiate_auth_code_flow(self, **kwargs):
