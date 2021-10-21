@@ -119,7 +119,7 @@ class _AuthCodeHttpServer6(_AuthCodeHttpServer):
 
 class AuthCodeReceiver(object):
     # This class has (rather than is) an _AuthCodeHttpServer, so it does not leak API
-    def __init__(self, port=None):
+    def __init__(self, port=None, scheduled_actions=None):
         """Create a Receiver waiting for incoming auth response.
 
         :param port:
@@ -128,6 +128,12 @@ class AuthCodeReceiver(object):
             If your Identity Provider supports dynamic port, you can use port=0 here.
             Port 0 means to use an arbitrary unused port, per this official example:
             https://docs.python.org/2.7/library/socketserver.html#asynchronous-mixins
+
+        :param scheduled_actions:
+            For example, if the input is
+            ``[(10, lambda: print("Got stuck during sign in? Call 800-000-0000"))]``
+            then the receiver would call that lambda function after
+            waiting the response for 10 seconds.
         """
         address = "127.0.0.1"  # Hardcode, for now, Not sure what to expose, yet.
             # Per RFC 8252 (https://tools.ietf.org/html/rfc8252#section-8.3):
@@ -141,6 +147,7 @@ class AuthCodeReceiver(object):
             #   When this server physically listens to a specific IP (as it should),
             #   you will still be able to specify your redirect_uri using either
             #   IP (e.g. 127.0.0.1) or localhost, whichever matches your registration.
+        self._scheduled_actions = sorted(scheduled_actions or [])  # Make a copy
         Server = _AuthCodeHttpServer6 if ":" in address else _AuthCodeHttpServer
             # TODO: But, it would treat "localhost" or "" as IPv4.
             # If pressed, we might just expose a family parameter to caller.
@@ -215,6 +222,10 @@ class AuthCodeReceiver(object):
             time.sleep(1)  # Short detection interval to make happy path responsive
             if not t.is_alive():  # Then the thread has finished its job and exited
                 break
+            while (self._scheduled_actions
+                    and time.time() - begin > self._scheduled_actions[0][0]):
+                _, callback = self._scheduled_actions.pop(0)
+                callback()
         return result or None
 
     def _get_auth_response(self, result, auth_uri=None, timeout=None, state=None,
