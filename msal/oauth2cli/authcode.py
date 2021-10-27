@@ -7,6 +7,7 @@ After obtaining an auth code, the web server will automatically shut down.
 """
 import logging
 import socket
+import sys
 from string import Template
 import threading
 import time
@@ -103,7 +104,17 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         logger.debug(format, *args)  # To override the default log-to-stderr behavior
 
 
-class _AuthCodeHttpServer(HTTPServer):
+class _AuthCodeHttpServer(HTTPServer, object):
+    def __init__(self, server_address, *args, **kwargs):
+        _, port = server_address
+        if port and (sys.platform == "win32" or is_wsl()):
+            # The default allow_reuse_address is True. It works fine on non-Windows.
+            # On Windows, it undesirably allows multiple servers listening on same port,
+            # yet the second server would not receive any incoming request.
+            # So, we need to turn it off.
+            self.allow_reuse_address = False
+        super(_AuthCodeHttpServer, self).__init__(server_address, *args, **kwargs)
+
     def handle_timeout(self):
         # It will be triggered when no request comes in self.timeout seconds.
         # See https://docs.python.org/3/library/socketserver.html#socketserver.BaseServer.handle_timeout
