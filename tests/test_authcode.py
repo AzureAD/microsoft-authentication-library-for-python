@@ -2,7 +2,7 @@ import unittest
 import socket
 import sys
 
-from oauth2cli.authcode import AuthCodeReceiver
+from msal.oauth2cli.authcode import AuthCodeReceiver
 
 
 class TestAuthCodeReceiver(unittest.TestCase):
