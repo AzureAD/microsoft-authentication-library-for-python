@@ -286,7 +286,8 @@ class ClientApplication(object):
             which you will later provide via one of the acquire-token request.
 
         :param str azure_region:
-            Added since MSAL Python 1.12.0.
+            AAD provides regional endpoints for apps to opt in
+            to keep their traffic remain inside that region.
 
             As of 2021 May, regional service is only available for
             ``acquire_token_for_client()`` sent by any of the following scenarios::
@@ -303,9 +304,7 @@ class ClientApplication(object):
 
             4. An app which already onboard to the region's allow-list.
 
-            MSAL's default value is None, which means region behavior remains off.
-            If enabled, the `acquire_token_for_client()`-relevant traffic
-            would remain inside that region.
+            This parameter defaults to None, which means region behavior remains off.
 
             App developer can opt in to a regional endpoint,
             by provide its region name, such as "westus", "eastus2".
@@ -331,6 +330,9 @@ class ClientApplication(object):
                 or provide a custom http_client which has a short timeout.
                 That way, the latency would be under your control,
                 but still less performant than opting out of region feature.
+
+            New in version 1.12.0.
+
         :param list[str] exclude_scopes: (optional)
             Historically MSAL hardcodes `offline_access` scope,
             which would allow your app to have prolonged access to user's data.
@@ -492,17 +494,18 @@ class ClientApplication(object):
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
     def _get_regional_authority(self, central_authority):
-        is_region_specified = bool(self._region_configured
-            and self._region_configured != self.ATTEMPT_REGION_DISCOVERY)
         self._region_detected = self._region_detected or _detect_region(
             self.http_client if self._region_configured is not None else None)
-        if (is_region_specified and self._region_configured != self._region_detected):
+        if (self._region_configured != self.ATTEMPT_REGION_DISCOVERY
+                and self._region_configured != self._region_detected):
             logger.warning('Region configured ({}) != region detected ({})'.format(
                 repr(self._region_configured), repr(self._region_detected)))
         region_to_use = (
-            self._region_configured if is_region_specified else self._region_detected)
+            self._region_detected
+            if self._region_configured == self.ATTEMPT_REGION_DISCOVERY
+            else self._region_configured)  # It will retain the None i.e. opted out
+        logger.debug('Region to be used: {}'.format(repr(region_to_use)))
         if region_to_use:
-            logger.info('Region to be used: {}'.format(repr(region_to_use)))
             regional_host = ("{}.r.login.microsoftonline.com".format(region_to_use)
                 if central_authority.instance in (
                     # The list came from https://github.com/AzureAD/microsoft-authentication-library-for-python/pull/358/files#r629400328

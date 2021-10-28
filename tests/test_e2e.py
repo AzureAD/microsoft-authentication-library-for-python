@@ -791,7 +791,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
     region = "westus"
     timeout = 2  # Short timeout makes this test case responsive on non-VM
 
-    def test_acquire_token_for_client_should_hit_regional_endpoint(self):
+    def _test_acquire_token_for_client(self, configured_region, expected_region):
         """This is the only grant supported by regional endpoint, for now"""
         self.app = get_lab_app(  # Regional endpoint only supports confidential client
 
@@ -799,8 +799,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
             #authority="https://westus.login.microsoft.com/microsoft.onmicrosoft.com",
             #validate_authority=False,
             authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
-            azure_region=self.region,  # Explicitly use this region, regardless of detection
-
+            azure_region=configured_region,
             timeout=2,  # Short timeout makes this test case responsive on non-VM
             )
         scopes = ["https://graph.microsoft.com/.default"]
@@ -809,9 +808,11 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
                 self.app.http_client, "post", return_value=MinimalResponse(
                 status_code=400, text='{"error": "mock"}')) as mocked_method:
             self.app.acquire_token_for_client(scopes)
+            expected_host = '{}.r.login.microsoftonline.com'.format(
+                expected_region) if expected_region else 'login.microsoftonline.com'
             mocked_method.assert_called_with(
-                'https://westus.r.login.microsoftonline.com/{}/oauth2/v2.0/token'.format(
-                    self.app.authority.tenant),
+                'https://{}/{}/oauth2/v2.0/token'.format(
+                    expected_host, self.app.authority.tenant),
                 params=ANY, data=ANY, headers=ANY)
         result = self.app.acquire_token_for_client(
             scopes,
@@ -819,6 +820,29 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
             )
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scopes)
+
+    def test_acquire_token_for_client_should_hit_global_endpoint_by_default(self):
+        self._test_acquire_token_for_client(None, None)
+
+    def test_acquire_token_for_client_should_ignore_env_var_by_default(self):
+        os.environ["REGION_NAME"] = "eastus"
+        self._test_acquire_token_for_client(None, None)
+        del os.environ["REGION_NAME"]
+
+    def test_acquire_token_for_client_should_use_a_specified_region(self):
+        self._test_acquire_token_for_client("westus", "westus")
+
+    def test_acquire_token_for_client_should_use_an_env_var_with_short_region_name(self):
+        os.environ["REGION_NAME"] = "eastus"
+        self._test_acquire_token_for_client(
+            msal.ConfidentialClientApplication.ATTEMPT_REGION_DISCOVERY, "eastus")
+        del os.environ["REGION_NAME"]
+
+    def test_acquire_token_for_client_should_use_an_env_var_with_long_region_name(self):
+        os.environ["REGION_NAME"] = "East Us 2"
+        self._test_acquire_token_for_client(
+            msal.ConfidentialClientApplication.ATTEMPT_REGION_DISCOVERY, "eastus2")
+        del os.environ["REGION_NAME"]
 
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CLIENT_SECRET"),
