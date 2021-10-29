@@ -26,7 +26,7 @@ from .throttled_http_client import ThrottledHttpClient
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.15.0"
+__version__ = "1.16.0"
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +170,7 @@ class ClientApplication(object):
                 # This way, it holds the same positional param place for PCA,
                 # when we would eventually want to add this feature to PCA in future.
             exclude_scopes=None,
+            http_cache=None,
             ):
         """Create an instance of application.
 
@@ -285,7 +286,8 @@ class ClientApplication(object):
             which you will later provide via one of the acquire-token request.
 
         :param str azure_region:
-            Added since MSAL Python 1.12.0.
+            AAD provides regional endpoints for apps to opt in
+            to keep their traffic remain inside that region.
 
             As of 2021 May, regional service is only available for
             ``acquire_token_for_client()`` sent by any of the following scenarios::
@@ -302,9 +304,7 @@ class ClientApplication(object):
 
             4. An app which already onboard to the region's allow-list.
 
-            MSAL's default value is None, which means region behavior remains off.
-            If enabled, the `acquire_token_for_client()`-relevant traffic
-            would remain inside that region.
+            This parameter defaults to None, which means region behavior remains off.
 
             App developer can opt in to a regional endpoint,
             by provide its region name, such as "westus", "eastus2".
@@ -330,12 +330,69 @@ class ClientApplication(object):
                 or provide a custom http_client which has a short timeout.
                 That way, the latency would be under your control,
                 but still less performant than opting out of region feature.
+
+            New in version 1.12.0.
+
         :param list[str] exclude_scopes: (optional)
             Historically MSAL hardcodes `offline_access` scope,
             which would allow your app to have prolonged access to user's data.
             If that is unnecessary or undesirable for your app,
             now you can use this parameter to supply an exclusion list of scopes,
             such as ``exclude_scopes = ["offline_access"]``.
+
+        :param dict http_cache:
+            MSAL has long been caching tokens in the ``token_cache``.
+            Recently, MSAL also introduced a concept of ``http_cache``,
+            by automatically caching some finite amount of non-token http responses,
+            so that *long-lived*
+            ``PublicClientApplication`` and ``ConfidentialClientApplication``
+            would be more performant and responsive in some situations.
+
+            This ``http_cache`` parameter accepts any dict-like object.
+            If not provided, MSAL will use an in-memory dict.
+
+            If your app is a command-line app (CLI),
+            you would want to persist your http_cache across different CLI runs.
+            The following recipe shows a way to do so::
+
+                # Just add the following lines at the beginning of your CLI script
+                import sys, atexit, pickle
+                http_cache_filename = sys.argv[0] + ".http_cache"
+                try:
+                    with open(http_cache_filename, "rb") as f:
+                        persisted_http_cache = pickle.load(f)  # Take a snapshot
+                except (
+                        IOError,  # A non-exist http cache file
+                        pickle.UnpicklingError,  # A corrupted http cache file
+                        EOFError,  # An empty http cache file
+                        AttributeError, ImportError, IndexError,  # Other corruption
+                        ):
+                    persisted_http_cache = {}  # Recover by starting afresh
+                atexit.register(lambda: pickle.dump(
+                    # When exit, flush it back to the file.
+                    # It may occasionally overwrite another process's concurrent write,
+                    # but that is fine. Subsequent runs will reach eventual consistency.
+                    persisted_http_cache, open(http_cache_file, "wb")))
+
+                # And then you can implement your app as you normally would
+                app = msal.PublicClientApplication(
+                    "your_client_id",
+                    ...,
+                    http_cache=persisted_http_cache,  # Utilize persisted_http_cache
+                    ...,
+                    #token_cache=...,  # You may combine the old token_cache trick
+                        # Please refer to token_cache recipe at
+                        # https://msal-python.readthedocs.io/en/latest/#msal.SerializableTokenCache
+                    )
+                app.acquire_token_interactive(["your", "scope"], ...)
+
+            Content inside ``http_cache`` are cheap to obtain.
+            There is no need to share them among different apps.
+
+            Content inside ``http_cache`` will contain no tokens nor
+            Personally Identifiable Information (PII). Encryption is unnecessary.
+
+            New in version 1.16.0.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -370,7 +427,7 @@ class ClientApplication(object):
             self.http_client.mount("https://", a)
         self.http_client = ThrottledHttpClient(
             self.http_client,
-            {}  # Hard code an in-memory cache, for now
+            {} if http_cache is None else http_cache,  # Default to an in-memory dict
             )
 
         self.app_name = app_name
@@ -437,17 +494,18 @@ class ClientApplication(object):
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
     def _get_regional_authority(self, central_authority):
-        is_region_specified = bool(self._region_configured
-            and self._region_configured != self.ATTEMPT_REGION_DISCOVERY)
         self._region_detected = self._region_detected or _detect_region(
             self.http_client if self._region_configured is not None else None)
-        if (is_region_specified and self._region_configured != self._region_detected):
+        if (self._region_configured != self.ATTEMPT_REGION_DISCOVERY
+                and self._region_configured != self._region_detected):
             logger.warning('Region configured ({}) != region detected ({})'.format(
                 repr(self._region_configured), repr(self._region_detected)))
         region_to_use = (
-            self._region_configured if is_region_specified else self._region_detected)
+            self._region_detected
+            if self._region_configured == self.ATTEMPT_REGION_DISCOVERY
+            else self._region_configured)  # It will retain the None i.e. opted out
+        logger.debug('Region to be used: {}'.format(repr(region_to_use)))
         if region_to_use:
-            logger.info('Region to be used: {}'.format(repr(region_to_use)))
             regional_host = ("{}.r.login.microsoftonline.com".format(region_to_use)
                 if central_authority.instance in (
                     # The list came from https://github.com/AzureAD/microsoft-authentication-library-for-python/pull/358/files#r629400328

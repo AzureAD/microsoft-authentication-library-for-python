@@ -7,6 +7,7 @@ After obtaining an auth code, the web server will automatically shut down.
 """
 import logging
 import socket
+import sys
 from string import Template
 import threading
 import time
@@ -103,7 +104,17 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         logger.debug(format, *args)  # To override the default log-to-stderr behavior
 
 
-class _AuthCodeHttpServer(HTTPServer):
+class _AuthCodeHttpServer(HTTPServer, object):
+    def __init__(self, server_address, *args, **kwargs):
+        _, port = server_address
+        if port and (sys.platform == "win32" or is_wsl()):
+            # The default allow_reuse_address is True. It works fine on non-Windows.
+            # On Windows, it undesirably allows multiple servers listening on same port,
+            # yet the second server would not receive any incoming request.
+            # So, we need to turn it off.
+            self.allow_reuse_address = False
+        super(_AuthCodeHttpServer, self).__init__(server_address, *args, **kwargs)
+
     def handle_timeout(self):
         # It will be triggered when no request comes in self.timeout seconds.
         # See https://docs.python.org/3/library/socketserver.html#socketserver.BaseServer.handle_timeout
@@ -119,7 +130,7 @@ class _AuthCodeHttpServer6(_AuthCodeHttpServer):
 
 class AuthCodeReceiver(object):
     # This class has (rather than is) an _AuthCodeHttpServer, so it does not leak API
-    def __init__(self, port=None):
+    def __init__(self, port=None, scheduled_actions=None):
         """Create a Receiver waiting for incoming auth response.
 
         :param port:
@@ -128,6 +139,12 @@ class AuthCodeReceiver(object):
             If your Identity Provider supports dynamic port, you can use port=0 here.
             Port 0 means to use an arbitrary unused port, per this official example:
             https://docs.python.org/2.7/library/socketserver.html#asynchronous-mixins
+
+        :param scheduled_actions:
+            For example, if the input is
+            ``[(10, lambda: print("Got stuck during sign in? Call 800-000-0000"))]``
+            then the receiver would call that lambda function after
+            waiting the response for 10 seconds.
         """
         address = "127.0.0.1"  # Hardcode, for now, Not sure what to expose, yet.
             # Per RFC 8252 (https://tools.ietf.org/html/rfc8252#section-8.3):
@@ -141,6 +158,7 @@ class AuthCodeReceiver(object):
             #   When this server physically listens to a specific IP (as it should),
             #   you will still be able to specify your redirect_uri using either
             #   IP (e.g. 127.0.0.1) or localhost, whichever matches your registration.
+        self._scheduled_actions = sorted(scheduled_actions or [])  # Make a copy
         Server = _AuthCodeHttpServer6 if ":" in address else _AuthCodeHttpServer
             # TODO: But, it would treat "localhost" or "" as IPv4.
             # If pressed, we might just expose a family parameter to caller.
@@ -215,6 +233,10 @@ class AuthCodeReceiver(object):
             time.sleep(1)  # Short detection interval to make happy path responsive
             if not t.is_alive():  # Then the thread has finished its job and exited
                 break
+            while (self._scheduled_actions
+                    and time.time() - begin > self._scheduled_actions[0][0]):
+                _, callback = self._scheduled_actions.pop(0)
+                callback()
         return result or None
 
     def _get_auth_response(self, result, auth_uri=None, timeout=None, state=None,

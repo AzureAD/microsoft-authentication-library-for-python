@@ -5,6 +5,9 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_region(http_client=None):
+    region = os.environ.get("REGION_NAME", "").replace(" ", "").lower()  # e.g. westus2
+    if region:
+        return region
     if http_client:
         return _detect_region_of_azure_vm(http_client)  # It could hang for minutes
     return None
