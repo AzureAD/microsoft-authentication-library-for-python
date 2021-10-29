@@ -26,7 +26,7 @@ from .throttled_http_client import ThrottledHttpClient
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.15.0"
+__version__ = "1.16.0"
 
 logger = logging.getLogger(__name__)
 
