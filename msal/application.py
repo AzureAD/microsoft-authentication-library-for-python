@@ -1207,7 +1207,9 @@ class ClientApplication(object):
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
         except:  # The exact HTTP exception is transportation-layer dependent
-            logger.exception("Refresh token failed")  # Potential AAD outage?
+            # Typically network error. Potential AAD outage?
+            if not access_token_from_cache:  # It means there is no fall back option
+                raise  # We choose to bubble up the exception
         return access_token_from_cache
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
