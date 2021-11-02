@@ -14,12 +14,19 @@ from .exceptions import MsalServiceError
 
 
 logger = logging.getLogger(__name__)
+
+# Endpoints were copied from here
+# https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud#azure-ad-authentication-endpoints
+AZURE_US_GOVERNMENT = "login.microsoftonline.us"
+AZURE_CHINA = "login.chinacloudapi.cn"
+AZURE_PUBLIC = "login.microsoftonline.com"
+
 WORLD_WIDE = 'login.microsoftonline.com'  # There was an alias login.windows.net
 WELL_KNOWN_AUTHORITY_HOSTS = set([
     WORLD_WIDE,
-    'login.chinacloudapi.cn',
+    AZURE_CHINA,
     'login-us.microsoftonline.com',
-    'login.microsoftonline.us',
+    AZURE_US_GOVERNMENT,
     'login.microsoftonline.de',
     ])
 WELL_KNOWN_B2C_HOSTS = [
@@ -28,6 +35,19 @@ WELL_KNOWN_B2C_HOSTS = [
     "b2clogin.us",
     "b2clogin.de",
     ]
+
+
+class AuthorityBuilder(object):
+    def __init__(self, instance, tenant):
+        """A helper to save caller from doing string concatenation.
+
+        Usage is documented in :func:`application.ClientApplication.__init__`.
+        """
+        self._instance = instance.rstrip("/")
+        self._tenant = tenant.strip("/")
+
+    def __str__(self):
+        return "https://{}/{}".format(self._instance, self._tenant)
 
 
 class Authority(object):
@@ -53,6 +73,8 @@ class Authority(object):
             performed.
         """
         self._http_client = http_client
+        if isinstance(authority_url, AuthorityBuilder):
+            authority_url = str(authority_url)
         authority, self.instance, tenant = canonicalize(authority_url)
         parts = authority.path.split('/')
         is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (

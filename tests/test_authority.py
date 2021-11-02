@@ -8,16 +8,37 @@ from tests.http_client import MinimalHttpClient
 @unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip network io during tagged release")
 class TestAuthority(unittest.TestCase):
 
+    def _test_given_host_and_tenant(self, host, tenant):
+        c = MinimalHttpClient()
+        a = Authority('https://{}/{}'.format(host, tenant), c)
+        self.assertEqual(
+            a.authorization_endpoint,
+            'https://{}/{}/oauth2/v2.0/authorize'.format(host, tenant))
+        self.assertEqual(
+            a.token_endpoint,
+            'https://{}/{}/oauth2/v2.0/token'.format(host, tenant))
+        c.close()
+
+    def _test_authority_builder(self, host, tenant):
+        c = MinimalHttpClient()
+        a = Authority(AuthorityBuilder(host, tenant), c)
+        self.assertEqual(
+            a.authorization_endpoint,
+            'https://{}/{}/oauth2/v2.0/authorize'.format(host, tenant))
+        self.assertEqual(
+            a.token_endpoint,
+            'https://{}/{}/oauth2/v2.0/token'.format(host, tenant))
+        c.close()
+
     def test_wellknown_host_and_tenant(self):
         # Assert all well known authority hosts are using their own "common" tenant
         for host in WELL_KNOWN_AUTHORITY_HOSTS:
-            a = Authority(
-                'https://{}/common'.format(host), MinimalHttpClient())
-            self.assertEqual(
-                a.authorization_endpoint,
-                'https://%s/common/oauth2/v2.0/authorize' % host)
-            self.assertEqual(
-                a.token_endpoint, 'https://%s/common/oauth2/v2.0/token' % host)
+            self._test_given_host_and_tenant(host, "common")
+
+    def test_wellknown_host_and_tenant_using_new_authority_builder(self):
+        self._test_authority_builder(AZURE_PUBLIC, "consumers")
+        self._test_authority_builder(AZURE_CHINA, "organizations")
+        self._test_authority_builder(AZURE_US_GOVERNMENT, "common")
 
     @unittest.skip("As of Jan 2017, the server no longer returns V1 endpoint")
     def test_lessknown_host_will_return_a_set_of_v1_endpoints(self):
