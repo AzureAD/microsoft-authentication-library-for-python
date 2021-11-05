@@ -1,0 +1,2 @@
+Investigate whether this issue can be covered by the new validation feature
+https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/426
