@@ -331,7 +331,10 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
     account = {"home_account_id": "{}.{}".format(uid, utid)}
     rt = "this is a rt"
     client_id = "my_app"
-    app = ClientApplication(client_id, authority=authority_url)
+
+    @classmethod
+    def setUpClass(cls):  # Initialization at runtime, not interpret-time
+        cls.app = ClientApplication(cls.client_id, authority=cls.authority_url)
 
     def setUp(self):
         self.app.token_cache = self.cache = msal.SerializableTokenCache()
@@ -485,8 +488,10 @@ class TestTelemetryMaintainingOfflineState(unittest.TestCase):
 
 
 class TestTelemetryOnClientApplication(unittest.TestCase):
-    app = ClientApplication(
-        "client_id", authority="https://login.microsoftonline.com/common")
+    @classmethod
+    def setUpClass(cls):  # Initialization at runtime, not interpret-time
+        cls.app = ClientApplication(
+            "client_id", authority="https://login.microsoftonline.com/common")
 
     def test_acquire_token_by_auth_code_flow(self):
         at = "this is an access token"
@@ -509,8 +514,10 @@ class TestTelemetryOnClientApplication(unittest.TestCase):
 
 
 class TestTelemetryOnPublicClientApplication(unittest.TestCase):
-    app = PublicClientApplication(
-        "client_id", authority="https://login.microsoftonline.com/common")
+    @classmethod
+    def setUpClass(cls):  # Initialization at runtime, not interpret-time
+        cls.app = PublicClientApplication(
+            "client_id", authority="https://login.microsoftonline.com/common")
 
     # For now, acquire_token_interactive() is verified by code review.
 
@@ -534,9 +541,11 @@ class TestTelemetryOnPublicClientApplication(unittest.TestCase):
 
 
 class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
-    app = ConfidentialClientApplication(
-        "client_id", client_credential="secret",
-        authority="https://login.microsoftonline.com/common")
+    @classmethod
+    def setUpClass(cls):  # Initialization at runtime, not interpret-time
+        cls.app = ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/common")
 
     def test_acquire_token_for_client(self):
         at = "this is an access token"
