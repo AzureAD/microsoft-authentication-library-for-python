@@ -20,6 +20,9 @@ class MinimalHttpClient:
         return MinimalResponse(requests_resp=self.session.get(
             url, params=params, headers=headers, timeout=self.timeout))
 
+    def close(self):  # Not required, but we use it to avoid a warning in unit test
+        self.session.close()
+
 
 class MinimalResponse(object):  # Not for production use
     def __init__(self, requests_resp=None, status_code=None, text=None):
