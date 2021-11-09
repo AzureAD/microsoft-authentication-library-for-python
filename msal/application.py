@@ -231,8 +231,23 @@ class ClientApplication(object):
 
         :param str authority:
             A URL that identifies a token authority. It should be of the format
-            https://login.microsoftonline.com/your_tenant
-            By default, we will use https://login.microsoftonline.com/common
+            ``https://login.microsoftonline.com/your_tenant``
+            By default, we will use ``https://login.microsoftonline.com/common``
+
+            *Changed in version 1.17*: you can also use predefined constant
+            and a builder like this::
+
+                from msal.authority import (
+                    AuthorityBuilder,
+                    AZURE_US_GOVERNMENT, AZURE_CHINA, AZURE_PUBLIC)
+                my_authority = AuthorityBuilder(AZURE_PUBLIC, "contoso.onmicrosoft.com")
+                # Now you get an equivalent of
+                # "https://login.microsoftonline.com/contoso.onmicrosoft.com"
+
+                # You can feed such an authority to msal's ClientApplication
+                from msal import PublicClientApplication
+                app = PublicClientApplication("my_client_id", authority=my_authority, ...)
+
         :param bool validate_authority: (optional) Turns authority validation
             on or off. This parameter default to true.
         :param TokenCache cache:
