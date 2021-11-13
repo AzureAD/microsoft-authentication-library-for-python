@@ -185,12 +185,14 @@ class E2eTestCase(unittest.TestCase):
             self, client_id=None, authority=None, scope=None, port=None,
             username_uri="",  # But you would want to provide one
             data=None,  # Needed by ssh-cert feature
+            login_hint=None,
             **ignored):
         assert client_id and authority and scope
         self.app = msal.PublicClientApplication(
             client_id, authority=authority, http_client=MinimalHttpClient())
         result = self.app.acquire_token_interactive(
             scope,
+            login_hint=login_hint,
             timeout=120,
             port=port,
             welcome_template=  # This is an undocumented feature for testing
@@ -210,6 +212,29 @@ class E2eTestCase(unittest.TestCase):
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, scope, username=None, data=data or {})
         return result  # For further testing
+
+
+class RefreshInBehavior(E2eTestCase):
+    def test_refresh_in_should_be_available(self):
+        """The refresh_in claim in an AT will only be issued when:
+
+        * An MSAL library is in allowlist
+        * token lifetime > 2 hours. configured by token lifetime policy for your app
+        """
+        result = self._test_acquire_token_interactive(
+            client_id="880ed52d-22df-4916-8077-53b393439e02",
+            authority="https://login.microsoftonline.com/msidlab6.onmicrosoft.com",
+            scope=["https://msidlab6-my.sharepoint.com/.default"],
+            username_uri="https://msidlab.com/api/user/fidlab@msidlab6.com",
+            login_hint="fidlab@msidlab6.com",
+            )
+        self.assertNotIn("refresh_in", result.keys(), "Should filter out refresh_in")
+        _, token_in_cache = self.app.token_cache._cache["AccessToken"].popitem()
+        self.assertIn(
+            "refresh_on",
+            token_in_cache.keys(),
+            "refresh_on should be in cached AT {}".format(
+                json.dumps(token_in_cache, indent=4)))
 
 
 class SshCertTestCase(E2eTestCase):
