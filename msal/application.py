@@ -377,10 +377,8 @@ class ClientApplication(object):
                     with open(http_cache_filename, "rb") as f:
                         persisted_http_cache = pickle.load(f)  # Take a snapshot
                 except (
-                        IOError,  # A non-exist http cache file
+                        FileNotFoundError,  # Or IOError in Python 2
                         pickle.UnpicklingError,  # A corrupted http cache file
-                        EOFError,  # An empty http cache file
-                        AttributeError, ImportError, IndexError,  # Other corruption
                         ):
                     persisted_http_cache = {}  # Recover by starting afresh
                 atexit.register(lambda: pickle.dump(
