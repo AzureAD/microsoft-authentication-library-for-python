@@ -215,6 +215,9 @@ class E2eTestCase(unittest.TestCase):
 
 
 class RefreshInBehavior(E2eTestCase):
+
+    # TODO: Automates this by using ROPC?
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_refresh_in_should_be_available(self):
         """The refresh_in claim in an AT will only be issued when:
 
