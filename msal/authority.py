@@ -109,7 +109,8 @@ class Authority(object):
             raise ValueError(
                 "Unable to get authority configuration for {}. "
                 "Authority would typically be in a format of "
-                "https://login.microsoftonline.com/your_tenant_name".format(
+                "https://login.microsoftonline.com/your_tenant "
+                "Also please double check your tenant name or GUID is correct.".format(
                 authority_url))
         logger.debug("openid_config = %s", openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
@@ -170,7 +171,10 @@ def tenant_discovery(tenant_discovery_endpoint, http_client, **kwargs):
     if 400 <= resp.status_code < 500:
         # Nonexist tenant would hit this path
         # e.g. https://login.microsoftonline.com/nonexist_tenant/v2.0/.well-known/openid-configuration
-        raise ValueError("OIDC Discovery endpoint rejects our request")
+        raise ValueError(
+            "OIDC Discovery endpoint rejects our request. Error: {}".format(
+                resp.text  # Expose it as-is b/c OIDC defines no error response format
+            ))
     # Transient network error would hit this path
     resp.raise_for_status()
     raise RuntimeError(  # A fallback here, in case resp.raise_for_status() is no-op
