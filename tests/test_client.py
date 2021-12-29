@@ -190,12 +190,16 @@ class TestClient(Oauth2TestCase):
             self.assertLoosely(result, lambda: self.assertIn('access_token', result))
 
     def test_auth_code_flow_error_response(self):
-        assertRaisesRegex = getattr(self, "assertRaisesRegex", self.assertRaisesRegexp)
-        with assertRaisesRegex(ValueError, "state missing"):
+        if hasattr(self, "assertRaisesRegex"):
+            _assert = self.assertRaisesRegex
+        else:
+            _assert = self.assertRaisesRegexp
+
+        with _assert(ValueError, "state missing"):
             self.client.obtain_token_by_auth_code_flow({}, {"code": "foo"})
-        with assertRaisesRegex(ValueError, "state mismatch"):
+        with _assert(ValueError, "state mismatch"):
             self.client.obtain_token_by_auth_code_flow({"state": "1"}, {"state": "2"})
-        with assertRaisesRegex(ValueError, "scope"):
+        with _assert(ValueError, "scope"):
             self.client.obtain_token_by_auth_code_flow(
                 {"state": "s", "scope": ["foo"]}, {"state": "s"}, scope=["bar"])
         self.assertEqual(
