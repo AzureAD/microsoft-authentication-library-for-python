@@ -424,7 +424,9 @@ class ClientApplication(object):
 
         if http_client:
             self.http_client = http_client
+            self.internal_client = False
         else:
+            self.internal_client = True
             self.http_client = requests.Session()
             self.http_client.verify = verify
             self.http_client.proxies = proxies
@@ -448,20 +450,11 @@ class ClientApplication(object):
 
         # Here the self.authority will not be the same type as authority in input
         try:
-            self.authority = Authority(
-                authority or "https://login.microsoftonline.com/common/",
-                self.http_client, validate_authority=validate_authority)
-        except ValueError:  # Those are explicit authority validation errors
+            self.authority = self._build_authority(
+                authority, validate_authority, azure_region)
+        except Exception:
+            self.close()
             raise
-        except Exception:  # The rest are typically connection errors
-            if validate_authority and azure_region:
-                # Since caller opts in to use region, here we tolerate connection
-                # errors happened during authority validation at non-region endpoint
-                self.authority = Authority(
-                    authority or "https://login.microsoftonline.com/common/",
-                    self.http_client, validate_authority=False)
-            else:
-                raise
 
         self.token_cache = token_cache or TokenCache()
         self._region_configured = azure_region
@@ -471,6 +464,23 @@ class ClientApplication(object):
         self.authority_groups = None
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
+
+    def _build_authority(authority, validate_authority, azure_region):
+        try:
+            return Authority(
+                authority or "https://login.microsoftonline.com/common/",
+                self.http_client, validate_authority=validate_authority)
+        except ValueError:  # Those are explicit authority validation errors
+            raise
+        except Exception:  # The rest are typically connection errors
+            if validate_authority and azure_region:
+                # Since caller opts in to use region, here we tolerate connection
+                # errors happened during authority validation at non-region endpoint
+                return Authority(
+                    authority or "https://login.microsoftonline.com/common/",
+                    self.http_client, validate_authority=False)
+            else:
+                raise
 
     def _decorate_scope(
             self, scopes,
@@ -1469,6 +1479,11 @@ class ClientApplication(object):
                 username=username,  # Useful in case IDT contains no such info
                 )),
             **kwargs)
+
+    def close(self):
+        """Close the app and any open sockets"""
+        if self.internal_client:
+            self.http_client.close()
 
 
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
