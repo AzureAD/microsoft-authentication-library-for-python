@@ -11,8 +11,6 @@ import warnings
 from threading import Lock
 import os
 
-import requests
-
 from .oauth2cli import Client, JwtAssertionCreator
 from .oauth2cli.oidc import decode_part
 from .authority import Authority
@@ -425,6 +423,8 @@ class ClientApplication(object):
         if http_client:
             self.http_client = http_client
         else:
+            import requests  # Lazy load
+
             self.http_client = requests.Session()
             self.http_client.verify = verify
             self.http_client.proxies = proxies
