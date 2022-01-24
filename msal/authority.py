@@ -5,11 +5,6 @@ except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
 import logging
 
-# Historically some customers patched this module-wide requests instance.
-# We keep it here for now. They will be removed in next major release.
-import requests
-import requests as _requests
-
 from .exceptions import MsalServiceError
 
 
@@ -59,9 +54,10 @@ class Authority(object):
     _domains_without_user_realm_discovery = set([])
 
     @property
-    def http_client(self):  # Obsolete. We will remove this in next major release.
-        # A workaround: if module-wide requests is patched, we honor it.
-        return self._http_client if requests is _requests else requests
+    def http_client(self):  # Obsolete. We will remove this eventually
+        warnings.warn(
+            "authority.http_client might be removed in MSAL Python 1.21+", DeprecationWarning)
+        return self._http_client
 
     def __init__(self, authority_url, http_client, validate_authority=True):
         """Creates an authority instance, and also validates it.
@@ -84,7 +80,7 @@ class Authority(object):
             payload = instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
                     self.instance, authority.path),
-                self.http_client)
+                self._http_client)
             if payload.get("error") == "invalid_instance":
                 raise ValueError(
                     "invalid_instance: "
@@ -104,7 +100,7 @@ class Authority(object):
         try:
             openid_config = tenant_discovery(
                 tenant_discovery_endpoint,
-                self.http_client)
+                self._http_client)
         except ValueError:
             raise ValueError(
                 "Unable to get authority configuration for {}. "
@@ -124,7 +120,7 @@ class Authority(object):
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
         if self.instance not in self.__class__._domains_without_user_realm_discovery:
-            resp = response or self.http_client.get(
+            resp = response or self._http_client.get(
                 "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
                     netloc=self.instance, username=username),
                 headers={'Accept': 'application/json',
