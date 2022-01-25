@@ -78,6 +78,10 @@ def _preferred_browser():
     if sys.platform != "linux":  # On other platforms, we have no browser preference
         return None
     browser_path = "/usr/bin/microsoft-edge"  # Use a full path owned by sys admin
+        # Note: /usr/bin/microsoft-edge, /usr/bin/microsoft-edge-stable, etc.
+        # are symlinks that point to the actual binaries which are found under
+        # /opt/microsoft/msedge/msedge or /opt/microsoft/msedge-beta/msedge.
+        # Either method can be used to detect an Edge installation.
     user_has_no_preference = "BROWSER" not in os.environ
     user_wont_mind_edge = "microsoft-edge" in os.environ.get("BROWSER", "")  # Note:
         # BROWSER could contain "microsoft-edge" or "/path/to/microsoft-edge".
