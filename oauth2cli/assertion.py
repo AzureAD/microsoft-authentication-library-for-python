@@ -4,8 +4,6 @@ import base64
 import uuid
 import logging
 
-import jwt
-
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +97,7 @@ class JwtAssertionCreator(AssertionCreator):
         Parameters are defined in https://tools.ietf.org/html/rfc7523#section-3
         Key-value pairs in additional_claims will be added into payload as-is.
         """
+        import jwt  # Lazy loading
         now = time.time()
         payload = {
             'aud': audience,
