@@ -2,9 +2,9 @@ import functools
 import json
 import time
 try:  # Python 2
-    from urlparse import urljoin
+    from urlparse import urljoin, urlparse
 except:  # Python 3
-    from urllib.parse import urljoin
+    from urllib.parse import urljoin, urlparse
 import logging
 import sys
 import warnings
@@ -13,7 +13,7 @@ import os
 
 from .oauth2cli import Client, JwtAssertionCreator
 from .oauth2cli.oidc import decode_part
-from .authority import Authority
+from .authority import Authority, WORLD_WIDE
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
@@ -146,7 +146,6 @@ class _ClientWithCcsRoutingInfo(Client):
 
 
 class ClientApplication(object):
-
     ACQUIRE_TOKEN_SILENT_ID = "84"
     ACQUIRE_TOKEN_BY_REFRESH_TOKEN = "85"
     ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID = "301"
@@ -159,6 +158,48 @@ class ClientApplication(object):
     REMOVE_ACCOUNT_ID = "903"
 
     ATTEMPT_REGION_DISCOVERY = True  # "TryAutoDetect"
+
+    _known_authority_hosts = None
+
+    @classmethod
+    def set_known_authority_hosts(cls, known_authority_hosts):
+        """Declare a list of hosts which you allow MSAL to operate with.
+
+        If your app operates with some authorities that you know and own,
+        such as some ADFS or B2C or private cloud,
+        it is recommended and sometimes required that you declare them here,
+        so that MSAL will use your authorities without discovery,
+        and reject most of the other undefined authorities.
+
+        ``known_authority_hosts`` is meant to be a static and per-deployment setting.
+        This classmethod shall be called at most once,
+        during your entire app's starting-up,
+        before your initializing any ``PublicClientApplication`` or
+        ``ConfidentialClientApplication`` instance(s).
+
+        :param list[str] known_authority_hosts:
+            Authorities that you known, for example::
+
+                [
+                    "contoso.com",  # Your own domain
+                    "login.azs",  # This can be a private cloud
+                ]
+
+        New in version 1.19
+        """
+        new_input = frozenset(known_authority_hosts)
+        if (cls._known_authority_hosts is not None
+                and cls._known_authority_hosts != new_input):
+            raise ValueError(
+                "The known_authority_hosts are considered static. "
+                "Once configured, they should not be changed.")
+        cls._known_authority_hosts = new_input
+        logger.debug('known_authority_hosts is set to %s', known_authority_hosts)
+
+    def _union_known_authority_hosts(cls, url=None, host=None):
+        host = host if host else urlparse(url).netloc.split(":")[0]
+        return (cls._known_authority_hosts.union([host])
+            if cls._known_authority_hosts else frozenset([host]))
 
     def __init__(
             self, client_id,
@@ -453,9 +494,12 @@ class ClientApplication(object):
 
         # Here the self.authority will not be the same type as authority in input
         try:
+            authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
             self.authority = Authority(
-                authority or "https://login.microsoftonline.com/common/",
-                self.http_client, validate_authority=validate_authority)
+                authority_to_use,
+                self.http_client, validate_authority=validate_authority,
+                known_authority_hosts=self.__class__._known_authority_hosts,
+                )
         except ValueError:  # Those are explicit authority validation errors
             raise
         except Exception:  # The rest are typically connection errors
@@ -463,8 +507,11 @@ class ClientApplication(object):
                 # Since caller opts in to use region, here we tolerate connection
                 # errors happened during authority validation at non-region endpoint
                 self.authority = Authority(
-                    authority or "https://login.microsoftonline.com/common/",
-                    self.http_client, validate_authority=False)
+                    authority_to_use,
+                    self.http_client,
+                    known_authority_hosts=self._union_known_authority_hosts(
+                        url=authority_to_use),
+                    )
             else:
                 raise
 
@@ -534,10 +581,12 @@ class ClientApplication(object):
                     "sts.windows.net",
                     )
                 else "{}.{}".format(region_to_use, central_authority.instance))
-            return Authority(
+            return Authority(  # The central_authority has already been validated
                 "https://{}/{}".format(regional_host, central_authority.tenant),
                 self.http_client,
-                validate_authority=False)  # The central_authority has already been validated
+                known_authority_hosts=self._union_known_authority_hosts(
+                    host=regional_host),
+                )
         return None
 
     def _build_client(self, client_credential, authority, skip_regional_client=False):
@@ -789,7 +838,8 @@ class ClientApplication(object):
         # Multi-tenant app can use new authority on demand
         the_authority = Authority(
             authority,
-            self.http_client
+            self.http_client,
+            known_authority_hosts=self.__class__._known_authority_hosts,
             ) if authority else self.authority
 
         client = _ClientWithCcsRoutingInfo(
@@ -1012,14 +1062,21 @@ class ClientApplication(object):
             }
         return list(grouped_accounts.values())
 
+    def _get_instance_metadata(self):  # This exists so it can be mocked in unit test
+        resp = self.http_client.get(
+            "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
+            headers={'Accept': 'application/json'})
+        resp.raise_for_status()
+        return json.loads(resp.text)['metadata']
+
     def _get_authority_aliases(self, instance):
+        if self.authority._is_known_to_developer:
+            # Then it is an ADFS/B2C/known_authority_hosts situation
+            # which may not reach the central endpoint, so we skip it.
+            return []
         if not self.authority_groups:
-            resp = self.http_client.get(
-                "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-                headers={'Accept': 'application/json'})
-            resp.raise_for_status()
             self.authority_groups = [
-                set(group['aliases']) for group in json.loads(resp.text)['metadata']]
+                set(group['aliases']) for group in self._get_instance_metadata()]
         for group in self.authority_groups:
             if instance in group:
                 return [alias for alias in group if alias != instance]
@@ -1189,7 +1246,8 @@ class ClientApplication(object):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
                 self.http_client,
-                validate_authority=False)
+                known_authority_hosts=self._union_known_authority_hosts(host=alias),
+                )
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh,
                 claims_challenge=claims_challenge,

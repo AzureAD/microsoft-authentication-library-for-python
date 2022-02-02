@@ -1,5 +1,10 @@
 import os
+try:
+    from unittest.mock import patch, ANY
+except:
+    from mock import patch, ANY
 
+import msal
 from msal.authority import *
 from tests import unittest
 from tests.http_client import MinimalHttpClient
@@ -122,4 +127,103 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
                 response="This would cause exception if memorization did not work")
         finally:  # MUST NOT let the previous test changes affect other test cases
             Authority._domains_without_user_realm_discovery = set([])
+
+
+@patch("msal.authority.tenant_discovery", return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    })
+@patch("msal.authority.instance_discovery")
+@patch.object(msal.ClientApplication, "_get_instance_metadata", return_value=[])
+class TestMsalBehaviorsWithoutAndWithKnownAuthorityHosts(unittest.TestCase):
+    """Test cases use ClientApplication, which is a base class of both PCA and CCA"""
+
+    def test_by_default_a_known_to_microsoft_authority_should_skip_validation_but_still_use_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        app = msal.ClientApplication("id", authority="https://login.microsoftonline.com/common")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_called_once_with()
+
+    def test_validate_authority_boolean_should_skip_validation_and_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        """Pending deprecation, but kept for backward compatibility, for now"""
+        app = msal.ClientApplication(
+            "id", authority="https://contoso.com/common", validate_authority=False)
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_not_called()
+
+    def test_by_default_adfs_should_skip_validation_and_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        """Not strictly required, but when/if we already supported it, we better keep it"""
+        app = msal.ClientApplication("id", authority="https://contoso.com/adfs")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_not_called()
+
+    def test_by_default_b2c_should_skip_validation_and_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        """Not strictly required, but when/if we already supported it, we better keep it"""
+        app = msal.ClientApplication(
+            "id", authority="https://login.b2clogin.com/contoso/b2c_policy")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_not_called()
+
+    def test_known_authorities_should_allow_multiple_idempotent_calls_but_no_changes(self, *mocks):
+        known_hosts = ["contoso.com", "fabricam.com"]
+        msal.ClientApplication.set_known_authority_hosts(known_hosts)
+        msal.ClientApplication.set_known_authority_hosts(known_hosts)  # Allows idempotent calls
+        msal.ClientApplication.set_known_authority_hosts(
+            # Optional. Here we treat hosts orderless therefore accept equivalent call
+            reversed(known_hosts))
+        with self.assertRaises(ValueError):
+            msal.ClientApplication.set_known_authority_hosts(["hacked.com"])
+
+    def test_known_authority_hosts_should_not_coexist_with_validate_authority_boolean(self, *mocks):
+        msal.ClientApplication.set_known_authority_hosts(["private.cloud"])
+        with self.assertRaises(ValueError):
+            msal.ClientApplication(
+                "id",
+                authority="https://unknown.com/common", validate_authority=False)
+
+    def test_known_to_developer_authority_should_skip_validation_and_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        msal.ClientApplication.set_known_authority_hosts(["private.cloud"])
+        app = msal.ClientApplication("foo", authority="https://private.cloud/foo")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_not_called()
+
+    def test_known_to_developer_setting_should_still_let_a_known_to_microsoft_authority_skip_validation_and_use_instance_metadata(  # i.e. same as the without-known-to-developer behavior
+            self, instance_metadata, known_to_microsoft_validation, _):
+        msal.ClientApplication.set_known_authority_hosts(["private.cloud"])
+        app = msal.ClientApplication(
+            "id", authority="https://login.microsoftonline.com/common")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_called_once_with()
+
+    def test_known_authorities_should_make_unknown_adfs_perform_validation_and_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        msal.ClientApplication.set_known_authority_hosts(["private.cloud"])
+        app = msal.ClientApplication("foo", authority="https://unknown.com/adfs")
+        known_to_microsoft_validation.assert_called_once_with(ANY, ANY)  # Python 3.5+
+        # We effectively mocked a passed validation, so that MSAL will proceed
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_called_once_with()
+
+    def test_known_authorities_should_make_unknown_b2c_perform_validation_and_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        msal.ClientApplication.set_known_authority_hosts(["private.cloud"])
+        app = msal.ClientApplication("foo", authority="https://b2clogin.com/contoso/b2c_policy")
+        known_to_microsoft_validation.assert_called_once_with(ANY, ANY)  # Python 3.5+
+        # We effectively mocked a passed validation, so that MSAL will proceed
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_called_once_with()
+
+    def tearDown(self):
+        # This is not part of public API. We do it here only for unit-testing.
+        msal.ClientApplication._known_authority_hosts = None  # Reset
 
