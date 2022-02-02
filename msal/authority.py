@@ -22,7 +22,6 @@ WELL_KNOWN_AUTHORITY_HOSTS = set([
     AZURE_CHINA,
     'login-us.microsoftonline.com',
     AZURE_US_GOVERNMENT,
-    'login.microsoftonline.de',
     ])
 WELL_KNOWN_B2C_HOSTS = [
     "b2clogin.com",
