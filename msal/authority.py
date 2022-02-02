@@ -58,7 +58,11 @@ class Authority(object):
             "authority.http_client might be removed in MSAL Python 1.21+", DeprecationWarning)
         return self._http_client
 
-    def __init__(self, authority_url, http_client, validate_authority=True):
+    def __init__(
+            self, authority_url, http_client,
+            validate_authority=True,
+            known_authority_hosts=None,  # Known-to-developer authority hosts
+            ):
         """Creates an authority instance, and also validates it.
 
         :param validate_authority:
@@ -67,15 +71,24 @@ class Authority(object):
             This parameter only controls whether an instance discovery will be
             performed.
         """
+        if known_authority_hosts and not bool(validate_authority):
+            raise ValueError(
+                "Since you are using the new known_authority_hosts anyway, "
+                "you might as well avoid using validate_authority=False completely")
         self._http_client = http_client
         if isinstance(authority_url, AuthorityBuilder):
             authority_url = str(authority_url)
         authority, self.instance, tenant = canonicalize(authority_url)
+        self.is_adfs = tenant.lower() == 'adfs'
         parts = authority.path.split('/')
-        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
-            len(parts) == 3 and parts[2].lower().startswith("b2c_"))
-        if (tenant != "adfs" and (not is_b2c) and validate_authority
-                and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
+        is_b2c = any(
+            self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS
+            ) or (len(parts) == 3 and parts[2].lower().startswith("b2c_"))
+        self._is_known_to_developer = (
+            self.instance in known_authority_hosts if known_authority_hosts
+            else (self.is_adfs or is_b2c or not validate_authority))
+        is_known_to_microsoft = self.instance in WELL_KNOWN_AUTHORITY_HOSTS
+        if not (is_known_to_microsoft or self._is_known_to_developer):
             payload = instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
                     self.instance, authority.path),
@@ -113,7 +126,6 @@ class Authority(object):
         self.token_endpoint = openid_config['token_endpoint']
         self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
-        self.is_adfs = self.tenant.lower() == 'adfs'
 
     def user_realm_discovery(self, username, correlation_id=None, response=None):
         # It will typically return a dict containing "ver", "account_type",
