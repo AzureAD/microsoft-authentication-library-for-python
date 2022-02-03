@@ -175,7 +175,7 @@ class E2eTestCase(unittest.TestCase):
             assertion=lambda: self.assertIn('access_token', result),
             skippable_errors=self.app.client.DEVICE_FLOW_RETRIABLE_ERRORS)
         if "access_token" not in result:
-            self.skip("End user did not complete Device Flow in time")
+            self.skipTest("End user did not complete Device Flow in time")
         self.assertCacheWorksForUser(result, scope, username=None)
         result["access_token"] = result["refresh_token"] = "************"
         logger.info(
@@ -528,6 +528,8 @@ class LabBasedTestCase(E2eTestCase):
     <li><a href="$auth_uri">Sign In</a> or <a href="$abort_uri">Abort</a></li>
     </ol></body></html>""".format(id=self.id(), username_uri=username_uri),
                 )
+        if auth_response is None:
+            self.skipTest("Timed out. Did not have test settings in hand? Prepare and retry.")
         self.assertIsNotNone(
             auth_response.get("code"), "Error: {}, Detail: {}".format(
                 auth_response.get("error"), auth_response))
