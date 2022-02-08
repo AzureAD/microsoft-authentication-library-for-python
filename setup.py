@@ -75,7 +75,7 @@ setup(
         'requests>=2.0.0,<3',
         'PyJWT[crypto]>=1.0.0,<3',
 
-        'cryptography>=0.6,<38',
+        'cryptography>=0.6,<39',
             # load_pem_private_key() is available since 0.6
             # https://github.com/pyca/cryptography/blob/master/CHANGELOG.rst#06---2014-09-29
             #
