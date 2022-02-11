@@ -53,7 +53,7 @@ if accounts:
 if not result:
     logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
     print("A local browser window will be open for you to sign in. CTRL+C to cancel.")
-    result = app.acquire_token_interactive(
+    result = app.acquire_token_interactive(  # Only works if your app is registered with redirect_uri as http://localhost
         config["scope"],
         login_hint=config.get("username"),  # Optional.
             # If you know the username ahead of time, this parameter can pre-fill

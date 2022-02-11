@@ -11,8 +11,6 @@ import warnings
 from threading import Lock
 import os
 
-import requests
-
 from .oauth2cli import Client, JwtAssertionCreator
 from .oauth2cli.oidc import decode_part
 from .authority import Authority
@@ -26,7 +24,7 @@ from .throttled_http_client import ThrottledHttpClient
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.16.0"
+__version__ = "1.17.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +78,10 @@ def _preferred_browser():
     if sys.platform != "linux":  # On other platforms, we have no browser preference
         return None
     browser_path = "/usr/bin/microsoft-edge"  # Use a full path owned by sys admin
+        # Note: /usr/bin/microsoft-edge, /usr/bin/microsoft-edge-stable, etc.
+        # are symlinks that point to the actual binaries which are found under
+        # /opt/microsoft/msedge/msedge or /opt/microsoft/msedge-beta/msedge.
+        # Either method can be used to detect an Edge installation.
     user_has_no_preference = "BROWSER" not in os.environ
     user_wont_mind_edge = "microsoft-edge" in os.environ.get("BROWSER", "")  # Note:
         # BROWSER could contain "microsoft-edge" or "/path/to/microsoft-edge".
@@ -231,8 +233,23 @@ class ClientApplication(object):
 
         :param str authority:
             A URL that identifies a token authority. It should be of the format
-            https://login.microsoftonline.com/your_tenant
-            By default, we will use https://login.microsoftonline.com/common
+            ``https://login.microsoftonline.com/your_tenant``
+            By default, we will use ``https://login.microsoftonline.com/common``
+
+            *Changed in version 1.17*: you can also use predefined constant
+            and a builder like this::
+
+                from msal.authority import (
+                    AuthorityBuilder,
+                    AZURE_US_GOVERNMENT, AZURE_CHINA, AZURE_PUBLIC)
+                my_authority = AuthorityBuilder(AZURE_PUBLIC, "contoso.onmicrosoft.com")
+                # Now you get an equivalent of
+                # "https://login.microsoftonline.com/contoso.onmicrosoft.com"
+
+                # You can feed such an authority to msal's ClientApplication
+                from msal import PublicClientApplication
+                app = PublicClientApplication("my_client_id", authority=my_authority, ...)
+
         :param bool validate_authority: (optional) Turns authority validation
             on or off. This parameter default to true.
         :param TokenCache cache:
@@ -362,10 +379,8 @@ class ClientApplication(object):
                     with open(http_cache_filename, "rb") as f:
                         persisted_http_cache = pickle.load(f)  # Take a snapshot
                 except (
-                        IOError,  # A non-exist http cache file
+                        FileNotFoundError,  # Or IOError in Python 2
                         pickle.UnpicklingError,  # A corrupted http cache file
-                        EOFError,  # An empty http cache file
-                        AttributeError, ImportError, IndexError,  # Other corruption
                         ):
                     persisted_http_cache = {}  # Recover by starting afresh
                 atexit.register(lambda: pickle.dump(
@@ -412,6 +427,8 @@ class ClientApplication(object):
         if http_client:
             self.http_client = http_client
         else:
+            import requests  # Lazy load
+
             self.http_client = requests.Session()
             self.http_client.verify = verify
             self.http_client.proxies = proxies
@@ -1207,7 +1224,9 @@ class ClientApplication(object):
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
         except:  # The exact HTTP exception is transportation-layer dependent
-            logger.exception("Refresh token failed")  # Potential AAD outage?
+            # Typically network error. Potential AAD outage?
+            if not access_token_from_cache:  # It means there is no fall back option
+                raise  # We choose to bubble up the exception
         return access_token_from_cache
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
