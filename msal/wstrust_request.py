@@ -45,7 +45,8 @@ def send_request(
         elif '/trust/13/usernamemixed' in endpoint_address:
             soap_action = Mex.ACTION_13
     if soap_action not in (Mex.ACTION_13, Mex.ACTION_2005):
-        raise ValueError("Unsupported soap action: %s" % soap_action)
+        raise ValueError("Unsupported soap action: %s. "
+            "Contact your administrator to check your ADFS's MEX settings." % soap_action)
     data = _build_rst(
         username, password, cloud_audience_urn, endpoint_address, soap_action)
     resp = http_client.post(endpoint_address, data=data, headers={
