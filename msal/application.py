@@ -1417,18 +1417,12 @@ class ClientApplication(object):
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[msal.telemetry.CLIENT_REQUEST_ID])
             if user_realm_result.get("account_type") == "Federated":
-                try:
-                    response = _clean_up(self._acquire_token_by_username_password_federated(
-                        user_realm_result, username, password, scopes=scopes,
-                        data=data,
-                        headers=headers, **kwargs))
-                except (ValueError, RuntimeError):
-                    raise RuntimeError(
-                        "ADFS is not configured properly. "
-                        "Consider use acquire_token_interactive() instead.")
-                else:
-                    telemetry_context.update_telemetry(response)
-                    return response
+                response = _clean_up(self._acquire_token_by_username_password_federated(
+                    user_realm_result, username, password, scopes=scopes,
+                    data=data,
+                    headers=headers, **kwargs))
+                telemetry_context.update_telemetry(response)
+                return response
         response = _clean_up(self.client.obtain_token_by_username_password(
                 username, password, scope=scopes,
                 headers=headers,
