@@ -8,7 +8,7 @@ password    requisite           pam_pwquality.so retry=3 dcredit=-1 ocredit=-1 u
 # Step 1 - Add the apt sources & install for Edge and Intune
 
 # Install Curl
-sudo apt install curl
+sudo apt install curl -y
 
 # Install Microsoft's public key
 curl -sSl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc
@@ -22,7 +22,7 @@ sudo sh -c 'echo "deb [arch=amd64] https://packages.microsoft.com/repos/edge sta
 sudo apt update
 
 # Install Edge
-sudo apt install microsoft-edge-dev
+sudo apt install microsoft-edge-dev -y
 
 # Install Intune
-sudo apt install intune-portal
+sudo apt install intune-portal -y
