@@ -37,7 +37,7 @@ def _input_scopes():
         "User.Read",
         "User.ReadBasic.All",
         ],
-        header="Select a scope (multiple scopes can only be input by manually typing them):",
+        header="Select a scope (multiple scopes can only be input by manually typing them, delimited by space):",
         accept_nonempty_string=True,
         ).split()
 
@@ -62,13 +62,23 @@ def acquire_token_silent(app):
             force_refresh=_input_boolean("Bypass MSAL Python's token cache?"),
             ))
 
+def _acquire_token_interactive(app, scopes, data=None):
+    return app.acquire_token_interactive(
+        scopes,
+        prompt=_select_options([
+            {"value": None, "description": "Unspecified. Proceed silently with a default account (if any), fallback to prompt."},
+            {"value": "none", "description": "none. Proceed silently with a default account (if any), or error out."},
+            {"value": "select_account", "description": "select_account. Prompt with an account picker."},
+            ],
+            option_renderer=lambda o: o["description"],
+            header="Prompt behavior?")["value"],
+        login_hint=_input("login_hint (typically an email address, or leave it blank if you don't need one): ") or None,
+        data=data or {},
+        )
+
 def acquire_token_interactive(app):
     """acquire_token_interactive() - User will be prompted if app opts to do select_account."""
-    pprint.pprint(app.acquire_token_interactive(
-        _input_scopes(),
-        prompt="select_account" if _input_boolean("Select Account?") else None,
-        login_hint=_input("login_hint: ") or None,
-        ))
+    pprint.pprint(_acquire_token_interactive(app, _input_scopes()))
 
 def acquire_token_by_username_password(app):
     """acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc"""
@@ -95,12 +105,7 @@ def acquire_ssh_cert_silently(app):
 
 def acquire_ssh_cert_interactive(app):
     """Acquire an SSH Cert interactively - This typically only works with Azure CLI"""
-    result = app.acquire_token_interactive(
-        SSH_CERT_SCOPE,
-        prompt="select_account" if _input_boolean("Select Account?") else None,
-        login_hint=_input("login_hint: ") or None,
-        data=SSH_CERT_DATA,
-        )
+    result = _acquire_token_interactive(app, SSH_CERT_SCOPE, data=SSH_CERT_DATA)
     pprint.pprint(result)
     if result.get("token_type") != "ssh-cert":
         logging.error("Unable to acquire an ssh-cert")
@@ -118,9 +123,9 @@ def exit(_):
     sys.exit()
 
 def main():
-    print("Welcome to the Msal Python Console Test App")
+    print("Welcome to the Msal Python Console Test App, committed at 2022-5-2\n")
     chosen_app = _select_options([
-        {"client_id": "04b07795-8ddb-461a-bbee-02f9e1bf7b46", "name": "Azure CLI"},
+        {"client_id": "04b07795-8ddb-461a-bbee-02f9e1bf7b46", "name": "Azure CLI (Correctly configured for MSA-PT)"},
         {"client_id": "04f0c124-f2bc-4f59-8241-bf6df9866bbd", "name": "Visual Studio (Correctly configured for MSA-PT)"},
         ],
         option_renderer=lambda a: a["name"],
@@ -134,7 +139,10 @@ def main():
             "https://login.microsoftonline.com/microsoft.onmicrosoft.com",
             "https://login.microsoftonline.com/msidlab4.onmicrosoft.com",
             "https://login.microsoftonline.com/consumers",
-            ], header="Input authority", accept_nonempty_string=True),
+            ],
+            header="Input authority (Note that MSA-PT apps would NOT use the /common authority)",
+            accept_nonempty_string=True,
+            ),
         )
     if _input_boolean("Enable MSAL Python's DEBUG log?"):
         logging.basicConfig(level=logging.DEBUG)
