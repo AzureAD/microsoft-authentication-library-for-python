@@ -636,6 +636,7 @@ class ClientApplication(object):
             domain_hint=None,  # type: Optional[str]
             claims_challenge=None,
             max_age=None,
+            response_mode= None, # type: Optional[str]
             ):
         """Initiate an auth code flow.
 
@@ -673,6 +674,13 @@ class ClientApplication(object):
             If the elapsed time is greater than this value,
             Microsoft identity platform will actively re-authenticate the End-User.
 
+        :param str response_mode:
+            OPTIONAL. Response mode for the callback; can be either "form_post"
+            for POST to callback URI or "query" (the default) for GET with
+            parameters encoded in query string.
+            More information on possible values
+            `here <https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html>`
+
             MSAL Python will also automatically validate the auth_time in ID token.
 
             New in version 1.15.
@@ -706,7 +714,7 @@ class ClientApplication(object):
             domain_hint=domain_hint,
             claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
-            max_age=max_age,
+            max_age=max_age, response_mode=response_mode,
             )
         flow["claims_challenge"] = claims_challenge
         return flow
