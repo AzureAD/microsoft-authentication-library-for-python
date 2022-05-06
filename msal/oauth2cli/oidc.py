@@ -185,8 +185,8 @@ class Client(oauth2.Client):
             # they should simply go with oauth2.Client.
             _scope.append("openid")
         response_mode = kwargs.get("response_mode")
-        if response_mode is not None and (response_mode != "form_post" or response_mode != "query"):
-            raise ValueError('response_mode="form_post" or response_mode="query"  is allowed')
+        if response_mode is not None and response_mode != "form_post" and response_mode != "query":
+            raise ValueError('only response_mode="form_post" or response_mode="query" is allowed. default is query')
         nonce = "".join(random.sample(string.ascii_letters, 16))
         flow = super(Client, self).initiate_auth_code_flow(
             scope=_scope, nonce=_nonce_hash(nonce), **kwargs)

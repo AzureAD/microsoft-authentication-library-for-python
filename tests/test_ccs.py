@@ -16,7 +16,7 @@ class TestCcsRoutingInfoTestCase(unittest.TestCase):
         app = msal.ClientApplication("client_id")
         state = "foo"
         flow = app.initiate_auth_code_flow(
-            ["some", "scope"], login_hint="johndoe@contoso.com", state=state)
+            ["some", "scope"], login_hint="johndoe@contoso.com", state=state, response_mode="form_post")
         with patch.object(app.http_client, "post", return_value=MinimalResponse(
                 status_code=400, text='{"error": "mock"}')) as mocked_method:
             app.acquire_token_by_auth_code_flow(flow, {
