@@ -184,8 +184,7 @@ class Client(oauth2.Client):
             # Here we just automatically add it. If the caller do not want id_token,
             # they should simply go with oauth2.Client.
             _scope.append("openid")
-        response_mode = kwargs.get("response_mode")
-        if response_mode is not None and response_mode != "form_post" and response_mode != "query":
+        if kwargs.get("response_mode") not in (None, "form_post", "query"):
             raise ValueError('only response_mode="form_post" or response_mode="query" is allowed. default is query')
         nonce = "".join(random.sample(string.ascii_letters, 16))
         flow = super(Client, self).initiate_auth_code_flow(

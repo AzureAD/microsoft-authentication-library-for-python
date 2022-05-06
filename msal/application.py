@@ -636,7 +636,7 @@ class ClientApplication(object):
             domain_hint=None,  # type: Optional[str]
             claims_challenge=None,
             max_age=None,
-            response_mode= None, # type: Optional[str]
+            response_mode=None,  # type: Optional[str]
             ):
         """Initiate an auth code flow.
 
@@ -675,9 +675,12 @@ class ClientApplication(object):
             Microsoft identity platform will actively re-authenticate the End-User.
 
         :param str response_mode:
-            OPTIONAL. Response mode for the callback; can be either "form_post"
-            for POST to callback URI or "query" (the default) for GET with
-            parameters encoded in query string.
+            OPTIONAL. Specifies the method with which response parameters should be returned.
+            For security purposes, the value should be form_post. In this mode, response parameters
+            will be encoded as HTML form values that are transmitted via the HTTP POST method and
+            encoded in the body using the application/x-www-form-urlencoded format.
+            Valid values can be either "form_post" for HTTP POST to callback URI or
+            "query" (the default) for HTTP GET with parameters encoded in query string.
             More information on possible values
             `here <https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html>`
 
@@ -714,7 +717,8 @@ class ClientApplication(object):
             domain_hint=domain_hint,
             claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
-            max_age=max_age, response_mode=response_mode,
+            max_age=max_age,
+            response_mode=response_mode,
             )
         flow["claims_challenge"] = claims_challenge
         return flow
