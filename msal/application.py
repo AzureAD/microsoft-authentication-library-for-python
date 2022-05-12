@@ -674,6 +674,10 @@ class ClientApplication(object):
             If the elapsed time is greater than this value,
             Microsoft identity platform will actively re-authenticate the End-User.
 
+            MSAL Python will also automatically validate the auth_time in ID token.
+
+            New in version 1.15.
+
         :param str response_mode:
             OPTIONAL. Specifies the method with which response parameters should be returned.
             The default value is equivalent to ``query``, which is still secure enough in MSAL Python
@@ -687,10 +691,6 @@ class ClientApplication(object):
             More information on possible values
             `here <https://openid.net/specs/oauth-v2-multiple-response-types-1_0.html#ResponseModes>`
             and `here <https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html#FormPostResponseMode>`
-
-            MSAL Python will also automatically validate the auth_time in ID token.
-
-            New in version 1.15.
 
         :return:
             The auth code flow. It is a dict in this form::
