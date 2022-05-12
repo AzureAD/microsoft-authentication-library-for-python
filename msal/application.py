@@ -676,13 +676,17 @@ class ClientApplication(object):
 
         :param str response_mode:
             OPTIONAL. Specifies the method with which response parameters should be returned.
-            For security purposes, the value should be form_post. In this mode, response parameters
+            The default value is equivalent to ``query``, which is still secure enough in MSAL Python
+            (because MSAL Python does not transfer tokens via query parameter in the first place).
+            For even better security, we recommend using the value ``form_post``.
+            In "form_post" mode, response parameters
             will be encoded as HTML form values that are transmitted via the HTTP POST method and
             encoded in the body using the application/x-www-form-urlencoded format.
             Valid values can be either "form_post" for HTTP POST to callback URI or
             "query" (the default) for HTTP GET with parameters encoded in query string.
             More information on possible values
-            `here <https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html>`
+            `here <https://openid.net/specs/oauth-v2-multiple-response-types-1_0.html#ResponseModes>`
+            and `here <https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html#FormPostResponseMode>`
 
             MSAL Python will also automatically validate the auth_time in ID token.
 
