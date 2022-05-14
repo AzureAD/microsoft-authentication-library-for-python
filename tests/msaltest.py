@@ -63,18 +63,28 @@ def acquire_token_silent(app):
             ))
 
 def _acquire_token_interactive(app, scopes, data=None):
-    return app.acquire_token_interactive(
-        scopes,
-        prompt=_select_options([
-            {"value": None, "description": "Unspecified. Proceed silently with a default account (if any), fallback to prompt."},
-            {"value": "none", "description": "none. Proceed silently with a default account (if any), or error out."},
-            {"value": "select_account", "description": "select_account. Prompt with an account picker."},
-            ],
-            option_renderer=lambda o: o["description"],
-            header="Prompt behavior?")["value"],
-        login_hint=_input("login_hint (typically an email address, or leave it blank if you don't need one): ") or None,
-        data=data or {},
+    prompt = _select_options([
+        {"value": None, "description": "Unspecified. Proceed silently with a default account (if any), fallback to prompt."},
+        {"value": "none", "description": "none. Proceed silently with a default account (if any), or error out."},
+        {"value": "select_account", "description": "select_account. Prompt with an account picker."},
+        ],
+        option_renderer=lambda o: o["description"],
+        header="Prompt behavior?")["value"]
+    raw_login_hint = _select_options(
+        # login_hint is unnecessary when prompt=select_account,
+        # but we still let tester input login_hint, just for testing purpose.
+        [None] + [a["username"] for a in app.get_accounts()],
+        header="login_hint? (If you have multiple signed-in sessions in browser, and you specify a login_hint to match one of them, you will bypass the account picker.)",
+        accept_nonempty_string=True,
         )
+    login_hint = raw_login_hint["username"] if isinstance(raw_login_hint, dict) else raw_login_hint
+    result = app.acquire_token_interactive(
+        scopes, prompt=prompt, login_hint=login_hint, data=data or {})
+    if login_hint and "id_token_claims" in result:
+        signed_in_user = result.get("id_token_claims", {}).get("preferred_username")
+        if signed_in_user != login_hint:
+            logging.warning('Signed-in user "%s" does not match login_hint', signed_in_user)
+    return result
 
 def acquire_token_interactive(app):
     """acquire_token_interactive() - User will be prompted if app opts to do select_account."""
@@ -119,7 +129,8 @@ def remove_account(app):
 
 def exit(_):
     """Exit"""
-    print("Bye")
+    bug_link = "https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/new/choose"
+    print("Bye. If you found a bug, please report it here: {}".format(bug_link))
     sys.exit()
 
 def main():
@@ -127,6 +138,7 @@ def main():
     chosen_app = _select_options([
         {"client_id": "04b07795-8ddb-461a-bbee-02f9e1bf7b46", "name": "Azure CLI (Correctly configured for MSA-PT)"},
         {"client_id": "04f0c124-f2bc-4f59-8241-bf6df9866bbd", "name": "Visual Studio (Correctly configured for MSA-PT)"},
+        {"client_id": "95de633a-083e-42f5-b444-a4295d8e9314", "name": "Whiteboard Services (Non MSA-PT app. Accepts AAD & MSA accounts.)"},
         ],
         option_renderer=lambda a: a["name"],
         header="Impersonate this app (or you can type in the client_id of your own app)",
