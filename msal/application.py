@@ -1675,6 +1675,11 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
+        if self.authority.tenant.lower() in ["common", "organizations"]:
+            warnings.warn(
+                "Using /common or /organizations authority "
+                "in acquire_token_for_client() is unreliable. "
+                "Please use a specific tenant instead.", DeprecationWarning)
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_FOR_CLIENT_ID)
