@@ -21,13 +21,14 @@ from .token_cache import TokenCache
 import msal.telemetry
 from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
+from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.17.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.18.0b1"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
-
+_AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
 
 def extract_certs(public_cert_content):
     # Parses raw public certificate file contents and returns a list of strings
@@ -636,6 +637,7 @@ class ClientApplication(object):
             domain_hint=None,  # type: Optional[str]
             claims_challenge=None,
             max_age=None,
+            response_mode=None,  # type: Optional[str]
             ):
         """Initiate an auth code flow.
 
@@ -677,6 +679,20 @@ class ClientApplication(object):
 
             New in version 1.15.
 
+        :param str response_mode:
+            OPTIONAL. Specifies the method with which response parameters should be returned.
+            The default value is equivalent to ``query``, which is still secure enough in MSAL Python
+            (because MSAL Python does not transfer tokens via query parameter in the first place).
+            For even better security, we recommend using the value ``form_post``.
+            In "form_post" mode, response parameters
+            will be encoded as HTML form values that are transmitted via the HTTP POST method and
+            encoded in the body using the application/x-www-form-urlencoded format.
+            Valid values can be either "form_post" for HTTP POST to callback URI or
+            "query" (the default) for HTTP GET with parameters encoded in query string.
+            More information on possible values
+            `here <https://openid.net/specs/oauth-v2-multiple-response-types-1_0.html#ResponseModes>`
+            and `here <https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html#FormPostResponseMode>`
+
         :return:
             The auth code flow. It is a dict in this form::
 
@@ -707,6 +723,7 @@ class ClientApplication(object):
             claims=_merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge),
             max_age=max_age,
+            response_mode=response_mode,
             )
         flow["claims_challenge"] = claims_challenge
         return flow
@@ -970,6 +987,10 @@ class ClientApplication(object):
         return accounts
 
     def _find_msal_accounts(self, environment):
+        interested_authority_types = [
+            TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS]
+        if _is_running_in_cloud_shell():
+            interested_authority_types.append(_AUTHORITY_TYPE_CLOUDSHELL)
         grouped_accounts = {
             a.get("home_account_id"):  # Grouped by home tenant's id
                 {  # These are minimal amount of non-tenant-specific account info
@@ -985,8 +1006,7 @@ class ClientApplication(object):
             for a in self.token_cache.find(
                 TokenCache.CredentialType.ACCOUNT,
                 query={"environment": environment})
-            if a["authority_type"] in (
-                TokenCache.AuthorityType.ADFS, TokenCache.AuthorityType.MSSTS)
+            if a["authority_type"] in interested_authority_types
             }
         return list(grouped_accounts.values())
 
@@ -1045,6 +1065,21 @@ class ClientApplication(object):
         for a in self.token_cache.find(  # Remove Accounts, regardless of realm
                 TokenCache.CredentialType.ACCOUNT, query=owned_by_home_account):
             self.token_cache.remove_account(a)
+
+    def _acquire_token_by_cloud_shell(self, scopes, data=None):
+        from .cloudshell import _obtain_token
+        response = _obtain_token(
+            self.http_client, scopes, client_id=self.client_id, data=data)
+        if "error" not in response:
+            self.token_cache.add(dict(
+                client_id=self.client_id,
+                scope=response["scope"].split() if "scope" in response else scopes,
+                token_endpoint=self.authority.token_endpoint,
+                response=response.copy(),
+                data=data or {},
+                authority_type=_AUTHORITY_TYPE_CLOUDSHELL,
+                ))
+        return response
 
     def acquire_token_silent(
             self,
@@ -1179,6 +1214,7 @@ class ClientApplication(object):
             authority,  # This can be different than self.authority
             force_refresh=False,  # type: Optional[boolean]
             claims_challenge=None,
+            correlation_id=None,
             **kwargs):
         access_token_from_cache = None
         if not (force_refresh or claims_challenge):  # Bypass AT when desired or using claims
@@ -1217,9 +1253,13 @@ class ClientApplication(object):
             refresh_reason = msal.telemetry.FORCE_REFRESH  # TODO: It could also mean claims_challenge
         assert refresh_reason, "It should have been established at this point"
         try:
+            if account and account.get("authority_type") == _AUTHORITY_TYPE_CLOUDSHELL:
+                return self._acquire_token_by_cloud_shell(
+                    scopes, data=kwargs.get("data"))
             result = _clean_up(self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, self._decorate_scope(scopes), account,
                 refresh_reason=refresh_reason, claims_challenge=claims_challenge,
+                correlation_id=correlation_id,
                 **kwargs))
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
@@ -1558,6 +1598,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A dict containing an "error" key, when token refresh failed.
         """
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        if _is_running_in_cloud_shell() and prompt == "none":
+            return self._acquire_token_by_cloud_shell(
+                scopes, data=kwargs.pop("data", {}))
         claims = _merge_claims_challenge_and_capabilities(
             self._client_capabilities, claims_challenge)
         telemetry_context = self._build_telemetry_context(
@@ -1659,6 +1702,11 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
+        if self.authority.tenant.lower() in ["common", "organizations"]:
+            warnings.warn(
+                "Using /common or /organizations authority "
+                "in acquire_token_for_client() is unreliable. "
+                "Please use a specific tenant instead.", DeprecationWarning)
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_FOR_CLIENT_ID)

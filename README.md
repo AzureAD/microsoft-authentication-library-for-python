@@ -18,7 +18,7 @@ Quick links:
 
 Click on the following thumbnail to visit a large map with clickable links to proper samples.
 
-[![Map effect won't work inside github's markdown file, so we have to use a thumbnail here to lure audience to a real static website](docs/thumbnail.png)](https://msal-python.readthedocs.io/en/latest/)
+[![Map effect won't work inside github's markdown file, so we have to use a thumbnail here to lure audience to a real static website](https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-for-python/dev/docs/thumbnail.png)](https://msal-python.readthedocs.io/en/latest/)
 
 ## Installation
 

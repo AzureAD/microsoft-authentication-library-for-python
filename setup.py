@@ -63,6 +63,7 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
     ],
@@ -75,7 +76,7 @@ setup(
         'requests>=2.0.0,<3',
         'PyJWT[crypto]>=1.0.0,<3',
 
-        'cryptography>=0.6,<39',
+        'cryptography>=0.6,<40',
             # load_pem_private_key() is available since 0.6
             # https://github.com/pyca/cryptography/blob/master/CHANGELOG.rst#06---2014-09-29
             #
