@@ -116,7 +116,7 @@ class JwtAssertionCreator(AssertionCreator):
                 payload, self.key, algorithm=self.algorithm, headers=self.headers)
             return _str2bytes(str_or_bytes)  # We normalize them into bytes
         except:
-            if self.algorithm.startswith("RS") or self.algorithm.starswith("ES"):
+            if self.algorithm.startswith("RS") or self.algorithm.startswith("ES"):
                 logger.exception(
                     'Some algorithms requires "pip install cryptography". '
                     'See https://pyjwt.readthedocs.io/en/latest/installation.html#cryptographic-dependencies-optional')
