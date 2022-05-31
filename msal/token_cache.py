@@ -113,6 +113,7 @@ class TokenCache(object):
             return self.__add(event, now=now)
         finally:
             wipe(event.get("response", {}), (  # These claims were useful during __add()
+                "id_token_claims",  # Provided by broker
                 "access_token", "refresh_token", "id_token", "username"))
             wipe(event, ["username"])  # Needed for federated ROPC
             logger.debug("event=%s", json.dumps(
@@ -150,7 +151,8 @@ class TokenCache(object):
         id_token = response.get("id_token")
         id_token_claims = (
             decode_id_token(id_token, client_id=event["client_id"])
-            if id_token else {})
+            if id_token
+            else response.get("id_token_claims", {}))  # Broker would provide id_token_claims
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
         target = ' '.join(event.get("scope") or [])  # Per schema, we don't sort it
@@ -195,9 +197,10 @@ class TokenCache(object):
                         or data.get("username")  # Falls back to ROPC username
                         or event.get("username")  # Falls back to Federated ROPC username
                         or "",  # The schema does not like null
-                    "authority_type":
+                    "authority_type": event.get(
+                        "authority_type",  # Honor caller's choice of authority_type
                         self.AuthorityType.ADFS if realm == "adfs"
-                        else self.AuthorityType.MSSTS,
+                            else self.AuthorityType.MSSTS),
                     # "client_info": response.get("client_info"),  # Optional
                     }
                 self.modify(self.CredentialType.ACCOUNT, account, account)
