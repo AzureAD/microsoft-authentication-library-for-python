@@ -1340,7 +1340,7 @@ class ClientApplication(object):
                 reverse=True):
             logger.debug("Cache attempts an RT")
             headers = telemetry_context.generate_headers()
-            if "home_account_id" in query:  # Then use it as CCS Routing info
+            if query.get("home_account_id"):  # Then use it as CCS Routing info
                 headers["X-AnchorMailbox"] = "Oid:{}".format(  # case-insensitive value
                     query["home_account_id"].replace(".", "@"))
             response = client.obtain_token_by_refresh_token(
