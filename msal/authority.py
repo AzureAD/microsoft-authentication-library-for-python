@@ -71,6 +71,9 @@ class Authority(object):
         if isinstance(authority_url, AuthorityBuilder):
             authority_url = str(authority_url)
         authority, self.instance, tenant = canonicalize(authority_url)
+        # extract authority port
+        parsedUrl = urlparse(authority_url)
+        authorityPort = parsedUrl.port
         parts = authority.path.split('/')
         is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
             len(parts) == 3 and parts[2].lower().startswith("b2c_"))
@@ -91,8 +94,9 @@ class Authority(object):
             tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
             tenant_discovery_endpoint = (
-                'https://{}{}{}/.well-known/openid-configuration'.format(
+                'https://{}:{}{}{}/.well-known/openid-configuration'.format(
                     self.instance,
+                    authorityPort,
                     authority.path,  # In B2C scenario, it is "/tenant/policy"
                     "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
