@@ -73,10 +73,9 @@ class Authority(object):
         authority, self.instance, tenant = canonicalize(authority_url)
 
         # extract authority port
-        parsedUrl = urlparse(authority_url)
-        authorityPort = parsedUrl.port
+        authorityPort = authority.port
 
-        if not authorityPort and parsedUrl.scheme == 'https':
+        if not authorityPort and authority.scheme == 'https':
             authorityPort = 443
 
         parts = authority.path.split('/')
