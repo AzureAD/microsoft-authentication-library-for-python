@@ -1687,6 +1687,14 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
+    def __init__(self, client_id, **kwargs):
+        self._app_token_provider = kwargs.pop("app_token_provider", None)
+        if self._app_token_provider:
+            warnings.warn(
+                "The undocumented app_token_provider param is subject to change",
+                PendingDeprecationWarning)
+        super(ConfidentialClientApplication, self).__init__(client_id, **kwargs)
+
     def acquire_token_for_client(self, scopes, claims_challenge=None, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
 
@@ -1704,6 +1712,21 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
+        if self._app_token_provider:
+            response = self._app_token_provider(
+                scopes=scopes,
+                client_id=self.client_id,
+                )   # Return value should be like
+                    # {"access_token": "...", "expires_in": 123, ...}
+                    # or {"error": "...", "error_description": "..."}
+            if "error" not in response:
+                self.token_cache.add(dict(
+                    client_id=self.client_id,
+                    scope=response["scope"].split() if "scope" in response else scopes,
+                    token_endpoint=self.authority.token_endpoint,
+                    response=response.copy(),
+                    ))
+            return response
         if self.authority.tenant.lower() in ["common", "organizations"]:
             warnings.warn(
                 "Using /common or /organizations authority "
