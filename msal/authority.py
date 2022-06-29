@@ -91,8 +91,9 @@ class Authority(object):
             tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
             tenant_discovery_endpoint = (
-                'https://{}{}{}/.well-known/openid-configuration'.format(
+                'https://{}:{}{}{}/.well-known/openid-configuration'.format(
                     self.instance,
+                    443 if authority.port is None else authority.port,
                     authority.path,  # In B2C scenario, it is "/tenant/policy"
                     "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
