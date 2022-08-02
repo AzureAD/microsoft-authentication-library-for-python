@@ -1013,6 +1013,8 @@ class ClientApplication(object):
         return list(grouped_accounts.values())
 
     def _get_authority_aliases(self, instance):
+        if self.authority.is_adfs:
+            return []
         if not self.authority_groups:
             resp = self.http_client.get(
                 "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
