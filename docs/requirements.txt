@@ -1,2 +1,3 @@
 furo
+sphinx-paramlinks
 -r ../requirements.txt
