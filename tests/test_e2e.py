@@ -134,6 +134,31 @@ class E2eTestCase(unittest.TestCase):
             result_from_wire['access_token'], result_from_cache['access_token'],
             "We should get a cached AT")
 
+    @classmethod
+    def _build_app(cls,
+            client_id,
+            client_credential=None,
+            authority="https://login.microsoftonline.com/common",
+            scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
+            http_client=None,
+            azure_region=None,
+            **kwargs):
+        try:
+            import pymsalruntime
+            broker_available = True
+        except ImportError:
+            broker_available = False
+        return (msal.ConfidentialClientApplication
+                if client_credential else msal.PublicClientApplication)(
+            client_id,
+            client_credential=client_credential,
+            authority=authority,
+            azure_region=azure_region,
+            http_client=http_client or MinimalHttpClient(),
+            allow_broker=broker_available  # This way, we reuse same test cases, by run them with and without broker
+                and not client_credential,
+            )
+
     def _test_username_password(self,
             authority=None, client_id=None, username=None, password=None, scope=None,
             client_secret=None,  # Since MSAL 1.11, confidential client has ROPC too
@@ -141,9 +166,9 @@ class E2eTestCase(unittest.TestCase):
             http_client=None,
             **ignored):
         assert authority and client_id and username and password and scope
-        self.app = msal.ClientApplication(
+        self.app = self._build_app(
             client_id, authority=authority,
-            http_client=http_client or MinimalHttpClient(),
+            http_client=http_client,
             azure_region=azure_region,  # Regional endpoint does not support ROPC.
                 # Here we just use it to test a regional app won't break ROPC.
             client_credential=client_secret)
@@ -158,8 +183,7 @@ class E2eTestCase(unittest.TestCase):
     def _test_device_flow(
             self, client_id=None, authority=None, scope=None, **ignored):
         assert client_id and authority and scope
-        self.app = msal.PublicClientApplication(
-            client_id, authority=authority, http_client=MinimalHttpClient())
+        self.app = self._build_app(client_id, authority=authority)
         flow = self.app.initiate_device_flow(scopes=scope)
         assert "user_code" in flow, "DF does not seem to be provisioned: %s".format(
             json.dumps(flow, indent=4))
@@ -188,13 +212,13 @@ class E2eTestCase(unittest.TestCase):
             prompt=None,
             **ignored):
         assert client_id and authority and scope
-        self.app = msal.PublicClientApplication(
-            client_id, authority=authority, http_client=MinimalHttpClient())
+        self.app = self._build_app(client_id, authority=authority)
         result = self.app.acquire_token_interactive(
             scope,
             prompt=prompt,
             timeout=120,
             port=port,
+            parent_window_handle=self.app.CONSOLE_WINDOW_HANDLE,  # This test app is a console app
             welcome_template=  # This is an undocumented feature for testing
                 """<html><body><h1>{id}</h1><ol>
     <li>Get a username from the upn shown at <a href="{username_uri}">here</a></li>
