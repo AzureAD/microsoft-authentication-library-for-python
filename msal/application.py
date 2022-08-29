@@ -17,7 +17,7 @@ from .authority import Authority
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
-from .token_cache import TokenCache
+from .token_cache import TokenCache, _get_username
 import msal.telemetry
 from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.18.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.20.0b1"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -67,8 +67,12 @@ def _str2bytes(raw):
 
 def _clean_up(result):
     if isinstance(result, dict):
-        result.pop("refresh_in", None)  # MSAL handled refresh_in, customers need not
-    return result
+        return {
+            k: result[k] for k in result
+            if k != "refresh_in"  # MSAL handled refresh_in, customers need not
+            and not k.startswith('_')  # Skim internal properties
+            }
+    return result  # It could be None
 
 
 def _preferred_browser():
@@ -174,6 +178,7 @@ class ClientApplication(object):
                 # when we would eventually want to add this feature to PCA in future.
             exclude_scopes=None,
             http_cache=None,
+            allow_broker=None,
             ):
         """Create an instance of application.
 
@@ -409,6 +414,34 @@ class ClientApplication(object):
             Personally Identifiable Information (PII). Encryption is unnecessary.
 
             New in version 1.16.0.
+
+        :param boolean allow_broker:
+            Brokers provide Single-Sign-On, device identification,
+            and application identification verification.
+            If this parameter is set to True,
+            MSAL will use the broker and return either a token or an error,
+            when your scenario is supported by a broker,
+            otherwise it will automatically fall back to non-broker behavior.
+            This also means you could set this flag as True universally,
+            as long as your app meets the following prerequisite:
+
+            * Installed optional dependency, e.g. ``pip install msal[broker]>=1.20,<2``.
+              (Note that broker is currently only available on Windows 10+)
+
+            * Register a new redirect_uri for your desktop app as:
+              ``ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id``
+
+            * Tested your app in following scenarios:
+
+              * Windows 10+
+
+              * PublicClientApplication's following methods::
+                acquire_token_interactive(), acquire_token_by_username_password(),
+                acquire_token_silent() (or acquire_token_silent_with_error()).
+
+              * AAD and MSA accounts (i.e. Non-ADFS, non-B2C)
+
+            New in version 1.20.0.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -467,6 +500,15 @@ class ClientApplication(object):
                     self.http_client, validate_authority=False)
             else:
                 raise
+        is_confidential_app = bool(
+            isinstance(self, ConfidentialClientApplication) or self.client_credential)
+        if is_confidential_app and allow_broker:
+            raise ValueError("allow_broker=True is only supported in PublicClientApplication")
+        self._enable_broker = bool(
+            allow_broker and not is_confidential_app
+            and sys.platform == "win32"
+            and not self.authority.is_adfs and not self.authority._is_b2c)
+        logger.debug("Broker enabled? %s", self._enable_broker)
 
         self.token_cache = token_cache or TokenCache()
         self._region_configured = azure_region
@@ -1028,6 +1070,15 @@ class ClientApplication(object):
     def remove_account(self, account):
         """Sign me out and forget me from token cache"""
         self._forget_me(account)
+        if self._enable_broker:
+            try:
+                from .broker import _signout_silently
+            except RuntimeError:  # TODO: TBD
+                logger.debug("Broker is unavailable on this platform. Fallback to non-broker.")
+            else:
+                error = _signout_silently(self.client_id, account["local_account_id"])
+                if error:
+                    logger.debug("_signout_silently() returns error: %s", error)
 
     def _sign_out(self, home_account):
         # Remove all relevant RTs and ATs from token cache
@@ -1255,9 +1306,28 @@ class ClientApplication(object):
             refresh_reason = msal.telemetry.FORCE_REFRESH  # TODO: It could also mean claims_challenge
         assert refresh_reason, "It should have been established at this point"
         try:
+            data = kwargs.get("data", {})
             if account and account.get("authority_type") == _AUTHORITY_TYPE_CLOUDSHELL:
-                return self._acquire_token_by_cloud_shell(
-                    scopes, data=kwargs.get("data"))
+                return self._acquire_token_by_cloud_shell(scopes, data=data)
+
+            if self._enable_broker and account is not None and data.get("token_type") != "ssh-cert":
+                try:
+                    from .broker import _acquire_token_silently
+                except RuntimeError:  # TODO: TBD
+                    logger.debug("Broker is unavailable on this platform. Fallback to non-broker.")
+                else:
+                    response = _acquire_token_silently(
+                        "https://{}/{}".format(self.authority.instance, self.authority.tenant),
+                        self.client_id,
+                        account["local_account_id"],
+                        scopes,
+                        claims=_merge_claims_challenge_and_capabilities(
+                            self._client_capabilities, claims_challenge),
+                        correlation_id=correlation_id,
+                        **data)
+                    if response:  # The broker provided a decisive outcome, so we use it
+                        return self._process_broker_response(response, scopes, data)
+
             result = _clean_up(self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, self._decorate_scope(scopes), account,
                 refresh_reason=refresh_reason, claims_challenge=claims_challenge,
@@ -1270,6 +1340,18 @@ class ClientApplication(object):
             if not access_token_from_cache:  # It means there is no fall back option
                 raise  # We choose to bubble up the exception
         return access_token_from_cache
+
+    def _process_broker_response(self, response, scopes, data):
+        if "error" not in response:
+            self.token_cache.add(dict(
+                client_id=self.client_id,
+                scope=response["scope"].split() if "scope" in response else scopes,
+                token_endpoint=self.authority.token_endpoint,
+                response=response.copy(),
+                data=data,
+                _account_id=response["_account_id"],
+                ))
+        return _clean_up(response)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             self, authority, scopes, account, **kwargs):
@@ -1447,14 +1529,33 @@ class ClientApplication(object):
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
+        claims = _merge_claims_challenge_and_capabilities(
+                self._client_capabilities, claims_challenge)
+        if self._enable_broker:
+            try:
+                from .broker import _signin_silently
+            except RuntimeError:  # TODO: TBD
+                logger.debug("Broker is unavailable on this platform. Fallback to non-broker.")
+            else:
+                response = _signin_silently(
+                    "https://{}/{}".format(self.authority.instance, self.authority.tenant),
+                    self.client_id,
+                    scopes,  # Decorated scopes won't work due to offline_access
+                    MSALRuntime_Username=username,
+                    MSALRuntime_Password=password,
+                    validateAuthority="no"
+                        if self.authority._validate_authority is False
+                        or self.authority.is_adfs or self.authority._is_b2c
+                        else None,
+                    claims=claims,
+                    )
+                return self._process_broker_response(response, scopes, kwargs.get("data", {}))
+
         scopes = self._decorate_scope(scopes)
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)
         headers = telemetry_context.generate_headers()
-        data = dict(
-            kwargs.pop("data", {}),
-            claims=_merge_claims_challenge_and_capabilities(
-                self._client_capabilities, claims_challenge))
+        data = dict(kwargs.pop("data", {}), claims=claims)
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[msal.telemetry.CLIENT_REQUEST_ID])
@@ -1520,6 +1621,7 @@ class ClientApplication(object):
 class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
     DEVICE_FLOW_CORRELATION_ID = "_correlation_id"
+    CONSOLE_WINDOW_HANDLE = object()
 
     def __init__(self, client_id, client_credential=None, **kwargs):
         if client_credential is not None:
@@ -1538,11 +1640,16 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             port=None,
             extra_scopes_to_consent=None,
             max_age=None,
+            parent_window_handle=None,
+            on_before_launching_ui=None,
             **kwargs):
         """Acquire token interactively i.e. via a local browser.
 
         Prerequisite: In Azure Portal, configure the Redirect URI of your
         "Mobile and Desktop application" as ``http://localhost``.
+        If you opts in to use broker during ``PublicClientApplication`` creation,
+        your app also need this Redirect URI:
+        ``ms-appx-web://Microsoft.AAD.BrokerPlugin/YOUR_CLIENT_ID``
 
         :param list scopes:
             It is a list of case-sensitive strings.
@@ -1594,17 +1701,79 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
             New in version 1.15.
 
+        :param int parent_window_handle:
+            OPTIONAL. If your app is a GUI app running on modern Windows system,
+            and your app opts in to use broker,
+            you are recommended to also provide its window handle,
+            so that the sign in UI window will properly pop up on top of your window.
+
+            New in version 1.20.0.
+
+        :param function on_before_launching_ui:
+            A callback with the form of
+            ``lambda ui="xyz", **kwargs: print("A {} will be launched".format(ui))``,
+            where ``ui`` will be either "browser" or "broker".
+            You can use it to inform your end user to expect a pop-up window.
+
+            New in version 1.20.0.
+
         :return:
             - A dict containing no "error" key,
               and typically contains an "access_token" key.
             - A dict containing an "error" key, when token refresh failed.
         """
-        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        data = kwargs.pop("data", {})
+        self._validate_ssh_cert_input_data(data)
+        if not on_before_launching_ui:
+            on_before_launching_ui = lambda **kwargs: None
         if _is_running_in_cloud_shell() and prompt == "none":
-            return self._acquire_token_by_cloud_shell(
-                scopes, data=kwargs.pop("data", {}))
+            # Note: _acquire_token_by_cloud_shell() is always silent,
+            #       so we would not fire on_before_launching_ui()
+            return self._acquire_token_by_cloud_shell(scopes, data=data)
         claims = _merge_claims_challenge_and_capabilities(
             self._client_capabilities, claims_challenge)
+        if self._enable_broker and data.get("token_type") != "ssh-cert":
+            if parent_window_handle is None:
+                raise ValueError(
+                    "parent_window_handle is required when you opted into using broker. "
+                    "You need to provide the window handle of your GUI application, "
+                    "or use msal.PublicClientApplication.CONSOLE_WINDOW_HANDLE "
+                    "when and only when your application is a console app.")
+            if extra_scopes_to_consent:
+                logger.warning(
+                    "Ignoring parameter extra_scopes_to_consent, "
+                    "which is not supported by broker")
+            enable_msa_passthrough = kwargs.pop(
+                "enable_msa_passthrough",  # Keep it as a hidden param, for now.
+                    # OPTIONAL. MSA-Passthrough is a legacy configuration,
+                    # needed by a small amount of Microsoft first-party apps,
+                    # which would login MSA accounts via ".../organizations" authority.
+                    # If you app belongs to this category, AND you are enabling broker,
+                    # you would want to enable this flag. Default value is equivalent to False.
+                self.client_id in [
+                    # Experimental: Automatically enable MSA-PT mode for known MSA-PT apps
+                    # More background of MSA-PT is available from this internal docs:
+                    # https://microsoft.sharepoint.com/:w:/t/Identity-DevEx/EatIUauX3c9Ctw1l7AQ6iM8B5CeBZxc58eoQCE0IuZ0VFw?e=tgc3jP&CID=39c853be-76ea-79d7-ee73-f1b2706ede05
+                    "04b07795-8ddb-461a-bbee-02f9e1bf7b46",  # Azure CLI
+                    "04f0c124-f2bc-4f59-8241-bf6df9866bbd",  # Visual Studio
+                    ] and data.get("token_type") != "ssh-cert"  # Work around a known issue as of PyMsalRuntime 0.8
+                )
+            try:
+                return self._acquire_token_interactive_via_broker(
+                    scopes,
+                    parent_window_handle,
+                    enable_msa_passthrough,
+                    claims,
+                    data,
+                    on_before_launching_ui,
+                    prompt=prompt,
+                    login_hint=login_hint,
+                    max_age=max_age,
+                    )
+            except RuntimeError:  # TODO: TBD
+                logger.debug("Broker is unavailable on this platform. Fallback to non-broker.")
+
+        on_before_launching_ui(ui="browser")
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_INTERACTIVE)
         response = _clean_up(self.client.obtain_token_by_browser(
@@ -1621,12 +1790,98 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 "claims": claims,
                 "domain_hint": domain_hint,
                 },
-            data=dict(kwargs.pop("data", {}), claims=claims),
+            data=dict(data, claims=claims),
             headers=telemetry_context.generate_headers(),
             browser_name=_preferred_browser(),
             **kwargs))
         telemetry_context.update_telemetry(response)
         return response
+
+    def _acquire_token_interactive_via_broker(
+            self,
+            scopes,  # type: list[str]
+            parent_window_handle,  # type: int
+            enable_msa_passthrough,  # type: boolean
+            claims,  # type: str
+            data,  # type: dict
+            on_before_launching_ui,  # type: callable
+            prompt=None,
+            login_hint=None,  # type: Optional[str]
+            max_age=None,
+            **kwargs):
+        from .broker import _signin_interactively, _signin_silently, _acquire_token_silently
+        if "welcome_template" in kwargs:
+            logger.debug(kwargs["welcome_template"])  # Experimental
+        authority = "https://{}/{}".format(
+            self.authority.instance, self.authority.tenant)
+        validate_authority = (
+            "no" if self.authority._validate_authority is False
+                or self.authority.is_adfs or self.authority._is_b2c
+            else None)
+        # Calls different broker methods to mimic the OIDC behaviors
+        if login_hint and prompt != "select_account":  # OIDC prompts when the user did not sign in
+            accounts = self.get_accounts(username=login_hint)
+            if len(accounts) == 1:  # Unambiguously proceed with this account
+                response = _acquire_token_silently(  # When it works, it bypasses prompt
+                    authority,
+                    self.client_id,
+                    accounts[0]["local_account_id"],
+                    scopes,
+                    claims=claims,
+                    **data)
+                if response and "error" not in response:
+                    return self._process_broker_response(response, scopes, data)
+        # login_hint undecisive or not exists
+        if prompt == "none" or not prompt:  # Must/Can attempt _signin_silently()
+            response = _signin_silently(  # Unlike OIDC, it doesn't honor login_hint
+                authority, self.client_id, scopes,
+                validateAuthority=validate_authority,
+                claims=claims,
+                max_age=max_age,
+                enable_msa_pt=enable_msa_passthrough,
+                **data)
+            is_wrong_account = bool(
+                # _signin_silently() only gets tokens for default account,
+                # but this seems to have been fixed in PyMsalRuntime 0.11.2
+                "access_token" in response and login_hint
+                and response.get("id_token_claims", {}) != login_hint)
+            wrong_account_error_message = (
+                'prompt="none" will not work for login_hint="non-default-user"')
+            if is_wrong_account:
+                logger.debug(wrong_account_error_message)
+            if prompt == "none":
+                return self._process_broker_response(  # It is either token or error
+                        response, scopes, data
+                    ) if not is_wrong_account else {
+                        "error": "broker_error",
+                        "error_description": wrong_account_error_message,
+                    }
+            else:
+                assert bool(prompt) is False
+                from pymsalruntime import Response_Status
+                recoverable_errors = frozenset([
+                    Response_Status.Status_AccountUnusable,
+                    Response_Status.Status_InteractionRequired,
+                    ])
+                if is_wrong_account or "error" in response and response.get(
+                        "_broker_status") in recoverable_errors:
+                    pass  # It will fall back to the _signin_interactively()
+                else:
+                    return self._process_broker_response(response, scopes, data)
+        # Falls back to _signin_interactively()
+        on_before_launching_ui(ui="broker")
+        response = _signin_interactively(
+            authority, self.client_id, scopes,
+            None if parent_window_handle is self.CONSOLE_WINDOW_HANDLE
+                else parent_window_handle,
+            validateAuthority=validate_authority,
+            login_hint=login_hint,
+            prompt=prompt,
+            claims=claims,
+            max_age=max_age,
+            enable_msa_pt=enable_msa_passthrough,
+            **data)
+        return self._process_broker_response(response, scopes, data)
 
     def initiate_device_flow(self, scopes=None, **kwargs):
         """Initiate a Device Flow instance,
