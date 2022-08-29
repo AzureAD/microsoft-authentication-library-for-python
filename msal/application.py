@@ -418,11 +418,12 @@ class ClientApplication(object):
         :param boolean allow_broker:
             Brokers provide Single-Sign-On, device identification,
             and application identification verification.
+            This flag defaults to None, which means MSAL will not utilize broker.
             If this parameter is set to True,
-            MSAL will use the broker and return either a token or an error,
-            when your scenario is supported by a broker,
-            otherwise it will automatically fall back to non-broker behavior.
-            This also means you could set this flag as True universally,
+            MSAL will use the broker whenever possible,
+            and automatically fall back to non-broker behavior.
+            That also means your app does not need to enable broker conditionally,
+            you can always set allow_broker to True,
             as long as your app meets the following prerequisite:
 
             * Installed optional dependency, e.g. ``pip install msal[broker]>=1.20,<2``.
