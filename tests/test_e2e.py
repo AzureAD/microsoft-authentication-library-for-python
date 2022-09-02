@@ -1,4 +1,4 @@
-"""If the following ENV VAR are available, many end-to-end test cases would run.
+"""If the following ENV VAR were available, many end-to-end test cases would run.
 LAB_APP_CLIENT_SECRET=...
 LAB_OBO_CLIENT_SECRET=...
 LAB_APP_CLIENT_ID=...
@@ -27,10 +27,23 @@ import requests
 import msal
 from tests.http_client import MinimalHttpClient, MinimalResponse
 from msal.oauth2cli import AuthCodeReceiver
+from msal.oauth2cli.oidc import decode_part
 
+try:
+    import pymsalruntime
+    broker_available = True
+except ImportError:
+    broker_available = False
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG if "-v" in sys.argv else logging.INFO)
 
+try:
+    from dotenv import load_dotenv  # Use this only in local dev machine
+    load_dotenv()  # take environment variables from .env.
+except ImportError:
+    logger.warn("Run pip install -r requirements.txt for optional dependency")
+
+_AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 
 def _get_app_and_auth_code(
         client_id,
@@ -93,7 +106,7 @@ class E2eTestCase(unittest.TestCase):
             assertion()
 
     def assertCacheWorksForUser(
-            self, result_from_wire, scope, username=None, data=None):
+            self, result_from_wire, scope, username=None, data=None, auth_scheme=None):
         logger.debug(
             "%s: cache = %s, id_token_claims = %s",
             self.id(),
@@ -110,13 +123,14 @@ class E2eTestCase(unittest.TestCase):
                 ):
             # Going to test acquire_token_silent(...) to locate an AT from cache
             result_from_cache = self.app.acquire_token_silent(
-                scope, account=account, data=data or {})
+                scope, account=account, data=data or {}, auth_scheme=auth_scheme)
             self.assertIsNotNone(result_from_cache)
             self.assertIsNone(
                 result_from_cache.get("refresh_token"), "A cache hit returns no RT")
+            # TODO: Assert POP AT shall not come from cache
             self.assertEqual(
-                result_from_wire['access_token'], result_from_cache['access_token'],
-                "We should get a cached AT")
+                    result_from_wire['access_token'], result_from_cache['access_token'],
+                    "We should get a cached AT")
 
         if "refresh_token" in result_from_wire:
             # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
@@ -192,6 +206,7 @@ class E2eTestCase(unittest.TestCase):
             client_secret=None,  # Since MSAL 1.11, confidential client has ROPC too
             azure_region=None,
             http_client=None,
+            auth_scheme=None,
             **ignored):
         assert authority and client_id and username and password and scope
         self.app = self._build_app(
@@ -203,12 +218,14 @@ class E2eTestCase(unittest.TestCase):
         self.assertEqual(
             self.app.get_accounts(username=username), [], "Cache starts empty")
         result = self.app.acquire_token_by_username_password(
-            username, password, scopes=scope)
+            username, password, scopes=scope, auth_scheme=auth_scheme)
         self.assertLoosely(result)
         self.assertCacheWorksForUser(
             result, scope,
             username=username,  # Our implementation works even when "profile" scope was not requested, or when profile claims is unavailable in B2C
+            auth_scheme=auth_scheme,
             )
+        return result
 
     @unittest.skipIf(
         os.getenv("TRAVIS"),  # It is set when running on TravisCI or Github Actions
@@ -246,6 +263,7 @@ class E2eTestCase(unittest.TestCase):
             data=None,  # Needed by ssh-cert feature
             prompt=None,
             enable_msa_passthrough=None,
+            auth_scheme=None,
             **ignored):
         assert client_id and authority and scope
         self.app = self._build_app(client_id, authority=authority)
@@ -266,6 +284,7 @@ class E2eTestCase(unittest.TestCase):
     </ol></body></html>""".format(id=self.id(), hint=_get_hint(
                 html_mode=True,
                 username=username, lab_name=lab_name, username_uri=username_uri)),
+            auth_scheme=auth_scheme,
             data=data or {},
             )
         self.assertIn(
@@ -279,7 +298,8 @@ class E2eTestCase(unittest.TestCase):
                 username, result["id_token_claims"]["preferred_username"],
                 "You are expected to sign in as account {}, but tokens returned is for {}".format(
                     username, result["id_token_claims"]["preferred_username"]))
-        self.assertCacheWorksForUser(result, scope, username=None, data=data or {})
+        self.assertCacheWorksForUser(
+            result, scope, username=None, data=data or {}, auth_scheme=auth_scheme)
         return result  # For further testing
 
 
@@ -1146,6 +1166,31 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
         # Note: An alias in this region is no longer accepting HTTPS traffic.
         #       If this test case passes without exception,
         #       it means MSAL Python is not affected by that.
+
+
+class PopTestCase(LabBasedTestCase):
+    @unittest.skipUnless(broker_available, "AT POP feature is supported by using broker")
+    def test_at_pop_should_contain_pop_scheme_content(self):
+        auth_scheme = msal.PopAuthScheme(
+            http_method=msal.PopAuthScheme.HTTP_GET,
+            url="https://www.Contoso.com/Path1/Path2?queryParam1=a&queryParam2=b",
+            nonce="placeholder",
+            )
+        result = self._test_acquire_token_interactive(
+            # Lab test users tend to get kicked out from WAM, we use local user to test
+            client_id=_AZURE_CLI,
+            authority="https://login.microsoftonline.com/organizations",
+            scope=["https://management.azure.com/.default"],
+            auth_scheme=auth_scheme,
+            )   # It also tests assertCacheWorksForUser()
+        self.assertEqual(result["token_type"], "pop")
+        payload = json.loads(decode_part(result["access_token"].split(".")[1]))
+        logger.debug("AT POP payload = %s", json.dumps(payload, indent=2))
+        self.assertEqual(payload["m"], auth_scheme._http_method)
+        self.assertEqual(payload["u"], auth_scheme._url.netloc)
+        self.assertEqual(payload["p"], auth_scheme._url.path)
+        self.assertEqual(payload["nonce"], auth_scheme._nonce)
+
 
 if __name__ == "__main__":
     unittest.main()
