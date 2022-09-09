@@ -159,47 +159,10 @@ class ClientApplication(object):
 
     ATTEMPT_REGION_DISCOVERY = True  # "TryAutoDetect"
 
-    _known_authority_hosts = None
-
-    @classmethod
-    def set_known_authority_hosts(cls, known_authority_hosts):
-        """Declare a list of hosts which you allow MSAL to operate with.
-
-        If your app operates with some authorities that you know and own,
-        such as some ADFS or B2C or private cloud,
-        it is recommended and sometimes required that you declare them here,
-        so that MSAL will use your authorities without discovery,
-        and reject most of the other undefined authorities.
-
-        ``known_authority_hosts`` is meant to be a static and per-deployment setting.
-        This classmethod shall be called at most once,
-        during your entire app's starting-up,
-        before your initializing any ``PublicClientApplication`` or
-        ``ConfidentialClientApplication`` instance(s).
-
-        :param list[str] known_authority_hosts:
-            Authorities that you known, for example::
-
-                [
-                    "contoso.com",  # Your own domain
-                    "login.azs",  # This can be a private cloud
-                ]
-
-        New in version 1.19
-        """
-        new_input = frozenset(known_authority_hosts)
-        if (cls._known_authority_hosts is not None
-                and cls._known_authority_hosts != new_input):
-            raise ValueError(
-                "The known_authority_hosts are considered static. "
-                "Once configured, they should not be changed.")
-        cls._known_authority_hosts = new_input
-        logger.debug('known_authority_hosts is set to %s', known_authority_hosts)
-
-    def _union_known_authority_hosts(cls, url=None, host=None):
+    def _union_known_authority_hosts(self, url=None, host=None):
         host = host if host else urlparse(url).netloc.split(":")[0]
-        return (cls._known_authority_hosts.union([host])
-            if cls._known_authority_hosts else frozenset([host]))
+        return (self._known_authority_hosts.union([host])
+            if self._known_authority_hosts else frozenset([host]))
 
     def __init__(
             self, client_id,
@@ -215,6 +178,7 @@ class ClientApplication(object):
                 # when we would eventually want to add this feature to PCA in future.
             exclude_scopes=None,
             http_cache=None,
+            known_authority_hosts=None,
             ):
         """Create an instance of application.
 
@@ -450,11 +414,41 @@ class ClientApplication(object):
             Personally Identifiable Information (PII). Encryption is unnecessary.
 
             New in version 1.16.0.
+
+        :param list[str] known_authority_hosts:
+            Historically, MSAL would try to connect to a central endpoint
+            to acquire some metadata for an unfamiliar authority.
+            This behavior is known as Instance Discovery.
+
+            If you know a list of hosts which you allow MSAL to operate with,
+            you can declare them here, so that MSAL will use them as-is,
+            and also reject most of other authorities such as a call like this:
+            ``ClientApplication("id", authority="https://undefined.com", known_authority_hosts=["contoso.com", "fabricam.com"])``.
+
+            Typically, the ADFS or B2C or private cloud authorities
+            is recommended and sometimes required to be declared here.
+
+            This is meant to be a static and per-deployment setting.
+            The recommended pattern is to load your predefined constant list
+            from a configuration file,
+            and never create new MSAL ``ClientApplication`` instances with
+            unknown and untrusted authorities during runtime.
+
+            Values would look like::
+
+                [
+                    "contoso.com",  # Your own domain
+                    "login.azs",  # This can be a private cloud
+                ]
+
+            New in version 1.19
         """
         self.client_id = client_id
         self.client_credential = client_credential
         self.client_claims = client_claims
         self._client_capabilities = client_capabilities
+        self._known_authority_hosts = frozenset(
+            known_authority_hosts if known_authority_hosts else [])
 
         if exclude_scopes and not isinstance(exclude_scopes, list):
             raise ValueError(
@@ -498,7 +492,7 @@ class ClientApplication(object):
             self.authority = Authority(
                 authority_to_use,
                 self.http_client, validate_authority=validate_authority,
-                known_authority_hosts=self.__class__._known_authority_hosts,
+                known_authority_hosts=self._known_authority_hosts,
                 )
         except ValueError:  # Those are explicit authority validation errors
             raise
@@ -839,7 +833,7 @@ class ClientApplication(object):
         the_authority = Authority(
             authority,
             self.http_client,
-            known_authority_hosts=self.__class__._known_authority_hosts,
+            known_authority_hosts=self._known_authority_hosts,
             ) if authority else self.authority
 
         client = _ClientWithCcsRoutingInfo(
