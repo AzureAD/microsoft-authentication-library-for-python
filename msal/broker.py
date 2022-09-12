@@ -10,8 +10,7 @@ import uuid
 
 logger = logging.getLogger(__name__)
 try:
-    import pymsalruntime  # ImportError would be raised on unsupported platforms such as Windows 8
-    # Its API description is available in site-packages/pymsalruntime/PyMsalRuntime.pyi
+    import pymsalruntime  # Its API description is available in site-packages/pymsalruntime/PyMsalRuntime.pyi
     pymsalruntime.register_logging_callback(lambda message, level: {  # New in pymsalruntime 0.7
         pymsalruntime.LogLevel.TRACE: logger.debug,  # Python has no TRACE level
         pymsalruntime.LogLevel.DEBUG: logger.debug,
@@ -26,7 +25,7 @@ except (ImportError, AttributeError):  # AttributeError happens when a prior pym
     # https://github.com/AzureAD/microsoft-authentication-library-for-cpp/pull/2406/files
     raise ImportError(  # TODO: Remove or adjust this line right before merging this PR
         'You need to install dependency by: pip install "msal[broker]>=1.20.0b1,<2"')
-# Other exceptions (possibly RuntimeError) would be raised if its initialization fails
+# It could throw RuntimeError when running on ancient versions of Windows
 
 
 class RedirectUriError(ValueError):

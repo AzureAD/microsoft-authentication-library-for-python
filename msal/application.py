@@ -505,10 +505,17 @@ class ClientApplication(object):
             isinstance(self, ConfidentialClientApplication) or self.client_credential)
         if is_confidential_app and allow_broker:
             raise ValueError("allow_broker=True is only supported in PublicClientApplication")
-        self._enable_broker = bool(
-            allow_broker and not is_confidential_app
-            and sys.platform == "win32"
-            and not self.authority.is_adfs and not self.authority._is_b2c)
+        self._enable_broker = False
+        if (allow_broker and not is_confidential_app
+                and sys.platform == "win32"
+                and not self.authority.is_adfs and not self.authority._is_b2c):
+            try:
+                from . import broker  # Trigger Broker's initialization
+                self._enable_broker = True
+            except RuntimeError:
+                logger.exception(
+                    "Broker is unavailable on this platform. "
+                    "We will fallback to non-broker.")
         logger.debug("Broker enabled? %s", self._enable_broker)
 
         self.token_cache = token_cache or TokenCache()
@@ -1072,14 +1079,10 @@ class ClientApplication(object):
         """Sign me out and forget me from token cache"""
         self._forget_me(account)
         if self._enable_broker:
-            try:
-                from .broker import _signout_silently
-            except RuntimeError:  # TODO: TBD
-                logger.debug("Broker is unavailable on this platform. Fallback to non-broker.")
-            else:
-                error = _signout_silently(self.client_id, account["local_account_id"])
-                if error:
-                    logger.debug("_signout_silently() returns error: %s", error)
+            from .broker import _signout_silently
+            error = _signout_silently(self.client_id, account["local_account_id"])
+            if error:
+                logger.debug("_signout_silently() returns error: %s", error)
 
     def _sign_out(self, home_account):
         # Remove all relevant RTs and ATs from token cache
@@ -1312,22 +1315,18 @@ class ClientApplication(object):
                 return self._acquire_token_by_cloud_shell(scopes, data=data)
 
             if self._enable_broker and account is not None and data.get("token_type") != "ssh-cert":
-                try:
-                    from .broker import _acquire_token_silently
-                except RuntimeError:  # TODO: TBD
-                    logger.debug("Broker is unavailable on this platform. Fallback to non-broker.")
-                else:
-                    response = _acquire_token_silently(
-                        "https://{}/{}".format(self.authority.instance, self.authority.tenant),
-                        self.client_id,
-                        account["local_account_id"],
-                        scopes,
-                        claims=_merge_claims_challenge_and_capabilities(
-                            self._client_capabilities, claims_challenge),
-                        correlation_id=correlation_id,
-                        **data)
-                    if response:  # The broker provided a decisive outcome, so we use it
-                        return self._process_broker_response(response, scopes, data)
+                from .broker import _acquire_token_silently
+                response = _acquire_token_silently(
+                    "https://{}/{}".format(self.authority.instance, self.authority.tenant),
+                    self.client_id,
+                    account["local_account_id"],
+                    scopes,
+                    claims=_merge_claims_challenge_and_capabilities(
+                        self._client_capabilities, claims_challenge),
+                    correlation_id=correlation_id,
+                    **data)
+                if response:  # The broker provided a decisive outcome, so we use it
+                    return self._process_broker_response(response, scopes, data)
 
             result = _clean_up(self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                 authority, self._decorate_scope(scopes), account,
@@ -1533,24 +1532,20 @@ class ClientApplication(object):
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
         if self._enable_broker:
-            try:
-                from .broker import _signin_silently
-            except RuntimeError:  # TODO: TBD
-                logger.debug("Broker is unavailable on this platform. Fallback to non-broker.")
-            else:
-                response = _signin_silently(
-                    "https://{}/{}".format(self.authority.instance, self.authority.tenant),
-                    self.client_id,
-                    scopes,  # Decorated scopes won't work due to offline_access
-                    MSALRuntime_Username=username,
-                    MSALRuntime_Password=password,
-                    validateAuthority="no"
-                        if self.authority._validate_authority is False
-                        or self.authority.is_adfs or self.authority._is_b2c
-                        else None,
-                    claims=claims,
-                    )
-                return self._process_broker_response(response, scopes, kwargs.get("data", {}))
+            from .broker import _signin_silently
+            response = _signin_silently(
+                "https://{}/{}".format(self.authority.instance, self.authority.tenant),
+                self.client_id,
+                scopes,  # Decorated scopes won't work due to offline_access
+                MSALRuntime_Username=username,
+                MSALRuntime_Password=password,
+                validateAuthority="no"
+                    if self.authority._validate_authority is False
+                    or self.authority.is_adfs or self.authority._is_b2c
+                    else None,
+                claims=claims,
+                )
+            return self._process_broker_response(response, scopes, kwargs.get("data", {}))
 
         scopes = self._decorate_scope(scopes)
         telemetry_context = self._build_telemetry_context(
@@ -1759,20 +1754,17 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     "04f0c124-f2bc-4f59-8241-bf6df9866bbd",  # Visual Studio
                     ] and data.get("token_type") != "ssh-cert"  # Work around a known issue as of PyMsalRuntime 0.8
                 )
-            try:
-                return self._acquire_token_interactive_via_broker(
-                    scopes,
-                    parent_window_handle,
-                    enable_msa_passthrough,
-                    claims,
-                    data,
-                    on_before_launching_ui,
-                    prompt=prompt,
-                    login_hint=login_hint,
-                    max_age=max_age,
-                    )
-            except RuntimeError:  # TODO: TBD
-                logger.debug("Broker is unavailable on this platform. Fallback to non-broker.")
+            return self._acquire_token_interactive_via_broker(
+                scopes,
+                parent_window_handle,
+                enable_msa_passthrough,
+                claims,
+                data,
+                on_before_launching_ui,
+                prompt=prompt,
+                login_hint=login_hint,
+                max_age=max_age,
+                )
 
         on_before_launching_ui(ui="browser")
         telemetry_context = self._build_telemetry_context(
