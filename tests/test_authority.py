@@ -1,5 +1,10 @@
 import os
+try:
+    from unittest.mock import patch
+except:
+    from mock import patch
 
+import msal
 from msal.authority import *
 from tests import unittest
 from tests.http_client import MinimalHttpClient
@@ -33,12 +38,14 @@ class TestAuthority(unittest.TestCase):
     def test_wellknown_host_and_tenant(self):
         # Assert all well known authority hosts are using their own "common" tenant
         for host in WELL_KNOWN_AUTHORITY_HOSTS:
-            self._test_given_host_and_tenant(host, "common")
+            if host != AZURE_CHINA:  # It is prone to ConnectionError
+                self._test_given_host_and_tenant(host, "common")
 
     def test_wellknown_host_and_tenant_using_new_authority_builder(self):
         self._test_authority_builder(AZURE_PUBLIC, "consumers")
-        self._test_authority_builder(AZURE_CHINA, "organizations")
         self._test_authority_builder(AZURE_US_GOVERNMENT, "common")
+        ## AZURE_CHINA is prone to some ConnectionError. We skip it to speed up our tests.
+        # self._test_authority_builder(AZURE_CHINA, "organizations")
 
     @unittest.skip("As of Jan 2017, the server no longer returns V1 endpoint")
     def test_lessknown_host_will_return_a_set_of_v1_endpoints(self):
@@ -120,4 +127,65 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
                 response="This would cause exception if memorization did not work")
         finally:  # MUST NOT let the previous test changes affect other test cases
             Authority._domains_without_user_realm_discovery = set([])
+
+
+@patch("msal.authority.tenant_discovery", return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    })
+@patch("msal.authority._instance_discovery")
+@patch.object(msal.ClientApplication, "_get_instance_metadata", return_value=[])
+class TestMsalBehaviorsWithoutAndWithInstanceDiscoveryBoolean(unittest.TestCase):
+    """Test cases use ClientApplication, which is a base class of both PCA and CCA"""
+
+    def test_by_default_a_known_to_microsoft_authority_should_skip_validation_but_still_use_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        app = msal.ClientApplication("id", authority="https://login.microsoftonline.com/common")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_called_once_with()
+
+    def test_validate_authority_boolean_should_skip_validation_and_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        """Pending deprecation, but kept for backward compatibility, for now"""
+        app = msal.ClientApplication(
+            "id", authority="https://contoso.com/common", validate_authority=False)
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_not_called()
+
+    def test_by_default_adfs_should_skip_validation_and_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        """Not strictly required, but when/if we already supported it, we better keep it"""
+        app = msal.ClientApplication("id", authority="https://contoso.com/adfs")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_not_called()
+
+    def test_by_default_b2c_should_skip_validation_and_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        """Not strictly required, but when/if we already supported it, we better keep it"""
+        app = msal.ClientApplication(
+            "id", authority="https://login.b2clogin.com/contoso/b2c_policy")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_not_called()
+
+    def test_turning_off_instance_discovery_should_work_for_all_kinds_of_clouds(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        for authority in [
+                "https://login.microsoftonline.com/common",  # Known to Microsoft
+                "https://contoso.com/adfs",  # ADFS
+                "https://login.b2clogin.com/contoso/b2c_policy",  # B2C
+                "https://private.cloud/foo",  # Private Cloud
+                ]:
+            self._test_turning_off_instance_discovery_should_skip_authority_validation_and_instance_metadata(
+                authority, instance_metadata, known_to_microsoft_validation)
+
+    def _test_turning_off_instance_discovery_should_skip_authority_validation_and_instance_metadata(
+            self, authority, instance_metadata, known_to_microsoft_validation):
+        app = msal.ClientApplication("id", authority=authority, instance_discovery=False)
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_not_called()
 

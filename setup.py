@@ -74,9 +74,9 @@ setup(
         # See https://stackoverflow.com/a/14211600/728675 for more detail
     install_requires=[
         'requests>=2.0.0,<3',
-        'PyJWT[crypto]>=1.0.0,<3',
+        'PyJWT[crypto]>=1.0.0,<3',  # MSAL does not use jwt.decode(), therefore is insusceptible to CVE-2022-29217 so no need to bump to PyJWT 2.4+
 
-        'cryptography>=0.6,<40',
+        'cryptography>=0.6,<41',
             # load_pem_private_key() is available since 0.6
             # https://github.com/pyca/cryptography/blob/master/CHANGELOG.rst#06---2014-09-29
             #

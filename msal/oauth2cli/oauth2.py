@@ -139,8 +139,7 @@ class BaseClient(object):
         """
         if not server_configuration:
             raise ValueError("Missing input parameter server_configuration")
-        if not client_id:
-            raise ValueError("Missing input parameter client_id")
+        # Generally we should have client_id, but we tolerate its absence
         self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
