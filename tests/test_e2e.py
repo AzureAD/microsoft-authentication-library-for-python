@@ -133,6 +133,11 @@ class E2eTestCase(unittest.TestCase):
         self.assertEqual(
             result_from_wire['access_token'], result_from_cache['access_token'],
             "We should get a cached AT")
+        self.app.acquire_token_silent(
+            # Result will typically be None, because client credential grant returns no RT.
+            # But we care more on this call should succeed without exception.
+            scope, account=None,
+            force_refresh=True)  # Mimic the AT already expires
 
     @classmethod
     def _build_app(cls,
@@ -642,11 +647,12 @@ class LabBasedTestCase(E2eTestCase):
             self, client_id=None, client_secret=None, authority=None, scope=None,
             **ignored):
         assert client_id and client_secret and authority and scope
-        app = msal.ConfidentialClientApplication(
+        self.app = msal.ConfidentialClientApplication(
             client_id, client_credential=client_secret, authority=authority,
             http_client=MinimalHttpClient())
-        result = app.acquire_token_for_client(scope)
+        result = self.app.acquire_token_for_client(scope)
         self.assertIsNotNone(result.get("access_token"), "Got %s instead" % result)
+        self.assertCacheWorksForApp(result, scope)
 
 
 class WorldWideTestCase(LabBasedTestCase):

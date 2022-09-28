@@ -13,7 +13,7 @@ import os
 
 from .oauth2cli import Client, JwtAssertionCreator
 from .oauth2cli.oidc import decode_part
-from .authority import Authority
+from .authority import Authority, WORLD_WIDE
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
@@ -150,7 +150,6 @@ class _ClientWithCcsRoutingInfo(Client):
 
 
 class ClientApplication(object):
-
     ACQUIRE_TOKEN_SILENT_ID = "84"
     ACQUIRE_TOKEN_BY_REFRESH_TOKEN = "85"
     ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID = "301"
@@ -178,6 +177,7 @@ class ClientApplication(object):
                 # when we would eventually want to add this feature to PCA in future.
             exclude_scopes=None,
             http_cache=None,
+            instance_discovery=None,
             allow_broker=None,
             ):
         """Create an instance of application.
@@ -415,6 +415,34 @@ class ClientApplication(object):
 
             New in version 1.16.0.
 
+        :param boolean instance_discovery:
+            Historically, MSAL would connect to a central endpoint located at
+            ``https://login.microsoftonline.com`` to acquire some metadata,
+            especially when using an unfamiliar authority.
+            This behavior is known as Instance Discovery.
+
+            This parameter defaults to None, which enables the Instance Discovery.
+
+            If you know some authorities which you allow MSAL to operate with as-is,
+            without involving any Instance Discovery, the recommended pattern is::
+
+                known_authorities = frozenset([  # Treat your known authorities as const
+                    "https://contoso.com/adfs", "https://login.azs/foo"])
+                ...
+                authority = "https://contoso.com/adfs"  # Assuming your app will use this
+                app1 = PublicClientApplication(
+                    "client_id",
+                    authority=authority,
+                    # Conditionally disable Instance Discovery for known authorities
+                    instance_discovery=authority not in known_authorities,
+                    )
+
+            If you do not know some authorities beforehand,
+            yet still want MSAL to accept any authority that you will provide,
+            you can use a ``False`` to unconditionally disable Instance Discovery.
+
+            New in version 1.19.0.
+
         :param boolean allow_broker:
             Brokers provide Single-Sign-On, device identification,
             and application identification verification.
@@ -448,6 +476,7 @@ class ClientApplication(object):
         self.client_credential = client_credential
         self.client_claims = client_claims
         self._client_capabilities = client_capabilities
+        self._instance_discovery = instance_discovery
 
         if exclude_scopes and not isinstance(exclude_scopes, list):
             raise ValueError(
@@ -487,9 +516,13 @@ class ClientApplication(object):
 
         # Here the self.authority will not be the same type as authority in input
         try:
+            authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
             self.authority = Authority(
-                authority or "https://login.microsoftonline.com/common/",
-                self.http_client, validate_authority=validate_authority)
+                authority_to_use,
+                self.http_client,
+                validate_authority=validate_authority,
+                instance_discovery=self._instance_discovery,
+                )
         except ValueError:  # Those are explicit authority validation errors
             raise
         except Exception:  # The rest are typically connection errors
@@ -497,8 +530,10 @@ class ClientApplication(object):
                 # Since caller opts in to use region, here we tolerate connection
                 # errors happened during authority validation at non-region endpoint
                 self.authority = Authority(
-                    authority or "https://login.microsoftonline.com/common/",
-                    self.http_client, validate_authority=False)
+                    authority_to_use,
+                    self.http_client,
+                    instance_discovery=False,
+                    )
             else:
                 raise
         is_confidential_app = bool(
@@ -584,10 +619,11 @@ class ClientApplication(object):
                     "sts.windows.net",
                     )
                 else "{}.{}".format(region_to_use, central_authority.instance))
-            return Authority(
+            return Authority(  # The central_authority has already been validated
                 "https://{}/{}".format(regional_host, central_authority.tenant),
                 self.http_client,
-                validate_authority=False)  # The central_authority has already been validated
+                instance_discovery=False,
+                )
         return None
 
     def _build_client(self, client_credential, authority, skip_regional_client=False):
@@ -839,7 +875,8 @@ class ClientApplication(object):
         # Multi-tenant app can use new authority on demand
         the_authority = Authority(
             authority,
-            self.http_client
+            self.http_client,
+            instance_discovery=self._instance_discovery,
             ) if authority else self.authority
 
         client = _ClientWithCcsRoutingInfo(
@@ -1062,14 +1099,23 @@ class ClientApplication(object):
             }
         return list(grouped_accounts.values())
 
+    def _get_instance_metadata(self):  # This exists so it can be mocked in unit test
+        resp = self.http_client.get(
+            "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",  # TBD: We may extend this to use self._instance_discovery endpoint
+            headers={'Accept': 'application/json'})
+        resp.raise_for_status()
+        return json.loads(resp.text)['metadata']
+
     def _get_authority_aliases(self, instance):
+        if self._instance_discovery is False:
+            return []
+        if self.authority._is_known_to_developer:
+            # Then it is an ADFS/B2C/known_authority_hosts situation
+            # which may not reach the central endpoint, so we skip it.
+            return []
         if not self.authority_groups:
-            resp = self.http_client.get(
-                "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",
-                headers={'Accept': 'application/json'})
-            resp.raise_for_status()
             self.authority_groups = [
-                set(group['aliases']) for group in json.loads(resp.text)['metadata']]
+                set(group['aliases']) for group in self._get_instance_metadata()]
         for group in self.authority_groups:
             if instance in group:
                 return [alias for alias in group if alias != instance]
@@ -1223,6 +1269,7 @@ class ClientApplication(object):
         # the_authority = Authority(
         #     authority,
         #     self.http_client,
+        #     instance_discovery=self._instance_discovery,
         #     ) if authority else self.authority
         result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
             scopes, account, self.authority, force_refresh=force_refresh,
@@ -1244,7 +1291,8 @@ class ClientApplication(object):
             the_authority = Authority(
                 "https://" + alias + "/" + self.authority.tenant,
                 self.http_client,
-                validate_authority=False)
+                instance_discovery=False,
+                )
             result = self._acquire_token_silent_from_cache_and_possibly_refresh_it(
                 scopes, account, the_authority, force_refresh=force_refresh,
                 claims_challenge=claims_challenge,
@@ -1539,10 +1587,9 @@ class ClientApplication(object):
                 scopes,  # Decorated scopes won't work due to offline_access
                 MSALRuntime_Username=username,
                 MSALRuntime_Password=password,
-                validateAuthority="no"
-                    if self.authority._validate_authority is False
-                    or self.authority.is_adfs or self.authority._is_b2c
-                    else None,
+                validateAuthority="no" if (
+                    self.authority._is_known_to_developer
+                    or self._instance_discovery is False) else None,
                 claims=claims,
                 )
             return self._process_broker_response(response, scopes, kwargs.get("data", {}))
@@ -1807,10 +1854,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             logger.debug(kwargs["welcome_template"])  # Experimental
         authority = "https://{}/{}".format(
             self.authority.instance, self.authority.tenant)
-        validate_authority = (
-            "no" if self.authority._validate_authority is False
-                or self.authority.is_adfs or self.authority._is_b2c
-            else None)
+        validate_authority = "no" if (
+            self.authority._is_known_to_developer
+            or self._instance_discovery is False) else None
         # Calls different broker methods to mimic the OIDC behaviors
         if login_hint and prompt != "select_account":  # OIDC prompts when the user did not sign in
             accounts = self.get_accounts(username=login_hint)
