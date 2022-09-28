@@ -91,7 +91,7 @@ setup(
             # The broker is defined as optional dependency,
             # so that downstream apps can opt in. The opt-in is needed, partially because
             # most existing MSAL Python apps do not have the redirect_uri needed by broker.
-            "pymsalruntime>=0.11.2,<0.12;python_version>='3.6' and platform_system=='Windows'",
+            "pymsalruntime>=0.11.2,<0.14;python_version>='3.6' and platform_system=='Windows'",
             ],
         },
 )
