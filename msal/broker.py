@@ -90,8 +90,7 @@ def _convert_result(result, client_id, expected_token_type=None):  # Mimic an on
     id_token_claims = json.loads(result.get_id_token()) if result.get_id_token() else {}
     account = result.get_account()
     assert account, "Account is expected to be always available"
-    ## Note: As of pymsalruntime 0.1.0, only wam_account_ids property is available
-    #account.get_account_property("wam_account_ids")
+    # Note: There are more account attribute getters available in pymsalruntime 0.13+
     return_value = {k: v for k, v in {
         "access_token": result.get_access_token(),
         "expires_in": result.get_access_token_expiry_time() - int(time.time()),  # Convert epoch to count-down
