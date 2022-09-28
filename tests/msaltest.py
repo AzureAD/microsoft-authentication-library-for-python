@@ -1,6 +1,9 @@
 import getpass, logging, pprint, sys, msal
 
 
+AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
+
 def _input_boolean(message):
     return input(
         "{} (N/n/F/f or empty means False, otherwise it is True): ".format(message)
@@ -81,6 +84,9 @@ def _acquire_token_interactive(app, scopes, data=None):
     result = app.acquire_token_interactive(
         scopes,
         parent_window_handle=app.CONSOLE_WINDOW_HANDLE,  # This test app is a console app
+        enable_msa_passthrough=app.client_id in [  # Apps are expected to set this right
+            AZURE_CLI, VISUAL_STUDIO,
+            ],  # Here this test app mimics the setting for some known MSA-PT apps
         prompt=prompt, login_hint=login_hint, data=data or {})
     if login_hint and "id_token_claims" in result:
         signed_in_user = result.get("id_token_claims", {}).get("preferred_username")
@@ -142,8 +148,8 @@ def exit(app):
 def main():
     print("Welcome to the Msal Python Console Test App, committed at 2022-5-2\n")
     chosen_app = _select_options([
-        {"client_id": "04b07795-8ddb-461a-bbee-02f9e1bf7b46", "name": "Azure CLI (Correctly configured for MSA-PT)"},
-        {"client_id": "04f0c124-f2bc-4f59-8241-bf6df9866bbd", "name": "Visual Studio (Correctly configured for MSA-PT)"},
+        {"client_id": AZURE_CLI, "name": "Azure CLI (Correctly configured for MSA-PT)"},
+        {"client_id": VISUAL_STUDIO, "name": "Visual Studio (Correctly configured for MSA-PT)"},
         {"client_id": "95de633a-083e-42f5-b444-a4295d8e9314", "name": "Whiteboard Services (Non MSA-PT app. Accepts AAD & MSA accounts.)"},
         ],
         option_renderer=lambda a: a["name"],
