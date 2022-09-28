@@ -1766,6 +1766,17 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             - A dict containing an "error" key, when token refresh failed.
         """
         data = kwargs.pop("data", {})
+        enable_msa_passthrough = kwargs.pop(  # MUST remove it from kwargs
+            "enable_msa_passthrough",  # Keep it as a hidden param, for now.
+                # OPTIONAL. MSA-Passthrough is a legacy configuration,
+                # needed by a small amount of Microsoft first-party apps,
+                # which would login MSA accounts via ".../organizations" authority.
+                # If you app belongs to this category, AND you are enabling broker,
+                # you would want to enable this flag. Default value is False.
+                # More background of MSA-PT is available from this internal docs:
+                # https://microsoft.sharepoint.com/:w:/t/Identity-DevEx/EatIUauX3c9Ctw1l7AQ6iM8B5CeBZxc58eoQCE0IuZ0VFw?e=tgc3jP&CID=39c853be-76ea-79d7-ee73-f1b2706ede05
+            False
+            ) and data.get("token_type") != "ssh-cert"  # Work around a known issue as of PyMsalRuntime 0.8
         self._validate_ssh_cert_input_data(data)
         if not on_before_launching_ui:
             on_before_launching_ui = lambda **kwargs: None
@@ -1786,21 +1797,6 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 logger.warning(
                     "Ignoring parameter extra_scopes_to_consent, "
                     "which is not supported by broker")
-            enable_msa_passthrough = kwargs.pop(
-                "enable_msa_passthrough",  # Keep it as a hidden param, for now.
-                    # OPTIONAL. MSA-Passthrough is a legacy configuration,
-                    # needed by a small amount of Microsoft first-party apps,
-                    # which would login MSA accounts via ".../organizations" authority.
-                    # If you app belongs to this category, AND you are enabling broker,
-                    # you would want to enable this flag. Default value is equivalent to False.
-                self.client_id in [
-                    # Experimental: Automatically enable MSA-PT mode for known MSA-PT apps
-                    # More background of MSA-PT is available from this internal docs:
-                    # https://microsoft.sharepoint.com/:w:/t/Identity-DevEx/EatIUauX3c9Ctw1l7AQ6iM8B5CeBZxc58eoQCE0IuZ0VFw?e=tgc3jP&CID=39c853be-76ea-79d7-ee73-f1b2706ede05
-                    "04b07795-8ddb-461a-bbee-02f9e1bf7b46",  # Azure CLI
-                    "04f0c124-f2bc-4f59-8241-bf6df9866bbd",  # Visual Studio
-                    ] and data.get("token_type") != "ssh-cert"  # Work around a known issue as of PyMsalRuntime 0.8
-                )
             return self._acquire_token_interactive_via_broker(
                 scopes,
                 parent_window_handle,
