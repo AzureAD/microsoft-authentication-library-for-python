@@ -1857,6 +1857,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         if login_hint and prompt != "select_account":  # OIDC prompts when the user did not sign in
             accounts = self.get_accounts(username=login_hint)
             if len(accounts) == 1:  # Unambiguously proceed with this account
+                logger.debug("Calling broker._acquire_token_silently()")
                 response = _acquire_token_silently(  # When it works, it bypasses prompt
                     authority,
                     self.client_id,
@@ -1868,6 +1869,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     return self._process_broker_response(response, scopes, data)
         # login_hint undecisive or not exists
         if prompt == "none" or not prompt:  # Must/Can attempt _signin_silently()
+            logger.debug("Calling broker._signin_silently()")
             response = _signin_silently(  # Unlike OIDC, it doesn't honor login_hint
                 authority, self.client_id, scopes,
                 validateAuthority=validate_authority,
@@ -1903,7 +1905,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     pass  # It will fall back to the _signin_interactively()
                 else:
                     return self._process_broker_response(response, scopes, data)
-        # Falls back to _signin_interactively()
+
+        logger.debug("Falls back to broker._signin_interactively()")
         on_before_launching_ui(ui="broker")
         response = _signin_interactively(
             authority, self.client_id, scopes,

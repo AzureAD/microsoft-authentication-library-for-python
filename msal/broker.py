@@ -144,7 +144,7 @@ def _signin_silently(
 def _signin_interactively(
         authority, client_id, scopes,
         parent_window_handle,  # None means auto-detect for console apps
-        prompt=None,
+        prompt=None,  # Note: This function does not really use this parameter
         login_hint=None,
         claims=None,
         correlation_id=None,
