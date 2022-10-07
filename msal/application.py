@@ -444,9 +444,22 @@ class ClientApplication(object):
             New in version 1.19.0.
 
         :param boolean allow_broker:
-            Brokers provide Single-Sign-On, device identification,
-            and application identification verification.
-            This flag defaults to None, which means MSAL will not utilize broker.
+            A broker is a component installed on your device.
+            Broker implicitly gives your device an identity. By using a broker,
+            your device becomes a factor that can satisfy MFA (Multi-factor authentication).
+            This factor would become mandatory
+            if a tenant's admin enables a corresponding Conditional Access (CA) policy.
+            The broker's presence allows Microsoft identity platform
+            to have higher confidence that the tokens are being issued to your device,
+            and that is more secure.
+
+            An additional benefit of broker is,
+            it runs as a long-lived process with your device's OS,
+            and maintains its own cache,
+            so that your broker-enabled apps (even a CLI)
+            could automatically SSO from a previously established signed-in session.
+
+            This parameter defaults to None, which means MSAL will not utilize a broker.
             If this parameter is set to True,
             MSAL will use the broker whenever possible,
             and automatically fall back to non-broker behavior.
