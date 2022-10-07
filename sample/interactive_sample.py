@@ -1,4 +1,7 @@
 """
+Prerequisite is documented here:
+https://msal-python.readthedocs.io/en/latest/#msal.PublicClientApplication.acquire_token_interactive
+
 The configuration file would look like this:
 
 {
@@ -30,6 +33,8 @@ config = json.load(open(sys.argv[1]))
 # Create a preferably long-lived app instance which maintains a token cache.
 app = msal.PublicClientApplication(
     config["client_id"], authority=config["authority"],
+    #allow_broker=True,  # If opted in, you will be guided to meet the prerequisites, when applicable
+                         # See also: https://docs.microsoft.com/en-us/azure/active-directory/develop/scenario-desktop-acquire-token-wam#wam-value-proposition
     # token_cache=...  # Default cache is in memory only.
                        # You can learn how to use SerializableTokenCache from
                        # https://msal-python.readthedocs.io/en/latest/#msal.SerializableTokenCache
@@ -55,6 +60,7 @@ if not result:
     print("A local browser window will be open for you to sign in. CTRL+C to cancel.")
     result = app.acquire_token_interactive(  # Only works if your app is registered with redirect_uri as http://localhost
         config["scope"],
+        #parent_window_handle=...,  # If broker is enabled, you will be guided to provide a window handle
         login_hint=config.get("username"),  # Optional.
             # If you know the username ahead of time, this parameter can pre-fill
             # the username (or email address) field of the sign-in page for the user,

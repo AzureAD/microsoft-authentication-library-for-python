@@ -82,10 +82,10 @@ class Authority(object):
         authority, self.instance, tenant = canonicalize(authority_url)
         self.is_adfs = tenant.lower() == 'adfs'
         parts = authority.path.split('/')
-        is_b2c = any(
+        self._is_b2c = any(
             self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS
             ) or (len(parts) == 3 and parts[2].lower().startswith("b2c_"))
-        self._is_known_to_developer = self.is_adfs or is_b2c or not validate_authority
+        self._is_known_to_developer = self.is_adfs or self._is_b2c or not validate_authority
         is_known_to_microsoft = self.instance in WELL_KNOWN_AUTHORITY_HOSTS
         instance_discovery_endpoint = 'https://{}/common/discovery/instance'.format(  # Note: This URL seemingly returns V1 endpoint only
             WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
