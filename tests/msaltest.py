@@ -1,6 +1,9 @@
 import getpass, logging, pprint, sys, msal
 
 
+AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
+
 def _input_boolean(message):
     return input(
         "{} (N/n/F/f or empty means False, otherwise it is True): ".format(message)
@@ -74,12 +77,17 @@ def _acquire_token_interactive(app, scopes, data=None):
         # login_hint is unnecessary when prompt=select_account,
         # but we still let tester input login_hint, just for testing purpose.
         [None] + [a["username"] for a in app.get_accounts()],
-        header="login_hint? (If you have multiple signed-in sessions in browser, and you specify a login_hint to match one of them, you will bypass the account picker.)",
+        header="login_hint? (If you have multiple signed-in sessions in browser/broker, and you specify a login_hint to match one of them, you will bypass the account picker.)",
         accept_nonempty_string=True,
         )
     login_hint = raw_login_hint["username"] if isinstance(raw_login_hint, dict) else raw_login_hint
     result = app.acquire_token_interactive(
-        scopes, prompt=prompt, login_hint=login_hint, data=data or {})
+        scopes,
+        parent_window_handle=app.CONSOLE_WINDOW_HANDLE,  # This test app is a console app
+        enable_msa_passthrough=app.client_id in [  # Apps are expected to set this right
+            AZURE_CLI, VISUAL_STUDIO,
+            ],  # Here this test app mimics the setting for some known MSA-PT apps
+        prompt=prompt, login_hint=login_hint, data=data or {})
     if login_hint and "id_token_claims" in result:
         signed_in_user = result.get("id_token_claims", {}).get("preferred_username")
         if signed_in_user != login_hint:
@@ -127,17 +135,21 @@ def remove_account(app):
         app.remove_account(account)
         print('Account "{}" and/or its token(s) are signed out from MSAL Python'.format(account["username"]))
 
-def exit(_):
+def exit(app):
     """Exit"""
-    bug_link = "https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/new/choose"
+    bug_link = (
+        "https://identitydivision.visualstudio.com/Engineering/_queries/query/79b3a352-a775-406f-87cd-a487c382a8ed/"
+        if app._enable_broker else
+        "https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/new/choose"
+        )
     print("Bye. If you found a bug, please report it here: {}".format(bug_link))
     sys.exit()
 
 def main():
     print("Welcome to the Msal Python Console Test App, committed at 2022-5-2\n")
     chosen_app = _select_options([
-        {"client_id": "04b07795-8ddb-461a-bbee-02f9e1bf7b46", "name": "Azure CLI (Correctly configured for MSA-PT)"},
-        {"client_id": "04f0c124-f2bc-4f59-8241-bf6df9866bbd", "name": "Visual Studio (Correctly configured for MSA-PT)"},
+        {"client_id": AZURE_CLI, "name": "Azure CLI (Correctly configured for MSA-PT)"},
+        {"client_id": VISUAL_STUDIO, "name": "Visual Studio (Correctly configured for MSA-PT)"},
         {"client_id": "95de633a-083e-42f5-b444-a4295d8e9314", "name": "Whiteboard Services (Non MSA-PT app. Accepts AAD & MSA accounts.)"},
         ],
         option_renderer=lambda a: a["name"],
@@ -155,6 +167,7 @@ def main():
             header="Input authority (Note that MSA-PT apps would NOT use the /common authority)",
             accept_nonempty_string=True,
             ),
+        allow_broker=_input_boolean("Allow broker? (Azure CLI currently only supports @microsoft.com accounts when enabling broker)"),
         )
     if _input_boolean("Enable MSAL Python's DEBUG log?"):
         logging.basicConfig(level=logging.DEBUG)

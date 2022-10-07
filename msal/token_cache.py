@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 def is_subdict_of(small, big):
     return dict(big, **small) == big
 
+def _get_username(id_token_claims):
+    return id_token_claims.get(
+        "preferred_username",  # AAD
+        id_token_claims.get("upn"))  # ADFS 2019
 
 class TokenCache(object):
     """This is considered as a base class containing minimal cache behavior.
@@ -149,10 +153,9 @@ class TokenCache(object):
         access_token = response.get("access_token")
         refresh_token = response.get("refresh_token")
         id_token = response.get("id_token")
-        id_token_claims = (
-            decode_id_token(id_token, client_id=event["client_id"])
-            if id_token
-            else response.get("id_token_claims", {}))  # Broker would provide id_token_claims
+        id_token_claims = response.get("id_token_claims") or (  # Prefer the claims from broker
+            # Only use decode_id_token() when necessary, it contains time-sensitive validation
+            decode_id_token(id_token, client_id=event["client_id"]) if id_token else {})
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
         target = ' '.join(event.get("scope") or [])  # Per schema, we don't sort it
@@ -190,10 +193,11 @@ class TokenCache(object):
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "realm": realm,
-                    "local_account_id": id_token_claims.get(
-                        "oid", id_token_claims.get("sub")),
-                    "username": id_token_claims.get("preferred_username")  # AAD
-                        or id_token_claims.get("upn")  # ADFS 2019
+                    "local_account_id": event.get(
+                        "_account_id",  # Came from mid-tier code path.
+                            # Emperically, it is the oid in AAD or cid in MSA.
+                        id_token_claims.get("oid", id_token_claims.get("sub"))),
+                    "username": _get_username(id_token_claims)
                         or data.get("username")  # Falls back to ROPC username
                         or event.get("username")  # Falls back to Federated ROPC username
                         or "",  # The schema does not like null
