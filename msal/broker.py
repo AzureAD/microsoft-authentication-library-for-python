@@ -24,7 +24,7 @@ except (ImportError, AttributeError):  # AttributeError happens when a prior pym
     # PyMsalRuntime currently supports these Windows versions, listed in this MSFT internal link
     # https://github.com/AzureAD/microsoft-authentication-library-for-cpp/pull/2406/files
     raise ImportError(  # TODO: Remove or adjust this line right before merging this PR
-        'You need to install dependency by: pip install "msal[broker]>=1.20.0b1,<2"')
+        'You need to install dependency by: pip install "msal[broker]>=1.20,<2"')
 # It could throw RuntimeError when running on ancient versions of Windows
 
 
