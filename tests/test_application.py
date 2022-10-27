@@ -625,3 +625,17 @@ class TestClientCredentialGrant(unittest.TestCase):
         self._test_certain_authority_should_emit_warnning(
             authority="https://login.microsoftonline.com/organizations")
 
+
+class TestBrokerAllowance(unittest.TestCase):
+    def test_opt_in_for_broker_should_error_out_on_nonsupported_platforms(self):
+        supported_platforms = ["win32"]
+        if sys.platform in supported_platforms:
+            try:
+                PublicClientApplication("client_id", allow_broker=True)
+                # It would either create an app instance successfully
+            except ImportError:
+                pass  # Or detect the absence of MsalRuntime
+        else:
+            with self.assertRaises(ValueError):  # We decide to error out
+                PublicClientApplication("client_id", allow_broker=True)
+

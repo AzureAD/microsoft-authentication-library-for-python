@@ -450,7 +450,7 @@ class ClientApplication(object):
             This factor would become mandatory
             if a tenant's admin enables a corresponding Conditional Access (CA) policy.
             The broker's presence allows Microsoft identity platform
-            to have higher confidence that the tokens are being issued to your device,
+            to have more confidence that the tokens are being issued to your device,
             and that is more secure.
 
             An additional benefit of broker is,
@@ -459,29 +459,24 @@ class ClientApplication(object):
             so that your broker-enabled apps (even a CLI)
             could automatically SSO from a previously established signed-in session.
 
-            This parameter defaults to None, which means MSAL will not utilize a broker.
-            If this parameter is set to True,
-            MSAL will use the broker whenever possible,
-            and automatically fall back to non-broker behavior.
-            That also means your app does not need to enable broker conditionally,
-            you can always set allow_broker to True,
-            as long as your app meets the following prerequisite:
+            This parameter defaults to None, which means MSAL will not utilize a broker,
+            and your end users will have the traditional browser-based login experience.
 
-            * Installed optional dependency, e.g. ``pip install msal[broker]>=1.20,<2``.
-              (Note that broker is currently only available on Windows 10+)
+            You can set it to True, based on the OS platform.
+            Currently, MSAL supports broker on Windows 10+, and errors out on others.
+            So, for example, you can do ``allow_broker = sys.platform=="win32"``.
+
+            In order to allow broker, your app must also meet the following prerequisite:
+
+            * Install optional dependency, e.g. ``pip install msal[broker]>=1.20,<2``.
 
             * Register a new redirect_uri for your desktop app as:
               ``ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id``
 
-            * Tested your app in following scenarios:
-
-              * Windows 10+
-
-              * PublicClientApplication's following methods::
-                acquire_token_interactive(), acquire_token_by_username_password(),
-                acquire_token_silent() (or acquire_token_silent_with_error()).
-
-              * AAD and MSA accounts (i.e. Non-ADFS, non-B2C)
+            * Test your app with AAD and MSA accounts (i.e. Non-ADFS, non-B2C)
+              in PublicClientApplication's following methods:
+              acquire_token_interactive(), acquire_token_by_username_password(),
+              acquire_token_silent() (or acquire_token_silent_with_error()).
 
             New in version 1.20.0.
         """
@@ -549,6 +544,9 @@ class ClientApplication(object):
                     )
             else:
                 raise
+
+        if allow_broker and sys.platform != "win32":
+            raise ValueError("allow_broker=True is only supported on Windows")
         is_confidential_app = bool(
             isinstance(self, ConfidentialClientApplication) or self.client_credential)
         if is_confidential_app and allow_broker:

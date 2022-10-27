@@ -33,7 +33,7 @@ config = json.load(open(sys.argv[1]))
 # Create a preferably long-lived app instance which maintains a token cache.
 app = msal.PublicClientApplication(
     config["client_id"], authority=config["authority"],
-    #allow_broker=True,  # If opted in, you will be guided to meet the prerequisites, when applicable
+    #allow_broker=sys.platform in ["win32"],  # If opted in, you will be guided to meet the prerequisites, when applicable
                          # See also: https://docs.microsoft.com/en-us/azure/active-directory/develop/scenario-desktop-acquire-token-wam#wam-value-proposition
     # token_cache=...  # Default cache is in memory only.
                        # You can learn how to use SerializableTokenCache from
