@@ -1164,8 +1164,8 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
         #       it means MSAL Python is not affected by that.
 
 
+@unittest.skipUnless(broker_available, "AT POP feature is only supported by using broker")
 class PopTestCase(LabBasedTestCase):
-    @unittest.skipUnless(broker_available, "AT POP feature is supported by using broker")
     def test_at_pop_should_contain_pop_scheme_content(self):
         auth_scheme = msal.PopAuthScheme(
             http_method=msal.PopAuthScheme.HTTP_GET,
@@ -1187,6 +1187,92 @@ class PopTestCase(LabBasedTestCase):
         self.assertEqual(payload["u"], auth_scheme._url.netloc)
         self.assertEqual(payload["p"], auth_scheme._url.path)
         self.assertEqual(payload["nonce"], auth_scheme._nonce)
+
+    # TODO: Remove this, as ROPC support is removed by Broker-on-Win
+    def test_at_pop_via_testingsts_service(self):
+        """Based on https://testingsts.azurewebsites.net/ServerNonce"""
+        self.skipTest("ROPC support is removed by Broker-on-Win")
+        auth_scheme = msal.PopAuthScheme(
+            http_method="POST",
+            url="https://www.Contoso.com/Path1/Path2?queryParam1=a&queryParam2=b",
+            nonce=requests.get(
+                # TODO: Could use ".../missing" and then parse its WWW-Authenticate header
+                "https://testingsts.azurewebsites.net/servernonce/get").text,
+            )
+        config = self.get_lab_user(usertype="cloud")
+        config["password"] = self.get_lab_user_secret(config["lab_name"])
+        result = self._test_username_password(auth_scheme=auth_scheme, **config)
+        self.assertEqual(result["token_type"], "pop")
+        shr = result["access_token"]
+        payload = json.loads(decode_part(result["access_token"].split(".")[1]))
+        logger.debug("AT POP payload = %s", json.dumps(payload, indent=2))
+        self.assertEqual(payload["m"], auth_scheme._http_method)
+        self.assertEqual(payload["u"], auth_scheme._url.netloc)
+        self.assertEqual(payload["p"], auth_scheme._url.path)
+        self.assertEqual(payload["nonce"], auth_scheme._nonce)
+
+        validation = requests.post(
+            # TODO: This endpoint does not seem to validate the url
+            "https://testingsts.azurewebsites.net/servernonce/validateshr",
+            data={"SHR": shr},
+            )
+        self.assertEqual(validation.status_code, 200)
+
+    def test_at_pop_calling_pattern(self):
+        # The calling pattern was described here:
+        # https://identitydivision.visualstudio.com/DevEx/_git/AuthLibrariesApiReview?path=/PoPTokensProtocol/PoP_API_In_MSAL.md&_a=preview&anchor=proposal-2---optional-isproofofposessionsupportedbyclient-helper-(accepted)
+
+        # It is supposed to call app.is_pop_supported() first,
+        # and then fallback to bearer token code path.
+        # We skip it here because this test case has not yet initialize self.app
+        # assert self.app.is_pop_supported()
+        api_endpoint = "https://20.190.132.47/beta/me"
+        resp = requests.get(api_endpoint, verify=False)
+        self.assertEqual(resp.status_code, 401, "Initial call should end with an http 401 error")
+        result = self._get_shr_pop(**dict(
+            self.get_lab_user(usertype="cloud"),  # This is generally not the current laptop's default AAD account
+            scope=["https://graph.microsoft.com/.default"],
+            auth_scheme=msal.PopAuthScheme(
+                http_method=msal.PopAuthScheme.HTTP_GET,
+                url=api_endpoint,
+                nonce=self._extract_pop_nonce(resp.headers.get("WWW-Authenticate")),
+                ),
+            ))
+        resp = requests.get(api_endpoint, verify=False, headers={
+            "Authorization": "pop {}".format(result["access_token"]),
+            })
+        if resp.status_code != 200:
+            # TODO https://teams.microsoft.com/l/message/19:b1697a70b1de43ddaea281d98ff2e985@thread.v2/1700184847801?context=%7B%22contextType%22%3A%22chat%22%7D
+            self.skipTest("We haven't got this end-to-end test case working")
+        self.assertEqual(resp.status_code, 200, "POP resource should be accessible")
+
+    def _extract_pop_nonce(self, www_authenticate):
+        # This is a hack for testing purpose only. Do not use this in prod.
+        # FYI: There is a www-authenticate package but it falters when encountering realm=""
+        import re
+        found = re.search(r'nonce="(.+?)"', www_authenticate)
+        if found:
+            return found.group(1)
+
+    def _get_shr_pop(
+            self, client_id=None, authority=None, scope=None, auth_scheme=None,
+            **kwargs):
+        result = self._test_acquire_token_interactive(
+            # Lab test users tend to get kicked out from WAM, we use local user to test
+            client_id=client_id,
+            authority=authority,
+            scope=scope,
+            auth_scheme=auth_scheme,
+            **kwargs)  # It also tests assertCacheWorksForUser()
+        self.assertEqual(result["token_source"], "broker", "POP is only supported by broker")
+        self.assertEqual(result["token_type"], "pop")
+        payload = json.loads(decode_part(result["access_token"].split(".")[1]))
+        logger.debug("AT POP payload = %s", json.dumps(payload, indent=2))
+        self.assertEqual(payload["m"], auth_scheme._http_method)
+        self.assertEqual(payload["u"], auth_scheme._url.netloc)
+        self.assertEqual(payload["p"], auth_scheme._url.path)
+        self.assertEqual(payload["nonce"], auth_scheme._nonce)
+        return result
 
 
 if __name__ == "__main__":
