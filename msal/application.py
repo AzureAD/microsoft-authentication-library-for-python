@@ -622,7 +622,7 @@ class ClientApplication(object):
             else self._region_configured)  # It will retain the None i.e. opted out
         logger.debug('Region to be used: {}'.format(repr(region_to_use)))
         if region_to_use:
-            regional_host = ("{}.r.login.microsoftonline.com".format(region_to_use)
+            regional_host = ("{}.login.microsoft.com".format(region_to_use)
                 if central_authority.instance in (
                     # The list came from point 3 of the algorithm section in this internal doc
                     # https://identitydivision.visualstudio.com/DevEx/_git/AuthLibrariesApiReview?path=/PinAuthToRegion/AAD%20SDK%20Proposal%20to%20Pin%20Auth%20to%20region.md&anchor=algorithm&_a=preview
