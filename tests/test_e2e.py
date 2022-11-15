@@ -904,7 +904,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
                 self.app.http_client, "post", return_value=MinimalResponse(
                 status_code=400, text='{"error": "mock"}')) as mocked_method:
             self.app.acquire_token_for_client(scopes)
-            expected_host = '{}.r.login.microsoftonline.com'.format(
+            expected_host = '{}.login.microsoft.com'.format(
                 expected_region) if expected_region else 'login.microsoftonline.com'
             mocked_method.assert_called_with(
                 'https://{}/{}/oauth2/v2.0/token'.format(
