@@ -164,8 +164,11 @@ class TokenCache(object):
             now = int(time.time() if now is None else now)
 
             if access_token:
+                default_expires_in = (  # https://www.rfc-editor.org/rfc/rfc6749#section-5.1
+                    int(response.get("expires_on")) - now  # Some Managed Identity emits this
+                    ) if response.get("expires_on") else 600
                 expires_in = int(  # AADv1-like endpoint returns a string
-			response.get("expires_in", 3599))
+                    response.get("expires_in", default_expires_in))
                 ext_expires_in = int(  # AADv1-like endpoint returns a string
 			response.get("ext_expires_in", expires_in))
                 at = {
