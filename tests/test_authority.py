@@ -59,7 +59,10 @@ class TestAuthority(unittest.TestCase):
         self.assertNotIn('v2.0', a.token_endpoint)
 
     def test_unknown_host_wont_pass_instance_discovery(self):
-        _assert = getattr(self, "assertRaisesRegex", self.assertRaisesRegexp)  # Hack
+        _assert = (
+            # Was Regexp, added alias Regex in Py 3.2, and Regexp will be gone in Py 3.12
+            getattr(self, "assertRaisesRegex", None) or
+            getattr(self, "assertRaisesRegexp", None))
         with _assert(ValueError, "invalid_instance"):
             Authority('https://example.com/tenant_doesnt_matter_in_this_case',
                       MinimalHttpClient())
