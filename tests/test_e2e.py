@@ -196,6 +196,8 @@ class E2eTestCase(unittest.TestCase):
             azure_region=azure_region,  # Regional endpoint does not support ROPC.
                 # Here we just use it to test a regional app won't break ROPC.
             client_credential=client_secret)
+        self.assertEqual(
+            self.app.get_accounts(username=username), [], "Cache starts empty")
         result = self.app.acquire_token_by_username_password(
             username, password, scopes=scope)
         self.assertLoosely(result)
@@ -204,6 +206,9 @@ class E2eTestCase(unittest.TestCase):
             username=username,  # Our implementation works even when "profile" scope was not requested, or when profile claims is unavailable in B2C
             )
 
+    @unittest.skipIf(
+        os.getenv("TRAVIS"),  # It is set when running on TravisCI or Github Actions
+        "Although it is doable, we still choose to skip device flow to save time")
     def _test_device_flow(
             self, client_id=None, authority=None, scope=None, **ignored):
         assert client_id and authority and scope
@@ -229,6 +234,7 @@ class E2eTestCase(unittest.TestCase):
         logger.info(
             "%s obtained tokens: %s", self.id(), json.dumps(result, indent=4))
 
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def _test_acquire_token_interactive(
             self, client_id=None, authority=None, scope=None, port=None,
             username=None, lab_name=None,
@@ -289,7 +295,6 @@ class SshCertTestCase(E2eTestCase):
             result.get("error"), result.get("error_description")))
         self.assertEqual("ssh-cert", result["token_type"])
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_ssh_cert_for_user_should_work_with_any_account(self):
         result = self._test_acquire_token_interactive(
             client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",  # Azure CLI is one
@@ -524,8 +529,8 @@ class LabBasedTestCase(E2eTestCase):
         cls.session.close()
 
     @classmethod
-    def get_lab_app_object(cls, **query):  # https://msidlab.com/swagger/index.html
-        url = "https://msidlab.com/api/app"
+    def get_lab_app_object(cls, client_id=None, **query):  # https://msidlab.com/swagger/index.html
+        url = "https://msidlab.com/api/app/{}".format(client_id or "")
         resp = cls.session.get(url, params=query)
         result = resp.json()[0]
         result["scopes"] = [  # Raw data has extra space, such as "s1, s2"
@@ -561,6 +566,7 @@ class LabBasedTestCase(E2eTestCase):
             "scope": scope,
             }
 
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def _test_acquire_token_by_auth_code(
             self, client_id=None, authority=None, port=None, scope=None,
             **ignored):
@@ -583,6 +589,7 @@ class LabBasedTestCase(E2eTestCase):
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, scope, username=None)
 
+    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def _test_acquire_token_by_auth_code_flow(
             self, client_id=None, authority=None, port=None, scope=None,
             username=None, lab_name=None,
@@ -723,11 +730,9 @@ class WorldWideTestCase(LabBasedTestCase):
                 self.skipTest("MEX endpoint in our test environment tends to fail")
             raise
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_cloud_acquire_token_interactive(self):
         self._test_acquire_token_interactive(**self.get_lab_user(usertype="cloud"))
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_msa_pt_app_signin_via_organizations_authority_without_login_hint(self):
         """There is/was an upstream bug. See test case full docstring for the details.
 
@@ -751,7 +756,6 @@ class WorldWideTestCase(LabBasedTestCase):
         config["password"] = self.get_lab_user_secret(config["lab_name"])
         self._test_username_password(**config)
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_adfs2019_onprem_acquire_token_by_auth_code(self):
         """When prompted, you can manually login using this account:
 
@@ -765,7 +769,6 @@ class WorldWideTestCase(LabBasedTestCase):
         config["port"] = 8080
         self._test_acquire_token_by_auth_code(**config)
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_adfs2019_onprem_acquire_token_by_auth_code_flow(self):
         config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
         self._test_acquire_token_by_auth_code_flow(**dict(
@@ -775,7 +778,6 @@ class WorldWideTestCase(LabBasedTestCase):
             port=8080,
             ))
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_adfs2019_onprem_acquire_token_interactive(self):
         config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
         self._test_acquire_token_interactive(**dict(
@@ -846,7 +848,6 @@ class WorldWideTestCase(LabBasedTestCase):
         base = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com"
         return base + "/" + policy  # We do not support base + "?p=" + policy
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_b2c_acquire_token_by_auth_code(self):
         """
         When prompted, you can manually login using this account:
@@ -863,7 +864,6 @@ class WorldWideTestCase(LabBasedTestCase):
             scope=config["scopes"],
             )
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def test_b2c_acquire_token_by_auth_code_flow(self):
         self._test_acquire_token_by_auth_code_flow(**dict(
             self.get_lab_user(usertype="b2c", b2cprovider="local"),
