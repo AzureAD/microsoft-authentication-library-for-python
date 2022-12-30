@@ -17,10 +17,9 @@ class TestAuthCodeReceiver(unittest.TestCase):
             self.assertNotEqual(port, receiver.get_port())
 
     def test_no_two_concurrent_receivers_can_listen_on_same_port(self):
-        port = 12345  # Assuming this port is available
-        with AuthCodeReceiver(port=port) as receiver:
+        with AuthCodeReceiver() as receiver:
             expected_error = OSError if sys.version_info[0] > 2 else socket.error
             with self.assertRaises(expected_error):
-                with AuthCodeReceiver(port=port) as receiver2:
+                with AuthCodeReceiver(port=receiver.get_port()):
                     pass
 
