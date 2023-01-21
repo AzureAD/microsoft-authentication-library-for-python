@@ -551,6 +551,8 @@ class LabBasedTestCase(E2eTestCase):
     def get_lab_user(cls, **query):  # https://docs.msidlab.com/labapi/userapi.html
         resp = cls.session.get("https://msidlab.com/api/user", params=query)
         result = resp.json()[0]
+        assert result.get("upn"), "Found no test user but {}".format(
+            json.dumps(result, indent=2))
         _env = query.get("azureenvironment", "").lower()
         authority_base = {
             "azureusgovernment": "https://login.microsoftonline.us/"
