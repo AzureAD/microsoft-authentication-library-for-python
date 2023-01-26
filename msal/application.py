@@ -1375,7 +1375,7 @@ class ClientApplication(object):
             if account and account.get("authority_type") == _AUTHORITY_TYPE_CLOUDSHELL:
                 return self._acquire_token_by_cloud_shell(scopes, data=data)
 
-            if self._enable_broker and account is not None and data.get("token_type") != "ssh-cert":
+            if self._enable_broker and account is not None:
                 from .broker import _acquire_token_silently
                 response = _acquire_token_silently(
                     "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -1799,7 +1799,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             return self._acquire_token_by_cloud_shell(scopes, data=data)
         claims = _merge_claims_challenge_and_capabilities(
             self._client_capabilities, claims_challenge)
-        if self._enable_broker and data.get("token_type") != "ssh-cert":
+        if self._enable_broker:
             if parent_window_handle is None:
                 raise ValueError(
                     "parent_window_handle is required when you opted into using broker. "
