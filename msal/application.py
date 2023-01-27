@@ -588,18 +588,9 @@ class ClientApplication(object):
             raise ValueError(
                 "API does not accept {} value as user-provided scopes".format(
                     reserved_scope))
-        if self.client_id in scope_set:
-            if len(scope_set) > 1:
-                # We make developers pass their client id, so that they can express
-                # the intent that they want the token for themselves (their own
-                # app).
-                # If we do not restrict them to passing only client id then they
-                # could write code where they expect an id token but end up getting
-                # access_token.
-                raise ValueError("Client Id can only be provided as a single scope")
-            decorated = set(reserved_scope)  # Make a writable copy
-        else:
-            decorated = scope_set | reserved_scope
+
+        # client_id can also be used as a scope in B2C
+        decorated = scope_set | reserved_scope
         decorated -= self._exclude_scopes
         return list(decorated)
 

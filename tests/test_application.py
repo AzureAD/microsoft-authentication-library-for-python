@@ -625,3 +625,18 @@ class TestClientCredentialGrant(unittest.TestCase):
         self._test_certain_authority_should_emit_warnning(
             authority="https://login.microsoftonline.com/organizations")
 
+
+class TestScopeDecoration(unittest.TestCase):
+    def _test_client_id_should_be_a_valid_scope(self, client_id, other_scopes):
+        # B2C needs this https://learn.microsoft.com/en-us/azure/active-directory-b2c/access-tokens#openid-connect-scopes
+        reserved_scope = ['openid', 'profile', 'offline_access']
+        scopes_to_use = [client_id] + other_scopes
+        self.assertEqual(
+            set(ClientApplication(client_id)._decorate_scope(scopes_to_use)),
+            set(scopes_to_use + reserved_scope),
+            "Scope decoration should return input scopes plus reserved scopes")
+
+    def test_client_id_should_be_a_valid_scope(self):
+        self._test_client_id_should_be_a_valid_scope("client_id", [])
+        self._test_client_id_should_be_a_valid_scope("client_id", ["foo"])
+

@@ -884,6 +884,18 @@ class WorldWideTestCase(LabBasedTestCase):
             scope=config["scopes"],
             )
 
+    def test_b2c_allows_using_client_id_as_scope(self):
+        # See also https://learn.microsoft.com/en-us/azure/active-directory-b2c/access-tokens#openid-connect-scopes
+        config = self.get_lab_app_object(azureenvironment="azureb2ccloud")
+        config["scopes"] = [config["appId"]]
+        self._test_username_password(
+            authority=self._build_b2c_authority("B2C_1_ROPC_Auth"),
+            client_id=config["appId"],
+            username="b2clocal@msidlabb2c.onmicrosoft.com",
+            password=self.get_lab_user_secret("msidlabb2c"),
+            scope=config["scopes"],
+            )
+
 
 class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
     region = "westus"
