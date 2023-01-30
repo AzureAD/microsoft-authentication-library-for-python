@@ -34,7 +34,7 @@ def _select_options(
                 return raw_data
 
 def _input_scopes():
-    return _select_options([
+    scopes = _select_options([
         "https://graph.microsoft.com/.default",
         "https://management.azure.com/.default",
         "User.Read",
@@ -42,7 +42,10 @@ def _input_scopes():
         ],
         header="Select a scope (multiple scopes can only be input by manually typing them, delimited by space):",
         accept_nonempty_string=True,
-        ).split()
+        ).split()  # It also converts the input string(s) into a list
+    if "https://pas.windows.net/CheckMyAccess/Linux/.default" in scopes:
+        raise ValueError("SSH Cert scope shall be tested by its dedicated functions")
+    return scopes
 
 def _select_account(app):
     accounts = app.get_accounts()
@@ -183,6 +186,8 @@ def main():
             ], option_renderer=lambda f: f.__doc__, header="MSAL Python APIs:")
         try:
             func(app)
+        except ValueError as e:
+            logging.error("Invalid input: %s", e)
         except KeyboardInterrupt:  # Useful for bailing out a stuck interactive flow
             print("Aborted")
 
