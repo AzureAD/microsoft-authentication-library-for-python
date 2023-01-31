@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.20.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.21.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -588,18 +588,9 @@ class ClientApplication(object):
             raise ValueError(
                 "API does not accept {} value as user-provided scopes".format(
                     reserved_scope))
-        if self.client_id in scope_set:
-            if len(scope_set) > 1:
-                # We make developers pass their client id, so that they can express
-                # the intent that they want the token for themselves (their own
-                # app).
-                # If we do not restrict them to passing only client id then they
-                # could write code where they expect an id token but end up getting
-                # access_token.
-                raise ValueError("Client Id can only be provided as a single scope")
-            decorated = set(reserved_scope)  # Make a writable copy
-        else:
-            decorated = scope_set | reserved_scope
+
+        # client_id can also be used as a scope in B2C
+        decorated = scope_set | reserved_scope
         decorated -= self._exclude_scopes
         return list(decorated)
 
@@ -622,7 +613,7 @@ class ClientApplication(object):
             else self._region_configured)  # It will retain the None i.e. opted out
         logger.debug('Region to be used: {}'.format(repr(region_to_use)))
         if region_to_use:
-            regional_host = ("{}.r.login.microsoftonline.com".format(region_to_use)
+            regional_host = ("{}.login.microsoft.com".format(region_to_use)
                 if central_authority.instance in (
                     # The list came from point 3 of the algorithm section in this internal doc
                     # https://identitydivision.visualstudio.com/DevEx/_git/AuthLibrariesApiReview?path=/PinAuthToRegion/AAD%20SDK%20Proposal%20to%20Pin%20Auth%20to%20region.md&anchor=algorithm&_a=preview
@@ -1375,7 +1366,7 @@ class ClientApplication(object):
             if account and account.get("authority_type") == _AUTHORITY_TYPE_CLOUDSHELL:
                 return self._acquire_token_by_cloud_shell(scopes, data=data)
 
-            if self._enable_broker and account is not None and data.get("token_type") != "ssh-cert":
+            if self._enable_broker and account is not None:
                 from .broker import _acquire_token_silently
                 response = _acquire_token_silently(
                     "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -1799,7 +1790,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             return self._acquire_token_by_cloud_shell(scopes, data=data)
         claims = _merge_claims_challenge_and_capabilities(
             self._client_capabilities, claims_challenge)
-        if self._enable_broker and data.get("token_type") != "ssh-cert":
+        if self._enable_broker:
             if parent_window_handle is None:
                 raise ValueError(
                     "parent_window_handle is required when you opted into using broker. "

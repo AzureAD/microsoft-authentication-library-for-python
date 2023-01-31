@@ -62,6 +62,16 @@ API
 ===
 
 The following section is the API Reference of MSAL Python.
+The API Reference is like a dictionary. You **read this API section when and only when**:
+
+* You already followed our sample(s) above and have your app up and running,
+  but want to know more on how you could tweak the authentication experience
+  by using other optional parameters (there are plenty of them!)
+* You read the MSAL Python source code and found a helper function that is useful to you,
+  then you would want to double check whether that helper is documented below.
+  Only documented APIs are considered part of the MSAL Python public API,
+  which are guaranteed to be backward-compatible in MSAL Python 1.x series.
+  Undocumented internal helpers are subject to change anytime, without prior notice.
 
 .. note::
 
