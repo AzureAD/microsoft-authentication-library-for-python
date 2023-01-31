@@ -92,7 +92,9 @@ setup(
             # The broker is defined as optional dependency,
             # so that downstream apps can opt in. The opt-in is needed, partially because
             # most existing MSAL Python apps do not have the redirect_uri needed by broker.
-            "pymsalruntime>=0.11.2,<0.14;python_version>='3.6' and platform_system=='Windows'",
+            # MSAL Python uses a subset of API from PyMsalRuntime 0.11.2+,
+            # but we still bump the lower bound to 0.13.2+ for its important bugfix (https://github.com/AzureAD/microsoft-authentication-library-for-cpp/pull/3244)
+            "pymsalruntime>=0.13.2,<0.14;python_version>='3.6' and platform_system=='Windows'",
             ],
         },
 )
