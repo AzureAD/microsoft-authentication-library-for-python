@@ -1182,7 +1182,7 @@ class ClientApplication(object):
                 client_id=self.client_id,
                 scope=response["scope"].split() if "scope" in response else scopes,
                 token_endpoint=self.authority.token_endpoint,
-                response=response.copy(),
+                response=response,
                 data=data or {},
                 authority_type=_AUTHORITY_TYPE_CLOUDSHELL,
                 ))
@@ -1399,7 +1399,7 @@ class ClientApplication(object):
                 client_id=self.client_id,
                 scope=response["scope"].split() if "scope" in response else scopes,
                 token_endpoint=self.authority.token_endpoint,
-                response=response.copy(),
+                response=response,
                 data=data,
                 _account_id=response["_account_id"],
                 ))
