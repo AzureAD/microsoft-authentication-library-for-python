@@ -174,16 +174,14 @@ def tenant_discovery(tenant_discovery_endpoint, http_client, **kwargs):
     # Returns Openid Configuration
     resp = http_client.get(tenant_discovery_endpoint, **kwargs)
     if resp.status_code == 200:
-        payload = json.loads(resp.text)  # It could raise ValueError
-        if 'authorization_endpoint' in payload and 'token_endpoint' in payload:
-            return payload  # Happy path
-        raise ValueError("OIDC Discovery does not provide enough information")
+        return json.loads(resp.text)  # It could raise ValueError
     if 400 <= resp.status_code < 500:
         # Nonexist tenant would hit this path
         # e.g. https://login.microsoftonline.com/nonexist_tenant/v2.0/.well-known/openid-configuration
-        raise ValueError(
-            "OIDC Discovery endpoint rejects our request. Error: {}".format(
-                resp.text  # Expose it as-is b/c OIDC defines no error response format
+        raise ValueError("OIDC Discovery failed on {}. HTTP status: {}, Error: {}".format(
+            tenant_discovery_endpoint,
+            resp.status_code,
+            resp.text,  # Expose it as-is b/c OIDC defines no error response format
             ))
     # Transient network error would hit this path
     resp.raise_for_status()
