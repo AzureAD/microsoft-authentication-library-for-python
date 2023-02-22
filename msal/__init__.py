@@ -34,3 +34,8 @@ from .application import (
 from .oauth2cli.oidc import Prompt, IdTokenError
 from .token_cache import TokenCache, SerializableTokenCache
 from .auth_scheme import PopAuthScheme
+from .managed_identity import (
+    SystemAssignedManagedIdentity, UserAssignedManagedIdentity,
+    ManagedIdentityClient,
+    )
+
