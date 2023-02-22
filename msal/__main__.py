@@ -242,18 +242,24 @@ def _main():
     enable_broker = _input_boolean("Enable broker? It will error out later if your app has not registered some redirect URI")
     enable_debug_log = _input_boolean("Enable MSAL Python's DEBUG log?")
     enable_pii_log = _input_boolean("Enable PII in broker's log?") if enable_broker and enable_debug_log else False
+    authority = _select_options([
+        "https://login.microsoftonline.com/common",
+        "https://login.microsoftonline.com/organizations",
+        "https://login.microsoftonline.com/microsoft.onmicrosoft.com",
+        "https://login.microsoftonline.com/msidlab4.onmicrosoft.com",
+        "https://login.microsoftonline.com/consumers",
+        ],
+        header="Input authority (Note that MSA-PT apps would NOT use the /common authority)",
+        accept_nonempty_string=True,
+        )
+    instance_discovery = _input_boolean(
+        "You input an unusual authority which might fail the Instance Discovery. "
+        "Now, do you want to perform Instance Discovery on your input authority?"
+        ) if not authority.startswith("https://login.microsoftonline.com") else None
     app = msal.PublicClientApplication(
         chosen_app["client_id"] if isinstance(chosen_app, dict) else chosen_app,
-        authority=_select_options([
-            "https://login.microsoftonline.com/common",
-            "https://login.microsoftonline.com/organizations",
-            "https://login.microsoftonline.com/microsoft.onmicrosoft.com",
-            "https://login.microsoftonline.com/msidlab4.onmicrosoft.com",
-            "https://login.microsoftonline.com/consumers",
-            ],
-            header="Input authority (Note that MSA-PT apps would NOT use the /common authority)",
-            accept_nonempty_string=True,
-            ),
+        authority=authority,
+        instance_discovery=instance_discovery,
         enable_broker_on_windows=enable_broker,
         enable_pii_log=enable_pii_log,
         token_cache=global_cache,
