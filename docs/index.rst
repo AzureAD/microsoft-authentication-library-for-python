@@ -15,7 +15,7 @@ You can find high level conceptual documentations in the project
 Scenarios
 =========
 
-There are many `different application scenarios <https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-flows-app-scenarios>`_.
+There are many `different application scenarios <https://docs.microsoft.com/azure/active-directory/develop/authentication-flows-app-scenarios>`_.
 MSAL Python supports some of them.
 **The following diagram serves as a map. Locate your application scenario on the map.**
 **If the corresponding icon is clickable, it will bring you to an MSAL Python sample for that scenario.**
@@ -24,15 +24,15 @@ MSAL Python supports some of them.
 
   .. raw:: html
 
-    <!-- Original diagram came from https://docs.microsoft.com/en-us/azure/active-directory/develop/media/scenarios/scenarios-with-users.svg -->
+    <!-- Original diagram came from https://docs.microsoft.com/azure/active-directory/develop/media/scenarios/scenarios-with-users.svg -->
     <!-- Don't know how to include images into Sphinx, so we host it from github repo instead -->
     <img src="https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-for-python/dev/docs/scenarios-with-users.svg"
         usemap="#public-map"><!-- Derived from http://www.image-map.net/ but we had to manually add unique map id -->
     <map name="public-map">
         <area target="_blank" coords="110,150,59,94" shape="rect"
-            alt="Web app" title="Web app" href="https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-v2-python-webapp">
+            alt="Web app" title="Web app" href="https://learn.microsoft.com/azure/active-directory/develop/web-app-quickstart?pivots=devlang-python>
         <area target="_blank" coords="58,281,108,338" shape="rect"
-            alt="Web app" title="Web app" href="https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-v2-python-webapp">
+            alt="Web app" title="Web app" href="https://learn.microsoft.com/azure/active-directory/develop/web-app-quickstart?pivots=devlang-python>
         <area target="_blank" coords="57,529,127,470" shape="rect"
             alt="Desktop App" title="Desktop App" href="https://github.com/AzureAD/microsoft-authentication-library-for-python/blob/dev/sample/interactive_sample.py">
             <!-- TODO: Upgrade this sample to use Interactive Flow: https://github.com/Azure-Samples/ms-identity-python-desktop/blob/master/1-Call-MsGraph-WithUsernamePassword/username_password_sample.py -->
