@@ -7,8 +7,6 @@ MSAL Python Documentation
    :caption: Contents:
    :hidden:
 
-   index
-
 ..
     Comment: Perhaps because of the theme, only the first level sections will show in TOC,
     regardless of maxdepth setting.
@@ -26,7 +24,7 @@ MSAL Python supports some of them.
 **The following diagram serves as a map. Locate your application scenario on the map.**
 **If the corresponding icon is clickable, it will bring you to an MSAL Python sample for that scenario.**
 
-* Most authentication scenarios acquire tokens on behalf of signed-in users.
+* Most authentication scenarios acquire tokens representing the signed-in user.
 
   .. raw:: html
 
@@ -46,7 +44,7 @@ MSAL Python supports some of them.
             alt="Browserless app" title="Browserless app" href="https://github.com/Azure-Samples/ms-identity-python-devicecodeflow">
     </map>
 
-* There are also daemon apps. In these scenarios, applications acquire tokens on behalf of themselves with no user.
+* There are also daemon apps, who acquire tokens representing themselves, not a user.
 
   .. raw:: html
 
@@ -66,26 +64,24 @@ MSAL Python supports some of them.
 
 API Reference
 =============
+.. note::
+
+    Only the contents inside
+    `this source file <https://github.com/AzureAD/microsoft-authentication-library-for-python/blob/dev/msal/__init__.py>`_
+    and their documented methods (unless otherwise marked as deprecated)
+    are MSAL Python public API,
+    which are guaranteed to be backward-compatible until the next major version.
+
+    Everything else, regardless of their naming, are all internal helpers,
+    which could change at anytime in the future, without prior notice.
 
 The following section is the API Reference of MSAL Python.
-The API Reference is like a dictionary. You **read this API section when and only when**:
+The API Reference is like a dictionary, which is useful when:
 
 * You already followed our sample(s) above and have your app up and running,
   but want to know more on how you could tweak the authentication experience
   by using other optional parameters (there are plenty of them!)
-* You read the MSAL Python source code and found a helper function that is useful to you,
-  then you would want to double check whether that helper is documented below.
-  Only documented APIs are considered part of the MSAL Python public API,
-  which are guaranteed to be backward-compatible in MSAL Python 1.x series.
-  Undocumented internal helpers are subject to change anytime, without prior notice.
-
-.. note::
-
-    Only APIs and their parameters documented in this section are part of public API,
-    with guaranteed backward compatibility for the entire 1.x series.
-
-    Other modules in the source code are all considered as internal helpers,
-    which could change at anytime in the future, without prior notice.
+* Some important features have their in-depth documentations in the API Reference.
 
 MSAL proposes a clean separation between
 `public client applications and confidential client applications
@@ -109,6 +105,7 @@ PublicClientApplication
 .. autoclass:: msal.PublicClientApplication
    :members:
 
+   .. autoattribute:: msal.PublicClientApplication.CONSOLE_WINDOW_HANDLE
    .. automethod:: __init__
 
 ConfidentialClientApplication
@@ -134,6 +131,15 @@ See `SerializableTokenCache` for example.
 .. autoclass:: msal.SerializableTokenCache
    :members:
 
+Prompt
+------
+.. autoclass:: msal.Prompt
+   :members:
+
+   .. autoattribute:: msal.Prompt.SELECT_ACCOUNT
+   .. autoattribute:: msal.Prompt.NONE
+   .. autoattribute:: msal.Prompt.CONSENT
+   .. autoattribute:: msal.Prompt.LOGIN
 
 PopAuthScheme
 -------------
@@ -146,6 +152,11 @@ New in MSAL Python 1.26
 .. autoclass:: msal.PopAuthScheme
    :members:
 
+   .. autoattribute:: msal.PopAuthScheme.HTTP_GET
+   .. autoattribute:: msal.PopAuthScheme.HTTP_POST
+   .. autoattribute:: msal.PopAuthScheme.HTTP_PUT
+   .. autoattribute:: msal.PopAuthScheme.HTTP_DELETE
+   .. autoattribute:: msal.PopAuthScheme.HTTP_PATCH
    .. automethod:: __init__
 
 

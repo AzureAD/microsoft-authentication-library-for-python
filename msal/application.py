@@ -737,10 +737,11 @@ class ClientApplication(object):
             maintain state between the request and callback.
             If absent, this library will automatically generate one internally.
         :param str prompt:
-            By default, no prompt value will be sent, not even "none".
+            By default, no prompt value will be sent, not even string ``"none"``.
             You will have to specify a value explicitly.
-            Its valid values are defined in Open ID Connect specs
-            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+            Its valid values are the constants defined in
+            :class:`Prompt <msal.Prompt>`.
+
         :param str login_hint:
             Optional. Identifier of the user. Generally a User Principal Name (UPN).
         :param domain_hint:
@@ -840,10 +841,10 @@ class ClientApplication(object):
             `not recommended <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-implicit-grant-flow#is-the-implicit-grant-suitable-for-my-app>`_.
 
         :param str prompt:
-            By default, no prompt value will be sent, not even "none".
+            By default, no prompt value will be sent, not even string ``"none"``.
             You will have to specify a value explicitly.
-            Its valid values are defined in Open ID Connect specs
-            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+            Its valid values are the constants defined in
+            :class:`Prompt <msal.Prompt>`.
         :param nonce:
             A cryptographically random value used to mitigate replay attacks. See also
             `OIDC specs <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
@@ -1819,10 +1820,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         :param list scopes:
             It is a list of case-sensitive strings.
         :param str prompt:
-            By default, no prompt value will be sent, not even "none".
+            By default, no prompt value will be sent, not even string ``"none"``.
             You will have to specify a value explicitly.
-            Its valid values are defined in Open ID Connect specs
-            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+            Its valid values are the constants defined in
+            :class:`Prompt <msal.Prompt>`.
         :param str login_hint:
             Optional. Identifier of the user. Generally a User Principal Name (UPN).
         :param domain_hint:
@@ -1867,10 +1868,14 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             New in version 1.15.
 
         :param int parent_window_handle:
-            OPTIONAL. If your app is a GUI app running on modern Windows system,
-            and your app opts in to use broker,
+            Required if your app is running on Windows and opted in to use broker.
+
+            If your app is a GUI app,
             you are recommended to also provide its window handle,
             so that the sign in UI window will properly pop up on top of your window.
+
+            If your app is a console app (most Python scripts are console apps),
+            you can use a placeholder value ``msal.PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
 
             New in version 1.20.0.
 
