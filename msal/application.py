@@ -1831,7 +1831,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 "domain_hint": domain_hint,
                 },
             data=dict(data, claims=claims),
-            headers=telemetry_context.generate_headers(),
+            headers=telemetry_context.generate_headers() | kwargs.pop('headers', {}),
             browser_name=_preferred_browser(),
             **kwargs))
         telemetry_context.update_telemetry(response)
