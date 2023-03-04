@@ -58,6 +58,11 @@ class Response(object):
         # but a `text` would be more generic,
         # when downstream packages would potentially access some XML endpoints.
 
+    headers = {}  # Duplicated headers are expected to be combined into one header
+                  # with its value as a comma-separated string.
+                  # https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.2
+                  # Popular HTTP libraries model it as a case-insensitive dict.
+
     def raise_for_status(self):
         """Raise an exception when http response status contains error"""
         raise NotImplementedError("Your implementation should provide this")
