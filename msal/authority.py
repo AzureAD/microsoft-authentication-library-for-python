@@ -28,6 +28,7 @@ WELL_KNOWN_B2C_HOSTS = [
     "b2clogin.cn",
     "b2clogin.us",
     "b2clogin.de",
+    "ciamlogin.com",
     ]
 
 

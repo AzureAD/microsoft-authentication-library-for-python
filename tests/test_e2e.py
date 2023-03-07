@@ -897,6 +897,9 @@ class CiamTestCase(LabBasedTestCase):
         # FYI: Only single- or multi-tenant CIAM app can have other-than-OIDC
         # delegated permissions on Microsoft Graph.
         cls.app_config = cls.get_lab_app_object(cls.user["client_id"])
+        cls.app_config["authority"] = cls.app_config["authority"].replace(
+            "microsoftonline", "ciamlogin")
+        print(cls.app_config["authority"])
 
     def test_ciam_acquire_token_interactive(self):
         self._test_acquire_token_interactive(
