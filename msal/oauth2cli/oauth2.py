@@ -17,8 +17,6 @@ import random
 import string
 import hashlib
 
-import requests
-
 from .authcode import AuthCodeReceiver as _AuthCodeReceiver
 
 try:
@@ -141,8 +139,7 @@ class BaseClient(object):
         """
         if not server_configuration:
             raise ValueError("Missing input parameter server_configuration")
-        if not client_id:
-            raise ValueError("Missing input parameter client_id")
+        # Generally we should have client_id, but we tolerate its absence
         self.configuration = server_configuration
         self.client_id = client_id
         self.client_secret = client_secret
@@ -159,6 +156,8 @@ class BaseClient(object):
                     "when http_client is in use")
             self._http_client = http_client
         else:
+            import requests  # Lazy loading
+
             self._http_client = requests.Session()
             self._http_client.verify = True if verify is None else verify
             self._http_client.proxies = proxies

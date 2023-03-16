@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 def is_subdict_of(small, big):
     return dict(big, **small) == big
 
+def _get_username(id_token_claims):
+    return id_token_claims.get(
+        "preferred_username",  # AAD
+        id_token_claims.get("upn"))  # ADFS 2019
 
 class TokenCache(object):
     """This is considered as a base class containing minimal cache behavior.
@@ -99,28 +103,30 @@ class TokenCache(object):
 
     def add(self, event, now=None):
         # type: (dict) -> None
-        """Handle a token obtaining event, and add tokens into cache.
-
-        Known side effects: This function modifies the input event in place.
-        """
-        def wipe(dictionary, sensitive_fields):  # Masks sensitive info
-            for sensitive in sensitive_fields:
-                if sensitive in dictionary:
-                    dictionary[sensitive] = "********"
-        wipe(event.get("data", {}),
-            ("password", "client_secret", "refresh_token", "assertion"))
-        try:
-            return self.__add(event, now=now)
-        finally:
-            wipe(event.get("response", {}), (  # These claims were useful during __add()
-                "access_token", "refresh_token", "id_token", "username"))
-            wipe(event, ["username"])  # Needed for federated ROPC
-            logger.debug("event=%s", json.dumps(
-            # We examined and concluded that this log won't have Log Injection risk,
-            # because the event payload is already in JSON so CR/LF will be escaped.
-                event, indent=4, sort_keys=True,
-                default=str,  # A workaround when assertion is in bytes in Python 3
-                ))
+        """Handle a token obtaining event, and add tokens into cache."""
+        def make_clean_copy(dictionary, sensitive_fields):  # Masks sensitive info
+            return {
+                k: "********" if k in sensitive_fields else v
+                for k, v in dictionary.items()
+            }
+        clean_event = dict(
+            event,
+            data=make_clean_copy(event.get("data", {}), (
+                "password", "client_secret", "refresh_token", "assertion",
+            )),
+            response=make_clean_copy(event.get("response", {}), (
+                "id_token_claims",  # Provided by broker
+                "access_token", "refresh_token", "id_token", "username",
+            )),
+        )
+        logger.debug("event=%s", json.dumps(
+        # We examined and concluded that this log won't have Log Injection risk,
+        # because the event payload is already in JSON so CR/LF will be escaped.
+            clean_event,
+            indent=4, sort_keys=True,
+            default=str,  # assertion is in bytes in Python 3
+        ))
+        return self.__add(event, now=now)
 
     def __parse_account(self, response, id_token_claims):
         """Return client_info and home_account_id"""
@@ -148,9 +154,9 @@ class TokenCache(object):
         access_token = response.get("access_token")
         refresh_token = response.get("refresh_token")
         id_token = response.get("id_token")
-        id_token_claims = (
-            decode_id_token(id_token, client_id=event["client_id"])
-            if id_token else {})
+        id_token_claims = response.get("id_token_claims") or (  # Prefer the claims from broker
+            # Only use decode_id_token() when necessary, it contains time-sensitive validation
+            decode_id_token(id_token, client_id=event["client_id"]) if id_token else {})
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
         target = ' '.join(event.get("scope") or [])  # Per schema, we don't sort it
@@ -159,8 +165,11 @@ class TokenCache(object):
             now = int(time.time() if now is None else now)
 
             if access_token:
+                default_expires_in = (  # https://www.rfc-editor.org/rfc/rfc6749#section-5.1
+                    int(response.get("expires_on")) - now  # Some Managed Identity emits this
+                    ) if response.get("expires_on") else 600
                 expires_in = int(  # AADv1-like endpoint returns a string
-			response.get("expires_in", 3599))
+                    response.get("expires_in", default_expires_in))
                 ext_expires_in = int(  # AADv1-like endpoint returns a string
 			response.get("ext_expires_in", expires_in))
                 at = {
@@ -188,16 +197,18 @@ class TokenCache(object):
                     "home_account_id": home_account_id,
                     "environment": environment,
                     "realm": realm,
-                    "local_account_id": id_token_claims.get(
-                        "oid", id_token_claims.get("sub")),
-                    "username": id_token_claims.get("preferred_username")  # AAD
-                        or id_token_claims.get("upn")  # ADFS 2019
+                    "local_account_id": event.get(
+                        "_account_id",  # Came from mid-tier code path.
+                            # Emperically, it is the oid in AAD or cid in MSA.
+                        id_token_claims.get("oid", id_token_claims.get("sub"))),
+                    "username": _get_username(id_token_claims)
                         or data.get("username")  # Falls back to ROPC username
                         or event.get("username")  # Falls back to Federated ROPC username
                         or "",  # The schema does not like null
-                    "authority_type":
+                    "authority_type": event.get(
+                        "authority_type",  # Honor caller's choice of authority_type
                         self.AuthorityType.ADFS if realm == "adfs"
-                        else self.AuthorityType.MSSTS,
+                            else self.AuthorityType.MSSTS),
                     # "client_info": response.get("client_info"),  # Optional
                     }
                 self.modify(self.CredentialType.ACCOUNT, account, account)

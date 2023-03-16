@@ -40,8 +40,9 @@ release = version
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
-    'sphinx.ext.autodoc',
+    'sphinx.ext.autodoc',  # This seems need to be the first extension to load
     'sphinx.ext.githubpages',
+    'sphinx_paramlinks',
 ]
 
 # Add any paths that contain templates here, relative to this directory.

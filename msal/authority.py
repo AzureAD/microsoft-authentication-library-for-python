@@ -5,11 +5,6 @@ except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
 import logging
 
-# Historically some customers patched this module-wide requests instance.
-# We keep it here for now. They will be removed in next major release.
-import requests
-import requests as _requests
-
 from .exceptions import MsalServiceError
 
 
@@ -27,7 +22,6 @@ WELL_KNOWN_AUTHORITY_HOSTS = set([
     AZURE_CHINA,
     'login-us.microsoftonline.com',
     AZURE_US_GOVERNMENT,
-    'login.microsoftonline.de',
     ])
 WELL_KNOWN_B2C_HOSTS = [
     "b2clogin.com",
@@ -59,11 +53,16 @@ class Authority(object):
     _domains_without_user_realm_discovery = set([])
 
     @property
-    def http_client(self):  # Obsolete. We will remove this in next major release.
-        # A workaround: if module-wide requests is patched, we honor it.
-        return self._http_client if requests is _requests else requests
+    def http_client(self):  # Obsolete. We will remove this eventually
+        warnings.warn(
+            "authority.http_client might be removed in MSAL Python 1.21+", DeprecationWarning)
+        return self._http_client
 
-    def __init__(self, authority_url, http_client, validate_authority=True):
+    def __init__(
+            self, authority_url, http_client,
+            validate_authority=True,
+            instance_discovery=None,
+            ):
         """Creates an authority instance, and also validates it.
 
         :param validate_authority:
@@ -72,19 +71,34 @@ class Authority(object):
             This parameter only controls whether an instance discovery will be
             performed.
         """
+        # :param instance_discovery:
+        #    By default, the known-to-Microsoft validation will use an
+        #    instance discovery endpoint located at ``login.microsoftonline.com``.
+        #    You can customize the endpoint by providing a url as a string.
+        #    Or you can turn this behavior off by passing in a False here.
         self._http_client = http_client
         if isinstance(authority_url, AuthorityBuilder):
             authority_url = str(authority_url)
         authority, self.instance, tenant = canonicalize(authority_url)
+        self.is_adfs = tenant.lower() == 'adfs'
         parts = authority.path.split('/')
-        is_b2c = any(self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS) or (
-            len(parts) == 3 and parts[2].lower().startswith("b2c_"))
-        if (tenant != "adfs" and (not is_b2c) and validate_authority
-                and self.instance not in WELL_KNOWN_AUTHORITY_HOSTS):
-            payload = instance_discovery(
+        self._is_b2c = any(
+            self.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS
+            ) or (len(parts) == 3 and parts[2].lower().startswith("b2c_"))
+        self._is_known_to_developer = self.is_adfs or self._is_b2c or not validate_authority
+        is_known_to_microsoft = self.instance in WELL_KNOWN_AUTHORITY_HOSTS
+        instance_discovery_endpoint = 'https://{}/common/discovery/instance'.format(  # Note: This URL seemingly returns V1 endpoint only
+            WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
+                # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
+                # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
+            ) if instance_discovery in (None, True) else instance_discovery
+        if instance_discovery_endpoint and not (
+                is_known_to_microsoft or self._is_known_to_developer):
+            payload = _instance_discovery(
                 "https://{}{}/oauth2/v2.0/authorize".format(
                     self.instance, authority.path),
-                self.http_client)
+                self._http_client,
+                instance_discovery_endpoint)
             if payload.get("error") == "invalid_instance":
                 raise ValueError(
                     "invalid_instance: "
@@ -96,15 +110,16 @@ class Authority(object):
             tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
             tenant_discovery_endpoint = (
-                'https://{}{}{}/.well-known/openid-configuration'.format(
+                'https://{}:{}{}{}/.well-known/openid-configuration'.format(
                     self.instance,
+                    443 if authority.port is None else authority.port,
                     authority.path,  # In B2C scenario, it is "/tenant/policy"
                     "" if tenant == "adfs" else "/v2.0" # the AAD v2 endpoint
                     ))
         try:
             openid_config = tenant_discovery(
                 tenant_discovery_endpoint,
-                self.http_client)
+                self._http_client)
         except ValueError:
             raise ValueError(
                 "Unable to get authority configuration for {}. "
@@ -117,14 +132,13 @@ class Authority(object):
         self.token_endpoint = openid_config['token_endpoint']
         self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
-        self.is_adfs = self.tenant.lower() == 'adfs'
 
     def user_realm_discovery(self, username, correlation_id=None, response=None):
         # It will typically return a dict containing "ver", "account_type",
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
         if self.instance not in self.__class__._domains_without_user_realm_discovery:
-            resp = response or self.http_client.get(
+            resp = response or self._http_client.get(
                 "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
                     netloc=self.instance, username=username),
                 headers={'Accept': 'application/json',
@@ -149,13 +163,9 @@ def canonicalize(authority_url):
             % authority_url)
     return authority, authority.hostname, parts[1]
 
-def instance_discovery(url, http_client, **kwargs):
-    resp = http_client.get(  # Note: This URL seemingly returns V1 endpoint only
-        'https://{}/common/discovery/instance'.format(
-            WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
-                # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
-                # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
-            ),
+def _instance_discovery(url, http_client, instance_discovery_endpoint, **kwargs):
+    resp = http_client.get(
+        instance_discovery_endpoint,
         params={'authorization_endpoint': url, 'api-version': '1.0'},
         **kwargs)
     return json.loads(resp.text)

@@ -11,14 +11,14 @@ Not sure whether this is the SDK you are looking for your app? There are other M
 
 Quick links:
 
-| [Getting Started](https://docs.microsoft.com/azure/active-directory/develop/quickstart-v2-python-webapp) | [Docs](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki) | [Samples](https://aka.ms/aaddevsamplesv2) | [Support](README.md#community-help-and-support) | [Feedback](https://forms.office.com/r/TMjZkDbzjY) |
+| [Getting Started](https://learn.microsoft.com/azure/active-directory/develop/web-app-quickstart?pivots=devlang-python)| [Docs](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki) | [Samples](https://aka.ms/aaddevsamplesv2) | [Support](README.md#community-help-and-support) | [Feedback](https://forms.office.com/r/TMjZkDbzjY) |
 | --- | --- | --- | --- | --- |
 
 ## Scenarios supported
 
 Click on the following thumbnail to visit a large map with clickable links to proper samples.
 
-[![Map effect won't work inside github's markdown file, so we have to use a thumbnail here to lure audience to a real static website](docs/thumbnail.png)](https://msal-python.readthedocs.io/en/latest/)
+[![Map effect won't work inside github's markdown file, so we have to use a thumbnail here to lure audience to a real static website](https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-for-python/dev/docs/thumbnail.png)](https://msal-python.readthedocs.io/en/latest/)
 
 ## Installation
 

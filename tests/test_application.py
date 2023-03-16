@@ -1,5 +1,6 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
+import sys
 from msal.application import *
 from msal.application import _str2bytes
 import msal
@@ -601,4 +602,41 @@ class TestClientApplicationWillGroupAccounts(unittest.TestCase):
         self.assertIn("authority_type", account, "Backward compatibility")
         self.assertIn("local_account_id", account, "Backward compatibility")
         self.assertIn("realm", account, "Backward compatibility")
+
+
+@unittest.skipUnless(
+    sys.version_info[0] >= 3 and sys.version_info[1] >= 2,
+    "assertWarns() is only available in Python 3.2+")
+class TestClientCredentialGrant(unittest.TestCase):
+    def _test_certain_authority_should_emit_warnning(self, authority):
+        app = ConfidentialClientApplication(
+            "client_id", client_credential="secret", authority=authority)
+        def mock_post(url, headers=None, *args, **kwargs):
+            return MinimalResponse(
+                status_code=200, text=json.dumps({"access_token": "an AT"}))
+        with self.assertWarns(DeprecationWarning):
+            app.acquire_token_for_client(["scope"], post=mock_post)
+
+    def test_common_authority_should_emit_warnning(self):
+        self._test_certain_authority_should_emit_warnning(
+            authority="https://login.microsoftonline.com/common")
+
+    def test_organizations_authority_should_emit_warnning(self):
+        self._test_certain_authority_should_emit_warnning(
+            authority="https://login.microsoftonline.com/organizations")
+
+
+class TestScopeDecoration(unittest.TestCase):
+    def _test_client_id_should_be_a_valid_scope(self, client_id, other_scopes):
+        # B2C needs this https://learn.microsoft.com/en-us/azure/active-directory-b2c/access-tokens#openid-connect-scopes
+        reserved_scope = ['openid', 'profile', 'offline_access']
+        scopes_to_use = [client_id] + other_scopes
+        self.assertEqual(
+            set(ClientApplication(client_id)._decorate_scope(scopes_to_use)),
+            set(scopes_to_use + reserved_scope),
+            "Scope decoration should return input scopes plus reserved scopes")
+
+    def test_client_id_should_be_a_valid_scope(self):
+        self._test_client_id_should_be_a_valid_scope("client_id", [])
+        self._test_client_id_should_be_a_valid_scope("client_id", ["foo"])
 
