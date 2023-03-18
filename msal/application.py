@@ -444,6 +444,8 @@ class ClientApplication(object):
             New in version 1.19.0.
 
         :param boolean allow_broker:
+            This parameter is NOT applicable to :class:`ConfidentialClientApplication`.
+
             A broker is a component installed on your device.
             Broker implicitly gives your device an identity. By using a broker,
             your device becomes a factor that can satisfy MFA (Multi-factor authentication).
