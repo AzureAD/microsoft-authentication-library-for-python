@@ -187,8 +187,8 @@ class TokenCache(object):
                     }
                 if data.get("key_id"):  # It happens in SSH-cert or POP scenario
                     at["key_id"] = data.get("key_id")
-                if "refresh_in" in response:
-                    refresh_in = response["refresh_in"]  # It is an integer
+                if "refresh_in" in response or expires_in > 7200:
+                    refresh_in = int(response.get("refresh_in", expires_in / 2))
                     at["refresh_on"] = str(now + refresh_in)  # Schema wants a string
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
