@@ -52,12 +52,6 @@ class Authority(object):
     """
     _domains_without_user_realm_discovery = set([])
 
-    @property
-    def http_client(self):  # Obsolete. We will remove this eventually
-        warnings.warn(
-            "authority.http_client might be removed in MSAL Python 1.21+", DeprecationWarning)
-        return self._http_client
-
     def __init__(
             self, authority_url, http_client,
             validate_authority=True,
