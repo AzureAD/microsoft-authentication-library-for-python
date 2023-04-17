@@ -897,6 +897,57 @@ class WorldWideTestCase(LabBasedTestCase):
             )
 
 
+class CiamTestCase(LabBasedTestCase):
+    # Test cases below show you what scenarios need to be covered for CIAM.
+    # Detail test behaviors have already been implemented in preexisting helpers.
+
+    @classmethod
+    def setUpClass(cls):
+        super(CiamTestCase, cls).setUpClass()
+        cls.user = cls.get_lab_user(
+            federationProvider="ciam", signinAudience="azureadmyorg", publicClient="No")
+        # FYI: Only single- or multi-tenant CIAM app can have other-than-OIDC
+        # delegated permissions on Microsoft Graph.
+        cls.app_config = cls.get_lab_app_object(cls.user["client_id"])
+
+    def test_ciam_acquire_token_interactive(self):
+        self._test_acquire_token_interactive(
+            authority=self.app_config["authority"],
+            client_id=self.app_config["appId"],
+            scope=self.app_config["scopes"],
+            username=self.user["username"],
+            lab_name=self.user["lab_name"],
+            )
+
+    def test_ciam_acquire_token_for_client(self):
+        self._test_acquire_token_by_client_secret(
+            client_id=self.app_config["appId"],
+            client_secret=self.get_lab_user_secret(
+                self.app_config["clientSecret"].split("=")[-1]),
+            authority=self.app_config["authority"],
+            scope=["{}/.default".format(self.app_config["appId"])],  # App permission
+            )
+
+    def test_ciam_acquire_token_by_ropc(self):
+        # Somehow, this would only work after creating a secret for the test app
+        # and enabling "Allow public client flows".
+        # Otherwise it would hit AADSTS7000218.
+        self._test_username_password(
+            authority=self.app_config["authority"],
+            client_id=self.app_config["appId"],
+            username=self.user["username"],
+            password=self.get_lab_user_secret(self.user["lab_name"]),
+            scope=self.app_config["scopes"],
+            )
+
+    def test_ciam_device_flow(self):
+        self._test_device_flow(
+            authority=self.app_config["authority"],
+            client_id=self.app_config["appId"],
+            scope=self.app_config["scopes"],
+            )
+
+
 class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
     region = "westus"
     timeout = 2  # Short timeout makes this test case responsive on non-VM

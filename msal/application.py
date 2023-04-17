@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.21.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.22.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -1182,7 +1182,7 @@ class ClientApplication(object):
                 client_id=self.client_id,
                 scope=response["scope"].split() if "scope" in response else scopes,
                 token_endpoint=self.authority.token_endpoint,
-                response=response.copy(),
+                response=response,
                 data=data or {},
                 authority_type=_AUTHORITY_TYPE_CLOUDSHELL,
                 ))
@@ -1399,7 +1399,7 @@ class ClientApplication(object):
                 client_id=self.client_id,
                 scope=response["scope"].split() if "scope" in response else scopes,
                 token_endpoint=self.authority.token_endpoint,
-                response=response.copy(),
+                response=response,
                 data=data,
                 _account_id=response["_account_id"],
                 ))

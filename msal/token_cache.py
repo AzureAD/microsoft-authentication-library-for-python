@@ -103,29 +103,30 @@ class TokenCache(object):
 
     def add(self, event, now=None):
         # type: (dict) -> None
-        """Handle a token obtaining event, and add tokens into cache.
-
-        Known side effects: This function modifies the input event in place.
-        """
-        def wipe(dictionary, sensitive_fields):  # Masks sensitive info
-            for sensitive in sensitive_fields:
-                if sensitive in dictionary:
-                    dictionary[sensitive] = "********"
-        wipe(event.get("data", {}),
-            ("password", "client_secret", "refresh_token", "assertion"))
-        try:
-            return self.__add(event, now=now)
-        finally:
-            wipe(event.get("response", {}), (  # These claims were useful during __add()
+        """Handle a token obtaining event, and add tokens into cache."""
+        def make_clean_copy(dictionary, sensitive_fields):  # Masks sensitive info
+            return {
+                k: "********" if k in sensitive_fields else v
+                for k, v in dictionary.items()
+            }
+        clean_event = dict(
+            event,
+            data=make_clean_copy(event.get("data", {}), (
+                "password", "client_secret", "refresh_token", "assertion",
+            )),
+            response=make_clean_copy(event.get("response", {}), (
                 "id_token_claims",  # Provided by broker
-                "access_token", "refresh_token", "id_token", "username"))
-            wipe(event, ["username"])  # Needed for federated ROPC
-            logger.debug("event=%s", json.dumps(
-            # We examined and concluded that this log won't have Log Injection risk,
-            # because the event payload is already in JSON so CR/LF will be escaped.
-                event, indent=4, sort_keys=True,
-                default=str,  # A workaround when assertion is in bytes in Python 3
-                ))
+                "access_token", "refresh_token", "id_token", "username",
+            )),
+        )
+        logger.debug("event=%s", json.dumps(
+        # We examined and concluded that this log won't have Log Injection risk,
+        # because the event payload is already in JSON so CR/LF will be escaped.
+            clean_event,
+            indent=4, sort_keys=True,
+            default=str,  # assertion is in bytes in Python 3
+        ))
+        return self.__add(event, now=now)
 
     def __parse_account(self, response, id_token_claims):
         """Return client_info and home_account_id"""
