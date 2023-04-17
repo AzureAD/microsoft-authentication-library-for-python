@@ -79,6 +79,26 @@ class TestAuthority(unittest.TestCase):
             pass  # Those are expected for this unittest case
 
 
+@patch("msal.authority.tenant_discovery", return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    })
+class TestCiamAuthority(unittest.TestCase):
+    http_client = MinimalHttpClient()
+
+    def test_path_less_authority_should_work(self, oidc_discovery):
+        Authority('https://contoso.ciamlogin.com', self.http_client)
+        oidc_discovery.assert_called_once_with(
+            "https://contoso.ciamlogin.com/contoso.onmicrosoft.com/v2.0/.well-known/openid-configuration",
+            self.http_client)
+
+    def test_authority_with_path_should_be_used_as_is(self, oidc_discovery):
+        Authority('https://contoso.ciamlogin.com/anything', self.http_client)
+        oidc_discovery.assert_called_once_with(
+            "https://contoso.ciamlogin.com/anything/v2.0/.well-known/openid-configuration",
+            self.http_client)
+
+
 class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
 
     def test_canonicalize_tenant_followed_by_extra_paths(self):
