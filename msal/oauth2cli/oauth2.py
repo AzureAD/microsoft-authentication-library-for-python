@@ -28,6 +28,9 @@ except:
 string_types = (str,) if sys.version_info[0] >= 3 else (basestring, )
 
 
+class BrowserInteractionTimeoutError(RuntimeError):
+    pass
+
 class BaseClient(object):
     # This low-level interface works. Yet you'll find its sub-class
     # more friendly to remind you what parameters are needed in each scenario.
@@ -674,6 +677,8 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             auth_uri_callback=auth_uri_callback,
             browser_name=browser_name,
             )
+        if auth_response is None:
+            raise BrowserInteractionTimeoutError("User did not complete the flow in time")
         return self.obtain_token_by_auth_code_flow(
             flow, auth_response, scope=scope, **kwargs)
 
