@@ -925,10 +925,16 @@ class CiamTestCase(LabBasedTestCase):
             client_secret=self.get_lab_user_secret(
                 self.app_config["clientSecret"].split("=")[-1]),
             authority=self.app_config["authority"],
-            scope=["{}/.default".format(self.app_config["appId"])],  # App permission
+            #scope=["{}/.default".format(self.app_config["appId"])],  # AADSTS500207: The account type can't be used for the resource you're trying to access.
+            #scope=["api://{}/.default".format(self.app_config["appId"])],  # AADSTS500011: The resource principal named api://ced781e7-bdb0-4c99-855c-d3bacddea88a was not found in the tenant named MSIDLABCIAM2. This can happen if the application has not been installed by the administrator of the tenant or consented to by any user in the tenant. You might have sent your authentication request to the wrong tenant.
+            scope=self.app_config["scopes"],  # It shall ends with "/.default"
             )
 
     def test_ciam_acquire_token_by_ropc(self):
+        """CIAM does not officially support ROPC, especially not for external emails.
+
+        We keep this test case for now, because the test data will use a local email.
+        """
         # Somehow, this would only work after creating a secret for the test app
         # and enabling "Allow public client flows".
         # Otherwise it would hit AADSTS7000218.
