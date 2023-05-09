@@ -22,6 +22,7 @@ import msal.telemetry
 from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
 from .cloudshell import _is_running_in_cloud_shell
+from .imds import ManagedIdentityClient, ManagedIdentity, _scope_to_resource
 
 
 # The __init__.py will import this. Not the other way around.
@@ -2021,6 +2022,14 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - an error response would contain "error" and usually "error_description".
         """
         # TBD: force_refresh behavior
+        if ManagedIdentity.is_managed_identity(self.client_id):
+            if len(scopes) != 1:
+                raise ValueError("Managed Identity supports only one scope/resource")
+            if claims_challenge:
+                raise ValueError("Managed Identity does not support claims_challenge")
+            return ManagedIdentityClient(
+                self.http_client, self.client_id, self.token_cache
+                ).acquire_token(_scope_to_resource(scopes[0]))
         if self.authority.tenant.lower() in ["common", "organizations"]:
             warnings.warn(
                 "Using /common or /organizations authority "
