@@ -255,6 +255,7 @@ def _main():
             accept_nonempty_string=True,
             ),
         enable_broker_on_windows=enable_broker,
+        enable_broker_on_mac=enable_broker,
         enable_pii_log=enable_pii_log,
         token_cache=global_cache,
         )

@@ -187,6 +187,8 @@ class ClientApplication(object):
         "You can enable broker by following these instructions. "
         "https://msal-python.readthedocs.io/en/latest/#publicclientapplication")
 
+    _enable_broker = False
+
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
@@ -540,7 +542,9 @@ class ClientApplication(object):
         if allow_broker:
             warnings.warn(
                 "allow_broker is deprecated. "
-                "Please use PublicClientApplication(..., enable_broker_on_windows=True)",
+                "Please use PublicClientApplication(..., "
+                "enable_broker_on_windows=True, "
+                "enable_broker_on_mac=...)",
                 DeprecationWarning)
         self._enable_broker = self._enable_broker or (
             # When we started the broker project on Windows platform,
@@ -1646,7 +1650,8 @@ class ClientApplication(object):
         """
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
-        if False:  # Disabled, for now. It was if self._enable_broker:
+        if False:  # Disabled, for now. It was if self._enable_broker and sys.platform != "darwin":
+            # _signin_silently() won't work on Mac. We may revisit on whether it shall work on Windows.
             from .broker import _signin_silently
             response = _signin_silently(
                 "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -1744,7 +1749,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
         .. note::
 
-            You may set enable_broker_on_windows to True.
+            You may set enable_broker_on_windows and/or enable_broker_on_mac to True.
 
             What is a broker, and why use it?
 
@@ -1773,9 +1778,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
                * ``ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id``
                  if your app is expected to run on Windows 10+
+               * ``msauth.com.msauth.unsignedapp://auth``
+                 if your app is expected to run on Mac
 
             2. installed broker dependency,
-               e.g. ``pip install msal[broker]>=1.25,<2``.
+               e.g. ``pip install msal[broker]>=1.27.0b1,<2``.
 
             3. tested with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
 
@@ -1784,12 +1791,21 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
             New in MSAL Python 1.25.0.
+
+        :param boolean enable_broker_on_mac:
+            This setting is only effective if your app is running on Mac.
+            This parameter defaults to None, which means MSAL will not utilize a broker.
+
+            New in MSAL Python 1.27.0.
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
         # Using kwargs notation for now. We will switch to keyword-only arguments.
         enable_broker_on_windows = kwargs.pop("enable_broker_on_windows", False)
-        self._enable_broker = enable_broker_on_windows and sys.platform == "win32"
+        enable_broker_on_mac = kwargs.pop("enable_broker_on_mac", False)
+        self._enable_broker = bool(
+            enable_broker_on_windows and sys.platform == "win32"
+            or enable_broker_on_mac and sys.platform == "darwin")
         super(PublicClientApplication, self).__init__(
             client_id, client_credential=None, **kwargs)
 
@@ -1867,10 +1883,23 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             New in version 1.15.
 
         :param int parent_window_handle:
-            OPTIONAL. If your app is a GUI app running on modern Windows system,
-            and your app opts in to use broker,
-            you are recommended to also provide its window handle,
-            so that the sign in UI window will properly pop up on top of your window.
+            OPTIONAL.
+
+            * If your app does not opt in to use broker,
+              you do not need to provide a ``parent_window_handle`` here.
+
+            * If your app opts in to use broker,
+              ``parent_window_handle`` is required.
+
+              - If your app is a GUI app running on modern Windows system,
+                you are required to also provide its window handle,
+                so that the sign-in window will pop up on top of your window.
+              - If your app is a console app runnong on Windows system,
+                you can use a placeholder
+                ``PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
+              - If your app is running on Mac,
+                you can use a placeholder
+                ``PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
 
             New in version 1.20.0.
 
