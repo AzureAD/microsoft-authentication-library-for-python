@@ -4,6 +4,7 @@ It relies on PyMsalRuntime which is the package providing broker's functionality
 from threading import Event
 import json
 import logging
+import sys
 import time
 import uuid
 
@@ -166,6 +167,8 @@ def _signin_interactively(
                 logger.warning("Using both select_account and login_hint is ambiguous. Ignoring login_hint.")
         else:
             logger.warning("prompt=%s is not supported by this module", prompt)
+
+    params.set_additional_parameter("msal_accounts_control_title", sys.argv[0])  # Since pymsalruntime 0.13.2
     if parent_window_handle is None:
         # This fixes account picker hanging in IDE debug mode on some machines
         params.set_additional_parameter("msal_gui_thread", "true")  # Since pymsalruntime 0.8.1
