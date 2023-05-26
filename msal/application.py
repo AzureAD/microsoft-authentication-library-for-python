@@ -65,6 +65,12 @@ def _str2bytes(raw):
         return raw
 
 
+def _pii_less_home_account_id(home_account_id):
+    parts = home_account_id.split(".")  # It could contain one or two parts
+    parts[0] = "********"
+    return ".".join(parts)
+
+
 def _clean_up(result):
     if isinstance(result, dict):
         return {
@@ -1460,7 +1466,10 @@ class ClientApplication(object):
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
-        logger.debug("Found %d RTs matching %s", len(matches), query)
+        logger.debug("Found %d RTs matching %s", len(matches), {
+            k: _pii_less_home_account_id(v) if k == "home_account_id" and v else v
+            for k, v in query.items()
+        })
 
         response = None  # A distinguishable value to mean cache is empty
         if not matches:  # Then exit early to avoid expensive operations
