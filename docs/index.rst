@@ -1,4 +1,4 @@
-MSAL Python documentation
+MSAL Python Documentation
 =========================
 
 .. toctree::
@@ -6,8 +6,11 @@ MSAL Python documentation
    :caption: Contents:
    :hidden:
 
-   MSAL Documentation <https://docs.microsoft.com/en-au/azure/active-directory/develop/msal-authentication-flows>
-   GitHub Repository <https://github.com/AzureAD/microsoft-authentication-library-for-python>
+   index
+
+..
+    Comment: Perhaps because of the theme, only the first level sections will show in TOC,
+    regardless of maxdepth setting.
 
 You can find high level conceptual documentations in the project
 `README <https://github.com/AzureAD/microsoft-authentication-library-for-python>`_.
@@ -58,8 +61,8 @@ MSAL Python supports some of them.
   <https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/sample>`_.
 
 
-API
-===
+API Reference
+=============
 
 The following section is the API Reference of MSAL Python.
 The API Reference is like a dictionary. You **read this API section when and only when**:
@@ -88,8 +91,10 @@ MSAL proposes a clean separation between
 They are implemented as two separated classes,
 with different methods for different authentication scenarios.
 
+
+
 PublicClientApplication
------------------------
+=======================
 
 .. autoclass:: msal.PublicClientApplication
    :members:
@@ -98,7 +103,7 @@ PublicClientApplication
    .. automethod:: __init__
 
 ConfidentialClientApplication
------------------------------
+=============================
 
 .. autoclass:: msal.ConfidentialClientApplication
    :members:
@@ -107,7 +112,7 @@ ConfidentialClientApplication
    .. automethod:: __init__
 
 TokenCache
-----------
+==========
 
 One of the parameters accepted by
 both `PublicClientApplication` and `ConfidentialClientApplication`
