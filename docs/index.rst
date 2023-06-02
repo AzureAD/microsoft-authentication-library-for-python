@@ -91,14 +91,20 @@ MSAL proposes a clean separation between
 They are implemented as two separated classes,
 with different methods for different authentication scenarios.
 
+ClientApplication
+=================
 
+.. autoclass:: msal.ClientApplication
+   :members:
+   :inherited-members:
+
+   .. automethod:: __init__
 
 PublicClientApplication
 =======================
 
 .. autoclass:: msal.PublicClientApplication
    :members:
-   :inherited-members:
 
    .. automethod:: __init__
 
@@ -107,9 +113,7 @@ ConfidentialClientApplication
 
 .. autoclass:: msal.ConfidentialClientApplication
    :members:
-   :inherited-members:
 
-   .. automethod:: __init__
 
 TokenCache
 ==========
