@@ -1747,7 +1747,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
             You may set enable_broker_on_windows to True.
 
-            What is a broker, and why use it?
+            **What is a broker, and why use it?**
 
             A broker is a component installed on your device.
             Broker implicitly gives your device an identity. By using a broker,
@@ -1764,10 +1764,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             so that your broker-enabled apps (even a CLI)
             could automatically SSO from a previously established signed-in session.
 
-            ADFS and B2C do not support broker.
-            MSAL will automatically fallback to use browser.
-
-            You shall only enable broker when your app:
+            **You shall only enable broker when your app:**
 
             1. is running on supported platforms,
                and already registered their corresponding redirect_uri
@@ -1779,6 +1776,29 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                e.g. ``pip install msal[broker]>=1.25,<2``.
 
             3. tested with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
+
+            **The fallback behaviors of MSAL Python's broker support**
+
+            MSAL will either error out, or silently fallback to non-broker flows.
+
+            1. MSAL will ignore the `enable_broker_...` and bypass broker
+               on those auth flows that are known to be NOT supported by broker.
+               This includes ADFS, B2C, etc..
+               For other "could-use-broker" scenarios, please see below.
+            2. MSAL errors out when app developer opted-in to use broker
+               but a direct dependency "mid-tier" package is not installed.
+               Error message guides app developer to declare the correct dependency
+               ``msal[broker]``.
+               We error out here because the error is actionable to app developers.
+            3. MSAL silently "deactivates" the broker and fallback to non-broker,
+               when opted-in, dependency installed yet failed to initialize.
+               We anticipate this would happen on a device whose OS is too old
+               or the underlying broker component is somehow unavailable.
+               There is not much an app developer or the end user can do here.
+               Eventually, the conditional access policy shall
+               force the user to switch to a different device.
+            4. MSAL errors out when broker is opted in, installed, initialized,
+               but subsequent token request(s) failed.
 
         :param boolean enable_broker_on_windows:
             This setting is only effective if your app is running on Windows 10+.
