@@ -102,7 +102,6 @@ class TokenCache(object):
                 ]
 
     def add(self, event, now=None):
-        # type: (dict) -> None
         """Handle a token obtaining event, and add tokens into cache."""
         def make_clean_copy(dictionary, sensitive_fields):  # Masks sensitive info
             return {

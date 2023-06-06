@@ -156,6 +156,9 @@ class _ClientWithCcsRoutingInfo(Client):
 
 
 class ClientApplication(object):
+    """You do not usually directly use this class. Use its subclasses instead:
+    :class:`PublicClientApplication` and :class:`ConfidentialClientApplication`.
+    """
     ACQUIRE_TOKEN_SILENT_ID = "84"
     ACQUIRE_TOKEN_BY_REFRESH_TOKEN = "85"
     ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID = "301"
@@ -319,7 +322,7 @@ class ClientApplication(object):
             to keep their traffic remain inside that region.
 
             As of 2021 May, regional service is only available for
-            ``acquire_token_for_client()`` sent by any of the following scenarios::
+            ``acquire_token_for_client()`` sent by any of the following scenarios:
 
             1. An app powered by a capable MSAL
                (MSAL Python 1.12+ will be provisioned)
@@ -764,9 +767,9 @@ class ClientApplication(object):
             Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
             If included, it will skip the email-based discovery process that user goes
             through on the sign-in page, leading to a slightly more streamlined user experience.
-            More information on possible values
-            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
-            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+            More information on possible values available in
+            `Auth Code Flow doc <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `domain_hint doc <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
 
         :param int max_age:
             OPTIONAL. Maximum Authentication Age.
@@ -804,7 +807,7 @@ class ClientApplication(object):
                     "...": "...",  // Everything else are reserved and internal
                 }
 
-            The caller is expected to::
+            The caller is expected to:
 
             1. somehow store this content, typically inside the current session,
             2. guide the end user (i.e. resource owner) to visit that auth_uri,
@@ -868,9 +871,9 @@ class ClientApplication(object):
             Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
             If included, it will skip the email-based discovery process that user goes
             through on the sign-in page, leading to a slightly more streamlined user experience.
-            More information on possible values
-            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
-            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+            More information on possible values available in
+            `Auth Code Flow doc <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `domain_hint doc <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
         :param claims_challenge:
              The claims_challenge parameter requests specific claims requested by the resource provider
              in the form of a claims_challenge directive in the www-authenticate header to be
@@ -1682,6 +1685,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     CONSOLE_WINDOW_HANDLE = object()
 
     def __init__(self, client_id, client_credential=None, **kwargs):
+        """Same as :func:`ClientApplication.__init__`,
+        except that ``client_credential`` parameter shall remain ``None``.
+        """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
         super(PublicClientApplication, self).__init__(
@@ -1722,9 +1728,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
             If included, it will skip the email-based discovery process that user goes
             through on the sign-in page, leading to a slightly more streamlined user experience.
-            More information on possible values
-            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
-            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+            More information on possible values available in
+            `Auth Code Flow doc <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `domain_hint doc <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
 
         :param claims_challenge:
             The claims_challenge parameter requests specific claims requested by the resource provider
@@ -1994,6 +2000,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
+    """Same as :func:`ClientApplication.__init__`,
+    except that ``allow_broker`` parameter shall remain ``None``.
+    """
 
     def acquire_token_for_client(self, scopes, claims_challenge=None, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
