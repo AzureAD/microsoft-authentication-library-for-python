@@ -1,8 +1,11 @@
-import getpass, logging, pprint, sys, msal
+import getpass, json, logging, sys, msal
 
 
 AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
+
+def print_json(blob):
+    print(json.dumps(blob, indent=2))
 
 def _input_boolean(message):
     return input(
@@ -62,7 +65,7 @@ def acquire_token_silent(app):
     """acquire_token_silent() - with an account already signed into MSAL Python."""
     account = _select_account(app)
     if account:
-        pprint.pprint(app.acquire_token_silent(
+        print_json(app.acquire_token_silent(
             _input_scopes(),
             account=account,
             force_refresh=_input_boolean("Bypass MSAL Python's token cache?"),
@@ -99,11 +102,11 @@ def _acquire_token_interactive(app, scopes, data=None):
 
 def acquire_token_interactive(app):
     """acquire_token_interactive() - User will be prompted if app opts to do select_account."""
-    pprint.pprint(_acquire_token_interactive(app, _input_scopes()))
+    print_json(_acquire_token_interactive(app, _input_scopes()))
 
 def acquire_token_by_username_password(app):
     """acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc"""
-    pprint.pprint(app.acquire_token_by_username_password(
+    print_json(app.acquire_token_by_username_password(
         _input("username: "), getpass.getpass("password: "), scopes=_input_scopes()))
 
 _JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
@@ -120,14 +123,14 @@ def acquire_ssh_cert_silently(app):
             data=SSH_CERT_DATA,
             force_refresh=_input_boolean("Bypass MSAL Python's token cache?"),
             )
-        pprint.pprint(result)
+        print_json(result)
         if result and result.get("token_type") != "ssh-cert":
             logging.error("Unable to acquire an ssh-cert.")
 
 def acquire_ssh_cert_interactive(app):
     """Acquire an SSH Cert interactively - This typically only works with Azure CLI"""
     result = _acquire_token_interactive(app, SSH_CERT_SCOPE, data=SSH_CERT_DATA)
-    pprint.pprint(result)
+    print_json(result)
     if result.get("token_type") != "ssh-cert":
         logging.error("Unable to acquire an ssh-cert")
 
@@ -149,7 +152,7 @@ def exit(app):
     sys.exit()
 
 def main():
-    print("Welcome to the Msal Python Console Test App, committed at 2022-5-2\n")
+    print("Welcome to the Msal Python {} Tester\n".format(msal.__version__))
     chosen_app = _select_options([
         {"client_id": AZURE_CLI, "name": "Azure CLI (Correctly configured for MSA-PT)"},
         {"client_id": VISUAL_STUDIO, "name": "Visual Studio (Correctly configured for MSA-PT)"},
