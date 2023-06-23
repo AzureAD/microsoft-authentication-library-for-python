@@ -73,6 +73,11 @@ def _pii_less_home_account_id(home_account_id):
 
 def _clean_up(result):
     if isinstance(result, dict):
+        if "_msalruntime_telemetry" in result or "_msal_python_telemetry" in result:
+            result["msal_telemetry"] = json.dumps({  # Telemetry as an opaque string
+                "msalruntime_telemetry": result.get("_msalruntime_telemetry"),
+                "msal_python_telemetry": result.get("_msal_python_telemetry"),
+                }, separators=(",", ":"))
         return {
             k: result[k] for k in result
             if k != "refresh_in"  # MSAL handled refresh_in, customers need not
@@ -966,7 +971,7 @@ class ClientApplication(object):
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)
-        response =_clean_up(self.client.obtain_token_by_auth_code_flow(
+        response = _clean_up(self.client.obtain_token_by_auth_code_flow(
             auth_code_flow,
             auth_response,
             scope=self._decorate_scope(scopes) if scopes else None,

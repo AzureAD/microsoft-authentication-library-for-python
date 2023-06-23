@@ -23,8 +23,7 @@ try:
 except (ImportError, AttributeError):  # AttributeError happens when a prior pymsalruntime uninstallation somehow leaved an empty folder behind
     # PyMsalRuntime currently supports these Windows versions, listed in this MSFT internal link
     # https://github.com/AzureAD/microsoft-authentication-library-for-cpp/pull/2406/files
-    raise ImportError(  # TODO: Remove or adjust this line right before merging this PR
-        'You need to install dependency by: pip install "msal[broker]>=1.20,<2"')
+    raise ImportError('You need to install dependency by: pip install "msal[broker]>=1.20,<2"')
 # It could throw RuntimeError when running on ancient versions of Windows
 
 
@@ -84,9 +83,11 @@ def _read_account_by_id(account_id, correlation_id):
 
 
 def _convert_result(result, client_id, expected_token_type=None):  # Mimic an on-the-wire response from AAD
+    telemetry = result.get_telemetry_data()
+    telemetry.pop("wam_telemetry", None)  # In pymsalruntime 0.13, it contains PII "account_id"
     error = result.get_error()
     if error:
-        return _convert_error(error, client_id)
+        return dict(_convert_error(error, client_id), _msalruntime_telemetry=telemetry)
     id_token_claims = json.loads(result.get_id_token()) if result.get_id_token() else {}
     account = result.get_account()
     assert account, "Account is expected to be always available"
@@ -107,7 +108,7 @@ def _convert_result(result, client_id, expected_token_type=None):  # Mimic an on
     granted_scopes = result.get_granted_scopes()  # New in pymsalruntime 0.3.x
     if granted_scopes:
         return_value["scope"] = " ".join(granted_scopes)  # Mimic the on-the-wire data format
-    return return_value
+    return dict(return_value, _msalruntime_telemetry=telemetry)
 
 
 def _get_new_correlation_id():
