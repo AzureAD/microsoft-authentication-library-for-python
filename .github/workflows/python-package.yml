@@ -32,21 +32,10 @@ jobs:
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v2
+      # It automatically takes care of pip cache, according to
+      # https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#about-caching-workflow-dependencies
       with:
         python-version: ${{ matrix.python-version }}
-
-    # Derived from https://github.com/actions/cache/blob/main/examples.md#using-pip-to-get-cache-location
-    # However, a before-and-after test shows no improvement in this repo,
-    # possibly because the bottlenect was not in downloading those small python deps.
-    - name: Get pip cache dir from pip 20.1+
-      id: pip-cache
-      run: |
-        echo "::set-output name=dir::$(pip cache dir)"
-    - name: pip cache
-      uses: actions/cache@v2
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt') }}
 
     - name: Install dependencies
       run: |
