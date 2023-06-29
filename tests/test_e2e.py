@@ -146,17 +146,15 @@ class E2eTestCase(unittest.TestCase):
             json.dumps(self.app.token_cache._cache, indent=4),
             json.dumps(result_from_wire.get("id_token_claims"), indent=4),
             )
-        # Going to test acquire_token_silent(...) to locate an AT from cache
-        result_from_cache = self.app.acquire_token_silent(scope, account=None)
+        self.assertIsNone(
+            self.app.acquire_token_silent(scope, account=None),
+            "acquire_token_silent(..., account=None) shall always return None")
+        # Going to test acquire_token_for_client(...) to locate an AT from cache
+        result_from_cache = self.app.acquire_token_for_client(scope)
         self.assertIsNotNone(result_from_cache)
         self.assertEqual(
             result_from_wire['access_token'], result_from_cache['access_token'],
             "We should get a cached AT")
-        self.app.acquire_token_silent(
-            # Result will typically be None, because client credential grant returns no RT.
-            # But we care more on this call should succeed without exception.
-            scope, account=None,
-            force_refresh=True)  # Mimic the AT already expires
 
     @classmethod
     def _build_app(cls,
