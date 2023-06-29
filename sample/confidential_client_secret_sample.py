@@ -50,17 +50,9 @@ app = msal.ConfidentialClientApplication(
                        # https://msal-python.readthedocs.io/en/latest/#msal.SerializableTokenCache
     )
 
-# The pattern to acquire a token looks like this.
-result = None
-
-# Firstly, looks up a token from cache
-# Since we are looking for token for the current app, NOT for an end user,
-# notice we give account parameter as None.
-result = app.acquire_token_silent(config["scope"], account=None)
-
-if not result:
-    logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
-    result = app.acquire_token_for_client(scopes=config["scope"])
+# Since MSAL 1.23, acquire_token_for_client(...) will automatically look up
+# a token from cache, and fall back to acquire a fresh token when needed.
+result = app.acquire_token_for_client(scopes=config["scope"])
 
 if "access_token" in result:
     # Calling graph using the access token
