@@ -177,7 +177,7 @@ class ClientApplication(object):
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
             http_client=None,
-            verify=True, proxies=None, timeout=None,
+            verify=True, proxies=None, trust_env=False, timeout=None,
             client_claims=None, app_name=None, app_version=None,
             client_capabilities=None,
             azure_region=None,  # Note: We choose to add this param in this base class,
@@ -520,6 +520,7 @@ class ClientApplication(object):
             self.http_client = requests.Session()
             self.http_client.verify = verify
             self.http_client.proxies = proxies
+            self.http_client.trust_env = trust_env
             # Requests, does not support session - wide timeout
             # But you can patch that (https://github.com/psf/requests/issues/3341):
             self.http_client.request = functools.partial(
