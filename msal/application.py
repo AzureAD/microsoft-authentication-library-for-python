@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.22.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.23.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -63,6 +63,12 @@ def _str2bytes(raw):
         return raw.encode(encoding="utf-8")
     except:
         return raw
+
+
+def _pii_less_home_account_id(home_account_id):
+    parts = home_account_id.split(".")  # It could contain one or two parts
+    parts[0] = "********"
+    return ".".join(parts)
 
 
 def _clean_up(result):
@@ -150,6 +156,9 @@ class _ClientWithCcsRoutingInfo(Client):
 
 
 class ClientApplication(object):
+    """You do not usually directly use this class. Use its subclasses instead:
+    :class:`PublicClientApplication` and :class:`ConfidentialClientApplication`.
+    """
     ACQUIRE_TOKEN_SILENT_ID = "84"
     ACQUIRE_TOKEN_BY_REFRESH_TOKEN = "85"
     ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID = "301"
@@ -313,7 +322,7 @@ class ClientApplication(object):
             to keep their traffic remain inside that region.
 
             As of 2021 May, regional service is only available for
-            ``acquire_token_for_client()`` sent by any of the following scenarios::
+            ``acquire_token_for_client()`` sent by any of the following scenarios:
 
             1. An app powered by a capable MSAL
                (MSAL Python 1.12+ will be provisioned)
@@ -444,6 +453,8 @@ class ClientApplication(object):
             New in version 1.19.0.
 
         :param boolean allow_broker:
+            This parameter is NOT applicable to :class:`ConfidentialClientApplication`.
+
             A broker is a component installed on your device.
             Broker implicitly gives your device an identity. By using a broker,
             your device becomes a factor that can satisfy MFA (Multi-factor authentication).
@@ -756,9 +767,9 @@ class ClientApplication(object):
             Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
             If included, it will skip the email-based discovery process that user goes
             through on the sign-in page, leading to a slightly more streamlined user experience.
-            More information on possible values
-            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
-            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+            More information on possible values available in
+            `Auth Code Flow doc <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `domain_hint doc <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
 
         :param int max_age:
             OPTIONAL. Maximum Authentication Age.
@@ -796,7 +807,7 @@ class ClientApplication(object):
                     "...": "...",  // Everything else are reserved and internal
                 }
 
-            The caller is expected to::
+            The caller is expected to:
 
             1. somehow store this content, typically inside the current session,
             2. guide the end user (i.e. resource owner) to visit that auth_uri,
@@ -860,9 +871,9 @@ class ClientApplication(object):
             Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
             If included, it will skip the email-based discovery process that user goes
             through on the sign-in page, leading to a slightly more streamlined user experience.
-            More information on possible values
-            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
-            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+            More information on possible values available in
+            `Auth Code Flow doc <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `domain_hint doc <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
         :param claims_challenge:
              The claims_challenge parameter requests specific claims requested by the resource provider
              in the form of a claims_challenge directive in the www-authenticate header to be
@@ -1198,22 +1209,12 @@ class ClientApplication(object):
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
-        It is done either by finding a valid access token from cache,
-        or by finding a valid refresh token from cache and then automatically
-        use it to redeem a new access token.
-
+        It has same parameters as the :func:`~acquire_token_silent_with_error`.
+        The difference is the behavior of the return value.
         This method will combine the cache empty and refresh error
         into one return value, `None`.
         If your app does not care about the exact token refresh error during
         token cache look-up, then this method is easier and recommended.
-
-        Internally, this method calls :func:`~acquire_token_silent_with_error`.
-
-        :param claims_challenge:
-            The claims_challenge parameter requests specific claims requested by the resource provider
-            in the form of a claims_challenge directive in the www-authenticate header to be
-            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of claims being requested from these locations.
 
         :return:
             - A dict containing no "error" key,
@@ -1221,9 +1222,11 @@ class ClientApplication(object):
               if cache lookup succeeded.
             - None when cache lookup does not yield a token.
         """
-        result = self.acquire_token_silent_with_error(
+        if not account:
+            return None  # A backward-compatible NO-OP to drop the account=None usage
+        result = _clean_up(self._acquire_token_silent_with_error(
             scopes, account, authority=authority, force_refresh=force_refresh,
-            claims_challenge=claims_challenge, **kwargs)
+            claims_challenge=claims_challenge, **kwargs))
         return result if result and "error" not in result else None
 
     def acquire_token_silent_with_error(
@@ -1247,9 +1250,10 @@ class ClientApplication(object):
 
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
-        :param account:
-            one of the account object returned by :func:`~get_accounts`,
-            or use None when you want to find an access token for this client.
+        :param account: (Required)
+            One of the account object returned by :func:`~get_accounts`.
+            Starting from MSAL Python 1.23,
+            a ``None`` input will become a NO-OP and always return ``None``.
         :param force_refresh:
             If True, it will skip Access Token look-up,
             and try to find a Refresh Token to obtain a new Access Token.
@@ -1265,6 +1269,20 @@ class ClientApplication(object):
             - None when there is simply no token in the cache.
             - A dict containing an "error" key, when token refresh failed.
         """
+        if not account:
+            return None  # A backward-compatible NO-OP to drop the account=None usage
+        return _clean_up(self._acquire_token_silent_with_error(
+            scopes, account, authority=authority, force_refresh=force_refresh,
+            claims_challenge=claims_challenge, **kwargs))
+
+    def _acquire_token_silent_with_error(
+            self,
+            scopes,  # type: List[str]
+            account,  # type: Optional[Account]
+            authority=None,  # See get_authorization_request_url()
+            force_refresh=False,  # type: Optional[boolean]
+            claims_challenge=None,
+            **kwargs):
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         correlation_id = msal.telemetry._get_new_correlation_id()
@@ -1324,7 +1342,11 @@ class ClientApplication(object):
             force_refresh=False,  # type: Optional[boolean]
             claims_challenge=None,
             correlation_id=None,
+            http_exceptions=None,
             **kwargs):
+        # This internal method has two calling patterns:
+        # it accepts a non-empty account to find token for a user,
+        # and accepts account=None to find a token for the current app.
         access_token_from_cache = None
         if not (force_refresh or claims_challenge):  # Bypass AT when desired or using claims
             query={
@@ -1361,6 +1383,10 @@ class ClientApplication(object):
         else:
             refresh_reason = msal.telemetry.FORCE_REFRESH  # TODO: It could also mean claims_challenge
         assert refresh_reason, "It should have been established at this point"
+        if not http_exceptions:  # It can be a tuple of exceptions
+            # The exact HTTP exceptions are transportation-layer dependent
+            from requests.exceptions import RequestException  # Lazy load
+            http_exceptions = (RequestException,)
         try:
             data = kwargs.get("data", {})
             if account and account.get("authority_type") == _AUTHORITY_TYPE_CLOUDSHELL:
@@ -1380,14 +1406,19 @@ class ClientApplication(object):
                 if response:  # The broker provided a decisive outcome, so we use it
                     return self._process_broker_response(response, scopes, data)
 
-            result = _clean_up(self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-                authority, self._decorate_scope(scopes), account,
-                refresh_reason=refresh_reason, claims_challenge=claims_challenge,
-                correlation_id=correlation_id,
-                **kwargs))
+            if account:
+                result = self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
+                    authority, self._decorate_scope(scopes), account,
+                    refresh_reason=refresh_reason, claims_challenge=claims_challenge,
+                    correlation_id=correlation_id,
+                    **kwargs)
+            else:  # The caller is acquire_token_for_client()
+                result = self._acquire_token_for_client(
+                    scopes, refresh_reason, claims_challenge=claims_challenge,
+                    **kwargs)
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
-        except:  # The exact HTTP exception is transportation-layer dependent
+        except http_exceptions:
             # Typically network error. Potential AAD outage?
             if not access_token_from_cache:  # It means there is no fall back option
                 raise  # We choose to bubble up the exception
@@ -1458,7 +1489,10 @@ class ClientApplication(object):
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
             query=query)
-        logger.debug("Found %d RTs matching %s", len(matches), query)
+        logger.debug("Found %d RTs matching %s", len(matches), {
+            k: _pii_less_home_account_id(v) if k == "home_account_id" and v else v
+            for k, v in query.items()
+        })
 
         response = None  # A distinguishable value to mean cache is empty
         if not matches:  # Then exit early to avoid expensive operations
@@ -1671,6 +1705,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     CONSOLE_WINDOW_HANDLE = object()
 
     def __init__(self, client_id, client_credential=None, **kwargs):
+        """Same as :func:`ClientApplication.__init__`,
+        except that ``client_credential`` parameter shall remain ``None``.
+        """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
         super(PublicClientApplication, self).__init__(
@@ -1711,9 +1748,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             Can be one of "consumers" or "organizations" or your tenant domain "contoso.com".
             If included, it will skip the email-based discovery process that user goes
             through on the sign-in page, leading to a slightly more streamlined user experience.
-            More information on possible values
-            `here <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
-            `here <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
+            More information on possible values available in
+            `Auth Code Flow doc <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code>`_ and
+            `domain_hint doc <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/86fb452d-e34a-494e-ac61-e526e263b6d8>`_.
 
         :param claims_challenge:
             The claims_challenge parameter requests specific claims requested by the resource provider
@@ -1983,9 +2020,15 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
+    """Same as :func:`ClientApplication.__init__`,
+    except that ``allow_broker`` parameter shall remain ``None``.
+    """
 
     def acquire_token_for_client(self, scopes, claims_challenge=None, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
+
+        Since MSAL Python 1.23, it will automatically look for token from cache,
+        and only send request to Identity Provider when cache misses.
 
         :param list[str] scopes: (Required)
             Scopes requested to access a protected API (a resource).
@@ -2000,7 +2043,20 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        # TBD: force_refresh behavior
+        if kwargs.get("force_refresh"):
+            raise ValueError(  # We choose to disallow force_refresh
+                "Historically, this method does not support force_refresh behavior. "
+            )
+        return _clean_up(self._acquire_token_silent_with_error(
+            scopes, None, claims_challenge=claims_challenge, **kwargs))
+
+    def _acquire_token_for_client(
+        self,
+        scopes,
+        refresh_reason,
+        claims_challenge=None,
+        **kwargs
+    ):
         if self.authority.tenant.lower() in ["common", "organizations"]:
             warnings.warn(
                 "Using /common or /organizations authority "
@@ -2008,16 +2064,16 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 "Please use a specific tenant instead.", DeprecationWarning)
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
-            self.ACQUIRE_TOKEN_FOR_CLIENT_ID)
+            self.ACQUIRE_TOKEN_FOR_CLIENT_ID, refresh_reason=refresh_reason)
         client = self._regional_client or self.client
-        response = _clean_up(client.obtain_token_for_client(
+        response = client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers=telemetry_context.generate_headers(),
             data=dict(
                 kwargs.pop("data", {}),
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
-            **kwargs))
+            **kwargs)
         telemetry_context.update_telemetry(response)
         return response
 

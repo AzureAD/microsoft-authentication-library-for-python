@@ -11,19 +11,13 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 
-class DummyHttpResponse(MinimalResponse):
-    def __init__(self, headers=None, **kwargs):
-        self.headers = {} if headers is None else headers
-        super(DummyHttpResponse, self).__init__(**kwargs)
-
-
 class DummyHttpClient(object):
     def __init__(self, status_code=None, response_headers=None):
         self._status_code = status_code
         self._response_headers = response_headers
 
     def _build_dummy_response(self):
-        return DummyHttpResponse(
+        return MinimalResponse(
             status_code=self._status_code,
             headers=self._response_headers,
             text=random(),  # So that we'd know whether a new response is received
