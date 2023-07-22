@@ -382,8 +382,8 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         old_at = "old AT"
         self.populate_cache(access_token=old_at, expires_in=3599, refresh_in=-1)
         def mock_post(url, headers=None, *args, **kwargs):
-            self.assertEqual("4|84,2|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
-            return MinimalResponse(status_code=400, text=json.dumps({"error": error}))
+            self.assertEqual("4|84,4|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=400, text=json.dumps({"error": "foo"}))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
         self.assertEqual(old_at, result.get("access_token"))
 
@@ -549,12 +549,31 @@ class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
             authority="https://login.microsoftonline.com/common")
 
     def test_acquire_token_for_client(self):
-        at = "this is an access token"
         def mock_post(url, headers=None, *args, **kwargs):
-            self.assertEqual("4|730,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
-            return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
+            self.assertEqual("4|730,2|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "AT 1",
+                "expires_in": 0,
+                }))
         result = self.app.acquire_token_for_client(["scope"], post=mock_post)
-        self.assertEqual(at, result.get("access_token"))
+        self.assertEqual("AT 1", result.get("access_token"), "Shall get a new token")
+
+        def mock_post(url, headers=None, *args, **kwargs):
+            self.assertEqual("4|730,3|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "AT 2",
+                "expires_in": 3600,
+                "refresh_in": -100,  # A hack to make sure it will attempt refresh
+                }))
+        result = self.app.acquire_token_for_client(["scope"], post=mock_post)
+        self.assertEqual("AT 2", result.get("access_token"), "Shall get a new token")
+
+        def mock_post(url, headers=None, *args, **kwargs):
+            # 1/0  # TODO: Make sure this was called
+            self.assertEqual("4|730,4|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
+            return MinimalResponse(status_code=400, text=json.dumps({"error": "foo"}))
+        result = self.app.acquire_token_for_client(["scope"], post=mock_post)
+        self.assertEqual("AT 2", result.get("access_token"), "Shall get aging token")
 
     def test_acquire_token_on_behalf_of(self):
         at = "this is an access token"
