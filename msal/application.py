@@ -210,7 +210,7 @@ class ClientApplication(object):
 
         :param str client_id: Your app has a client_id after you register it on Microsoft Entra admin center.
 
-        :param Union[str, dict] client_credential:
+        :param client_credential:
             For :class:`PublicClientApplication`, you use `None` here.
             For :class:`ConfidentialClientApplication`,
             it can be a string containing client secret,
@@ -253,6 +253,8 @@ class ClientApplication(object):
                 {
                     "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
                 }
+
+        :type client_credential: Union[dict, str]
 
         :param dict client_claims:
             *Added in version 0.5.0*:
