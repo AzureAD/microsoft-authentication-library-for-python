@@ -465,7 +465,7 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
 
 def get_lab_app(
         env_client_id="LAB_APP_CLIENT_ID",
-        env_client_secret="LAB_APP_CLIENT_SECRET",
+        env_name2="LAB_APP_CLIENT_SECRET",  # A var name that hopefully avoids false alarm
         authority="https://login.microsoftonline.com/"
             "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
         timeout=None,
@@ -477,18 +477,17 @@ def get_lab_app(
     logger.info(
         "Reading ENV variables %s and %s for lab app defined at "
         "https://docs.msidlab.com/accounts/confidentialclient.html",
-        env_client_id, env_client_secret)
-    if os.getenv(env_client_id) and os.getenv(env_client_secret):
+        env_client_id, env_name2)
+    if os.getenv(env_client_id) and os.getenv(env_name2):
         # A shortcut mainly for running tests on developer's local development machine
         # or it could be setup on Travis CI
         #   https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
         # Data came from here
         # https://docs.msidlab.com/accounts/confidentialclient.html
         client_id = os.getenv(env_client_id)
-        client_secret = os.getenv(env_client_secret)
+        client_secret = os.getenv(env_name2)
     else:
-        logger.info("ENV variables %s and/or %s are not defined. Fall back to MSI.",
-                env_client_id, env_client_secret)
+        logger.info("ENV variables are not defined. Fall back to MSI.")
         # See also https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API's.aspx
         raise unittest.SkipTest("MSI-based mechanism has not been implemented yet")
     return msal.ConfidentialClientApplication(
