@@ -1,0 +1,6 @@
+__pycache__
+docs
+tests
+sample
+msal.egg-info
+msal
