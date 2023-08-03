@@ -1,10 +1,6 @@
 import functools
 import json
 import time
-try:  # Python 2
-    from urlparse import urljoin
-except:  # Python 3
-    from urllib.parse import urljoin
 import logging
 import sys
 import warnings
@@ -723,9 +719,7 @@ class ClientApplication(object):
         central_configuration = {
             "authorization_endpoint": authority.authorization_endpoint,
             "token_endpoint": authority.token_endpoint,
-            "device_authorization_endpoint":
-                authority.device_authorization_endpoint or
-                urljoin(authority.token_endpoint, "devicecode"),
+            "device_authorization_endpoint": authority.device_authorization_endpoint,
             }
         central_client = _ClientWithCcsRoutingInfo(
             central_configuration,
@@ -749,8 +743,7 @@ class ClientApplication(object):
                     "authorization_endpoint": regional_authority.authorization_endpoint,
                     "token_endpoint": regional_authority.token_endpoint,
                     "device_authorization_endpoint":
-                        regional_authority.device_authorization_endpoint or
-                        urljoin(regional_authority.token_endpoint, "devicecode"),
+                        regional_authority.device_authorization_endpoint,
                     }
                 regional_client = _ClientWithCcsRoutingInfo(
                     regional_configuration,
