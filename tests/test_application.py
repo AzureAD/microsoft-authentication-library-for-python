@@ -627,7 +627,7 @@ class TestClientApplicationWillGroupAccounts(unittest.TestCase):
     sys.version_info[0] >= 3 and sys.version_info[1] >= 2,
     "assertWarns() is only available in Python 3.2+")
 class TestClientCredentialGrant(unittest.TestCase):
-    def _test_certain_authority_should_emit_warnning(self, authority):
+    def _test_certain_authority_should_emit_warning(self, authority):
         app = ConfidentialClientApplication(
             "client_id", client_credential="secret", authority=authority)
         def mock_post(url, headers=None, *args, **kwargs):
@@ -636,12 +636,12 @@ class TestClientCredentialGrant(unittest.TestCase):
         with self.assertWarns(DeprecationWarning):
             app.acquire_token_for_client(["scope"], post=mock_post)
 
-    def test_common_authority_should_emit_warnning(self):
-        self._test_certain_authority_should_emit_warnning(
+    def test_common_authority_should_emit_warning(self):
+        self._test_certain_authority_should_emit_warning(
             authority="https://login.microsoftonline.com/common")
 
-    def test_organizations_authority_should_emit_warnning(self):
-        self._test_certain_authority_should_emit_warnning(
+    def test_organizations_authority_should_emit_warning(self):
+        self._test_certain_authority_should_emit_warning(
             authority="https://login.microsoftonline.com/organizations")
 
 
