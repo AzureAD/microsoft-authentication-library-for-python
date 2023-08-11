@@ -161,6 +161,9 @@ def main():
         option_renderer=lambda a: a["name"],
         header="Impersonate this app (or you can type in the client_id of your own app)",
         accept_nonempty_string=True)
+    allow_broker = _input_boolean("Allow broker?")
+    enable_debug_log = _input_boolean("Enable MSAL Python's DEBUG log?")
+    enable_pii_log = _input_boolean("Enable PII in broker's log?") if allow_broker and enable_debug_log else False
     app = msal.PublicClientApplication(
         chosen_app["client_id"] if isinstance(chosen_app, dict) else chosen_app,
         authority=_select_options([
@@ -173,9 +176,10 @@ def main():
             header="Input authority (Note that MSA-PT apps would NOT use the /common authority)",
             accept_nonempty_string=True,
             ),
-        allow_broker=_input_boolean("Allow broker? (Azure CLI currently only supports @microsoft.com accounts when enabling broker)"),
+        allow_broker=allow_broker,
+        enable_pii_log=enable_pii_log,
         )
-    if _input_boolean("Enable MSAL Python's DEBUG log?"):
+    if enable_debug_log:
         logging.basicConfig(level=logging.DEBUG)
     while True:
         func = _select_options([

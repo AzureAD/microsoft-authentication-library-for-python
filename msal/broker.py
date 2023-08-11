@@ -236,3 +236,6 @@ def _signout_silently(client_id, account_id, correlation_id=None):
     if error:
         return _convert_error(error, client_id)
 
+def _enable_pii_log():
+    pymsalruntime.set_is_pii_enabled(1)  # New in PyMsalRuntime 0.13.0
+
