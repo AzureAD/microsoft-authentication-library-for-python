@@ -193,6 +193,7 @@ class ClientApplication(object):
             http_cache=None,
             instance_discovery=None,
             allow_broker=None,
+            enable_pii_log=None,
             ):
         """Create an instance of application.
 
@@ -500,6 +501,13 @@ class ClientApplication(object):
               * AAD and MSA accounts (i.e. Non-ADFS, non-B2C)
 
             New in version 1.20.0.
+
+        :param boolean enable_pii_log:
+            When enabled, logs may include PII (Personal Identifiable Information).
+            This can be useful in troubleshooting broker behaviors.
+            The default behavior is False.
+
+            New in version 1.24.0.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -576,6 +584,8 @@ class ClientApplication(object):
             try:
                 from . import broker  # Trigger Broker's initialization
                 self._enable_broker = True
+                if enable_pii_log:
+                    broker._enable_pii_log()
             except RuntimeError:
                 logger.exception(
                     "Broker is unavailable on this platform. "
