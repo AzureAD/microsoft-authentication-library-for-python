@@ -2,6 +2,8 @@ import unittest
 import socket
 import sys
 
+import requests
+
 from oauth2cli.authcode import AuthCodeReceiver
 
 
@@ -22,4 +24,19 @@ class TestAuthCodeReceiver(unittest.TestCase):
             with self.assertRaises(expected_error):
                 with AuthCodeReceiver(port=receiver.get_port()):
                     pass
+
+    def test_template_should_escape_input(self):
+        with AuthCodeReceiver() as receiver:
+            receiver._scheduled_actions = [(  # Injection happens here when the port is known
+                1,  # Delay it until the receiver is activated by get_auth_response()
+                lambda: self.assertEqual(
+                    "<html>&lt;tag&gt;foo&lt;/tag&gt;</html>",
+                    requests.get("http://localhost:{}?error=<tag>foo</tag>".format(
+                        receiver.get_port())).text,
+                    "Unsafe data in HTML should be escaped",
+            ))]
+            receiver.get_auth_response(  # Starts server and hang until timeout
+                timeout=3,
+                error_template="<html>$error</html>",
+            )
 
