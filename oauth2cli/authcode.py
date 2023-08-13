@@ -95,17 +95,22 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         if qs.get('code') or qs.get("error"):  # So, it is an auth response
             auth_response = _qs2kv(qs)
             logger.debug("Got auth response: %s", auth_response)
-            template = (self.server.success_template
-                if "code" in qs else self.server.error_template)
-            if _is_html(template.template):
-                safe_data = _escape(auth_response)
+            if self.server.auth_state and self.server.auth_state != auth_response.get("state"):
+                # OAuth2 successful and error responses contain state when it was used
+                # https://www.rfc-editor.org/rfc/rfc6749#section-4.2.2.1
+                self._send_full_response("State mismatch")  # Possibly an attack
             else:
-                safe_data = auth_response
-            self._send_full_response(template.safe_substitute(**safe_data))
-            self.server.auth_response = auth_response  # Set it now, after the response is likely sent
-            # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
+                template = (self.server.success_template
+                    if "code" in qs else self.server.error_template)
+                if _is_html(template.template):
+                    safe_data = _escape(auth_response)  # Foiling an XSS attack
+                else:
+                    safe_data = auth_response
+                self._send_full_response(template.safe_substitute(**safe_data))
+                self.server.auth_response = auth_response  # Set it now, after the response is likely sent
         else:
             self._send_full_response(self.server.welcome_page)
+        # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
 
     def _send_full_response(self, body, is_ok=True):
         self.send_response(200 if is_ok else 400)
@@ -295,16 +300,14 @@ class AuthCodeReceiver(object):
 
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
         self._server.auth_response = {}  # Shared with _AuthCodeHandler
+        self._server.auth_state = state  # So handler will check it before sending response
         while not self._closing:  # Otherwise, the handle_request() attempt
                                   # would yield noisy ValueError trace
             # Derived from
             # https://docs.python.org/2/library/basehttpserver.html#more-examples
             self._server.handle_request()
             if self._server.auth_response:
-                if state and state != self._server.auth_response.get("state"):
-                    logger.debug("State mismatch. Ignoring this noise.")
-                else:
-                    break
+                break
         result.update(self._server.auth_response)  # Return via writable result param
 
     def close(self):
