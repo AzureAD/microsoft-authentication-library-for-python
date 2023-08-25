@@ -206,11 +206,18 @@ class ClientApplication(object):
             or an X509 certificate container in this form::
 
                 {
-                    "private_key": "...-----BEGIN PRIVATE KEY-----...",
+                    "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
                     "thumbprint": "A1B2C3D4E5F6...",
                     "public_certificate": "...-----BEGIN CERTIFICATE-----... (Optional. See below.)",
                     "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
                 }
+
+            MSAL Python requires a "private_key" in PEM format.
+            If your cert is in a PKCS12 (.pfx) format, you can also
+            `convert it to PEM and get the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L101-L123>`_.
+
+            The thumbprint is available in your app's registration in Azure Portal.
+            Alternatively, you can `calculate the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L94-L97>`_.
 
             *Added in version 0.5.0*:
             public_certificate (optional) is public key certificate
