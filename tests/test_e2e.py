@@ -277,48 +277,6 @@ class E2eTestCase(unittest.TestCase):
         return result  # For further testing
 
 
-class SshCertTestCase(E2eTestCase):
-    _JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
-    _JWK2 = """{"kty":"RSA", "n":"72u07mew8rw-ssw3tUs9clKstGO2lvD7ZNxJU7OPNKz5PGYx3gjkhUmtNah4I4FP0DuF1ogb_qSS5eD86w10Wb1ftjWcoY8zjNO9V3ph-Q2tMQWdDW5kLdeU3-EDzc0HQeou9E0udqmfQoPbuXFQcOkdcbh3eeYejs8sWn3TQprXRwGh_TRYi-CAurXXLxQ8rp-pltUVRIr1B63fXmXhMeCAGwCPEFX9FRRs-YHUszUJl9F9-E0nmdOitiAkKfCC9LhwB9_xKtjmHUM9VaEC9jWOcdvXZutwEoW2XPMOg0Ky-s197F9rfpgHle2gBrXsbvVMvS0D-wXg6vsq6BAHzQ", "e":"AQAB"}"""
-    DATA1 = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": _JWK1}
-    DATA2 = {"token_type": "ssh-cert", "key_id": "key2", "req_cnf": _JWK2}
-    _SCOPE_USER = ["https://pas.windows.net/CheckMyAccess/Linux/user_impersonation"]
-    _SCOPE_SP = ["https://pas.windows.net/CheckMyAccess/Linux/.default"]
-    SCOPE = _SCOPE_SP  # Historically there was a separation, at 2021 it is unified
-
-    def test_ssh_cert_for_service_principal(self):
-        # Any SP can obtain an ssh-cert. Here we use the lab app.
-        result = get_lab_app().acquire_token_for_client(self.SCOPE, data=self.DATA1)
-        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
-            result.get("error"), result.get("error_description")))
-        self.assertEqual("ssh-cert", result["token_type"])
-
-    def test_ssh_cert_for_user_should_work_with_any_account(self):
-        result = self._test_acquire_token_interactive(
-            client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",  # Azure CLI is one
-                # of the only 2 clients that are PreAuthz to use ssh cert feature
-            authority="https://login.microsoftonline.com/common",
-            scope=self.SCOPE,
-            data=self.DATA1,
-            username_uri="https://msidlab.com/api/user?usertype=cloud",
-            prompt="none" if msal.application._is_running_in_cloud_shell() else None,
-            )   # It already tests reading AT from cache, and using RT to refresh
-                # acquire_token_silent() would work because we pass in the same key
-        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
-            result.get("error"), result.get("error_description")))
-        self.assertEqual("ssh-cert", result["token_type"])
-        logger.debug("%s.cache = %s",
-            self.id(), json.dumps(self.app.token_cache._cache, indent=4))
-
-        # refresh_token grant can fetch an ssh-cert bound to a different key
-        account = self.app.get_accounts()[0]
-        refreshed_ssh_cert = self.app.acquire_token_silent(
-            self.SCOPE, account=account, data=self.DATA2)
-        self.assertIsNotNone(refreshed_ssh_cert)
-        self.assertEqual(refreshed_ssh_cert["token_type"], "ssh-cert")
-        self.assertNotEqual(result["access_token"], refreshed_ssh_cert['access_token'])
-
-
 @unittest.skipUnless(
     msal.application._is_running_in_cloud_shell(),
     "Manually run this test case from inside Cloud Shell")
@@ -695,6 +653,59 @@ class LabBasedTestCase(E2eTestCase):
         result = self.app.acquire_token_for_client(scope)
         self.assertIsNotNone(result.get("access_token"), "Got %s instead" % result)
         self.assertCacheWorksForApp(result, scope)
+
+
+class PopWithExternalKeyTestCase(LabBasedTestCase):
+    def _test_service_principal(self):
+        # Any SP can obtain an ssh-cert. Here we use the lab app.
+        result = get_lab_app().acquire_token_for_client(self.SCOPE, data=self.DATA1)
+        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
+            result.get("error"), result.get("error_description")))
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, result["token_type"])
+
+    def _test_user_account(self):
+        lab_user = self.get_lab_user(usertype="cloud")
+        result = self._test_acquire_token_interactive(
+            client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",  # Azure CLI is one
+                # of the only 2 clients that are PreAuthz to use ssh cert feature
+            authority="https://login.microsoftonline.com/common",
+            scope=self.SCOPE,
+            data=self.DATA1,
+            username=lab_user["username"],
+            lab_name=lab_user["lab_name"],
+            prompt="none" if msal.application._is_running_in_cloud_shell() else None,
+            )   # It already tests reading AT from cache, and using RT to refresh
+                # acquire_token_silent() would work because we pass in the same key
+        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
+            result.get("error"), result.get("error_description")))
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, result["token_type"])
+        logger.debug("%s.cache = %s",
+            self.id(), json.dumps(self.app.token_cache._cache, indent=4))
+
+        # refresh_token grant can fetch an ssh-cert bound to a different key
+        account = self.app.get_accounts()[0]
+        refreshed_ssh_cert = self.app.acquire_token_silent(
+            self.SCOPE, account=account, data=self.DATA2)
+        self.assertIsNotNone(refreshed_ssh_cert)
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, refreshed_ssh_cert["token_type"])
+        self.assertNotEqual(result["access_token"], refreshed_ssh_cert['access_token'])
+
+
+class SshCertTestCase(PopWithExternalKeyTestCase):
+    EXPECTED_TOKEN_TYPE = "ssh-cert"
+    _JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
+    _JWK2 = """{"kty":"RSA", "n":"72u07mew8rw-ssw3tUs9clKstGO2lvD7ZNxJU7OPNKz5PGYx3gjkhUmtNah4I4FP0DuF1ogb_qSS5eD86w10Wb1ftjWcoY8zjNO9V3ph-Q2tMQWdDW5kLdeU3-EDzc0HQeou9E0udqmfQoPbuXFQcOkdcbh3eeYejs8sWn3TQprXRwGh_TRYi-CAurXXLxQ8rp-pltUVRIr1B63fXmXhMeCAGwCPEFX9FRRs-YHUszUJl9F9-E0nmdOitiAkKfCC9LhwB9_xKtjmHUM9VaEC9jWOcdvXZutwEoW2XPMOg0Ky-s197F9rfpgHle2gBrXsbvVMvS0D-wXg6vsq6BAHzQ", "e":"AQAB"}"""
+    DATA1 = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": _JWK1}
+    DATA2 = {"token_type": "ssh-cert", "key_id": "key2", "req_cnf": _JWK2}
+    _SCOPE_USER = ["https://pas.windows.net/CheckMyAccess/Linux/user_impersonation"]
+    _SCOPE_SP = ["https://pas.windows.net/CheckMyAccess/Linux/.default"]
+    SCOPE = _SCOPE_SP  # Historically there was a separation, at 2021 it is unified
+
+    def test_service_principal(self):
+        self._test_service_principal()
+
+    def test_user_account(self):
+        self._test_user_account()
 
 
 class WorldWideTestCase(LabBasedTestCase):
