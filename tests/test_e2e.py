@@ -10,7 +10,7 @@ try:
     load_dotenv()  # take environment variables from .env.
 except:
     pass
-
+import base64
 import logging
 import os
 import json
@@ -700,6 +700,32 @@ class SshCertTestCase(PopWithExternalKeyTestCase):
     _SCOPE_USER = ["https://pas.windows.net/CheckMyAccess/Linux/user_impersonation"]
     _SCOPE_SP = ["https://pas.windows.net/CheckMyAccess/Linux/.default"]
     SCOPE = _SCOPE_SP  # Historically there was a separation, at 2021 it is unified
+
+    def test_service_principal(self):
+        self._test_service_principal()
+
+    def test_user_account(self):
+        self._test_user_account()
+
+
+def _data_for_pop(key):
+    raw_req_cnf = json.dumps({"kid": key, "xms_ksl": "sw"})
+    return {  # Sampled from Azure CLI's plugin connectedk8s
+        'token_type': 'pop',
+        'key_id': key,
+        "req_cnf": base64.urlsafe_b64encode(raw_req_cnf.encode('utf-8')).decode('utf-8').rstrip('='),
+            # Note: Sending raw_req_cnf without base64 encoding would result in an http 500 error
+    }  # See also https://github.com/Azure/azure-cli-extensions/blob/main/src/connectedk8s/azext_connectedk8s/_clientproxyutils.py#L86-L92
+
+
+class AtPopWithExternalKeyTestCase(PopWithExternalKeyTestCase):
+    EXPECTED_TOKEN_TYPE = "pop"
+    DATA1 = _data_for_pop('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAAA')  # Fake key with a certain format and length
+    DATA2 = _data_for_pop('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB-BBBBBBBB')  # Fake key with a certain format and length
+    SCOPE = [
+        '6256c85f-0aad-4d50-b960-e6e9b21efe35/.default',  # Azure CLI's connectedk8s plugin uses this
+            # https://github.com/Azure/azure-cli-extensions/pull/4468/files#diff-a47efa3186c7eb4f1176e07d0b858ead0bf4a58bfd51e448ee3607a5b4ef47f6R116
+    ]
 
     def test_service_principal(self):
         self._test_service_principal()
