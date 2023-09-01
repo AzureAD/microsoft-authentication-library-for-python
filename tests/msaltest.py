@@ -1,11 +1,11 @@
-import getpass, json, logging, sys, msal
+import base64, getpass, json, logging, sys, msal
 
 
 AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
 
 def print_json(blob):
-    print(json.dumps(blob, indent=2))
+    print(json.dumps(blob, indent=2, sort_keys=True))
 
 def _input_boolean(message):
     return input(
@@ -134,6 +134,24 @@ def acquire_ssh_cert_interactive(app):
     if result.get("token_type") != "ssh-cert":
         logging.error("Unable to acquire an ssh-cert")
 
+POP_KEY_ID = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAAA'  # Fake key with a certain format and length
+RAW_REQ_CNF = json.dumps({"kid": POP_KEY_ID, "xms_ksl": "sw"})
+POP_DATA = {  # Sampled from Azure CLI's plugin connectedk8s
+    'token_type': 'pop',
+    'key_id': POP_KEY_ID,
+    "req_cnf": base64.urlsafe_b64encode(RAW_REQ_CNF.encode('utf-8')).decode('utf-8').rstrip('='),
+        # Note: Sending RAW_REQ_CNF without base64 encoding would result in an http 500 error
+}  # See also https://github.com/Azure/azure-cli-extensions/blob/main/src/connectedk8s/azext_connectedk8s/_clientproxyutils.py#L86-L92
+
+def acquire_pop_token_interactive(app):
+    """Acquire a POP token interactively - This typically only works with Azure CLI"""
+    POP_SCOPE = ['6256c85f-0aad-4d50-b960-e6e9b21efe35/.default']  # KAP 1P Server App Scope, obtained from https://github.com/Azure/azure-cli-extensions/pull/4468/files#diff-a47efa3186c7eb4f1176e07d0b858ead0bf4a58bfd51e448ee3607a5b4ef47f6R116
+    result = _acquire_token_interactive(app, POP_SCOPE, data=POP_DATA)
+    print_json(result)
+    if result.get("token_type") != "pop":
+        logging.error("Unable to acquire a pop token")
+
+
 def remove_account(app):
     """remove_account() - Invalidate account and/or token(s) from cache, so that acquire_token_silent() would be reset"""
     account = _select_account(app)
@@ -188,6 +206,7 @@ def main():
             acquire_token_by_username_password,
             acquire_ssh_cert_silently,
             acquire_ssh_cert_interactive,
+            acquire_pop_token_interactive,
             remove_account,
             exit,
             ], option_renderer=lambda f: f.__doc__, header="MSAL Python APIs:")
