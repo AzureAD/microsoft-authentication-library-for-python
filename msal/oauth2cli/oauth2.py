@@ -666,7 +666,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             **(auth_params or {}))
         auth_response = auth_code_receiver.get_auth_response(
             auth_uri=flow["auth_uri"],
-            state=flow["state"],  # Optional but we choose to do it upfront
+            state=flow["state"],  # So receiver can check it early
             timeout=timeout,
             welcome_template=welcome_template,
             success_template=success_template,
