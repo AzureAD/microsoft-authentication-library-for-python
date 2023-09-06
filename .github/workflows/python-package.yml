@@ -42,15 +42,40 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install flake8 pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Test with pytest
+      run: pytest --benchmark-skip
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
         #flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         #flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Test with pytest
+
+  cb:
+    # Benchmark only after the correctness has been tested by CI,
+    # and then run benchmark only once (sampling with only one Python version).
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+    - name: Install dependencies
       run: |
-        pytest
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Run benchmark
+      run: pytest --benchmark-only --benchmark-json benchmark.json --log-cli-level INFO tests/test_benchmark.py
+    - name: Render benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        tool: 'pytest'
+        output-file-path: benchmark.json
+        fail-on-alert: true
+    - name: Publish Gibhub Pages
+      run: git push origin gh-pages
 
   cd:
     needs: ci
