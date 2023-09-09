@@ -1,8 +1,19 @@
+# It is currently shipped inside msal library.
+# Pros: It is always available wherever msal is installed.
+# Cons: Its 3rd-party dependencies (if any) may become msal's dependency.
+"""MSAL Python Tester
+
+Usage 1: Run it on the fly.
+    python -m msal
+
+Usage 2: Build an all-in-one executable file for bug bash.
+    shiv -e msal.__main__._main -o msaltest-on-os-name.pyz .
+    Note: We choose to not define a console script to avoid name conflict.
+"""
 import base64, getpass, json, logging, sys, msal
 
-
-AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
-VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
+_AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+_VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
 
 def print_json(blob):
     print(json.dumps(blob, indent=2, sort_keys=True))
@@ -61,7 +72,7 @@ def _select_account(app):
     else:
         print("No account available inside MSAL Python. Use other methods to acquire token first.")
 
-def acquire_token_silent(app):
+def _acquire_token_silent(app):
     """acquire_token_silent() - with an account already signed into MSAL Python."""
     account = _select_account(app)
     if account:
@@ -71,7 +82,8 @@ def acquire_token_silent(app):
             force_refresh=_input_boolean("Bypass MSAL Python's token cache?"),
             ))
 
-def _acquire_token_interactive(app, scopes, data=None):
+def _acquire_token_interactive(app, scopes=None, data=None):
+    """acquire_token_interactive() - User will be prompted if app opts to do select_account."""
     prompt = _select_options([
         {"value": None, "description": "Unspecified. Proceed silently with a default account (if any), fallback to prompt."},
         {"value": "none", "description": "none. Proceed silently with a default account (if any), or error out."},
@@ -88,78 +100,73 @@ def _acquire_token_interactive(app, scopes, data=None):
         )
     login_hint = raw_login_hint["username"] if isinstance(raw_login_hint, dict) else raw_login_hint
     result = app.acquire_token_interactive(
-        scopes,
+        scopes or _input_scopes(),
         parent_window_handle=app.CONSOLE_WINDOW_HANDLE,  # This test app is a console app
         enable_msa_passthrough=app.client_id in [  # Apps are expected to set this right
-            AZURE_CLI, VISUAL_STUDIO,
+            _AZURE_CLI, _VISUAL_STUDIO,
             ],  # Here this test app mimics the setting for some known MSA-PT apps
         prompt=prompt, login_hint=login_hint, data=data or {})
     if login_hint and "id_token_claims" in result:
         signed_in_user = result.get("id_token_claims", {}).get("preferred_username")
         if signed_in_user != login_hint:
             logging.warning('Signed-in user "%s" does not match login_hint', signed_in_user)
+    print_json(result)
     return result
 
-def acquire_token_interactive(app):
-    """acquire_token_interactive() - User will be prompted if app opts to do select_account."""
-    print_json(_acquire_token_interactive(app, _input_scopes()))
-
-def acquire_token_by_username_password(app):
+def _acquire_token_by_username_password(app):
     """acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc"""
     print_json(app.acquire_token_by_username_password(
         _input("username: "), getpass.getpass("password: "), scopes=_input_scopes()))
 
 _JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
-SSH_CERT_DATA = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": _JWK1}
-SSH_CERT_SCOPE = ["https://pas.windows.net/CheckMyAccess/Linux/.default"]
+_SSH_CERT_DATA = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": _JWK1}
+_SSH_CERT_SCOPE = ["https://pas.windows.net/CheckMyAccess/Linux/.default"]
 
-def acquire_ssh_cert_silently(app):
+def _acquire_ssh_cert_silently(app):
     """Acquire an SSH Cert silently- This typically only works with Azure CLI"""
     account = _select_account(app)
     if account:
         result = app.acquire_token_silent(
-            SSH_CERT_SCOPE,
+            _SSH_CERT_SCOPE,
             account,
-            data=SSH_CERT_DATA,
+            data=_SSH_CERT_DATA,
             force_refresh=_input_boolean("Bypass MSAL Python's token cache?"),
             )
         print_json(result)
         if result and result.get("token_type") != "ssh-cert":
             logging.error("Unable to acquire an ssh-cert.")
 
-def acquire_ssh_cert_interactive(app):
+def _acquire_ssh_cert_interactive(app):
     """Acquire an SSH Cert interactively - This typically only works with Azure CLI"""
-    result = _acquire_token_interactive(app, SSH_CERT_SCOPE, data=SSH_CERT_DATA)
-    print_json(result)
+    result = _acquire_token_interactive(app, scopes=_SSH_CERT_SCOPE, data=_SSH_CERT_DATA)
     if result.get("token_type") != "ssh-cert":
         logging.error("Unable to acquire an ssh-cert")
 
-POP_KEY_ID = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAAA'  # Fake key with a certain format and length
-RAW_REQ_CNF = json.dumps({"kid": POP_KEY_ID, "xms_ksl": "sw"})
-POP_DATA = {  # Sampled from Azure CLI's plugin connectedk8s
+_POP_KEY_ID = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAAA'  # Fake key with a certain format and length
+_RAW_REQ_CNF = json.dumps({"kid": _POP_KEY_ID, "xms_ksl": "sw"})
+_POP_DATA = {  # Sampled from Azure CLI's plugin connectedk8s
     'token_type': 'pop',
-    'key_id': POP_KEY_ID,
-    "req_cnf": base64.urlsafe_b64encode(RAW_REQ_CNF.encode('utf-8')).decode('utf-8').rstrip('='),
-        # Note: Sending RAW_REQ_CNF without base64 encoding would result in an http 500 error
+    'key_id': _POP_KEY_ID,
+    "req_cnf": base64.urlsafe_b64encode(_RAW_REQ_CNF.encode('utf-8')).decode('utf-8').rstrip('='),
+        # Note: Sending _RAW_REQ_CNF without base64 encoding would result in an http 500 error
 }  # See also https://github.com/Azure/azure-cli-extensions/blob/main/src/connectedk8s/azext_connectedk8s/_clientproxyutils.py#L86-L92
 
-def acquire_pop_token_interactive(app):
+def _acquire_pop_token_interactive(app):
     """Acquire a POP token interactively - This typically only works with Azure CLI"""
     POP_SCOPE = ['6256c85f-0aad-4d50-b960-e6e9b21efe35/.default']  # KAP 1P Server App Scope, obtained from https://github.com/Azure/azure-cli-extensions/pull/4468/files#diff-a47efa3186c7eb4f1176e07d0b858ead0bf4a58bfd51e448ee3607a5b4ef47f6R116
-    result = _acquire_token_interactive(app, POP_SCOPE, data=POP_DATA)
+    result = _acquire_token_interactive(app, scopes=POP_SCOPE, data=_POP_DATA)
     print_json(result)
     if result.get("token_type") != "pop":
         logging.error("Unable to acquire a pop token")
 
-
-def remove_account(app):
+def _remove_account(app):
     """remove_account() - Invalidate account and/or token(s) from cache, so that acquire_token_silent() would be reset"""
     account = _select_account(app)
     if account:
         app.remove_account(account)
         print('Account "{}" and/or its token(s) are signed out from MSAL Python'.format(account["username"]))
 
-def exit(app):
+def _exit(app):
     """Exit"""
     bug_link = (
         "https://identitydivision.visualstudio.com/Engineering/_queries/query/79b3a352-a775-406f-87cd-a487c382a8ed/"
@@ -169,11 +176,11 @@ def exit(app):
     print("Bye. If you found a bug, please report it here: {}".format(bug_link))
     sys.exit()
 
-def main():
-    print("Welcome to the Msal Python {} Tester\n".format(msal.__version__))
+def _main():
+    print("Welcome to the Msal Python {} Tester (Experimental)\n".format(msal.__version__))
     chosen_app = _select_options([
-        {"client_id": AZURE_CLI, "name": "Azure CLI (Correctly configured for MSA-PT)"},
-        {"client_id": VISUAL_STUDIO, "name": "Visual Studio (Correctly configured for MSA-PT)"},
+        {"client_id": _AZURE_CLI, "name": "Azure CLI (Correctly configured for MSA-PT)"},
+        {"client_id": _VISUAL_STUDIO, "name": "Visual Studio (Correctly configured for MSA-PT)"},
         {"client_id": "95de633a-083e-42f5-b444-a4295d8e9314", "name": "Whiteboard Services (Non MSA-PT app. Accepts AAD & MSA accounts.)"},
         ],
         option_renderer=lambda a: a["name"],
@@ -201,14 +208,14 @@ def main():
         logging.basicConfig(level=logging.DEBUG)
     while True:
         func = _select_options([
-            acquire_token_silent,
-            acquire_token_interactive,
-            acquire_token_by_username_password,
-            acquire_ssh_cert_silently,
-            acquire_ssh_cert_interactive,
-            acquire_pop_token_interactive,
-            remove_account,
-            exit,
+            _acquire_token_silent,
+            _acquire_token_interactive,
+            _acquire_token_by_username_password,
+            _acquire_ssh_cert_silently,
+            _acquire_ssh_cert_interactive,
+            _acquire_pop_token_interactive,
+            _remove_account,
+            _exit,
             ], option_renderer=lambda f: f.__doc__, header="MSAL Python APIs:")
         try:
             func(app)
@@ -218,5 +225,5 @@ def main():
             print("Aborted")
 
 if __name__ == "__main__":
-    main()
+    _main()
 
