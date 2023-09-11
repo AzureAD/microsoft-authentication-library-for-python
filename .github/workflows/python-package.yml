@@ -85,6 +85,10 @@ jobs:
 
   cd:
     needs: ci
+    # Note: github.event.pull_request.draft == false WON'T WORK in "if" statement,
+    # because the triggered event is a push, not a pull_request.
+    # This means each commit will trigger a release on TestPyPI.
+    # Those releases will only succeed when each push has a new version number: a1, a2, a3, etc.
     if: |
       github.event_name == 'push' &&
       (
