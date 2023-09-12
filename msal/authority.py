@@ -163,9 +163,9 @@ def canonicalize(authority_or_auth_endpoint):
     raise ValueError(
         "Your given address (%s) should consist of "
         "an https url with a minimum of one segment in a path: e.g. "
-        "https://login.microsoftonline.com/<tenant> "
-        "or https://<tenant_name>.ciamlogin.com/<tenant> "
-        "or https://<tenant_name>.b2clogin.com/<tenant_name>.onmicrosoft.com/policy"
+        "https://login.microsoftonline.com/{tenant} "
+        "or https://{tenant_name}.ciamlogin.com/{tenant} "
+        "or https://{tenant_name}.b2clogin.com/{tenant_name}.onmicrosoft.com/policy"
         % authority_or_auth_endpoint)
 
 def _instance_discovery(url, http_client, instance_discovery_endpoint, **kwargs):

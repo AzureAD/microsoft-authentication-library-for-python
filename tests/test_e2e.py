@@ -10,7 +10,7 @@ try:
     load_dotenv()  # take environment variables from .env.
 except:
     pass
-
+import base64
 import logging
 import os
 import json
@@ -277,48 +277,6 @@ class E2eTestCase(unittest.TestCase):
         return result  # For further testing
 
 
-class SshCertTestCase(E2eTestCase):
-    _JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
-    _JWK2 = """{"kty":"RSA", "n":"72u07mew8rw-ssw3tUs9clKstGO2lvD7ZNxJU7OPNKz5PGYx3gjkhUmtNah4I4FP0DuF1ogb_qSS5eD86w10Wb1ftjWcoY8zjNO9V3ph-Q2tMQWdDW5kLdeU3-EDzc0HQeou9E0udqmfQoPbuXFQcOkdcbh3eeYejs8sWn3TQprXRwGh_TRYi-CAurXXLxQ8rp-pltUVRIr1B63fXmXhMeCAGwCPEFX9FRRs-YHUszUJl9F9-E0nmdOitiAkKfCC9LhwB9_xKtjmHUM9VaEC9jWOcdvXZutwEoW2XPMOg0Ky-s197F9rfpgHle2gBrXsbvVMvS0D-wXg6vsq6BAHzQ", "e":"AQAB"}"""
-    DATA1 = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": _JWK1}
-    DATA2 = {"token_type": "ssh-cert", "key_id": "key2", "req_cnf": _JWK2}
-    _SCOPE_USER = ["https://pas.windows.net/CheckMyAccess/Linux/user_impersonation"]
-    _SCOPE_SP = ["https://pas.windows.net/CheckMyAccess/Linux/.default"]
-    SCOPE = _SCOPE_SP  # Historically there was a separation, at 2021 it is unified
-
-    def test_ssh_cert_for_service_principal(self):
-        # Any SP can obtain an ssh-cert. Here we use the lab app.
-        result = get_lab_app().acquire_token_for_client(self.SCOPE, data=self.DATA1)
-        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
-            result.get("error"), result.get("error_description")))
-        self.assertEqual("ssh-cert", result["token_type"])
-
-    def test_ssh_cert_for_user_should_work_with_any_account(self):
-        result = self._test_acquire_token_interactive(
-            client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",  # Azure CLI is one
-                # of the only 2 clients that are PreAuthz to use ssh cert feature
-            authority="https://login.microsoftonline.com/common",
-            scope=self.SCOPE,
-            data=self.DATA1,
-            username_uri="https://msidlab.com/api/user?usertype=cloud",
-            prompt="none" if msal.application._is_running_in_cloud_shell() else None,
-            )   # It already tests reading AT from cache, and using RT to refresh
-                # acquire_token_silent() would work because we pass in the same key
-        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
-            result.get("error"), result.get("error_description")))
-        self.assertEqual("ssh-cert", result["token_type"])
-        logger.debug("%s.cache = %s",
-            self.id(), json.dumps(self.app.token_cache._cache, indent=4))
-
-        # refresh_token grant can fetch an ssh-cert bound to a different key
-        account = self.app.get_accounts()[0]
-        refreshed_ssh_cert = self.app.acquire_token_silent(
-            self.SCOPE, account=account, data=self.DATA2)
-        self.assertIsNotNone(refreshed_ssh_cert)
-        self.assertEqual(refreshed_ssh_cert["token_type"], "ssh-cert")
-        self.assertNotEqual(result["access_token"], refreshed_ssh_cert['access_token'])
-
-
 @unittest.skipUnless(
     msal.application._is_running_in_cloud_shell(),
     "Manually run this test case from inside Cloud Shell")
@@ -465,7 +423,7 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
 
 def get_lab_app(
         env_client_id="LAB_APP_CLIENT_ID",
-        env_client_secret="LAB_APP_CLIENT_SECRET",
+        env_name2="LAB_APP_CLIENT_SECRET",  # A var name that hopefully avoids false alarm
         authority="https://login.microsoftonline.com/"
             "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
         timeout=None,
@@ -477,18 +435,17 @@ def get_lab_app(
     logger.info(
         "Reading ENV variables %s and %s for lab app defined at "
         "https://docs.msidlab.com/accounts/confidentialclient.html",
-        env_client_id, env_client_secret)
-    if os.getenv(env_client_id) and os.getenv(env_client_secret):
+        env_client_id, env_name2)
+    if os.getenv(env_client_id) and os.getenv(env_name2):
         # A shortcut mainly for running tests on developer's local development machine
         # or it could be setup on Travis CI
         #   https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
         # Data came from here
         # https://docs.msidlab.com/accounts/confidentialclient.html
         client_id = os.getenv(env_client_id)
-        client_secret = os.getenv(env_client_secret)
+        client_secret = os.getenv(env_name2)
     else:
-        logger.info("ENV variables %s and/or %s are not defined. Fall back to MSI.",
-                env_client_id, env_client_secret)
+        logger.info("ENV variables are not defined. Fall back to MSI.")
         # See also https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API's.aspx
         raise unittest.SkipTest("MSI-based mechanism has not been implemented yet")
     return msal.ConfidentialClientApplication(
@@ -696,6 +653,85 @@ class LabBasedTestCase(E2eTestCase):
         result = self.app.acquire_token_for_client(scope)
         self.assertIsNotNone(result.get("access_token"), "Got %s instead" % result)
         self.assertCacheWorksForApp(result, scope)
+
+
+class PopWithExternalKeyTestCase(LabBasedTestCase):
+    def _test_service_principal(self):
+        # Any SP can obtain an ssh-cert. Here we use the lab app.
+        result = get_lab_app().acquire_token_for_client(self.SCOPE, data=self.DATA1)
+        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
+            result.get("error"), result.get("error_description")))
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, result["token_type"])
+
+    def _test_user_account(self):
+        lab_user = self.get_lab_user(usertype="cloud")
+        result = self._test_acquire_token_interactive(
+            client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",  # Azure CLI is one
+                # of the only 2 clients that are PreAuthz to use ssh cert feature
+            authority="https://login.microsoftonline.com/common",
+            scope=self.SCOPE,
+            data=self.DATA1,
+            username=lab_user["username"],
+            lab_name=lab_user["lab_name"],
+            prompt="none" if msal.application._is_running_in_cloud_shell() else None,
+            )   # It already tests reading AT from cache, and using RT to refresh
+                # acquire_token_silent() would work because we pass in the same key
+        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
+            result.get("error"), result.get("error_description")))
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, result["token_type"])
+        logger.debug("%s.cache = %s",
+            self.id(), json.dumps(self.app.token_cache._cache, indent=4))
+
+        # refresh_token grant can fetch an ssh-cert bound to a different key
+        account = self.app.get_accounts()[0]
+        refreshed_ssh_cert = self.app.acquire_token_silent(
+            self.SCOPE, account=account, data=self.DATA2)
+        self.assertIsNotNone(refreshed_ssh_cert)
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, refreshed_ssh_cert["token_type"])
+        self.assertNotEqual(result["access_token"], refreshed_ssh_cert['access_token'])
+
+
+class SshCertTestCase(PopWithExternalKeyTestCase):
+    EXPECTED_TOKEN_TYPE = "ssh-cert"
+    _JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
+    _JWK2 = """{"kty":"RSA", "n":"72u07mew8rw-ssw3tUs9clKstGO2lvD7ZNxJU7OPNKz5PGYx3gjkhUmtNah4I4FP0DuF1ogb_qSS5eD86w10Wb1ftjWcoY8zjNO9V3ph-Q2tMQWdDW5kLdeU3-EDzc0HQeou9E0udqmfQoPbuXFQcOkdcbh3eeYejs8sWn3TQprXRwGh_TRYi-CAurXXLxQ8rp-pltUVRIr1B63fXmXhMeCAGwCPEFX9FRRs-YHUszUJl9F9-E0nmdOitiAkKfCC9LhwB9_xKtjmHUM9VaEC9jWOcdvXZutwEoW2XPMOg0Ky-s197F9rfpgHle2gBrXsbvVMvS0D-wXg6vsq6BAHzQ", "e":"AQAB"}"""
+    DATA1 = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": _JWK1}
+    DATA2 = {"token_type": "ssh-cert", "key_id": "key2", "req_cnf": _JWK2}
+    _SCOPE_USER = ["https://pas.windows.net/CheckMyAccess/Linux/user_impersonation"]
+    _SCOPE_SP = ["https://pas.windows.net/CheckMyAccess/Linux/.default"]
+    SCOPE = _SCOPE_SP  # Historically there was a separation, at 2021 it is unified
+
+    def test_service_principal(self):
+        self._test_service_principal()
+
+    def test_user_account(self):
+        self._test_user_account()
+
+
+def _data_for_pop(key):
+    raw_req_cnf = json.dumps({"kid": key, "xms_ksl": "sw"})
+    return {  # Sampled from Azure CLI's plugin connectedk8s
+        'token_type': 'pop',
+        'key_id': key,
+        "req_cnf": base64.urlsafe_b64encode(raw_req_cnf.encode('utf-8')).decode('utf-8').rstrip('='),
+            # Note: Sending raw_req_cnf without base64 encoding would result in an http 500 error
+    }  # See also https://github.com/Azure/azure-cli-extensions/blob/main/src/connectedk8s/azext_connectedk8s/_clientproxyutils.py#L86-L92
+
+
+class AtPopWithExternalKeyTestCase(PopWithExternalKeyTestCase):
+    EXPECTED_TOKEN_TYPE = "pop"
+    DATA1 = _data_for_pop('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAAA')  # Fake key with a certain format and length
+    DATA2 = _data_for_pop('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB-BBBBBBBB')  # Fake key with a certain format and length
+    SCOPE = [
+        '6256c85f-0aad-4d50-b960-e6e9b21efe35/.default',  # Azure CLI's connectedk8s plugin uses this
+            # https://github.com/Azure/azure-cli-extensions/pull/4468/files#diff-a47efa3186c7eb4f1176e07d0b858ead0bf4a58bfd51e448ee3607a5b4ef47f6R116
+    ]
+
+    def test_service_principal(self):
+        self._test_service_principal()
+
+    def test_user_account(self):
+        self._test_user_account()
 
 
 class WorldWideTestCase(LabBasedTestCase):

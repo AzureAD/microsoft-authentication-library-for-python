@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.23.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.24.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -73,6 +73,11 @@ def _pii_less_home_account_id(home_account_id):
 
 def _clean_up(result):
     if isinstance(result, dict):
+        if "_msalruntime_telemetry" in result or "_msal_python_telemetry" in result:
+            result["msal_telemetry"] = json.dumps({  # Telemetry as an opaque string
+                "msalruntime_telemetry": result.get("_msalruntime_telemetry"),
+                "msal_python_telemetry": result.get("_msal_python_telemetry"),
+                }, separators=(",", ":"))
         return {
             k: result[k] for k in result
             if k != "refresh_in"  # MSAL handled refresh_in, customers need not
@@ -188,6 +193,7 @@ class ClientApplication(object):
             http_cache=None,
             instance_discovery=None,
             allow_broker=None,
+            enable_pii_log=None,
             ):
         """Create an instance of application.
 
@@ -200,11 +206,18 @@ class ClientApplication(object):
             or an X509 certificate container in this form::
 
                 {
-                    "private_key": "...-----BEGIN PRIVATE KEY-----...",
+                    "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
                     "thumbprint": "A1B2C3D4E5F6...",
                     "public_certificate": "...-----BEGIN CERTIFICATE-----... (Optional. See below.)",
                     "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
                 }
+
+            MSAL Python requires a "private_key" in PEM format.
+            If your cert is in a PKCS12 (.pfx) format, you can also
+            `convert it to PEM and get the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L101-L123>`_.
+
+            The thumbprint is available in your app's registration in Azure Portal.
+            Alternatively, you can `calculate the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L94-L97>`_.
 
             *Added in version 0.5.0*:
             public_certificate (optional) is public key certificate
@@ -495,6 +508,13 @@ class ClientApplication(object):
               * AAD and MSA accounts (i.e. Non-ADFS, non-B2C)
 
             New in version 1.20.0.
+
+        :param boolean enable_pii_log:
+            When enabled, logs may include PII (Personal Identifiable Information).
+            This can be useful in troubleshooting broker behaviors.
+            The default behavior is False.
+
+            New in version 1.24.0.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -571,6 +591,8 @@ class ClientApplication(object):
             try:
                 from . import broker  # Trigger Broker's initialization
                 self._enable_broker = True
+                if enable_pii_log:
+                    broker._enable_pii_log()
             except RuntimeError:
                 logger.exception(
                     "Broker is unavailable on this platform. "
@@ -966,7 +988,7 @@ class ClientApplication(object):
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)
-        response =_clean_up(self.client.obtain_token_by_auth_code_flow(
+        response = _clean_up(self.client.obtain_token_by_auth_code_flow(
             auth_code_flow,
             auth_response,
             scope=self._decorate_scope(scopes) if scopes else None,
