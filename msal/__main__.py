@@ -84,6 +84,7 @@ def _acquire_token_silent(app):
 
 def _acquire_token_interactive(app, scopes=None, data=None):
     """acquire_token_interactive() - User will be prompted if app opts to do select_account."""
+    scopes = scopes or _input_scopes()  # Let user input scope param before less important prompt and login_hint
     prompt = _select_options([
         {"value": None, "description": "Unspecified. Proceed silently with a default account (if any), fallback to prompt."},
         {"value": "none", "description": "none. Proceed silently with a default account (if any), or error out."},
@@ -91,21 +92,23 @@ def _acquire_token_interactive(app, scopes=None, data=None):
         ],
         option_renderer=lambda o: o["description"],
         header="Prompt behavior?")["value"]
-    raw_login_hint = _select_options(
-        # login_hint is unnecessary when prompt=select_account,
-        # but we still let tester input login_hint, just for testing purpose.
-        [None] + [a["username"] for a in app.get_accounts()],
-        header="login_hint? (If you have multiple signed-in sessions in browser/broker, and you specify a login_hint to match one of them, you will bypass the account picker.)",
-        accept_nonempty_string=True,
-        )
-    login_hint = raw_login_hint["username"] if isinstance(raw_login_hint, dict) else raw_login_hint
+    if prompt == "select_account":
+        login_hint = None  # login_hint is unnecessary when prompt=select_account
+    else:
+        raw_login_hint = _select_options(
+            [None] + [a["username"] for a in app.get_accounts()],
+            header="login_hint? (If you have multiple signed-in sessions in browser/broker, and you specify a login_hint to match one of them, you will bypass the account picker.)",
+            accept_nonempty_string=True,
+            )
+        login_hint = raw_login_hint["username"] if isinstance(raw_login_hint, dict) else raw_login_hint
     result = app.acquire_token_interactive(
-        scopes or _input_scopes(),
+        scopes,
         parent_window_handle=app.CONSOLE_WINDOW_HANDLE,  # This test app is a console app
         enable_msa_passthrough=app.client_id in [  # Apps are expected to set this right
             _AZURE_CLI, _VISUAL_STUDIO,
             ],  # Here this test app mimics the setting for some known MSA-PT apps
-        prompt=prompt, login_hint=login_hint, data=data or {})
+        prompt=prompt, login_hint=login_hint, data=data or {},
+        )
     if login_hint and "id_token_claims" in result:
         signed_in_user = result.get("id_token_claims", {}).get("preferred_username")
         if signed_in_user != login_hint:
