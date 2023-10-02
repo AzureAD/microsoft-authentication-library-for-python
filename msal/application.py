@@ -280,7 +280,7 @@ class ClientApplication(object):
 
         :param bool validate_authority: (optional) Turns authority validation
             on or off. This parameter default to true.
-        :param TokenCache cache:
+        :param TokenCache token_cache:
             Sets the token cache used by this ClientApplication instance.
             By default, an in-memory cache will be created and used.
         :param http_client: (optional)
