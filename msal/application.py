@@ -669,7 +669,6 @@ class ClientApplication(object):
         default_headers = {
             "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
             "x-client-os": sys.platform,
-            "x-client-cpu": "x64" if sys.maxsize > 2 ** 32 else "x86",
             "x-ms-lib-capability": "retry-after, h429",
         }
         if self.app_name:
