@@ -103,32 +103,39 @@ def make_vault_jwt():
     return full_token
 
 
-authority = "https://login.microsoftonline.com/%s" % config['tenant']
 
-app = msal.ConfidentialClientApplication(
-        config['client_id'], authority=authority, client_credential={"client_assertion": make_vault_jwt()}
-      )
+# If for whatever reason you plan to recreate same ClientApplication periodically,
+# you shall create one global token cache and reuse it by each ClientApplication
+global_token_cache = msal.TokenCache()  # The TokenCache() is in-memory.
+    # See more options in https://msal-python.readthedocs.io/en/latest/#tokencache
 
-# The pattern to acquire a token looks like this.
-result = None
+# Create a preferably long-lived app instance, to avoid the overhead of app creation
+global_app = msal.ConfidentialClientApplication(
+    config['client_id'],
+    authority="https://login.microsoftonline.com/%s" % config['tenant'],
+    client_credential={"client_assertion": make_vault_jwt()},
+    token_cache=global_token_cache,  # Let this app (re)use an existing token cache.
+        # If absent, ClientApplication will create its own empty token cache
+    )
 
-# Firstly, looks up a token from cache
-# Since we are looking for token for the current app, NOT for an end user,
-# notice we give account parameter as None.
-result = app.acquire_token_silent(config["scope"], account=None)
 
-if not result:
-    logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
-    result = app.acquire_token_for_client(scopes=config["scope"])
+def acquire_and_use_token():
+    # Since MSAL 1.23, acquire_token_for_client(...) will automatically look up
+    # a token from cache, and fall back to acquire a fresh token when needed.
+    result = global_app.acquire_token_for_client(scopes=config["scope"])
 
-if "access_token" in result:
-    # Calling graph using the access token
-    graph_data = requests.get(  # Use token to call downstream service
-        config["endpoint"],
-        headers={'Authorization': 'Bearer ' + result['access_token']},).json()
-    print("Graph API call result: %s" % json.dumps(graph_data, indent=2))
-else:
-    print(result.get("error"))
-    print(result.get("error_description"))
-    print(result.get("correlation_id"))  # You may need this when reporting a bug
+    if "access_token" in result:
+        # Calling graph using the access token
+        graph_data = requests.get(  # Use token to call downstream service
+            config["endpoint"],
+            headers={'Authorization': 'Bearer ' + result['access_token']},).json()
+        print("Graph API call result: %s" % json.dumps(graph_data, indent=2))
+    else:
+        print("Token acquisition failed")  # Examine result["error_description"] etc. to diagnose error
+
+
+while True:  # Here we mimic a long-lived daemon
+    acquire_and_use_token()
+    print("Press Ctrl-C to stop.")
+    time.sleep(5)  # Let's say your app would run a workload every X minutes
 
