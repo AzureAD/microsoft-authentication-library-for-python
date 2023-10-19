@@ -79,6 +79,7 @@ def acquire_and_use_token():
             )
 
     if "access_token" in result:
+        print("Token was obtained from:", result["token_source"])  # Since MSAL 1.25
         # Calling graph using the access token
         graph_response = requests.get(  # Use token to call downstream service
             config["endpoint"],
