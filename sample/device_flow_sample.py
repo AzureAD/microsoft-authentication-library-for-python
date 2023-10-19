@@ -84,6 +84,7 @@ def acquire_and_use_token():
             # and then keep calling acquire_token_by_device_flow(flow) in your own customized loop.
 
     if "access_token" in result:
+        print("Token was obtained from:", result["token_source"])  # Since MSAL 1.25
         # Calling graph using the access token
         graph_data = requests.get(  # Use token to call downstream service
             config["endpoint"],
