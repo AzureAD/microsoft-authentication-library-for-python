@@ -12,8 +12,26 @@ Usage 2: Build an all-in-one executable file for bug bash.
 """
 import base64, getpass, json, logging, sys, msal
 
+# This tester can test scenarios of these apps
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 _VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
+_WHITE_BOARD = "95de633a-083e-42f5-b444-a4295d8e9314"
+_KNOWN_APPS = {
+    _AZURE_CLI: {
+        "client_id": _AZURE_CLI,
+        "name": "Azure CLI (Correctly configured for MSA-PT)",
+        "path_in_redirect_uri": None,
+    },
+    _VISUAL_STUDIO: {
+        "client_id": _VISUAL_STUDIO,
+        "name": "Visual Studio (Correctly configured for MSA-PT)",
+        "path_in_redirect_uri": None,
+    },
+    _WHITE_BOARD: {
+        "client_id": _WHITE_BOARD,
+        "name": "Whiteboard Services (Non MSA-PT app. Accepts AAD & MSA accounts.)",
+    },
+}
 
 def print_json(blob):
     print(json.dumps(blob, indent=2, sort_keys=True))
@@ -82,6 +100,13 @@ def _acquire_token_silent(app):
             force_refresh=_input_boolean("Bypass MSAL Python's token cache?"),
             ))
 
+def _get_redirect_uri_path(app):
+    if app._enable_broker:
+        return None
+    if "path_in_redirect_uri" in _KNOWN_APPS.get(app.client_id, {}):
+        return _KNOWN_APPS[app.client_id]["path_in_redirect_uri"]
+    return input("What is the path in this app's redirect_uri?")
+
 def _acquire_token_interactive(app, scopes=None, data=None):
     """acquire_token_interactive() - User will be prompted if app opts to do select_account."""
     scopes = scopes or _input_scopes()  # Let user input scope param before less important prompt and login_hint
@@ -108,6 +133,7 @@ def _acquire_token_interactive(app, scopes=None, data=None):
             _AZURE_CLI, _VISUAL_STUDIO,
             ],  # Here this test app mimics the setting for some known MSA-PT apps
         prompt=prompt, login_hint=login_hint, data=data or {},
+        path=_get_redirect_uri_path(app),
         )
     if login_hint and "id_token_claims" in result:
         signed_in_user = result.get("id_token_claims", {}).get("preferred_username")
@@ -181,11 +207,8 @@ def _exit(app):
 
 def _main():
     print("Welcome to the Msal Python {} Tester (Experimental)\n".format(msal.__version__))
-    chosen_app = _select_options([
-        {"client_id": _AZURE_CLI, "name": "Azure CLI (Correctly configured for MSA-PT)"},
-        {"client_id": _VISUAL_STUDIO, "name": "Visual Studio (Correctly configured for MSA-PT)"},
-        {"client_id": "95de633a-083e-42f5-b444-a4295d8e9314", "name": "Whiteboard Services (Non MSA-PT app. Accepts AAD & MSA accounts.)"},
-        ],
+    chosen_app = _select_options(
+        list(_KNOWN_APPS.values()),
         option_renderer=lambda a: a["name"],
         header="Impersonate this app (or you can type in the client_id of your own app)",
         accept_nonempty_string=True)
