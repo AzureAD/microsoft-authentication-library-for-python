@@ -176,6 +176,10 @@ class ClientApplication(object):
     REMOVE_ACCOUNT_ID = "903"
 
     ATTEMPT_REGION_DISCOVERY = True  # "TryAutoDetect"
+    _TOKEN_SOURCE = "token_source"
+    _TOKEN_SOURCE_IDP = "identity_provider"
+    _TOKEN_SOURCE_CACHE = "cache"
+    _TOKEN_SOURCE_BROKER = "broker"
 
     def __init__(
             self, client_id,
@@ -998,6 +1002,8 @@ class ClientApplication(object):
                     self._client_capabilities,
                     auth_code_flow.pop("claims_challenge", None))),
             **kwargs))
+        if "access_token" in response:
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
         telemetry_context.update_telemetry(response)
         return response
 
@@ -1070,6 +1076,8 @@ class ClientApplication(object):
                         self._client_capabilities, claims_challenge)),
                 nonce=nonce,
                 **kwargs))
+            if "access_token" in response:
+                response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
             telemetry_context.update_telemetry(response)
             return response
 
@@ -1218,6 +1226,8 @@ class ClientApplication(object):
                 data=data or {},
                 authority_type=_AUTHORITY_TYPE_CLOUDSHELL,
                 ))
+        if "access_token" in response:
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_BROKER
         return response
 
     def acquire_token_silent(
@@ -1395,6 +1405,7 @@ class ClientApplication(object):
                     "access_token": entry["secret"],
                     "token_type": entry.get("token_type", "Bearer"),
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
+                    self._TOKEN_SOURCE: self._TOKEN_SOURCE_CACHE,
                     }
                 if "refresh_on" in entry and int(entry["refresh_on"]) < now:  # aging
                     refresh_reason = msal.telemetry.AT_AGING
@@ -1437,6 +1448,8 @@ class ClientApplication(object):
                 result = self._acquire_token_for_client(
                     scopes, refresh_reason, claims_challenge=claims_challenge,
                     **kwargs)
+            if result and "access_token" in result:
+                result[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
         except http_exceptions:
@@ -1455,6 +1468,7 @@ class ClientApplication(object):
                 data=data,
                 _account_id=response["_account_id"],
                 ))
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_BROKER
         return _clean_up(response)
 
     def _acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
@@ -1611,6 +1625,8 @@ class ClientApplication(object):
             on_updating_rt=False,
             on_removing_rt=lambda rt_item: None,  # No OP
             **kwargs))
+        if "access_token" in response:
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
         telemetry_context.update_telemetry(response)
         return response
 
@@ -1658,6 +1674,7 @@ class ClientApplication(object):
             self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)
         headers = telemetry_context.generate_headers()
         data = dict(kwargs.pop("data", {}), claims=claims)
+        response = None
         if not self.authority.is_adfs:
             user_realm_result = self.authority.user_realm_discovery(
                 username, correlation_id=headers[msal.telemetry.CLIENT_REQUEST_ID])
@@ -1666,13 +1683,14 @@ class ClientApplication(object):
                     user_realm_result, username, password, scopes=scopes,
                     data=data,
                     headers=headers, **kwargs))
-                telemetry_context.update_telemetry(response)
-                return response
-        response = _clean_up(self.client.obtain_token_by_username_password(
+        if response is None:  # Either ADFS or not federated
+            response = _clean_up(self.client.obtain_token_by_username_password(
                 username, password, scope=scopes,
                 headers=headers,
                 data=data,
                 **kwargs))
+        if "access_token" in response:
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
         telemetry_context.update_telemetry(response)
         return response
 
@@ -1859,7 +1877,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 logger.warning(
                     "Ignoring parameter extra_scopes_to_consent, "
                     "which is not supported by broker")
-            return self._acquire_token_interactive_via_broker(
+            response = self._acquire_token_interactive_via_broker(
                 scopes,
                 parent_window_handle,
                 enable_msa_passthrough,
@@ -1870,6 +1888,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 login_hint=login_hint,
                 max_age=max_age,
                 )
+            return self._process_broker_response(response, scopes, data)
 
         on_before_launching_ui(ui="browser")
         telemetry_context = self._build_telemetry_context(
@@ -1892,6 +1911,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             headers=telemetry_context.generate_headers(),
             browser_name=_preferred_browser(),
             **kwargs))
+        if "access_token" in response:
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
         telemetry_context.update_telemetry(response)
         return response
 
@@ -1928,7 +1949,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     claims=claims,
                     **data)
                 if response and "error" not in response:
-                    return self._process_broker_response(response, scopes, data)
+                    return response
         # login_hint undecisive or not exists
         if prompt == "none" or not prompt:  # Must/Can attempt _signin_silently()
             logger.debug("Calling broker._signin_silently()")
@@ -1949,9 +1970,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             if is_wrong_account:
                 logger.debug(wrong_account_error_message)
             if prompt == "none":
-                return self._process_broker_response(  # It is either token or error
-                        response, scopes, data
-                    ) if not is_wrong_account else {
+                return response if not is_wrong_account else {
                         "error": "broker_error",
                         "error_description": wrong_account_error_message,
                     }
@@ -1966,11 +1985,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                         "_broker_status") in recoverable_errors:
                     pass  # It will fall back to the _signin_interactively()
                 else:
-                    return self._process_broker_response(response, scopes, data)
+                    return response
 
         logger.debug("Falls back to broker._signin_interactively()")
         on_before_launching_ui(ui="broker")
-        response = _signin_interactively(
+        return _signin_interactively(
             authority, self.client_id, scopes,
             None if parent_window_handle is self.CONSOLE_WINDOW_HANDLE
                 else parent_window_handle,
@@ -1981,7 +2000,6 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             max_age=max_age,
             enable_msa_pt=enable_msa_passthrough,
             **data)
-        return self._process_broker_response(response, scopes, data)
 
     def initiate_device_flow(self, scopes=None, **kwargs):
         """Initiate a Device Flow instance,
@@ -2036,6 +2054,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 ),
             headers=telemetry_context.generate_headers(),
             **kwargs))
+        if "access_token" in response:
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
         telemetry_context.update_telemetry(response)
         return response
 
@@ -2145,5 +2165,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             headers=telemetry_context.generate_headers(),
                 # TBD: Expose a login_hint (or ccs_routing_hint) param for web app
             **kwargs))
+        if "access_token" in response:
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
         telemetry_context.update_telemetry(response)
         return response

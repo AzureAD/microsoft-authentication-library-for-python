@@ -109,6 +109,7 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
             self.scopes, self.account, post=tester)
         self.assertEqual("", result.get("classification"))
 
+
 class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     def setUp(self):
@@ -263,6 +264,7 @@ class TestClientApplicationForAuthorityMigration(unittest.TestCase):
     def test_acquire_token_silent_should_find_at_under_different_alias(self):
         result = self.app.acquire_token_silent(self.scopes, self.account)
         self.assertNotEqual(None, result)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_CACHE)
         self.assertEqual(self.access_token, result.get('access_token'))
 
     def test_acquire_token_silent_should_find_rt_under_different_alias(self):
@@ -360,6 +362,7 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
             post=lambda url, *args, **kwargs:  # Utilize the undocumented test feature
                 self.fail("I/O shouldn't happen in cache hit AT scenario")
             )
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_CACHE)
         self.assertEqual(access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
 
@@ -374,6 +377,7 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
                 "refresh_in": 123,
                 }))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(new_access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
 
@@ -385,6 +389,7 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
             self.assertEqual("4|84,4|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=400, text=json.dumps({"error": "foo"}))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_CACHE)
         self.assertEqual(old_at, result.get("access_token"))
 
     def test_expired_token_and_unavailable_aad_should_return_error(self):
@@ -409,6 +414,7 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
                 "refresh_in": 123,
                 }))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(new_access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
 
@@ -444,6 +450,7 @@ class TestTelemetryMaintainingOfflineState(unittest.TestCase):
             post=lambda url, *args, **kwargs:  # Utilize the undocumented test feature
                 self.fail("I/O shouldn't happen in cache hit AT scenario")
             )
+        self.assertEqual(result[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
         self.assertEqual(cached_access_token, result.get("access_token"))
 
         error1 = "error_1"
@@ -477,6 +484,7 @@ class TestTelemetryMaintainingOfflineState(unittest.TestCase):
                 "The previous error should result in same success counter plus latest error info")
             return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
         result = app.acquire_token_by_device_flow({"device_code": "123"}, post=mock_post)
+        self.assertEqual(result[app._TOKEN_SOURCE], app._TOKEN_SOURCE_IDP)
         self.assertEqual(at, result.get("access_token"))
 
         def mock_post(url, headers=None, *args, **kwargs):
@@ -485,6 +493,7 @@ class TestTelemetryMaintainingOfflineState(unittest.TestCase):
                 "The previous success should reset all offline telemetry counters")
             return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
         result = app.acquire_token_by_device_flow({"device_code": "123"}, post=mock_post)
+        self.assertEqual(result[app._TOKEN_SOURCE], app._TOKEN_SOURCE_IDP)
         self.assertEqual(at, result.get("access_token"))
 
 
@@ -503,6 +512,7 @@ class TestTelemetryOnClientApplication(unittest.TestCase):
         result = self.app.acquire_token_by_auth_code_flow(
             {"state": state, "code_verifier": "bar"}, {"state": state, "code": "012"},
             post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(at, result.get("access_token"))
 
     def test_acquire_token_by_refresh_token(self):
@@ -511,6 +521,7 @@ class TestTelemetryOnClientApplication(unittest.TestCase):
             self.assertEqual("4|85,1|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
         result = self.app.acquire_token_by_refresh_token("rt", ["s"], post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(at, result.get("access_token"))
 
 
@@ -529,6 +540,7 @@ class TestTelemetryOnPublicClientApplication(unittest.TestCase):
             return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
         result = self.app.acquire_token_by_device_flow(
             {"device_code": "123"}, post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(at, result.get("access_token"))
 
     def test_acquire_token_by_username_password(self):
@@ -538,6 +550,7 @@ class TestTelemetryOnPublicClientApplication(unittest.TestCase):
             return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
         result = self.app.acquire_token_by_username_password(
             "username", "password", ["scope"], post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(at, result.get("access_token"))
 
 
@@ -556,6 +569,7 @@ class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
                 "expires_in": 0,
                 }))
         result = self.app.acquire_token_for_client(["scope"], post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual("AT 1", result.get("access_token"), "Shall get a new token")
 
         def mock_post(url, headers=None, *args, **kwargs):
@@ -566,6 +580,7 @@ class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
                 "refresh_in": -100,  # A hack to make sure it will attempt refresh
                 }))
         result = self.app.acquire_token_for_client(["scope"], post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual("AT 2", result.get("access_token"), "Shall get a new token")
 
         def mock_post(url, headers=None, *args, **kwargs):
@@ -573,6 +588,7 @@ class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
             self.assertEqual("4|730,4|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=400, text=json.dumps({"error": "foo"}))
         result = self.app.acquire_token_for_client(["scope"], post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_CACHE)
         self.assertEqual("AT 2", result.get("access_token"), "Shall get aging token")
 
     def test_acquire_token_on_behalf_of(self):
@@ -581,6 +597,7 @@ class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
             self.assertEqual("4|523,0|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=200, text=json.dumps({"access_token": at}))
         result = self.app.acquire_token_on_behalf_of("assertion", ["s"], post=mock_post)
+        self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(at, result.get("access_token"))
 
 
