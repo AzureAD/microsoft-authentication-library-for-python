@@ -107,6 +107,7 @@ def _acquire_token_interactive(app, scopes=None, data=None):
         enable_msa_passthrough=app.client_id in [  # Apps are expected to set this right
             _AZURE_CLI, _VISUAL_STUDIO,
             ],  # Here this test app mimics the setting for some known MSA-PT apps
+        port=1234,  # Hard coded for testing. Real app typically uses default value.
         prompt=prompt, login_hint=login_hint, data=data or {},
         )
     if login_hint and "id_token_claims" in result:

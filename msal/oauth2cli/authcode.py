@@ -6,6 +6,7 @@ It optionally opens a browser window to guide a human user to manually login.
 After obtaining an auth code, the web server will automatically shut down.
 """
 import logging
+import os
 import socket
 import sys
 from string import Template
@@ -36,6 +37,20 @@ def obtain_auth_code(listen_port, auth_uri=None):  # Historically only used in t
                 <hr><a href='$abort_uri'>Abort</a>
                 </body></html>""",
             ).get("code")
+
+
+def _is_inside_docker():
+    try:
+        with open("/proc/1/cgroup") as f:  # https://stackoverflow.com/a/20012536/728675
+            # Search keyword "/proc/pid/cgroup" in this link for the file format
+            # https://man7.org/linux/man-pages/man7/cgroups.7.html
+            for line in f.readlines():
+                cgroup_path = line.split(":", 2)[2].strip()
+                if cgroup_path.strip() != "/":
+                    return True
+    except IOError:
+        pass  # We are probably not running on Linux
+    return os.path.exists("/.dockerenv")  # Docker on Mac will run this line
 
 
 def is_wsl():
@@ -165,7 +180,7 @@ class AuthCodeReceiver(object):
             then the receiver would call that lambda function after
             waiting the response for 10 seconds.
         """
-        address = "127.0.0.1"  # Hardcode, for now, Not sure what to expose, yet.
+        address = "0.0.0.0" if _is_inside_docker() else "127.0.0.1"  # Hardcode
             # Per RFC 8252 (https://tools.ietf.org/html/rfc8252#section-8.3):
             #   * Clients should listen on the loopback network interface only.
             #     (It is not recommended to use "" shortcut to bind all addr.)
@@ -283,13 +298,15 @@ class AuthCodeReceiver(object):
                     logger.warning(
                         "Found no browser in current environment. "
                         "If this program is being run inside a container "
-                        "which has access to host network "
+                        "which either (1) has access to host network "
                         "(i.e. started by `docker run --net=host -it ...`), "
+                        "or (2) published port {port} to host network "
+                        "(i.e. started by `docker run -p 127.0.0.1:{port}:{port} -it ...`), "
                         "you can use browser on host to visit the following link. "
                         "Otherwise, this auth attempt would either timeout "
                         "(current timeout setting is {timeout}) "
                         "or be aborted by CTRL+C. Auth URI: {auth_uri}".format(
-                            auth_uri=_uri, timeout=timeout))
+                            auth_uri=_uri, timeout=timeout, port=self.get_port()))
                 else:  # Then it is the auth_uri_callback()'s job to inform the user
                     auth_uri_callback(_uri)
 
