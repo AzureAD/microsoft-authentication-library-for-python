@@ -1791,7 +1791,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             The unspecified parts of the ``redirect_uri`` are hard coded as
             ``http://localhost``.
             Only useful when using system browser authentication
-            (i.e., not an authentication brokerlike WAM).
+            (i.e., not an authentication broker like WAM).
 
         :param str path:
             The path to be used in the redirect URI.
@@ -1799,7 +1799,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             The unspecified parts of the ``redirect_uri`` are hard coded as
             ``http://localhost``.
             Only useful when using system browser authentication
-            (i.e., not an authentication brokerlike WAM).
+            (i.e., not an authentication broker like WAM).
 
             New in version 1.25.0.
 
