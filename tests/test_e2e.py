@@ -122,36 +122,34 @@ class E2eTestCase(unittest.TestCase):
                 set(scope) <= set(result_from_wire["scope"].split(" "))
                 ):
             # Going to test acquire_token_silent(...) to locate an AT from cache
-            result_from_cache = self.app.acquire_token_silent(
+            silent_result = self.app.acquire_token_silent(
                 scope, account=account, data=data or {}, auth_scheme=auth_scheme)
-            self.assertIsNotNone(result_from_cache)
+            self.assertIsNotNone(silent_result)
             self.assertIsNone(
-                result_from_cache.get("refresh_token"), "A cache hit returns no RT")
-            # TODO: Assert POP AT shall not come from cache
-            self.assertEqual(
-                    result_from_wire['access_token'], result_from_cache['access_token'],
-                    "We should get a cached AT")
+                silent_result.get("refresh_token"), "acquire_token_silent() should return no RT")
+            if auth_scheme:
+                self.assertNotEqual(
+                    self.app._TOKEN_SOURCE_CACHE, silent_result[self.app._TOKEN_SOURCE])
+            else:
+                self.assertEqual(
+                    self.app._TOKEN_SOURCE_CACHE, silent_result[self.app._TOKEN_SOURCE])
 
         if "refresh_token" in result_from_wire:
+            assert auth_scheme is None
             # Going to test acquire_token_silent(...) to obtain an AT by a RT from cache
             self.app.token_cache._cache["AccessToken"] = {}  # A hacky way to clear ATs
-        result_from_cache = self.app.acquire_token_silent(
-            scope, account=account, data=data or {})
-        if "refresh_token" not in result_from_wire:
-            self.assertEqual(
-                result_from_cache["access_token"], result_from_wire["access_token"],
-                "The previously cached AT should be returned")
-        self.assertIsNotNone(result_from_cache,
+            silent_result = self.app.acquire_token_silent(
+                scope, account=account, data=data or {})
+            self.assertIsNotNone(silent_result,
                 "We should get a result from acquire_token_silent(...) call")
-        self.assertIsNotNone(
-            # We used to assert it this way:
-            #   result_from_wire['access_token'] != result_from_cache['access_token']
-            # but ROPC in B2C tends to return the same AT we obtained seconds ago.
-            # Now looking back, "refresh_token grant would return a brand new AT"
-            # was just an empirical observation but never a commitment in specs,
-            # so we adjust our way to assert here.
-            (result_from_cache or {}).get("access_token"),
-            "We should get an AT from acquire_token_silent(...) call")
+            self.assertEqual(
+                # We used to assert it this way:
+                #   result_from_wire['access_token'] != silent_result['access_token']
+                # but ROPC in B2C tends to return the same AT we obtained seconds ago.
+                # Now looking back, "refresh_token grant would return a brand new AT"
+                # was just an empirical observation but never a commitment in specs,
+                # so we adjust our way to assert here.
+                self.app._TOKEN_SOURCE_IDP, silent_result[self.app._TOKEN_SOURCE])
 
     def assertCacheWorksForApp(self, result_from_wire, scope):
         logger.debug(
@@ -164,11 +162,9 @@ class E2eTestCase(unittest.TestCase):
             self.app.acquire_token_silent(scope, account=None),
             "acquire_token_silent(..., account=None) shall always return None")
         # Going to test acquire_token_for_client(...) to locate an AT from cache
-        result_from_cache = self.app.acquire_token_for_client(scope)
-        self.assertIsNotNone(result_from_cache)
-        self.assertEqual(
-            result_from_wire['access_token'], result_from_cache['access_token'],
-            "We should get a cached AT")
+        silent_result = self.app.acquire_token_for_client(scope)
+        self.assertIsNotNone(silent_result)
+        self.assertEqual(self.app._TOKEN_SOURCE_CACHE, silent_result[self.app._TOKEN_SOURCE])
 
     @classmethod
     def _build_app(cls,
@@ -1183,6 +1179,7 @@ class PopTestCase(LabBasedTestCase):
             scope=["https://management.azure.com/.default"],
             auth_scheme=auth_scheme,
             )   # It also tests assertCacheWorksForUser()
+        self.assertEqual(result["token_source"], "broker", "POP is only supported by broker")
         self.assertEqual(result["token_type"], "pop")
         payload = json.loads(decode_part(result["access_token"].split(".")[1]))
         logger.debug("AT POP payload = %s", json.dumps(payload, indent=2))
