@@ -190,9 +190,9 @@ def _main():
         option_renderer=lambda a: a["name"],
         header="Impersonate this app (or you can type in the client_id of your own app)",
         accept_nonempty_string=True)
-    allow_broker = _input_boolean("Allow broker?")
+    enable_broker = _input_boolean("Enable broker? It will error out later if your app has not registered some redirect URI")
     enable_debug_log = _input_boolean("Enable MSAL Python's DEBUG log?")
-    enable_pii_log = _input_boolean("Enable PII in broker's log?") if allow_broker and enable_debug_log else False
+    enable_pii_log = _input_boolean("Enable PII in broker's log?") if enable_broker and enable_debug_log else False
     app = msal.PublicClientApplication(
         chosen_app["client_id"] if isinstance(chosen_app, dict) else chosen_app,
         authority=_select_options([
@@ -205,7 +205,7 @@ def _main():
             header="Input authority (Note that MSA-PT apps would NOT use the /common authority)",
             accept_nonempty_string=True,
             ),
-        allow_broker=allow_broker,
+        enable_broker_on_windows=enable_broker,
         enable_pii_log=enable_pii_log,
         )
     if enable_debug_log:
