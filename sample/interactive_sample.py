@@ -37,8 +37,8 @@ global_token_cache = msal.TokenCache()  # The TokenCache() is in-memory.
 # Create a preferably long-lived app instance, to avoid the overhead of app creation
 global_app = msal.PublicClientApplication(
     config["client_id"], authority=config["authority"],
-    #allow_broker=True,  # If opted in, you will be guided to meet the prerequisites, when applicable
-                         # See also: https://docs.microsoft.com/en-us/azure/active-directory/develop/scenario-desktop-acquire-token-wam#wam-value-proposition
+    #enable_broker_on_windows=True,  # Opted in. You will be guided to meet the prerequisites, if your app hasn't already
+        # See also: https://docs.microsoft.com/en-us/azure/active-directory/develop/scenario-desktop-acquire-token-wam#wam-value-proposition
     token_cache=global_token_cache,  # Let this app (re)use an existing token cache.
         # If absent, ClientApplication will create its own empty token cache
     )
