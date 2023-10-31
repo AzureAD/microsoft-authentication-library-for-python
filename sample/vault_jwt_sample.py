@@ -132,7 +132,7 @@ def acquire_and_use_token():
             headers={'Authorization': 'Bearer ' + result['access_token']},).json()
         print("Graph API call result: %s" % json.dumps(graph_data, indent=2))
     else:
-        print("Token acquisition failed")  # Examine result["error_description"] etc. to diagnose error
+        print("Token acquisition failed", result)  # Examine result["error_description"] etc. to diagnose error
 
 
 while True:  # Here we mimic a long-lived daemon
