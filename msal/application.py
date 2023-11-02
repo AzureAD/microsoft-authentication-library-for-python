@@ -1783,6 +1783,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             max_age=None,
             parent_window_handle=None,
             on_before_launching_ui=None,
+            path=None,
             **kwargs):
         """Acquire token interactively i.e. via a local browser.
 
@@ -1822,8 +1823,21 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
         :param int port:
             The port to be used to listen to an incoming auth response.
-            By default we will use a system-allocated port.
-            (The rest of the redirect_uri is hard coded as ``http://localhost``.)
+            By default, a system-allocated port will be used.
+            The unspecified parts of the ``redirect_uri`` are hard coded as
+            ``http://localhost``.
+            Only useful when using system browser authentication
+            (i.e., not an authentication broker like WAM).
+
+        :param str path:
+            The path to be used in the redirect URI.
+            By default, no path is used.
+            The unspecified parts of the ``redirect_uri`` are hard coded as
+            ``http://localhost``.
+            Only useful when using system browser authentication
+            (i.e., not an authentication broker like WAM).
+
+            New in version 1.25.0.
 
         :param list extra_scopes_to_consent:
             "Extra scopes to consent" is a concept only available in AAD.
@@ -1914,9 +1928,12 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         response = _clean_up(self.client.obtain_token_by_browser(
             scope=self._decorate_scope(scopes) if scopes else None,
             extra_scope_to_consent=extra_scopes_to_consent,
-            redirect_uri="http://localhost:{port}".format(
+            redirect_uri="http://localhost:{port}/{path}".format(
                 # Hardcode the host, for now. AAD portal rejects 127.0.0.1 anyway
-                port=port or 0),
+                port=port or 0,
+                path=path or "",  # There could be multiple localhost uri only differ by path
+                    # https://learn.microsoft.com/en-us/azure/active-directory/develop/reply-url#localhost-exceptions
+                ),
             prompt=prompt,
             login_hint=login_hint,
             max_age=max_age,
