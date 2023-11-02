@@ -17,7 +17,7 @@ from .authority import Authority, WORLD_WIDE
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
-from .token_cache import TokenCache, _get_username
+from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER
 import msal.telemetry
 from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
@@ -1104,6 +1104,7 @@ class ClientApplication(object):
                     "home_account_id": a.get("home_account_id"),
                     "environment": a.get("environment"),
                     "username": a.get("username"),
+                    "account_source": a.get("account_source"),
 
                     # The following fields for backward compatibility, for now
                     "authority_type": a.get("authority_type"),
@@ -1398,7 +1399,10 @@ class ClientApplication(object):
             if account and account.get("authority_type") == _AUTHORITY_TYPE_CLOUDSHELL:
                 return self._acquire_token_by_cloud_shell(scopes, data=data)
 
-            if self._enable_broker and account is not None:
+            if self._enable_broker and account and account.get("account_source") in (
+                _GRANT_TYPE_BROKER,  # Broker successfully established this account previously.
+                None,  # Unknown data from older MSAL. Broker might still work.
+            ):
                 from .broker import _acquire_token_silently
                 response = _acquire_token_silently(
                     "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -1409,8 +1413,12 @@ class ClientApplication(object):
                         self._client_capabilities, claims_challenge),
                     correlation_id=correlation_id,
                     **data)
-                if response:  # The broker provided a decisive outcome, so we use it
-                    return self._process_broker_response(response, scopes, data)
+                if response:  # Broker provides a decisive outcome
+                    account_was_established_by_broker = account.get(
+                        "account_source") == _GRANT_TYPE_BROKER
+                    broker_attempt_succeeded_just_now = "error" not in response
+                    if account_was_established_by_broker or broker_attempt_succeeded_just_now:
+                        return self._process_broker_response(response, scopes, data)
 
             if account:
                 result = self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
@@ -1441,6 +1449,8 @@ class ClientApplication(object):
                 response=response,
                 data=data,
                 _account_id=response["_account_id"],
+                environment=self.authority.instance,  # Be consistent with non-broker flows
+                grant_type=_GRANT_TYPE_BROKER,  # A pseudo grant type for TokenCache to mark account_source as broker
                 ))
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_BROKER
         return _clean_up(response)
@@ -1628,7 +1638,7 @@ class ClientApplication(object):
         """
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
-        if self._enable_broker:
+        if False:  # Disabled, for now. It was if self._enable_broker:
             from .broker import _signin_silently
             response = _signin_silently(
                 "https://{}/{}".format(self.authority.instance, self.authority.tenant),
