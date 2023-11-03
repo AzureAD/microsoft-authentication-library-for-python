@@ -70,7 +70,7 @@ def _convert_error(error, client_id):
 
 
 def _read_account_by_id(account_id, correlation_id):
-    """Return an instance of MSALRuntimeError or MSALRuntimeAccount, or None"""
+    """Return an instance of MSALRuntimeAccount, or log error and return None"""
     callback_data = _CallbackData()
     pymsalruntime.read_account_by_id(
         account_id,
@@ -78,8 +78,14 @@ def _read_account_by_id(account_id, correlation_id):
         lambda result, callback_data=callback_data: callback_data.complete(result)
         )
     callback_data.signal.wait()
-    return (callback_data.result.get_error() or callback_data.result.get_account()
-        or None)  # None happens when the account was not created by broker
+    error = callback_data.result.get_error()
+    if error:
+        logger.debug("read_account_by_id() error: %s", _convert_error(error, None))
+        return None
+    account = callback_data.result.get_account()
+    if account:
+        return account
+    return None  # None happens when the account was not created by broker
 
 
 def _convert_result(result, client_id, expected_token_type=None):  # Mimic an on-the-wire response from AAD
@@ -196,8 +202,6 @@ def _acquire_token_silently(
     # acquireTokenSilently is expected to fail.  - Sam Wilson
     correlation_id = correlation_id or _get_new_correlation_id()
     account = _read_account_by_id(account_id, correlation_id)
-    if isinstance(account, pymsalruntime.MSALRuntimeError):
-        return _convert_error(account, client_id)
     if account is None:
         return
     params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
@@ -221,8 +225,6 @@ def _acquire_token_silently(
 def _signout_silently(client_id, account_id, correlation_id=None):
     correlation_id = correlation_id or _get_new_correlation_id()
     account = _read_account_by_id(account_id, correlation_id)
-    if isinstance(account, pymsalruntime.MSALRuntimeError):
-        return _convert_error(account, client_id)
     if account is None:
         return
     callback_data = _CallbackData()
