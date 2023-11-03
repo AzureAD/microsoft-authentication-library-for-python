@@ -5,9 +5,11 @@ import logging
 
 from .authority import canonicalize
 from .oauth2cli.oidc import decode_part, decode_id_token
+from .oauth2cli.oauth2 import Client
 
 
 logger = logging.getLogger(__name__)
+_GRANT_TYPE_BROKER = "broker"
 
 def is_subdict_of(small, big):
     return dict(big, **small) == big
@@ -210,6 +212,11 @@ class TokenCache(object):
                             else self.AuthorityType.MSSTS),
                     # "client_info": response.get("client_info"),  # Optional
                     }
+                grant_types_that_establish_an_account = (
+                    _GRANT_TYPE_BROKER, "authorization_code", "password",
+                    Client.DEVICE_FLOW["GRANT_TYPE"])
+                if event.get("grant_type") in grant_types_that_establish_an_account:
+                    account["account_source"] = event["grant_type"]
                 self.modify(self.CredentialType.ACCOUNT, account, account)
 
             if id_token:
