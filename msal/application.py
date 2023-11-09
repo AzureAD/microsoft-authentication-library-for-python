@@ -1771,6 +1771,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         :param boolean enable_broker_on_windows:
             This setting is only effective if your app is running on Windows 10+.
             This parameter defaults to None, which means MSAL will not utilize a broker.
+
+            New in MSAL Python 1.25.0.
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
