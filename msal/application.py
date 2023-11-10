@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.24.1"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.25.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -1771,6 +1771,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         :param boolean enable_broker_on_windows:
             This setting is only effective if your app is running on Windows 10+.
             This parameter defaults to None, which means MSAL will not utilize a broker.
+
+            New in MSAL Python 1.25.0.
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
