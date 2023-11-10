@@ -165,21 +165,27 @@ class E2eTestCase(unittest.TestCase):
             http_client=None,
             azure_region=None,
             **kwargs):
-        try:
-            import pymsalruntime
-            broker_available = True
-        except ImportError:
-            broker_available = False
-        return (msal.ConfidentialClientApplication
-                if client_credential else msal.PublicClientApplication)(
-            client_id,
-            client_credential=client_credential,
-            authority=authority,
-            azure_region=azure_region,
-            http_client=http_client or MinimalHttpClient(),
-            allow_broker=broker_available  # This way, we reuse same test cases, by run them with and without broker
-                and not client_credential,
+        if client_credential:
+            return msal.ConfidentialClientApplication(
+                client_id,
+                client_credential=client_credential,
+                authority=authority,
+                azure_region=azure_region,
+                http_client=http_client or MinimalHttpClient(),
             )
+        else:
+            # Reuse same test cases, by run them with and without broker
+            try:
+                import pymsalruntime
+                broker_available = True
+            except ImportError:
+                broker_available = False
+            return msal.PublicClientApplication(
+                client_id,
+                authority=authority,
+                http_client=http_client or MinimalHttpClient(),
+                enable_broker_on_windows=broker_available,
+                )
 
     def _test_username_password(self,
             authority=None, client_id=None, username=None, password=None, scope=None,

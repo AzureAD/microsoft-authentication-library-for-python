@@ -5,12 +5,20 @@
 
 Usage 1: Run it on the fly.
     python -m msal
+    Note: We choose to not define a console script to avoid name conflict.
 
 Usage 2: Build an all-in-one executable file for bug bash.
     shiv -e msal.__main__._main -o msaltest-on-os-name.pyz .
-    Note: We choose to not define a console script to avoid name conflict.
 """
-import base64, getpass, json, logging, sys, msal
+import base64, getpass, json, logging, sys, os, atexit, msal
+
+_token_cache_filename = "msal_cache.bin"
+global_cache = msal.SerializableTokenCache()
+atexit.register(lambda:
+    open(_token_cache_filename, "w").write(global_cache.serialize())
+    # Hint: The following optional line persists only when state changed
+    if global_cache.has_state_changed else None
+    )
 
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 _VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
@@ -66,7 +74,7 @@ def _select_account(app):
     if accounts:
         return _select_options(
             accounts,
-            option_renderer=lambda a: a["username"],
+            option_renderer=lambda a: "{}, came from {}".format(a["username"], a["account_source"]),
             header="Account(s) already signed in inside MSAL Python:",
             )
     else:
@@ -76,7 +84,7 @@ def _acquire_token_silent(app):
     """acquire_token_silent() - with an account already signed into MSAL Python."""
     account = _select_account(app)
     if account:
-        print_json(app.acquire_token_silent(
+        print_json(app.acquire_token_silent_with_error(
             _input_scopes(),
             account=account,
             force_refresh=_input_boolean("Bypass MSAL Python's token cache?"),
@@ -107,6 +115,7 @@ def _acquire_token_interactive(app, scopes=None, data=None):
         enable_msa_passthrough=app.client_id in [  # Apps are expected to set this right
             _AZURE_CLI, _VISUAL_STUDIO,
             ],  # Here this test app mimics the setting for some known MSA-PT apps
+        port=1234,  # Hard coded for testing. Real app typically uses default value.
         prompt=prompt, login_hint=login_hint, data=data or {},
         )
     if login_hint and "id_token_claims" in result:
@@ -120,6 +129,15 @@ def _acquire_token_by_username_password(app):
     """acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc"""
     print_json(app.acquire_token_by_username_password(
         _input("username: "), getpass.getpass("password: "), scopes=_input_scopes()))
+
+def _acquire_token_by_device_flow(app):
+    """acquire_token_by_device_flow() - Note that this one does not go through broker"""
+    flow = app.initiate_device_flow(scopes=_input_scopes())
+    print(flow["message"])
+    sys.stdout.flush()  # Some terminal needs this to ensure the message is shown
+    input("After you completed the step above, press ENTER in this console to continue...")
+    result = app.acquire_token_by_device_flow(flow)  # By default it will block
+    print_json(result)
 
 _JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
 _SSH_CERT_DATA = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": _JWK1}
@@ -181,6 +199,27 @@ def _exit(app):
 
 def _main():
     print("Welcome to the Msal Python {} Tester (Experimental)\n".format(msal.__version__))
+    cache_choice = _select_options([
+            {
+                "choice": "empty",
+                "desc": "Start with an empty token cache. Suitable for one-off tests.",
+            },
+            {
+                "choice": "reuse",
+                "desc": "Reuse the previous token cache {} (if any) "
+                    "which was created during last test app exit. "
+                    "Useful for testing acquire_token_silent() repeatedly".format(
+                        _token_cache_filename),
+            },
+        ],
+        option_renderer=lambda o: o["desc"],
+        header="What token cache state do you want to begin with?",
+        accept_nonempty_string=False)
+    if cache_choice["choice"] == "reuse" and os.path.exists(_token_cache_filename):
+        try:
+            global_cache.deserialize(open(_token_cache_filename, "r").read())
+        except IOError:
+            pass  # Use empty token cache
     chosen_app = _select_options([
         {"client_id": _AZURE_CLI, "name": "Azure CLI (Correctly configured for MSA-PT)"},
         {"client_id": _VISUAL_STUDIO, "name": "Visual Studio (Correctly configured for MSA-PT)"},
@@ -189,9 +228,9 @@ def _main():
         option_renderer=lambda a: a["name"],
         header="Impersonate this app (or you can type in the client_id of your own app)",
         accept_nonempty_string=True)
-    allow_broker = _input_boolean("Allow broker?")
+    enable_broker = _input_boolean("Enable broker? It will error out later if your app has not registered some redirect URI")
     enable_debug_log = _input_boolean("Enable MSAL Python's DEBUG log?")
-    enable_pii_log = _input_boolean("Enable PII in broker's log?") if allow_broker and enable_debug_log else False
+    enable_pii_log = _input_boolean("Enable PII in broker's log?") if enable_broker and enable_debug_log else False
     app = msal.PublicClientApplication(
         chosen_app["client_id"] if isinstance(chosen_app, dict) else chosen_app,
         authority=_select_options([
@@ -204,8 +243,9 @@ def _main():
             header="Input authority (Note that MSA-PT apps would NOT use the /common authority)",
             accept_nonempty_string=True,
             ),
-        allow_broker=allow_broker,
+        enable_broker_on_windows=enable_broker,
         enable_pii_log=enable_pii_log,
+        token_cache=global_cache,
         )
     if enable_debug_log:
         logging.basicConfig(level=logging.DEBUG)
@@ -214,6 +254,7 @@ def _main():
             _acquire_token_silent,
             _acquire_token_interactive,
             _acquire_token_by_username_password,
+            _acquire_token_by_device_flow,
             _acquire_ssh_cert_silently,
             _acquire_ssh_cert_interactive,
             _acquire_pop_token_interactive,
