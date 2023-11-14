@@ -161,6 +161,17 @@ class ManagedIdentityClient(object):
     ):
         """Create a managed identity client.
 
+        .. note::
+            You do not have to work with Managed Identity and this class directly.
+
+            A better approach is to use
+            `Workload identity federation <https://learn.microsoft.com/entra/workload-id/workload-identity-federation>`_.
+            Specifically, you can use MSAL's
+            :class:`msal.ConfidentialClientApplication` and feed
+            its :paramref:`msal.ClientApplication.client_credential` parameter
+            with an instance of :class:`msal.SystemAssignedManagedIdentity`
+            or :class:`msal.UserAssignedManagedIdentity`.
+
         :param managed_identity:
             It accepts an instance of :class:`SystemAssignedManagedIdentity`
             or :class:`UserAssignedManagedIdentity`.
