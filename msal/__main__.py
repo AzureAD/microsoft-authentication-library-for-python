@@ -11,6 +11,8 @@ Usage 2: Build an all-in-one executable file for bug bash.
     shiv -e msal.__main__._main -o msaltest-on-os-name.pyz .
 """
 import base64, getpass, json, logging, sys, os, atexit, msal
+#import http.client as http_client
+#http_client.HTTPConnection.debuglevel = 1  # Show http request/response on the wire
 
 _token_cache_filename = "msal_cache.bin"
 global_cache = msal.SerializableTokenCache()
@@ -263,9 +265,11 @@ def _main():
         {"client_id": "95de633a-083e-42f5-b444-a4295d8e9314", "name": "Whiteboard Services (Non MSA-PT app. Accepts AAD & MSA accounts.)"},
         {
             "client_id": os.getenv("CLIENT_ID"),
-            "client_secret": os.getenv("CLIENT_SECRET"),
-            "name": "A confidential client app (CCA) whose settings are defined "
-                "in environment variables CLIENT_ID and CLIENT_SECRET",
+            "client_secret": os.getenv("CLIENT_SECRET", msal.SystemAssignedManagedIdentity()),
+            "name": "A confidential client app (CCA) whose "
+                "(1) client_id is defined in environment variables CLIENT_ID "
+                "(2) client_secret is either in env var CLIENT_SECRET (if any) "
+                "or federated by system-assigned managed identity (if applicable)",
         },
         ],
         option_renderer=lambda a: a["name"],
