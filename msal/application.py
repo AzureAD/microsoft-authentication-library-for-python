@@ -337,17 +337,17 @@ class ClientApplication(object):
             which you will later provide via one of the acquire-token request.
 
         :param str azure_region: (optional)
-            Instructs MSAL to use the Entra regional token service. This legacy feature is only available to 
-            first-party applications. Only ``acquire_token_for_client()`` is supported.                            
-                       
-            Supports 3 values: 
-            
+            Instructs MSAL to use the Entra regional token service. This legacy feature is only available to
+            first-party applications. Only ``acquire_token_for_client()`` is supported.
+
+            Supports 3 values:
+
               ``azure_region=None`` - meaning no region is used. This is the default value.
               ``azure_region="some_region"`` - meaning the specified region is used.
-              ``azure_region=True`` - meaning MSAL will try to auto-detect the region. This is not recommended. 
+              ``azure_region=True`` - meaning MSAL will try to auto-detect the region. This is not recommended.
 
             .. note::
-                Region auto-discovery has been tested on VMs and on Azure Functions. It is unreliable.                                      
+                Region auto-discovery has been tested on VMs and on Azure Functions. It is unreliable.
                 Applications using this option should configure a short timeout.
 
                 For more details and for the values of the region string
@@ -583,9 +583,8 @@ class ClientApplication(object):
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
     def _get_regional_authority(self, central_authority):
-        # User did not opt-in to ESTS-R
-        if (self._region_configured == None): 
-            return None        
+        if not self._region_configured:  # User did not opt-in to ESTS-R
+            return None  # Short circuit to completely bypass region detection
         self._region_detected = self._region_detected or _detect_region(
             self.http_client if self._region_configured is not None else None)
         if (self._region_configured != self.ATTEMPT_REGION_DISCOVERY
