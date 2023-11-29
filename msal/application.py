@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.25.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.26.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -2201,8 +2201,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID)
-        # The implementation is NOT based on Token Exchange
-        # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
+        # The implementation is NOT based on Token Exchange (RFC 8693)
         response = _clean_up(self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
