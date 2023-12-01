@@ -336,51 +336,22 @@ class ClientApplication(object):
             `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter>`_
             which you will later provide via one of the acquire-token request.
 
-        :param str azure_region:
-            AAD provides regional endpoints for apps to opt in
-            to keep their traffic remain inside that region.
+        :param str azure_region: (optional)
+            Instructs MSAL to use the Entra regional token service. This legacy feature is only available to
+            first-party applications. Only ``acquire_token_for_client()`` is supported.
 
-            As of 2021 May, regional service is only available for
-            ``acquire_token_for_client()`` sent by any of the following scenarios:
+            Supports 3 values:
 
-            1. An app powered by a capable MSAL
-               (MSAL Python 1.12+ will be provisioned)
-
-            2. An app with managed identity, which is formerly known as MSI.
-               (However MSAL Python does not support managed identity,
-               so this one does not apply.)
-
-            3. An app authenticated by
-               `Subject Name/Issuer (SNI) <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_.
-
-            4. An app which already onboard to the region's allow-list.
-
-            This parameter defaults to None, which means region behavior remains off.
-
-            App developer can opt in to a regional endpoint,
-            by provide its region name, such as "westus", "eastus2".
-            You can find a full list of regions by running
-            ``az account list-locations -o table``, or referencing to
-            `this doc <https://docs.microsoft.com/en-us/dotnet/api/microsoft.azure.management.resourcemanager.fluent.core.region?view=azure-dotnet>`_.
-
-            An app running inside Azure Functions and Azure VM can use a special keyword
-            ``ClientApplication.ATTEMPT_REGION_DISCOVERY`` to auto-detect region.
+              ``azure_region=None`` - meaning no region is used. This is the default value.
+              ``azure_region="some_region"`` - meaning the specified region is used.
+              ``azure_region=True`` - meaning MSAL will try to auto-detect the region. This is not recommended.
 
             .. note::
+                Region auto-discovery has been tested on VMs and on Azure Functions. It is unreliable.
+                Applications using this option should configure a short timeout.
 
-                Setting ``azure_region`` to non-``None`` for an app running
-                outside of Azure Function/VM could hang indefinitely.
-
-                You should consider opting in/out region behavior on-demand,
-                by loading ``azure_region=None`` or ``azure_region="westus"``
-                or ``azure_region=True`` (which means opt-in and auto-detect)
-                from your per-deployment configuration, and then do
-                ``app = ConfidentialClientApplication(..., azure_region=azure_region)``.
-
-                Alternatively, you can configure a short timeout,
-                or provide a custom http_client which has a short timeout.
-                That way, the latency would be under your control,
-                but still less performant than opting out of region feature.
+                For more details and for the values of the region string
+                  see https://learn.microsoft.com/entra/msal/dotnet/resources/region-discovery-troubleshooting
 
             New in version 1.12.0.
 
@@ -612,6 +583,8 @@ class ClientApplication(object):
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
     def _get_regional_authority(self, central_authority):
+        if not self._region_configured:  # User did not opt-in to ESTS-R
+            return None  # Short circuit to completely bypass region detection
         self._region_detected = self._region_detected or _detect_region(
             self.http_client if self._region_configured is not None else None)
         if (self._region_configured != self.ATTEMPT_REGION_DISCOVERY
