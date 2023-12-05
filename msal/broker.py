@@ -99,13 +99,17 @@ def _convert_result(result, client_id, expected_token_type=None):  # Mimic an on
     assert account, "Account is expected to be always available"
     # Note: There are more account attribute getters available in pymsalruntime 0.13+
     return_value = {k: v for k, v in {
-        "access_token": result.get_access_token(),
+        "access_token":
+            result.get_authorization_header()  # It returns "pop SignedHttpRequest"
+                .split()[1]
+            if result.is_pop_authorization() else result.get_access_token(),
         "expires_in": result.get_access_token_expiry_time() - int(time.time()),  # Convert epoch to count-down
         "id_token": result.get_raw_id_token(),  # New in pymsalruntime 0.8.1
         "id_token_claims": id_token_claims,
         "client_info": account.get_client_info(),
         "_account_id": account.get_account_id(),
-		"token_type": expected_token_type or "Bearer",  # Workaround its absence from broker
+		"token_type": "pop" if result.is_pop_authorization() else (
+            expected_token_type or "bearer"),  # Workaround "ssh-cert"'s absence from broker
         }.items() if v}
     likely_a_cert = return_value["access_token"].startswith("AAAA")  # Empirical observation
     if return_value["token_type"].lower() == "ssh-cert" and not likely_a_cert:
@@ -128,11 +132,16 @@ def _enable_msa_pt(params):
 def _signin_silently(
         authority, client_id, scopes, correlation_id=None, claims=None,
         enable_msa_pt=False,
+        auth_scheme=None,
         **kwargs):
     params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
+    if auth_scheme:
+        params.set_pop_params(
+            auth_scheme._http_method, auth_scheme._url.netloc, auth_scheme._url.path,
+            auth_scheme._nonce)
     callback_data = _CallbackData()
     for k, v in kwargs.items():  # This can be used to support domain_hint, max_age, etc.
         if v is not None:
@@ -156,6 +165,7 @@ def _signin_interactively(
         claims=None,
         correlation_id=None,
         enable_msa_pt=False,
+        auth_scheme=None,
         **kwargs):
     params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
     params.set_requested_scopes(scopes)
@@ -178,6 +188,10 @@ def _signin_interactively(
         params.set_additional_parameter("msal_gui_thread", "true")  # Since pymsalruntime 0.8.1
     if enable_msa_pt:
         _enable_msa_pt(params)
+    if auth_scheme:
+        params.set_pop_params(
+            auth_scheme._http_method, auth_scheme._url.netloc, auth_scheme._url.path,
+            auth_scheme._nonce)
     for k, v in kwargs.items():  # This can be used to support domain_hint, max_age, etc.
         if v is not None:
             params.set_additional_parameter(k, str(v))
@@ -197,6 +211,7 @@ def _signin_interactively(
 
 def _acquire_token_silently(
         authority, client_id, account_id, scopes, claims=None, correlation_id=None,
+        auth_scheme=None,
         **kwargs):
     # For MSA PT scenario where you use the /organizations, yes,
     # acquireTokenSilently is expected to fail.  - Sam Wilson
@@ -208,6 +223,10 @@ def _acquire_token_silently(
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
+    if auth_scheme:
+        params.set_pop_params(
+            auth_scheme._http_method, auth_scheme._url.netloc, auth_scheme._url.path,
+            auth_scheme._nonce)
     for k, v in kwargs.items():  # This can be used to support domain_hint, max_age, etc.
         if v is not None:
             params.set_additional_parameter(k, str(v))
