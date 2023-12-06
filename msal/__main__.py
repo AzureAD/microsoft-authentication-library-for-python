@@ -22,6 +22,11 @@ atexit.register(lambda:
 
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 _VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
+placeholder_auth_scheme = msal.PopAuthScheme(
+    http_method=msal.PopAuthScheme.HTTP_GET,
+    url="https://example.com/endpoint",
+    nonce="placeholder",
+    )
 
 def print_json(blob):
     print(json.dumps(blob, indent=2, sort_keys=True))
@@ -88,6 +93,9 @@ def _acquire_token_silent(app):
             _input_scopes(),
             account=account,
             force_refresh=_input_boolean("Bypass MSAL Python's token cache?"),
+            auth_scheme=placeholder_auth_scheme
+                if app.is_pop_supported() and _input_boolean("Acquire AT POP via Broker?")
+                else None,
             ))
 
 def _acquire_token_interactive(app, scopes=None, data=None):
@@ -117,6 +125,9 @@ def _acquire_token_interactive(app, scopes=None, data=None):
             ],  # Here this test app mimics the setting for some known MSA-PT apps
         port=1234,  # Hard coded for testing. Real app typically uses default value.
         prompt=prompt, login_hint=login_hint, data=data or {},
+        auth_scheme=placeholder_auth_scheme
+            if app.is_pop_supported() and _input_boolean("Acquire AT POP via Broker?")
+            else None,
         )
     if login_hint and "id_token_claims" in result:
         signed_in_user = result.get("id_token_claims", {}).get("preferred_username")

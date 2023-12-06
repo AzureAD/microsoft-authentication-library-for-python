@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.25.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.26.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -182,6 +182,10 @@ class ClientApplication(object):
     _TOKEN_SOURCE_BROKER = "broker"
 
     _enable_broker = False
+    _AUTH_SCHEME_UNSUPPORTED = (
+        "auth_scheme is currently only available from broker. "
+        "You can enable broker by following these instructions. "
+        "https://msal-python.readthedocs.io/en/latest/#publicclientapplication")
 
     def __init__(
             self, client_id,
@@ -336,51 +340,22 @@ class ClientApplication(object):
             `claims parameter <https://openid.net/specs/openid-connect-core-1_0-final.html#ClaimsParameter>`_
             which you will later provide via one of the acquire-token request.
 
-        :param str azure_region:
-            AAD provides regional endpoints for apps to opt in
-            to keep their traffic remain inside that region.
+        :param str azure_region: (optional)
+            Instructs MSAL to use the Entra regional token service. This legacy feature is only available to
+            first-party applications. Only ``acquire_token_for_client()`` is supported.
 
-            As of 2021 May, regional service is only available for
-            ``acquire_token_for_client()`` sent by any of the following scenarios:
+            Supports 3 values:
 
-            1. An app powered by a capable MSAL
-               (MSAL Python 1.12+ will be provisioned)
-
-            2. An app with managed identity, which is formerly known as MSI.
-               (However MSAL Python does not support managed identity,
-               so this one does not apply.)
-
-            3. An app authenticated by
-               `Subject Name/Issuer (SNI) <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_.
-
-            4. An app which already onboard to the region's allow-list.
-
-            This parameter defaults to None, which means region behavior remains off.
-
-            App developer can opt in to a regional endpoint,
-            by provide its region name, such as "westus", "eastus2".
-            You can find a full list of regions by running
-            ``az account list-locations -o table``, or referencing to
-            `this doc <https://docs.microsoft.com/en-us/dotnet/api/microsoft.azure.management.resourcemanager.fluent.core.region?view=azure-dotnet>`_.
-
-            An app running inside Azure Functions and Azure VM can use a special keyword
-            ``ClientApplication.ATTEMPT_REGION_DISCOVERY`` to auto-detect region.
+              ``azure_region=None`` - meaning no region is used. This is the default value.
+              ``azure_region="some_region"`` - meaning the specified region is used.
+              ``azure_region=True`` - meaning MSAL will try to auto-detect the region. This is not recommended.
 
             .. note::
+                Region auto-discovery has been tested on VMs and on Azure Functions. It is unreliable.
+                Applications using this option should configure a short timeout.
 
-                Setting ``azure_region`` to non-``None`` for an app running
-                outside of Azure Function/VM could hang indefinitely.
-
-                You should consider opting in/out region behavior on-demand,
-                by loading ``azure_region=None`` or ``azure_region="westus"``
-                or ``azure_region=True`` (which means opt-in and auto-detect)
-                from your per-deployment configuration, and then do
-                ``app = ConfidentialClientApplication(..., azure_region=azure_region)``.
-
-                Alternatively, you can configure a short timeout,
-                or provide a custom http_client which has a short timeout.
-                That way, the latency would be under your control,
-                but still less performant than opting out of region feature.
+                For more details and for the values of the region string
+                  see https://learn.microsoft.com/entra/msal/dotnet/resources/region-discovery-troubleshooting
 
             New in version 1.12.0.
 
@@ -586,6 +561,10 @@ class ClientApplication(object):
                     "We will fallback to non-broker.")
         logger.debug("Broker enabled? %s", self._enable_broker)
 
+    def is_pop_supported(self):
+        """Returns True if this client supports Proof-of-Possession Access Token."""
+        return self._enable_broker
+
     def _decorate_scope(
             self, scopes,
             reserved_scope=frozenset(['openid', 'profile', 'offline_access'])):
@@ -612,6 +591,8 @@ class ClientApplication(object):
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
     def _get_regional_authority(self, central_authority):
+        if not self._region_configured:  # User did not opt-in to ESTS-R
+            return None  # Short circuit to completely bypass region detection
         self._region_detected = self._region_detected or _detect_region(
             self.http_client if self._region_configured is not None else None)
         if (self._region_configured != self.ATTEMPT_REGION_DISCOVERY
@@ -1212,6 +1193,7 @@ class ClientApplication(object):
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
             claims_challenge=None,
+            auth_scheme=None,
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
@@ -1232,7 +1214,7 @@ class ClientApplication(object):
             return None  # A backward-compatible NO-OP to drop the account=None usage
         result = _clean_up(self._acquire_token_silent_with_error(
             scopes, account, authority=authority, force_refresh=force_refresh,
-            claims_challenge=claims_challenge, **kwargs))
+            claims_challenge=claims_challenge, auth_scheme=auth_scheme, **kwargs))
         return result if result and "error" not in result else None
 
     def acquire_token_silent_with_error(
@@ -1242,6 +1224,7 @@ class ClientApplication(object):
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
             claims_challenge=None,
+            auth_scheme=None,
             **kwargs):
         """Acquire an access token for given account, without user interaction.
 
@@ -1268,6 +1251,12 @@ class ClientApplication(object):
             in the form of a claims_challenge directive in the www-authenticate header to be
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
+        :param object auth_scheme:
+            You can provide an ``msal.auth_scheme.PopAuthScheme`` object
+            so that MSAL will get a Proof-of-Possession (POP) token for you.
+
+            New in version 1.26.0.
+
         :return:
             - A dict containing no "error" key,
               and typically contains an "access_token" key,
@@ -1279,7 +1268,7 @@ class ClientApplication(object):
             return None  # A backward-compatible NO-OP to drop the account=None usage
         return _clean_up(self._acquire_token_silent_with_error(
             scopes, account, authority=authority, force_refresh=force_refresh,
-            claims_challenge=claims_challenge, **kwargs))
+            claims_challenge=claims_challenge, auth_scheme=auth_scheme, **kwargs))
 
     def _acquire_token_silent_with_error(
             self,
@@ -1288,6 +1277,7 @@ class ClientApplication(object):
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
             claims_challenge=None,
+            auth_scheme=None,
             **kwargs):
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
@@ -1303,6 +1293,7 @@ class ClientApplication(object):
             scopes, account, self.authority, force_refresh=force_refresh,
             claims_challenge=claims_challenge,
             correlation_id=correlation_id,
+            auth_scheme=auth_scheme,
             **kwargs)
         if result and "error" not in result:
             return result
@@ -1325,6 +1316,7 @@ class ClientApplication(object):
                 scopes, account, the_authority, force_refresh=force_refresh,
                 claims_challenge=claims_challenge,
                 correlation_id=correlation_id,
+                auth_scheme=auth_scheme,
                 **kwargs)
             if result:
                 if "error" not in result:
@@ -1349,12 +1341,13 @@ class ClientApplication(object):
             claims_challenge=None,
             correlation_id=None,
             http_exceptions=None,
+            auth_scheme=None,
             **kwargs):
         # This internal method has two calling patterns:
         # it accepts a non-empty account to find token for a user,
         # and accepts account=None to find a token for the current app.
         access_token_from_cache = None
-        if not (force_refresh or claims_challenge):  # Bypass AT when desired or using claims
+        if not (force_refresh or claims_challenge or auth_scheme):  # Then attempt AT cache
             query={
                     "client_id": self.client_id,
                     "environment": authority.instance,
@@ -1397,6 +1390,8 @@ class ClientApplication(object):
         try:
             data = kwargs.get("data", {})
             if account and account.get("authority_type") == _AUTHORITY_TYPE_CLOUDSHELL:
+                if auth_scheme:
+                    raise ValueError("auth_scheme is not supported in Cloud Shell")
                 return self._acquire_token_by_cloud_shell(scopes, data=data)
 
             if self._enable_broker and account and account.get("account_source") in (
@@ -1412,6 +1407,7 @@ class ClientApplication(object):
                     claims=_merge_claims_challenge_and_capabilities(
                         self._client_capabilities, claims_challenge),
                     correlation_id=correlation_id,
+                    auth_scheme=auth_scheme,
                     **data)
                 if response:  # Broker provides a decisive outcome
                     account_was_established_by_broker = account.get(
@@ -1420,6 +1416,8 @@ class ClientApplication(object):
                     if account_was_established_by_broker or broker_attempt_succeeded_just_now:
                         return self._process_broker_response(response, scopes, data)
 
+            if auth_scheme:
+                raise ValueError(self._AUTH_SCHEME_UNSUPPORTED)
             if account:
                 result = self._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
                     authority, self._decorate_scope(scopes), account,
@@ -1615,7 +1613,11 @@ class ClientApplication(object):
         return response
 
     def acquire_token_by_username_password(
-            self, username, password, scopes, claims_challenge=None, **kwargs):
+            self, username, password, scopes, claims_challenge=None,
+            # Note: We shouldn't need to surface enable_msa_passthrough,
+            # because this ROPC won't work with MSA account anyway.
+            auth_scheme=None,
+            **kwargs):
         """Gets a token for a given resource via user credentials.
 
         See this page for constraints of Username Password Flow.
@@ -1630,6 +1632,12 @@ class ClientApplication(object):
             in the form of a claims_challenge directive in the www-authenticate header to be
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
+
+        :param object auth_scheme:
+            You can provide an ``msal.auth_scheme.PopAuthScheme`` object
+            so that MSAL will get a Proof-of-Possession (POP) token for you.
+
+            New in version 1.26.0.
 
         :return: A dict representing the json response from AAD:
 
@@ -1650,9 +1658,12 @@ class ClientApplication(object):
                     self.authority._is_known_to_developer
                     or self._instance_discovery is False) else None,
                 claims=claims,
+                auth_scheme=auth_scheme,
                 )
             return self._process_broker_response(response, scopes, kwargs.get("data", {}))
 
+        if auth_scheme:
+            raise ValueError(self._AUTH_SCHEME_UNSUPPORTED)
         scopes = self._decorate_scope(scopes)
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_USERNAME_PASSWORD_ID)
@@ -1795,6 +1806,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             max_age=None,
             parent_window_handle=None,
             on_before_launching_ui=None,
+            auth_scheme=None,
             **kwargs):
         """Acquire token interactively i.e. via a local browser.
 
@@ -1870,6 +1882,12 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
             New in version 1.20.0.
 
+        :param object auth_scheme:
+            You can provide an ``msal.auth_scheme.PopAuthScheme`` object
+            so that MSAL will get a Proof-of-Possession (POP) token for you.
+
+            New in version 1.26.0.
+
         :return:
             - A dict containing no "error" key,
               and typically contains an "access_token" key.
@@ -1914,12 +1932,15 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 claims,
                 data,
                 on_before_launching_ui,
+                auth_scheme,
                 prompt=prompt,
                 login_hint=login_hint,
                 max_age=max_age,
                 )
             return self._process_broker_response(response, scopes, data)
 
+        if auth_scheme:
+            raise ValueError("auth_scheme is currently only available from broker")
         on_before_launching_ui(ui="browser")
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_INTERACTIVE)
@@ -1954,6 +1975,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             claims,  # type: str
             data,  # type: dict
             on_before_launching_ui,  # type: callable
+            auth_scheme,  # type: object
             prompt=None,
             login_hint=None,  # type: Optional[str]
             max_age=None,
@@ -1977,6 +1999,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                     accounts[0]["local_account_id"],
                     scopes,
                     claims=claims,
+                    auth_scheme=auth_scheme,
                     **data)
                 if response and "error" not in response:
                     return response
@@ -1989,6 +2012,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 claims=claims,
                 max_age=max_age,
                 enable_msa_pt=enable_msa_passthrough,
+                auth_scheme=auth_scheme,
                 **data)
             is_wrong_account = bool(
                 # _signin_silently() only gets tokens for default account,
@@ -2029,6 +2053,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             claims=claims,
             max_age=max_age,
             enable_msa_pt=enable_msa_passthrough,
+            auth_scheme=auth_scheme,
             **data)
 
     def initiate_device_flow(self, scopes=None, **kwargs):
@@ -2176,8 +2201,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID)
-        # The implementation is NOT based on Token Exchange
-        # https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16
+        # The implementation is NOT based on Token Exchange (RFC 8693)
         response = _clean_up(self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
