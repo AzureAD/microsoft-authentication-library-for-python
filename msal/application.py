@@ -1980,7 +1980,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             return self._process_broker_response(response, scopes, data)
 
         if auth_scheme:
-            raise ValueError("auth_scheme is currently only available from broker")
+            raise ValueError(self._AUTH_SCHEME_UNSUPPORTED)
         on_before_launching_ui(ui="browser")
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_INTERACTIVE)
