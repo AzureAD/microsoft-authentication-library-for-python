@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.26.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.27.0b2"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -1782,7 +1782,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                  if your app is expected to run on Mac
 
             2. installed broker dependency,
-               e.g. ``pip install msal[broker]>=1.27.0b1,<2``.
+               e.g. ``pip install msal[broker]>=1.27.0b2,<2``.
 
             3. tested with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
 
