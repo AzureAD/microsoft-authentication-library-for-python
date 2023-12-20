@@ -1,0 +1,15 @@
+How to perform Threat Model review
+==================================
+
+Note to MSAL Python team.
+
+1. Update the self-attestation here:
+   https://msazure.visualstudio.com/One/_git/ID-InfraSec-ThreatModels?path=%2Fsrc%2FThreatModels%2FAuth%20Client%2FMSAL%20Python&version=GBmaster&_a=contents
+
+   (You can NOT use the "Edit" button in the top right corner of the binary file.
+   You must clone the repo locally, and use git to update the file.)
+
+2. Create a PR for it.
+
+3. Create a placeholder review meeting at https://threatmodelingportal.azurewebsites.net/
+
