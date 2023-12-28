@@ -1241,9 +1241,6 @@ class PopTestCase(LabBasedTestCase):
         resp = requests.get(api_endpoint, verify=False, headers={
             "Authorization": "pop {}".format(result["access_token"]),
             })
-        if resp.status_code != 200:
-            # TODO https://teams.microsoft.com/l/message/19:b1697a70b1de43ddaea281d98ff2e985@thread.v2/1700184847801?context=%7B%22contextType%22%3A%22chat%22%7D
-            self.skipTest("We haven't got this end-to-end test case working")
         self.assertEqual(resp.status_code, 200, "POP resource should be accessible")
 
     def _extract_pop_nonce(self, www_authenticate):
