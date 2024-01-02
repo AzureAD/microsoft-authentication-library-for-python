@@ -76,11 +76,11 @@ class TokenCacheTestCase(unittest.TestCase):
                 'home_account_id': "uid.utid",
                 'realm': 'contoso',
                 'secret': 'an access token',
-                'target': 's2 s1 s3',
+                'target': 's1 s2 s3',  # Sorted
                 'token_type': 'some type',
             },
             self.cache._cache["AccessToken"].get(
-                'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s2 s1 s3')
+                'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s1 s2 s3')
             )
         self.assertEqual(
             {
@@ -90,10 +90,10 @@ class TokenCacheTestCase(unittest.TestCase):
                 'home_account_id': "uid.utid",
                 'last_modification_time': '1000',
                 'secret': 'a refresh token',
-                'target': 's2 s1 s3',
+                'target': 's1 s2 s3',  # Sorted
             },
             self.cache._cache["RefreshToken"].get(
-                'uid.utid-login.example.com-refreshtoken-my_client_id--s2 s1 s3')
+                'uid.utid-login.example.com-refreshtoken-my_client_id--s1 s2 s3')
             )
         self.assertEqual(
             {
@@ -150,11 +150,11 @@ class TokenCacheTestCase(unittest.TestCase):
                 'home_account_id': "subject",
                 'realm': 'adfs',
                 'secret': 'an access token',
-                'target': 's2 s1 s3',
+                'target': 's1 s2 s3',  # Sorted
                 'token_type': 'some type',
             },
             self.cache._cache["AccessToken"].get(
-                'subject-fs.msidlab8.com-accesstoken-my_client_id-adfs-s2 s1 s3')
+                'subject-fs.msidlab8.com-accesstoken-my_client_id-adfs-s1 s2 s3')
             )
         self.assertEqual(
             {
@@ -164,10 +164,10 @@ class TokenCacheTestCase(unittest.TestCase):
                 'home_account_id': "subject",
                 'last_modification_time': "1000",
                 'secret': 'a refresh token',
-                'target': 's2 s1 s3',
+                'target': 's1 s2 s3',  # Sorted
             },
             self.cache._cache["RefreshToken"].get(
-                'subject-fs.msidlab8.com-refreshtoken-my_client_id--s2 s1 s3')
+                'subject-fs.msidlab8.com-refreshtoken-my_client_id--s1 s2 s3')
             )
         self.assertEqual(
             {
@@ -214,7 +214,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 refresh_token="a refresh token"),
             }, now=1000)
         cached_key_id = self.cache._cache["AccessToken"].get(
-            'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s2 s1 s3',
+            'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s1 s2 s3',
             {}).get("key_id")
         self.assertEqual(my_key_id, cached_key_id, "AT should be bound to the key")
 
@@ -229,7 +229,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 ),  #refresh_token="a refresh token"),
             }, now=1000)
         refresh_on = self.cache._cache["AccessToken"].get(
-            'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s2 s1 s3',
+            'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s1 s2 s3',
             {}).get("refresh_on")
         self.assertEqual("2800", refresh_on, "Should save refresh_on")
 
