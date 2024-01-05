@@ -1357,13 +1357,14 @@ class ClientApplication(object):
             key_id = kwargs.get("data", {}).get("key_id")
             if key_id:  # Some token types (SSH-certs, POP) are bound to a key
                 query["key_id"] = key_id
-            matches = self.token_cache.find(
-                self.token_cache.CredentialType.ACCESS_TOKEN,
-                target=scopes,
-                query=query)
             now = time.time()
             refresh_reason = msal.telemetry.AT_ABSENT
-            for entry in matches:
+            for entry in self.token_cache._find(  # It returns a generator
+                self.token_cache.CredentialType.ACCESS_TOKEN,
+                target=scopes,
+                query=query,
+            ):  # Note that _find() holds a lock during this for loop;
+                # that is fine because this loop is fast
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
                     refresh_reason = msal.telemetry.AT_EXPIRED
