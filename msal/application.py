@@ -1493,10 +1493,8 @@ class ClientApplication(object):
             **kwargs) or last_resp
 
     def _get_app_metadata(self, environment):
-        apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
-            TokenCache.CredentialType.APP_METADATA, query={
-                "environment": environment, "client_id": self.client_id})
-        return apps[0] if apps else {}
+        return self.token_cache._get_app_metadata(
+            environment=environment, client_id=self.client_id, default={})
 
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
