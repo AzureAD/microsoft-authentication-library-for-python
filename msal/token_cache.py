@@ -104,6 +104,15 @@ class TokenCache(object):
                 ),
             default=default)
 
+    def _get_app_metadata(self, environment, client_id, default=None):  # O(1)
+        return self._get(
+            self.CredentialType.APP_METADATA,
+            self.key_makers[TokenCache.CredentialType.APP_METADATA](
+                environment=environment,
+                client_id=client_id,
+                ),
+            default=default)
+
     def _get(self, credential_type, key, default=None):  # O(1)
         with self._lock:
             return self._cache.get(credential_type, {}).get(key, default)
