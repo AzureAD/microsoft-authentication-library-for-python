@@ -88,20 +88,69 @@ class TokenCache(object):
                     "appmetadata-{}-{}".format(environment or "", client_id or ""),
             }
 
-    def find(self, credential_type, target=None, query=None):
-        target = target or []
+    def _get_access_token(
+        self,
+        home_account_id, environment, client_id, realm, target,  # Together they form a compound key
+        default=None,
+    ):  # O(1)
+        return self._get(
+            self.CredentialType.ACCESS_TOKEN,
+            self.key_makers[TokenCache.CredentialType.ACCESS_TOKEN](
+                home_account_id=home_account_id,
+                environment=environment,
+                client_id=client_id,
+                realm=realm,
+                target=" ".join(target),
+                ),
+            default=default)
+
+    def _get_app_metadata(self, environment, client_id, default=None):  # O(1)
+        return self._get(
+            self.CredentialType.APP_METADATA,
+            self.key_makers[TokenCache.CredentialType.APP_METADATA](
+                environment=environment,
+                client_id=client_id,
+                ),
+            default=default)
+
+    def _get(self, credential_type, key, default=None):  # O(1)
+        with self._lock:
+            return self._cache.get(credential_type, {}).get(key, default)
+
+    def _find(self, credential_type, target=None, query=None):  # O(n) generator
+        """Returns a generator of matching entries.
+
+        It is O(1) for AT hits, and O(n) for other types.
+        Note that it holds a lock during the entire search.
+        """
+        target = sorted(target or [])  # Match the order sorted by add()
         assert isinstance(target, list), "Invalid parameter type"
+
+        preferred_result = None
+        if (credential_type == self.CredentialType.ACCESS_TOKEN
+            and "home_account_id" in query and "environment" in query
+            and "client_id" in query and "realm" in query and target
+        ):  # Special case for O(1) AT lookup
+            preferred_result = self._get_access_token(
+                query["home_account_id"], query["environment"],
+                query["client_id"], query["realm"], target)
+            if preferred_result:
+                yield preferred_result
+
         target_set = set(target)
         with self._lock:
             # Since the target inside token cache key is (per schema) unsorted,
             # there is no point to attempt an O(1) key-value search here.
             # So we always do an O(n) in-memory search.
-            return [entry
-                for entry in self._cache.get(credential_type, {}).values()
-                if is_subdict_of(query or {}, entry)
-                and (target_set <= set(entry.get("target", "").split())
-		    if target else True)
-                ]
+            for entry in self._cache.get(credential_type, {}).values():
+                if is_subdict_of(query or {}, entry) and (
+                        target_set <= set(entry.get("target", "").split())
+                        if target else True):
+                    if entry != preferred_result:  # Avoid yielding the same entry twice
+                        yield entry
+
+    def find(self, credential_type, target=None, query=None):  # Obsolete. Use _find() instead.
+        return list(self._find(credential_type, target=target, query=query))
 
     def add(self, event, now=None):
         """Handle a token obtaining event, and add tokens into cache."""
@@ -160,7 +209,7 @@ class TokenCache(object):
             decode_id_token(id_token, client_id=event["client_id"]) if id_token else {})
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
-        target = ' '.join(event.get("scope") or [])  # Per schema, we don't sort it
+        target = ' '.join(sorted(event.get("scope") or []))  # Schema should have required sorting
 
         with self._lock:
             now = int(time.time() if now is None else now)
