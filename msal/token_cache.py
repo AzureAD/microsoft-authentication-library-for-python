@@ -128,6 +128,7 @@ class TokenCache(object):
 
         preferred_result = None
         if (credential_type == self.CredentialType.ACCESS_TOKEN
+            and isinstance(query, dict)
             and "home_account_id" in query and "environment" in query
             and "client_id" in query and "realm" in query and target
         ):  # Special case for O(1) AT lookup

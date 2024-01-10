@@ -65,8 +65,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 expires_in=3600, access_token="an access token",
                 id_token=id_token, refresh_token="a refresh token"),
             }, now=1000)
-        self.assertEqual(
-            {
+        access_token_entry = {
                 'cached_at': "1000",
                 'client_id': 'my_client_id',
                 'credential_type': 'AccessToken',
@@ -78,10 +77,16 @@ class TokenCacheTestCase(unittest.TestCase):
                 'secret': 'an access token',
                 'target': 's1 s2 s3',  # Sorted
                 'token_type': 'some type',
-            },
+            }
+        self.assertEqual(
+            access_token_entry,
             self.cache._cache["AccessToken"].get(
                 'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s1 s2 s3')
             )
+        self.assertIn(
+            access_token_entry,
+            self.cache.find(self.cache.CredentialType.ACCESS_TOKEN),
+            "find(..., query=None) should not crash, even though MSAL does not use it")
         self.assertEqual(
             {
                 'client_id': 'my_client_id',
