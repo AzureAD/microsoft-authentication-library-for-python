@@ -1123,12 +1123,13 @@ class ClientApplication(object):
 
     def remove_account(self, account):
         """Sign me out and forget me from token cache"""
-        self._forget_me(account)
         if self._enable_broker:
             from .broker import _signout_silently
             error = _signout_silently(self.client_id, account["local_account_id"])
             if error:
                 logger.debug("_signout_silently() returns error: %s", error)
+        # Broker sign-out has been attempted, even if the _forget_me() below throws.
+        self._forget_me(account)
 
     def _sign_out(self, home_account):
         # Remove all relevant RTs and ATs from token cache
