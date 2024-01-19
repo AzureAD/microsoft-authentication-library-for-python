@@ -1,3 +1,4 @@
+=========================
 MSAL Python Documentation
 =========================
 
@@ -11,6 +12,8 @@ MSAL Python Documentation
 ..
     Comment: Perhaps because of the theme, only the first level sections will show in TOC,
     regardless of maxdepth setting.
+    UPDATE: And now (early 2024) suddenly a function-level, long TOC is generated,
+    even though maxdepth is set to 2.
 
 You can find high level conceptual documentations in the project
 `README <https://github.com/AzureAD/microsoft-authentication-library-for-python>`_.
@@ -92,7 +95,7 @@ They are implemented as two separated classes,
 with different methods for different authentication scenarios.
 
 ClientApplication
-=================
+-----------------
 
 .. autoclass:: msal.ClientApplication
    :members:
@@ -101,7 +104,7 @@ ClientApplication
    .. automethod:: __init__
 
 PublicClientApplication
-=======================
+-----------------------
 
 .. autoclass:: msal.PublicClientApplication
    :members:
@@ -109,14 +112,14 @@ PublicClientApplication
    .. automethod:: __init__
 
 ConfidentialClientApplication
-=============================
+-----------------------------
 
 .. autoclass:: msal.ConfidentialClientApplication
    :members:
 
 
 TokenCache
-==========
+----------
 
 One of the parameters accepted by
 both `PublicClientApplication` and `ConfidentialClientApplication`
@@ -130,3 +133,18 @@ See `SerializableTokenCache` for example.
 
 .. autoclass:: msal.SerializableTokenCache
    :members:
+
+
+PopAuthScheme
+-------------
+
+This is used as the `auth_scheme` parameter in many of the acquire token methods
+to support for Proof of Possession (PoP) tokens.
+
+New in MSAL Python 1.26
+
+.. autoclass:: msal.PopAuthScheme
+   :members:
+
+   .. automethod:: __init__
+
