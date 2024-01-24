@@ -25,6 +25,7 @@ import time
 
 import requests
 import msal
+from msal.token_cache import  TokenCache
 
 
 # Optional logging
@@ -54,11 +55,11 @@ def acquire_and_use_token():
     # Firstly, check the cache to see if this end user has signed in before
     accounts = global_app.get_accounts(username=config["username"])
     if accounts:
-        logging.info("Account(s) exists in cache, probably with token too. Let's try.")
+        print("Account(s) exists in cache, probably with token too. Let's try.")
         result = global_app.acquire_token_silent(config["scope"], account=accounts[0])
 
     if not result:
-        logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
+        print("No suitable token exists in cache. Let's get a new one from AAD.")
         # See this page for constraints of Username Password Flow.
         # https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
         result = global_app.acquire_token_integrated_windows_auth(

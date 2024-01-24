@@ -188,6 +188,7 @@ class ClientApplication(object):
         "You can enable broker by following these instructions. "
         "https://msal-python.readthedocs.io/en/latest/#publicclientapplication")
 
+
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
@@ -1712,11 +1713,10 @@ class ClientApplication(object):
             wstrust_endpoint.get("action"), self.http_client)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
-        GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
         grant_type = {
-            SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
+            SAML_TOKEN_TYPE_V1: self.client.GRANT_TYPE_SAML1_1,
             SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
-            WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
+            WSS_SAML_TOKEN_PROFILE_V1_1: self.client.GRANT_TYPE_SAML1_1,
             WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
             }.get(wstrust_result.get("type"))
         if not grant_type:
@@ -2167,11 +2167,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             wstrust_endpoint.get("action"), self.http_client)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
-        GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
         grant_type = {
-            SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
+            SAML_TOKEN_TYPE_V1: self.client.GRANT_TYPE_SAML1_1,
             SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
-            WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
+            WSS_SAML_TOKEN_PROFILE_V1_1: self.client.GRANT_TYPE_SAML1_1,
             WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
         }.get(wstrust_result.get("type"))
         if not grant_type:
@@ -2185,6 +2184,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 event,
                 environment=self.authority.instance,
                 username=username,  # Useful in case IDT contains no such info
+                iwa=True
             )),
             **kwargs)
 
