@@ -207,7 +207,7 @@ class ClientApplication(object):
             ):
         """Create an instance of application.
 
-        :param str client_id: Your app has a client_id after you register it on Microsoft Entra admin.
+        :param str client_id: Your app has a client_id after you register it on Microsoft Entra admin center.
 
         :param Union[str, dict] client_credential:
             For :class:`PublicClientApplication`, you use `None` here.
