@@ -1,6 +1,7 @@
 from tests import unittest
 
-import oauth2cli
+import msal
+from msal import oauth2cli
 
 
 class TestIdToken(unittest.TestCase):
@@ -16,6 +17,6 @@ class TestIdToken(unittest.TestCase):
             }, "id_token is decoded correctly, without raising exception")
 
     def test_id_token_should_error_out_on_client_id_error(self):
-        with self.assertRaises(oauth2cli.IdTokenError):
+        with self.assertRaises(msal.IdTokenError):
             oauth2cli.oidc.decode_id_token(self.EXPIRED_ID_TOKEN, client_id="not foo")
 

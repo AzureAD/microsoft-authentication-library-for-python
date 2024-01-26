@@ -148,3 +148,12 @@ New in MSAL Python 1.26
 
    .. automethod:: __init__
 
+
+Exceptions
+----------
+These are exceptions that MSAL Python may raise.
+You should not need to create them directly.
+You may want to catch them to provide a better error message to your end users.
+
+.. autoclass:: msal.IdTokenError
+
