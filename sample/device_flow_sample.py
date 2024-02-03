@@ -3,7 +3,7 @@ The configuration file would look like this:
 
 {
     "authority": "https://login.microsoftonline.com/common",
-    "client_id": "your_client_id",
+    "client_id": "your_client_id came from https://learn.microsoft.com/entra/identity-platform/quickstart-register-app",
     "scope": ["User.ReadBasic.All"],
         // You can find the other permission names from this document
         // https://docs.microsoft.com/en-us/graph/permissions-reference

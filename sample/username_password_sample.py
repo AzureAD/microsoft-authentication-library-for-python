@@ -3,7 +3,7 @@ The configuration file would look like this:
 
 {
     "authority": "https://login.microsoftonline.com/organizations",
-    "client_id": "your_client_id",
+    "client_id": "your_client_id came from https://learn.microsoft.com/entra/identity-platform/quickstart-register-app",
     "username": "your_username@your_tenant.com",
     "password": "This is a sample only. You better NOT persist your password.",
     "scope": ["User.ReadBasic.All"],
