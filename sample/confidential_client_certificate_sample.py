@@ -3,7 +3,7 @@ The configuration file would look like this (sans those // comments):
 
 {
     "authority": "https://login.microsoftonline.com/Enter_the_Tenant_Name_Here",
-    "client_id": "your_client_id",
+    "client_id": "your_client_id came from https://learn.microsoft.com/entra/identity-platform/quickstart-register-app",
     "scope": ["https://graph.microsoft.com/.default"],
         // Specific to Client Credentials Grant i.e. acquire_token_for_client(),
         // you don't specify, in the code, the individual scopes you want to access.
