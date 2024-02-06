@@ -3,7 +3,7 @@ The configuration file would look like this (sans those // comments):
 {
     "tenant": "your_tenant_name",
         // Your target tenant, DNS name
-    "client_id": "your_client_id",
+    "client_id": "your_client_id came from https://learn.microsoft.com/entra/identity-platform/quickstart-register-app",
         // Target app ID in Azure AD
     "scope": ["https://graph.microsoft.com/.default"],
         // Specific to Client Credentials Grant i.e. acquire_token_for_client(),
