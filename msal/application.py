@@ -2178,6 +2178,19 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         telemetry_context.update_telemetry(response)
         return response
 
+    def remove_tokens_for_client(self):
+        """Remove all tokens that were previously acquired via
+        :func:`~acquire_token_for_client()` for the current client."""
+        for env in [self.authority.instance] + self._get_authority_aliases(
+                self.authority.instance):
+            for at in self.token_cache.find(TokenCache.CredentialType.ACCESS_TOKEN, query={
+                "client_id": self.client_id,
+                "environment": env,
+                "home_account_id": None,  # These are mostly app-only tokens
+            }):
+                self.token_cache.remove_at(at)
+        # acquire_token_for_client() obtains no RTs, so we have no RT to remove
+
     def acquire_token_on_behalf_of(self, user_assertion, scopes, claims_challenge=None, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
 

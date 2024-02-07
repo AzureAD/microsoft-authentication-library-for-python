@@ -662,6 +662,35 @@ class TestClientCredentialGrant(unittest.TestCase):
             authority="https://login.microsoftonline.com/organizations")
 
 
+class TestRemoveTokensForClient(unittest.TestCase):
+    def test_remove_tokens_for_client_should_remove_client_tokens_only(self):
+        at_for_user = "AT for user"
+        cca = msal.ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com")
+        self.assertEqual(
+            0, len(cca.token_cache.find(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+        cca.acquire_token_for_client(
+            ["scope"],
+            post=lambda url, **kwargs: MinimalResponse(
+                status_code=200, text=json.dumps({"access_token": "AT for client"})))
+        self.assertEqual(
+            1, len(cca.token_cache.find(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+        cca.acquire_token_by_username_password(
+            "johndoe", "password", ["scope"],
+            post=lambda url, **kwargs: MinimalResponse(
+                status_code=200, text=json.dumps(build_response(
+                    access_token=at_for_user, expires_in=3600,
+                    uid="uid", utid="utid",  # This populates home_account_id
+                    ))))
+        self.assertEqual(
+            2, len(cca.token_cache.find(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+        cca.remove_tokens_for_client()
+        remaining_tokens = cca.token_cache.find(msal.TokenCache.CredentialType.ACCESS_TOKEN)
+        self.assertEqual(1, len(remaining_tokens))
+        self.assertEqual(at_for_user, remaining_tokens[0].get("secret"))
+
+
 class TestScopeDecoration(unittest.TestCase):
     def _test_client_id_should_be_a_valid_scope(self, client_id, other_scopes):
         # B2C needs this https://learn.microsoft.com/en-us/azure/active-directory-b2c/access-tokens#openid-connect-scopes
