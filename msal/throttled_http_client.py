@@ -30,7 +30,7 @@ def _parse_http_429_5xx_retry_after(result=None, **ignored):
         return 0  # Quick exit
     default = 60  # Recommended at the end of
         # https://identitydivision.visualstudio.com/devex/_git/AuthLibrariesApiReview?version=GBdev&path=%2FService%20protection%2FIntial%20set%20of%20protection%20measures.md&_a=preview
-    retry_after = int(lowercase_headers.get("retry-after", default))
+    retry_after = lowercase_headers.get("retry-after", default)
     try:
         # AAD's retry_after uses integer format only
         # https://stackoverflow.microsoft.com/questions/264931/264932

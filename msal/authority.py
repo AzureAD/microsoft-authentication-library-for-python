@@ -100,7 +100,7 @@ class Authority(object):
                     "The authority you provided, %s, is not whitelisted. "
                     "If it is indeed your legit customized domain name, "
                     "you can turn off this check by passing in "
-                    "validate_authority=False"
+                    "instance_discovery=False"
                     % authority_url)
             tenant_discovery_endpoint = payload['tenant_discovery_endpoint']
         else:
@@ -120,6 +120,8 @@ class Authority(object):
                 "Unable to get authority configuration for {}. "
                 "Authority would typically be in a format of "
                 "https://login.microsoftonline.com/your_tenant "
+                "or https://tenant_name.ciamlogin.com "
+                "or https://tenant_name.b2clogin.com/tenant.onmicrosoft.com/policy. "
                 "Also please double check your tenant name or GUID is correct.".format(
                 authority_url))
         logger.debug("openid_config = %s", openid_config)

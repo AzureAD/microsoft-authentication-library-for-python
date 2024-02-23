@@ -56,6 +56,8 @@ jobs:
     # and then run benchmark only once (sampling with only one Python version).
     needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python 3.9

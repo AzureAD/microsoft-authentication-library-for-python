@@ -27,7 +27,7 @@
 
 try:
     from urllib.parse import urlparse
-except:
+except ImportError:
     from urlparse import urlparse
 try:
     from xml.etree import cElementTree as ET

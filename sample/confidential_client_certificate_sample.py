@@ -3,7 +3,7 @@ The configuration file would look like this (sans those // comments):
 
 {
     "authority": "https://login.microsoftonline.com/Enter_the_Tenant_Name_Here",
-    "client_id": "your_client_id",
+    "client_id": "your_client_id came from https://learn.microsoft.com/entra/identity-platform/quickstart-register-app",
     "scope": ["https://graph.microsoft.com/.default"],
         // Specific to Client Credentials Grant i.e. acquire_token_for_client(),
         // you don't specify, in the code, the individual scopes you want to access.
@@ -70,7 +70,7 @@ def acquire_and_use_token():
             headers={'Authorization': 'Bearer ' + result['access_token']},).json()
         print("Graph API call result: %s" % json.dumps(graph_data, indent=2))
     else:
-        print("Token acquisition failed")  # Examine result["error_description"] etc. to diagnose error
+        print("Token acquisition failed", result)  # Examine result["error_description"] etc. to diagnose error
 
 
 while True:  # Here we mimic a long-lived daemon

@@ -6,7 +6,7 @@ The configuration file would look like this:
 
 {
     "authority": "https://login.microsoftonline.com/organizations",
-    "client_id": "your_client_id",
+    "client_id": "your_client_id came from https://learn.microsoft.com/entra/identity-platform/quickstart-register-app",
     "scope": ["User.ReadBasic.All"],
         // You can find the other permission names from this document
         // https://docs.microsoft.com/en-us/graph/permissions-reference
@@ -86,7 +86,7 @@ def acquire_and_use_token():
             headers={'Authorization': 'Bearer ' + result['access_token']},)
         print("Graph API call result: %s ..." % graph_response.text[:100])
     else:
-        print("Token acquisition failed")  # Examine result["error_description"] etc. to diagnose error
+        print("Token acquisition failed", result)  # Examine result["error_description"] etc. to diagnose error
 
 
 while True:  # Here we mimic a long-lived daemon

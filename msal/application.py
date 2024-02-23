@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.26.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.27.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -737,10 +737,11 @@ class ClientApplication(object):
             maintain state between the request and callback.
             If absent, this library will automatically generate one internally.
         :param str prompt:
-            By default, no prompt value will be sent, not even "none".
+            By default, no prompt value will be sent, not even string ``"none"``.
             You will have to specify a value explicitly.
-            Its valid values are defined in Open ID Connect specs
-            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+            Its valid values are the constants defined in
+            :class:`Prompt <msal.Prompt>`.
+
         :param str login_hint:
             Optional. Identifier of the user. Generally a User Principal Name (UPN).
         :param domain_hint:
@@ -840,10 +841,10 @@ class ClientApplication(object):
             `not recommended <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-implicit-grant-flow#is-the-implicit-grant-suitable-for-my-app>`_.
 
         :param str prompt:
-            By default, no prompt value will be sent, not even "none".
+            By default, no prompt value will be sent, not even string ``"none"``.
             You will have to specify a value explicitly.
-            Its valid values are defined in Open ID Connect specs
-            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+            Its valid values are the constants defined in
+            :class:`Prompt <msal.Prompt>`.
         :param nonce:
             A cryptographically random value used to mitigate replay attacks. See also
             `OIDC specs <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
@@ -1123,12 +1124,13 @@ class ClientApplication(object):
 
     def remove_account(self, account):
         """Sign me out and forget me from token cache"""
-        self._forget_me(account)
         if self._enable_broker:
             from .broker import _signout_silently
             error = _signout_silently(self.client_id, account["local_account_id"])
             if error:
                 logger.debug("_signout_silently() returns error: %s", error)
+        # Broker sign-out has been attempted, even if the _forget_me() below throws.
+        self._forget_me(account)
 
     def _sign_out(self, home_account):
         # Remove all relevant RTs and ATs from token cache
@@ -1357,13 +1359,14 @@ class ClientApplication(object):
             key_id = kwargs.get("data", {}).get("key_id")
             if key_id:  # Some token types (SSH-certs, POP) are bound to a key
                 query["key_id"] = key_id
-            matches = self.token_cache.find(
-                self.token_cache.CredentialType.ACCESS_TOKEN,
-                target=scopes,
-                query=query)
             now = time.time()
             refresh_reason = msal.telemetry.AT_ABSENT
-            for entry in matches:
+            for entry in self.token_cache._find(  # It returns a generator
+                self.token_cache.CredentialType.ACCESS_TOKEN,
+                target=scopes,
+                query=query,
+            ):  # Note that _find() holds a lock during this for loop;
+                # that is fine because this loop is fast
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
                     refresh_reason = msal.telemetry.AT_EXPIRED
@@ -1492,10 +1495,8 @@ class ClientApplication(object):
             **kwargs) or last_resp
 
     def _get_app_metadata(self, environment):
-        apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
-            TokenCache.CredentialType.APP_METADATA, query={
-                "environment": environment, "client_id": self.client_id})
-        return apps[0] if apps else {}
+        return self.token_cache._get_app_metadata(
+            environment=environment, client_id=self.client_id, default={})
 
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
@@ -1746,7 +1747,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
             You may set enable_broker_on_windows to True.
 
-            What is a broker, and why use it?
+            **What is a broker, and why use it?**
 
             A broker is a component installed on your device.
             Broker implicitly gives your device an identity. By using a broker,
@@ -1763,10 +1764,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             so that your broker-enabled apps (even a CLI)
             could automatically SSO from a previously established signed-in session.
 
-            ADFS and B2C do not support broker.
-            MSAL will automatically fallback to use browser.
-
-            You shall only enable broker when your app:
+            **You shall only enable broker when your app:**
 
             1. is running on supported platforms,
                and already registered their corresponding redirect_uri
@@ -1778,6 +1776,29 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                e.g. ``pip install msal[broker]>=1.25,<2``.
 
             3. tested with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
+
+            **The fallback behaviors of MSAL Python's broker support**
+
+            MSAL will either error out, or silently fallback to non-broker flows.
+
+            1. MSAL will ignore the `enable_broker_...` and bypass broker
+               on those auth flows that are known to be NOT supported by broker.
+               This includes ADFS, B2C, etc..
+               For other "could-use-broker" scenarios, please see below.
+            2. MSAL errors out when app developer opted-in to use broker
+               but a direct dependency "mid-tier" package is not installed.
+               Error message guides app developer to declare the correct dependency
+               ``msal[broker]``.
+               We error out here because the error is actionable to app developers.
+            3. MSAL silently "deactivates" the broker and fallback to non-broker,
+               when opted-in, dependency installed yet failed to initialize.
+               We anticipate this would happen on a device whose OS is too old
+               or the underlying broker component is somehow unavailable.
+               There is not much an app developer or the end user can do here.
+               Eventually, the conditional access policy shall
+               force the user to switch to a different device.
+            4. MSAL errors out when broker is opted in, installed, initialized,
+               but subsequent token request(s) failed.
 
         :param boolean enable_broker_on_windows:
             This setting is only effective if your app is running on Windows 10+.
@@ -1819,10 +1840,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         :param list scopes:
             It is a list of case-sensitive strings.
         :param str prompt:
-            By default, no prompt value will be sent, not even "none".
+            By default, no prompt value will be sent, not even string ``"none"``.
             You will have to specify a value explicitly.
-            Its valid values are defined in Open ID Connect specs
-            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+            Its valid values are the constants defined in
+            :class:`Prompt <msal.Prompt>`.
         :param str login_hint:
             Optional. Identifier of the user. Generally a User Principal Name (UPN).
         :param domain_hint:
@@ -1867,10 +1888,14 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             New in version 1.15.
 
         :param int parent_window_handle:
-            OPTIONAL. If your app is a GUI app running on modern Windows system,
-            and your app opts in to use broker,
+            Required if your app is running on Windows and opted in to use broker.
+
+            If your app is a GUI app,
             you are recommended to also provide its window handle,
             so that the sign in UI window will properly pop up on top of your window.
+
+            If your app is a console app (most Python scripts are console apps),
+            you can use a placeholder value ``msal.PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
 
             New in version 1.20.0.
 
@@ -2172,6 +2197,19 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             **kwargs)
         telemetry_context.update_telemetry(response)
         return response
+
+    def remove_tokens_for_client(self):
+        """Remove all tokens that were previously acquired via
+        :func:`~acquire_token_for_client()` for the current client."""
+        for env in [self.authority.instance] + self._get_authority_aliases(
+                self.authority.instance):
+            for at in self.token_cache.find(TokenCache.CredentialType.ACCESS_TOKEN, query={
+                "client_id": self.client_id,
+                "environment": env,
+                "home_account_id": None,  # These are mostly app-only tokens
+            }):
+                self.token_cache.remove_at(at)
+        # acquire_token_for_client() obtains no RTs, so we have no RT to remove
 
     def acquire_token_on_behalf_of(self, user_assertion, scopes, claims_challenge=None, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.

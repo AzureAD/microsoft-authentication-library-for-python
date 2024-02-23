@@ -3,9 +3,8 @@ The configuration file would look like this:
 
 {
     "authority": "https://login.microsoftonline.com/organizations",
-    "client_id": "your_client_id",
+    "client_id": "your_client_id came from https://learn.microsoft.com/entra/identity-platform/quickstart-register-app",
     "username": "your_username@your_tenant.com",
-    "password": "This is a sample only. You better NOT persist your password.",
     "scope": ["User.ReadBasic.All"],
         // You can find the other permission names from this document
         // https://docs.microsoft.com/en-us/graph/permissions-reference
@@ -20,6 +19,7 @@ You can then run this sample with a JSON configuration file:
 """
 
 import sys  # For simplicity, we'll read config file from 1st CLI param sys.argv[1]
+import getpass
 import json
 import logging
 import time
@@ -33,6 +33,7 @@ import msal
 # logging.getLogger("msal").setLevel(logging.INFO)  # Optionally disable MSAL DEBUG logs
 
 config = json.load(open(sys.argv[1]))
+config["password"] = getpass.getpass()
 
 # If for whatever reason you plan to recreate same ClientApplication periodically,
 # you shall create one global token cache and reuse it by each ClientApplication
@@ -40,9 +41,10 @@ global_token_cache = msal.TokenCache()  # The TokenCache() is in-memory.
     # See more options in https://msal-python.readthedocs.io/en/latest/#tokencache
 
 # Create a preferably long-lived app instance, to avoid the overhead of app creation
-global_app = msal.PublicClientApplication(
-    config["client_id"], authority=config["authority"],
+global_app = msal.ClientApplication(
+    config["client_id"],
     client_credential=config.get("client_secret"),
+    authority=config["authority"],
     token_cache=global_token_cache,  # Let this app (re)use an existing token cache.
         # If absent, ClientApplication will create its own empty token cache
     )
@@ -73,8 +75,7 @@ def acquire_and_use_token():
             headers={'Authorization': 'Bearer ' + result['access_token']},).json()
         print("Graph API call result: %s" % json.dumps(graph_data, indent=2))
     else:
-        print("Token acquisition failed")  # Examine result["error_description"] etc. to diagnose error
-        print(result)
+        print("Token acquisition failed", result)  # Examine result["error_description"] etc. to diagnose error
         if 65001 in result.get("error_codes", []):  # Not mean to be coded programatically, but...
             raise RuntimeError(
                 "AAD requires user consent for U/P flow to succeed. "
