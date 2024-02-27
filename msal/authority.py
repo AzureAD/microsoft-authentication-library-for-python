@@ -56,6 +56,7 @@ class Authority(object):
             self, authority_url, http_client,
             validate_authority=True,
             instance_discovery=None,
+            oidc_authority_url=None,
             ):
         """Creates an authority instance, and also validates it.
 
@@ -65,12 +66,56 @@ class Authority(object):
             This parameter only controls whether an instance discovery will be
             performed.
         """
+        self._http_client = http_client
+        if oidc_authority_url:
+            logger.info("Initializing with OIDC authority: %s", oidc_authority_url)
+            tenant_discovery_endpoint = self._initialize_oidc_authority(
+                oidc_authority_url)
+        else:
+            logger.info("Initializing with Entra authority: %s", authority_url)
+            tenant_discovery_endpoint = self._initialize_entra_authority(
+                authority_url, validate_authority, instance_discovery)
+        try:
+            openid_config = tenant_discovery(
+                tenant_discovery_endpoint,
+                self._http_client)
+        except ValueError:
+            error_message = (
+                "Unable to get OIDC authority configuration for {url} "
+                "because its OIDC Discovery endpoint is unavailable at "
+                "{url}/.well-known/openid-configuration ".format(url=oidc_authority_url)
+                if oidc_authority_url else
+                "Unable to get authority configuration for {}. "
+                "Authority would typically be in a format of "
+                "https://login.microsoftonline.com/your_tenant "
+                "or https://tenant_name.ciamlogin.com "
+                "or https://tenant_name.b2clogin.com/tenant.onmicrosoft.com/policy. "
+                .format(authority_url)
+                ) + " Also please double check your tenant name or GUID is correct."
+            raise ValueError(error_message)
+        logger.debug(
+            'openid_config("%s") = %s', tenant_discovery_endpoint, openid_config)
+        self.authorization_endpoint = openid_config['authorization_endpoint']
+        self.token_endpoint = openid_config['token_endpoint']
+        self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
+        _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
+
+    def _initialize_oidc_authority(self, oidc_authority_url):
+        authority, self.instance, tenant = canonicalize(oidc_authority_url)
+        self.is_adfs = tenant.lower() == 'adfs'  # As a convention
+        self._is_b2c = True  # Not exactly true, but
+            # OIDC Authority was designed for CIAM which is the next gen of B2C.
+            # Besides, application.py uses this to bypass broker.
+        self._is_known_to_developer = True  # Not really relevant, but application.py uses this to bypass authority validation
+        return oidc_authority_url + "/.well-known/openid-configuration"
+
+    def _initialize_entra_authority(
+            self, authority_url, validate_authority, instance_discovery):
         # :param instance_discovery:
         #    By default, the known-to-Microsoft validation will use an
         #    instance discovery endpoint located at ``login.microsoftonline.com``.
         #    You can customize the endpoint by providing a url as a string.
         #    Or you can turn this behavior off by passing in a False here.
-        self._http_client = http_client
         if isinstance(authority_url, AuthorityBuilder):
             authority_url = str(authority_url)
         authority, self.instance, tenant = canonicalize(authority_url)
@@ -111,24 +156,7 @@ class Authority(object):
                     version="" if self.is_adfs else "/v2.0",
                     )
                 ).geturl()  # Keeping original port and query. Query is useful for test.
-        try:
-            openid_config = tenant_discovery(
-                tenant_discovery_endpoint,
-                self._http_client)
-        except ValueError:
-            raise ValueError(
-                "Unable to get authority configuration for {}. "
-                "Authority would typically be in a format of "
-                "https://login.microsoftonline.com/your_tenant "
-                "or https://tenant_name.ciamlogin.com "
-                "or https://tenant_name.b2clogin.com/tenant.onmicrosoft.com/policy. "
-                "Also please double check your tenant name or GUID is correct.".format(
-                authority_url))
-        logger.debug("openid_config = %s", openid_config)
-        self.authorization_endpoint = openid_config['authorization_endpoint']
-        self.token_endpoint = openid_config['token_endpoint']
-        self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
-        _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
+        return tenant_discovery_endpoint
 
     def user_realm_discovery(self, username, correlation_id=None, response=None):
         # It will typically return a dict containing "ver", "account_type",
