@@ -204,6 +204,7 @@ class ClientApplication(object):
             instance_discovery=None,
             allow_broker=None,
             enable_pii_log=None,
+            oidc_authority=None,
             ):
         """Create an instance of application.
 
@@ -455,6 +456,15 @@ class ClientApplication(object):
             The default behavior is False.
 
             New in version 1.24.0.
+
+        :param str oidc_authority:
+            *Added in version 1.28.0*:
+            It is a URL that identifies an OpenID Connect (OIDC) authority of
+            the format ``https://contoso.com/tenant``.
+            MSAL will append ".well-known/openid-configuration" to the authority
+            and retrieve the OIDC metadata from there, to figure out the endpoints.
+
+            Note: Broker will NOT be used for OIDC authority.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -499,6 +509,8 @@ class ClientApplication(object):
         self.app_version = app_version
 
         # Here the self.authority will not be the same type as authority in input
+        if oidc_authority and authority:
+            raise ValueError("You can not provide both authority and oidc_authority")
         try:
             authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
             self.authority = Authority(
@@ -506,11 +518,12 @@ class ClientApplication(object):
                 self.http_client,
                 validate_authority=validate_authority,
                 instance_discovery=self._instance_discovery,
+                oidc_authority_url=oidc_authority,
                 )
         except ValueError:  # Those are explicit authority validation errors
             raise
         except Exception:  # The rest are typically connection errors
-            if validate_authority and azure_region:
+            if validate_authority and azure_region and not oidc_authority:
                 # Since caller opts in to use region, here we tolerate connection
                 # errors happened during authority validation at non-region endpoint
                 self.authority = Authority(
