@@ -207,10 +207,10 @@ class ClientApplication(object):
             ):
         """Create an instance of application.
 
-        :param str client_id: Your app has a client_id after you register it on AAD.
+        :param str client_id: Your app has a client_id after you register it on Microsoft Entra admin center.
 
         :param Union[str, dict] client_credential:
-            For :class:`PublicClientApplication`, you simply use `None` here.
+            For :class:`PublicClientApplication`, you use `None` here.
             For :class:`ConfidentialClientApplication`,
             it can be a string containing client secret,
             or an X509 certificate container in this form::
@@ -916,7 +916,7 @@ class ClientApplication(object):
             OAuth2 was designed mostly for singleton services,
             where tokens are always meant for the same resource and the only
             changes are in the scopes.
-            In AAD, tokens can be issued for multiple 3rd party resources.
+            In Microsoft Entra, tokens can be issued for multiple 3rd party resources.
             You can ask authorization code for multiple resources,
             but when you redeem it, the token is for only one intended
             recipient, called audience.
@@ -986,7 +986,7 @@ class ClientApplication(object):
             OAuth2 was designed mostly for singleton services,
             where tokens are always meant for the same resource and the only
             changes are in the scopes.
-            In AAD, tokens can be issued for multiple 3rd party resources.
+            In Microsoft Entra, tokens can be issued for multiple 3rd party resources.
             You can ask authorization code for multiple resources,
             but when you redeem it, the token is for only one intended
             recipient, called audience.
@@ -1004,7 +1004,7 @@ class ClientApplication(object):
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -1640,7 +1640,7 @@ class ClientApplication(object):
 
             New in version 1.26.0.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -1871,7 +1871,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             (The rest of the redirect_uri is hard coded as ``http://localhost``.)
 
         :param list extra_scopes_to_consent:
-            "Extra scopes to consent" is a concept only available in AAD.
+            "Extra scopes to consent" is a concept only available in Microsoft Entra.
             It refers to other resources you might want to prompt to consent for,
             in the same interaction, but for which you won't get back a
             token for in this particular operation.
@@ -2114,7 +2114,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -2159,7 +2159,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -2232,7 +2232,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
