@@ -4,7 +4,7 @@
 |:------------:|:--------------:|:--------------------------------------:|:---------------------------------------:|:-----------------:|
  [![Build status](https://github.com/AzureAD/microsoft-authentication-library-for-python/actions/workflows/python-package.yml/badge.svg?branch=dev)](https://github.com/AzureAD/microsoft-authentication-library-for-python/actions) | [![Documentation Status](https://readthedocs.org/projects/msal-python/badge/?version=latest)](https://msal-python.readthedocs.io/en/latest/?badge=latest) | [![Downloads](https://static.pepy.tech/badge/msal)](https://pypistats.org/packages/msal) | [![Download monthly](https://static.pepy.tech/badge/msal/month)](https://pepy.tech/project/msal) | [📉](https://azuread.github.io/microsoft-authentication-library-for-python/dev/bench/)
 
-The Microsoft Authentication Library for Python enables applications to integrate with the [Microsoft identity platform](https://aka.ms/aaddevv2). It allows you to sign in users or apps with Microsoft identities ([Azure AD](https://azure.microsoft.com/services/active-directory/), [Microsoft Accounts](https://account.microsoft.com) and [Azure AD B2C](https://azure.microsoft.com/services/active-directory-b2c/) accounts) and obtain tokens to call Microsoft APIs such as [Microsoft Graph](https://graph.microsoft.io/) or your own APIs registered with the Microsoft identity platform. It is built using industry standard OAuth2 and OpenID Connect protocols
+The Microsoft Authentication Library for Python enables applications to integrate with the [Microsoft identity platform](https://aka.ms/aaddevv2). It allows you to sign in users or apps with Microsoft identities ([Microsoft Entra ID](https://www.microsoft.com/security/business/identity-access/microsoft-entra-id), [External identities](https://www.microsoft.com/security/business/identity-access/microsoft-entra-external-id), [Microsoft Accounts](https://account.microsoft.com) and [Azure AD B2C](https://azure.microsoft.com/services/active-directory-b2c/) accounts) and obtain tokens to call Microsoft APIs such as [Microsoft Graph](https://graph.microsoft.io/) or your own APIs registered with the Microsoft identity platform. It is built using industry standard OAuth2 and OpenID Connect protocols
 
 Not sure whether this is the SDK you are looking for your app? There are other Microsoft Identity SDKs
 [here](https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Microsoft-Authentication-Client-Libraries).
@@ -23,9 +23,10 @@ Click on the following thumbnail to visit a large map with clickable links to pr
 ## Installation
 
 You can find MSAL Python on [Pypi](https://pypi.org/project/msal/).
+
 1. If you haven't already, [install and/or upgrade the pip](https://pip.pypa.io/en/stable/installing/)
    of your Python environment to a recent version. We tested with pip 18.1.
-2. As usual, just run `pip install msal`.
+1. As usual, just run `pip install msal`.
 
 ## Versions
 
@@ -123,7 +124,7 @@ We provide a [full suite of sample applications](https://aka.ms/aaddevsamplesv2)
 
 ## Community Help and Support
 
-We leverage Stack Overflow to work with the community on supporting Azure Active Directory and its SDKs, including this one!
+We leverage Stack Overflow to work with the community on supporting Microsoft Entra and its SDKs, including this one!
 We highly recommend you ask your questions on Stack Overflow (we're all on there!)
 Also browser existing issues to see if someone has had your question before.
 
@@ -132,6 +133,7 @@ Here is the latest Q&A on Stack Overflow for MSAL:
 [http://stackoverflow.com/questions/tagged/msal](http://stackoverflow.com/questions/tagged/msal)
 
 ## Submit Feedback
+
 We'd like your thoughts on this library. Please complete [this short survey.](https://forms.office.com/r/TMjZkDbzjY)
 
 ## Security Reporting

@@ -25,7 +25,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.27.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.28.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -204,13 +204,14 @@ class ClientApplication(object):
             instance_discovery=None,
             allow_broker=None,
             enable_pii_log=None,
+            oidc_authority=None,
             ):
         """Create an instance of application.
 
-        :param str client_id: Your app has a client_id after you register it on AAD.
+        :param str client_id: Your app has a client_id after you register it on Microsoft Entra admin center.
 
         :param Union[str, dict] client_credential:
-            For :class:`PublicClientApplication`, you simply use `None` here.
+            For :class:`PublicClientApplication`, you use `None` here.
             For :class:`ConfidentialClientApplication`,
             it can be a string containing client secret,
             or an X509 certificate container in this form::
@@ -455,6 +456,15 @@ class ClientApplication(object):
             The default behavior is False.
 
             New in version 1.24.0.
+
+        :param str oidc_authority:
+            *Added in version 1.28.0*:
+            It is a URL that identifies an OpenID Connect (OIDC) authority of
+            the format ``https://contoso.com/tenant``.
+            MSAL will append ".well-known/openid-configuration" to the authority
+            and retrieve the OIDC metadata from there, to figure out the endpoints.
+
+            Note: Broker will NOT be used for OIDC authority.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -499,6 +509,8 @@ class ClientApplication(object):
         self.app_version = app_version
 
         # Here the self.authority will not be the same type as authority in input
+        if oidc_authority and authority:
+            raise ValueError("You can not provide both authority and oidc_authority")
         try:
             authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
             self.authority = Authority(
@@ -506,11 +518,12 @@ class ClientApplication(object):
                 self.http_client,
                 validate_authority=validate_authority,
                 instance_discovery=self._instance_discovery,
+                oidc_authority_url=oidc_authority,
                 )
         except ValueError:  # Those are explicit authority validation errors
             raise
         except Exception:  # The rest are typically connection errors
-            if validate_authority and azure_region:
+            if validate_authority and azure_region and not oidc_authority:
                 # Since caller opts in to use region, here we tolerate connection
                 # errors happened during authority validation at non-region endpoint
                 self.authority = Authority(
@@ -916,7 +929,7 @@ class ClientApplication(object):
             OAuth2 was designed mostly for singleton services,
             where tokens are always meant for the same resource and the only
             changes are in the scopes.
-            In AAD, tokens can be issued for multiple 3rd party resources.
+            In Microsoft Entra, tokens can be issued for multiple 3rd party resources.
             You can ask authorization code for multiple resources,
             but when you redeem it, the token is for only one intended
             recipient, called audience.
@@ -986,7 +999,7 @@ class ClientApplication(object):
             OAuth2 was designed mostly for singleton services,
             where tokens are always meant for the same resource and the only
             changes are in the scopes.
-            In AAD, tokens can be issued for multiple 3rd party resources.
+            In Microsoft Entra, tokens can be issued for multiple 3rd party resources.
             You can ask authorization code for multiple resources,
             but when you redeem it, the token is for only one intended
             recipient, called audience.
@@ -1004,7 +1017,7 @@ class ClientApplication(object):
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -1640,7 +1653,7 @@ class ClientApplication(object):
 
             New in version 1.26.0.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -1871,7 +1884,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             (The rest of the redirect_uri is hard coded as ``http://localhost``.)
 
         :param list extra_scopes_to_consent:
-            "Extra scopes to consent" is a concept only available in AAD.
+            "Extra scopes to consent" is a concept only available in Microsoft Entra.
             It refers to other resources you might want to prompt to consent for,
             in the same interaction, but for which you won't get back a
             token for in this particular operation.
@@ -2114,7 +2127,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -2159,7 +2172,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -2232,7 +2245,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
