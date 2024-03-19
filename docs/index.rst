@@ -168,3 +168,23 @@ You may want to catch them to provide a better error message to your end users.
 
 .. autoclass:: msal.IdTokenError
 
+
+Managed Identity
+================
+MSAL supports
+`Managed Identity <https://learn.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/overview>`_.
+
+You can create one of these two kinds of managed identity configuration objects:
+
+.. autoclass:: msal.SystemAssignedManagedIdentity
+   :members:
+
+.. autoclass:: msal.UserAssignedManagedIdentity
+   :members:
+
+And then feed the configuration object into a :class:`ManagedIdentityClient` object.
+
+.. autoclass:: msal.ManagedIdentityClient
+   :members:
+
+   .. automethod:: __init__

@@ -12,6 +12,7 @@ from threading import Lock
 import os
 
 from .oauth2cli import Client, JwtAssertionCreator
+from .oauth2cli.assertion import AutoRefresher
 from .oauth2cli.oidc import decode_part
 from .authority import Authority, WORLD_WIDE
 from .mex import send_request as mex_send_request
@@ -22,6 +23,7 @@ import msal.telemetry
 from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
 from .cloudshell import _is_running_in_cloud_shell
+from .managed_identity import ManagedIdentity, ManagedIdentityClient
 
 
 # The __init__.py will import this. Not the other way around.
@@ -254,6 +256,14 @@ class ClientApplication(object):
                     "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
                 }
 
+            *Added in version 1.28.0*:
+            It can also be a :py:class:`msal.SystemAssignedManagedIdentity` or
+            a :py:class:`msal.UserAssignedManagedIdentity` instance.
+            This way, the current confidential client application can authenticate
+            via a managed identity. This is also known as "workflow identity"
+            or "federated identity credential (FIC)".
+            Prerequisite: you need to `configure the federation <https://review.learn.microsoft.com/en-us/identity/microsoft-identity-platform/federated-identity-credentials?branch=main#azure-portal>`_.
+
         :param dict client_claims:
             *Added in version 0.5.0*:
             It is a dictionary of extra claims that would be signed by
@@ -483,27 +493,27 @@ class ClientApplication(object):
                 repr(exclude_scopes)))
 
         if http_client:
-            self.http_client = http_client
+            self._http_client = self.http_client = http_client
         else:
             import requests  # Lazy load
 
-            self.http_client = requests.Session()
-            self.http_client.verify = verify
-            self.http_client.proxies = proxies
+            self._http_client = requests.Session()
+            self._http_client.verify = verify
+            self._http_client.proxies = proxies
             # Requests, does not support session - wide timeout
             # But you can patch that (https://github.com/psf/requests/issues/3341):
-            self.http_client.request = functools.partial(
-                self.http_client.request, timeout=timeout)
+            self._http_client.request = functools.partial(
+                self._http_client.request, timeout=timeout)
 
             # Enable a minimal retry. Better than nothing.
             # https://github.com/psf/requests/blob/v2.25.1/requests/adapters.py#L94-L108
             a = requests.adapters.HTTPAdapter(max_retries=1)
-            self.http_client.mount("http://", a)
-            self.http_client.mount("https://", a)
+            self._http_client.mount("http://", a)
+            self._http_client.mount("https://", a)
         self.http_client = ThrottledHttpClient(
-            self.http_client,
+            self._http_client,
             {} if http_cache is None else http_cache,  # Default to an in-memory dict
-            )
+            )  # An unthrottled http_client is still available at self._http_client
 
         self.app_name = app_name
         self.app_version = app_version
@@ -648,13 +658,27 @@ class ClientApplication(object):
         if self.app_version:
             default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
-        if isinstance(client_credential, dict):
+        if ManagedIdentity.is_managed_identity(client_credential):
+            # Federated Identity Credential (FIC), a.k.a. workload identity
+            # https://review.learn.microsoft.com/identity/microsoft-identity-platform/federated-identity-credentials
+            client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
+            client_assertion = AutoRefresher(
+                lambda: ManagedIdentityClient(
+                    client_credential, self._http_client,
+                    ).acquire_token_for_client(
+                        resource="api://AzureADTokenExchange",
+                    ).get("access_token"),
+                expires_in=3600,  # Managed Identity token expires in 1 hour
+                )
+            logger.debug("CCA federated by Managed Identity specified via client_credential")
+        elif isinstance(client_credential, dict):
             assert (("private_key" in client_credential
                     and "thumbprint" in client_credential) or
                     "client_assertion" in client_credential)
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
             if 'client_assertion' in client_credential:
                 client_assertion = client_credential['client_assertion']
+                logger.debug("CCA authenticated by assertion specified in client_credential")
             else:
                 headers = {}
                 if 'public_certificate' in client_credential:
@@ -669,14 +693,16 @@ class ClientApplication(object):
                         _str2bytes(client_credential["passphrase"]),
                         backend=default_backend(),  # It was a required param until 2020
                         )
-                assertion = JwtAssertionCreator(
+                assertion_creator = JwtAssertionCreator(
                     unencrypted_private_key, algorithm="RS256",
                     sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
-                client_assertion = assertion.create_regenerative_assertion(
+                client_assertion = assertion_creator.create_regenerative_assertion(
                     audience=authority.token_endpoint, issuer=self.client_id,
                     additional_claims=self.client_claims or {})
+                logger.debug("CCA authenticated by certificate: {...}")
         else:
             default_body['client_secret'] = client_credential
+            logger.debug("CCA authenticated by secret: ******")
         central_configuration = {
             "authorization_endpoint": authority.authorization_endpoint,
             "token_endpoint": authority.token_endpoint,
