@@ -511,6 +511,7 @@ class ClientApplication(object):
         # Here the self.authority will not be the same type as authority in input
         if oidc_authority and authority:
             raise ValueError("You can not provide both authority and oidc_authority")
+        self._oidc_authority = oidc_authority
         try:
             authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
             self.authority = Authority(
@@ -973,6 +974,11 @@ class ClientApplication(object):
             **kwargs))
         if "access_token" in response:
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
+        if ("AADSTS500207" in response.get("error_description", "") and
+                self._oidc_authority and not self._oidc_authority.endswith("/v2.0")):
+            response["error_description"] = (
+                'Did you forget to append "/v2.0" to your oidc_authority? '
+                + response["error_description"])
         telemetry_context.update_telemetry(response)
         return response
 
