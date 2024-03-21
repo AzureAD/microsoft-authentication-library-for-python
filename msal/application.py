@@ -604,6 +604,16 @@ class ClientApplication(object):
             self._telemetry_buffer, self._telemetry_lock, api_id,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
+    def _adjust_response(self, response):  # Adjust response inline
+        # Currently, this is used to provide better error message for CIAM CUD
+        error_description = response.get("error_description", "")
+        if ("AADSTS500207" in error_description  # Observed in most auth grants
+            or "AADSTS900144" in error_description  # Observed in ROPC
+        ) and self._oidc_authority and not self._oidc_authority.endswith("/v2.0"):
+            response["error_description"] = (
+                'Did you forget to append "/v2.0" to your oidc_authority? '
+                + response["error_description"])
+
     def _get_regional_authority(self, central_authority):
         if not self._region_configured:  # User did not opt-in to ESTS-R
             return None  # Short circuit to completely bypass region detection
@@ -974,11 +984,7 @@ class ClientApplication(object):
             **kwargs))
         if "access_token" in response:
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
-        if ("AADSTS500207" in response.get("error_description", "") and
-                self._oidc_authority and not self._oidc_authority.endswith("/v2.0")):
-            response["error_description"] = (
-                'Did you forget to append "/v2.0" to your oidc_authority? '
-                + response["error_description"])
+        self._adjust_response(response)
         telemetry_context.update_telemetry(response)
         return response
 
@@ -1706,6 +1712,7 @@ class ClientApplication(object):
                 **kwargs))
         if "access_token" in response:
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
+        self._adjust_response(response)
         telemetry_context.update_telemetry(response)
         return response
 
@@ -2008,6 +2015,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             **kwargs))
         if "access_token" in response:
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
+        self._adjust_response(response)  # Note: It won't improve
+            # the error rendered in browser, but still better than nothing
         telemetry_context.update_telemetry(response)
         return response
 
@@ -2117,6 +2126,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             headers={msal.telemetry.CLIENT_REQUEST_ID: correlation_id},
             **kwargs)
         flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
+        self._adjust_response(flow)  # AADSTS500207 would happen here, not at token endpoint
         return flow
 
     def acquire_token_by_device_flow(self, flow, claims_challenge=None, **kwargs):
@@ -2214,6 +2224,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
             **kwargs)
+        self._adjust_response(response)
         telemetry_context.update_telemetry(response)
         return response
 

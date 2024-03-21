@@ -3,6 +3,9 @@ The configuration file would look like this:
 
 {
     "authority": "https://login.microsoftonline.com/common",
+        // Usually you use this one
+    "oidc_authority": "https://contoso.com/Enter_the_Tenant_Name_Here",
+        // Alternatively, you use this one when your CIAM tenant has a custom domain
     "client_id": "your_client_id came from https://learn.microsoft.com/entra/identity-platform/quickstart-register-app",
     "scope": ["User.ReadBasic.All"],
         // You can find the other permission names from this document
@@ -39,7 +42,8 @@ global_token_cache = msal.TokenCache()  # The TokenCache() is in-memory.
 
 # Create a preferably long-lived app instance, to avoid the overhead of app creation
 global_app = msal.PublicClientApplication(
-    config["client_id"], authority=config["authority"],
+    config["client_id"], authority=config.get("authority"),
+    oidc_authority=config.get("oidc_authority"),  # Use this for a CIAM custom domain
     token_cache=global_token_cache,  # Let this app (re)use an existing token cache.
         # If absent, ClientApplication will create its own empty token cache
     )
