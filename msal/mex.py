@@ -53,6 +53,16 @@ def send_request(mex_endpoint, http_client, **kwargs):
             "Malformed MEX document: %s, %s", mex_resp.status_code, mex_resp.text)
         raise
 
+def send_request_iwa(mex_endpoint, http_client, **kwargs):
+    mex_resp = http_client.get(mex_endpoint, **kwargs)
+    mex_resp.raise_for_status()
+    try:
+        return Mex(mex_resp.text).get_wstrust_iwa_endpoint()
+    except ET.ParseError:
+        logger.exception(
+            "Malformed MEX document: %s, %s", mex_resp.status_code, mex_resp.text)
+        raise
+
 
 class Mex(object):
 
@@ -126,6 +136,14 @@ class Mex(object):
                         {"address": address.text, "action": binding["action"]})
         return endpoints
 
+    def get_wstrust_iwa_endpoint(self):
+        """Returns {"address": "https://...", "action": "the soapAction value"}"""
+        endpoints = self._get_endpoints(
+            self._get_bindings(), self._get_iwa_policy_ids())
+        for e in endpoints:
+            if e["action"] == self.ACTION_13:
+                return e  # Historically, we prefer ACTION_13 a.k.a. WsTrust13
+        return endpoints[0] if endpoints else None
     def get_wstrust_username_password_endpoint(self):
         """Returns {"address": "https://...", "action": "the soapAction value"}"""
         endpoints = self._get_endpoints(
