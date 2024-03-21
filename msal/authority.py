@@ -102,6 +102,7 @@ class Authority(object):
 
     def _initialize_oidc_authority(self, oidc_authority_url):
         authority, self.instance, tenant = canonicalize(oidc_authority_url)
+        self._is_oidc = True
         self.is_adfs = tenant.lower() == 'adfs'  # As a convention
         self._is_b2c = True  # Not exactly true, but
             # OIDC Authority was designed for CIAM which is the next gen of B2C.
@@ -116,6 +117,7 @@ class Authority(object):
         #    instance discovery endpoint located at ``login.microsoftonline.com``.
         #    You can customize the endpoint by providing a url as a string.
         #    Or you can turn this behavior off by passing in a False here.
+        self._is_oidc = False
         if isinstance(authority_url, AuthorityBuilder):
             authority_url = str(authority_url)
         authority, self.instance, tenant = canonicalize(authority_url)
@@ -162,6 +164,10 @@ class Authority(object):
         # It will typically return a dict containing "ver", "account_type",
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
+        if self._is_oidc:
+            # Conceptually, OIDC has no user real discovery.
+            # Besides, ROPC on CIAM CUD apparently works without the federation anyway
+            return {}  # This can guide the caller to fall back normal ROPC flow
         if self.instance not in self.__class__._domains_without_user_realm_discovery:
             resp = response or self._http_client.get(
                 "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
