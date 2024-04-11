@@ -749,7 +749,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 lambda: ManagedIdentityClient(
                     client_credential, self.http_client,
                     ).acquire_token_for_client(
-                        resource="api://AzureADTokenExchange",
+                        resource="api://AzureADTokenExchange",  # TODO: Customizable
                     ).get("access_token"),
                 expires_in=3600,  # Managed Identity token expires in 1 hour
                 )
