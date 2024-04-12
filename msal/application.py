@@ -1142,7 +1142,7 @@ class ClientApplication(object):
                     "local_account_id": a.get("local_account_id"),  # Tenant-specific
                     "realm": a.get("realm"),  # Tenant-specific
                 }
-            for a in self.token_cache.find(
+            for a in self.token_cache.search(
                 TokenCache.CredentialType.ACCOUNT,
                 query={"environment": environment})
             if a["authority_type"] in interested_authority_types
@@ -1188,18 +1188,22 @@ class ClientApplication(object):
             "home_account_id": home_account["home_account_id"],}  # realm-independent
         app_metadata = self._get_app_metadata(home_account["environment"])
         # Remove RTs/FRTs, and they are realm-independent
-        for rt in [rt for rt in self.token_cache.find(
+        for rt in [  # Remove RTs from a static list (rather than from a dynamic generator),
+                    # to avoid changing self.token_cache while it is being iterated
+            rt for rt in self.token_cache.search(
                 TokenCache.CredentialType.REFRESH_TOKEN, query=owned_by_home_account)
                 # Do RT's app ownership check as a precaution, in case family apps
                 # and 3rd-party apps share same token cache, although they should not.
                 if rt["client_id"] == self.client_id or (
                     app_metadata.get("family_id")  # Now let's settle family business
                     and rt.get("family_id") == app_metadata["family_id"])
-                ]:
+        ]:
             self.token_cache.remove_rt(rt)
-        for at in self.token_cache.find(  # Remove ATs
-                # Regardless of realm, b/c we've removed realm-independent RTs anyway
-                TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_home_account):
+        for at in list(self.token_cache.search(  # Remove ATs from a static list,
+                # to avoid changing self.token_cache while it is being iterated
+            TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_home_account,
+            # Regardless of realm, b/c we've removed realm-independent RTs anyway
+        )):
             # To avoid the complexity of locating sibling family app's AT,
             # we skip AT's app ownership check.
             # It means ATs for other apps will also be removed, it is OK because:
@@ -1213,11 +1217,15 @@ class ClientApplication(object):
         owned_by_home_account = {
             "environment": home_account["environment"],
             "home_account_id": home_account["home_account_id"],}  # realm-independent
-        for idt in self.token_cache.find(  # Remove IDTs, regardless of realm
-                TokenCache.CredentialType.ID_TOKEN, query=owned_by_home_account):
+        for idt in list(self.token_cache.search(  # Remove IDTs from a static list,
+                # to avoid changing self.token_cache while it is being iterated
+            TokenCache.CredentialType.ID_TOKEN, query=owned_by_home_account, # regardless of realm
+        )):
             self.token_cache.remove_idt(idt)
-        for a in self.token_cache.find(  # Remove Accounts, regardless of realm
-                TokenCache.CredentialType.ACCOUNT, query=owned_by_home_account):
+        for a in list(self.token_cache.search(  # Remove Accounts from a static list,
+                # to avoid changing self.token_cache while it is being iterated
+            TokenCache.CredentialType.ACCOUNT, query=owned_by_home_account,  # regardless of realm
+        )):
             self.token_cache.remove_account(a)
 
     def _acquire_token_by_cloud_shell(self, scopes, data=None):
@@ -1350,12 +1358,12 @@ class ClientApplication(object):
             return result
         final_result = result
         for alias in self._get_authority_aliases(self.authority.instance):
-            if not self.token_cache.find(
+            if not list(self.token_cache.search(  # Need a list to test emptiness
                     self.token_cache.CredentialType.REFRESH_TOKEN,
                     # target=scopes,  # MUST NOT filter by scopes, because:
                         # 1. AAD RTs are scope-independent;
                         # 2. therefore target is optional per schema;
-                    query={"environment": alias}):
+                    query={"environment": alias})):
                 # Skip heavy weight logic when RT for this alias doesn't exist
                 continue
             the_authority = Authority(
@@ -1410,11 +1418,13 @@ class ClientApplication(object):
                 query["key_id"] = key_id
             now = time.time()
             refresh_reason = msal.telemetry.AT_ABSENT
-            for entry in self.token_cache._find(  # It returns a generator
+            for entry in self.token_cache.search(  # A generator allows us to
+                    # break early in cache-hit without finding a full list
                 self.token_cache.CredentialType.ACCESS_TOKEN,
                 target=scopes,
                 query=query,
-            ):  # Note that _find() holds a lock during this for loop;
+            ):  # This loop is about token search, not about token deletion.
+                # Note that search() holds a lock during this loop;
                 # that is fine because this loop is fast
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
@@ -1552,10 +1562,10 @@ class ClientApplication(object):
             rt_remover=None, break_condition=lambda response: False,
             refresh_reason=None, correlation_id=None, claims_challenge=None,
             **kwargs):
-        matches = self.token_cache.find(
+        matches = list(self.token_cache.search(  # We want a list to test emptiness
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
-            query=query)
+            query=query))
         logger.debug("Found %d RTs matching %s", len(matches), {
             k: _pii_less_home_account_id(v) if k == "home_account_id" and v else v
             for k, v in query.items()
@@ -2252,11 +2262,12 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         :func:`~acquire_token_for_client()` for the current client."""
         for env in [self.authority.instance] + self._get_authority_aliases(
                 self.authority.instance):
-            for at in self.token_cache.find(TokenCache.CredentialType.ACCESS_TOKEN, query={
+            for at in list(self.token_cache.search(  # Remove ATs from a snapshot
+                TokenCache.CredentialType.ACCESS_TOKEN, query={
                 "client_id": self.client_id,
                 "environment": env,
                 "home_account_id": None,  # These are mostly app-only tokens
-            }):
+            })):
                 self.token_cache.remove_at(at)
         # acquire_token_for_client() obtains no RTs, so we have no RT to remove
 
