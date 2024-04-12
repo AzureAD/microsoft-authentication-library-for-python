@@ -2,6 +2,7 @@
 import threading
 import time
 import logging
+import warnings
 
 from .authority import canonicalize
 from .oauth2cli.oidc import decode_part, decode_id_token
@@ -117,7 +118,7 @@ class TokenCache(object):
         with self._lock:
             return self._cache.get(credential_type, {}).get(key, default)
 
-    def _find(self, credential_type, target=None, query=None):  # O(n) generator
+    def search(self, credential_type, target=None, query=None):  # O(n) generator
         """Returns a generator of matching entries.
 
         It is O(1) for AT hits, and O(n) for other types.
@@ -150,8 +151,12 @@ class TokenCache(object):
                     if entry != preferred_result:  # Avoid yielding the same entry twice
                         yield entry
 
-    def find(self, credential_type, target=None, query=None):  # Obsolete. Use _find() instead.
-        return list(self._find(credential_type, target=target, query=query))
+    def find(self, credential_type, target=None, query=None):
+        """Equivalent to list(search(...))."""
+        warnings.warn(
+            "Use list(search(...)) instead to explicitly get a list.",
+            DeprecationWarning)
+        return list(self.search(credential_type, target=target, query=query))
 
     def add(self, event, now=None):
         """Handle a token obtaining event, and add tokens into cache."""
