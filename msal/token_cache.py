@@ -353,11 +353,14 @@ class SerializableTokenCache(TokenCache):
     the following simple recipe for file-based persistence may be sufficient::
 
         import os, atexit, msal
+        cache_filename = os.path.join(  # Persist cache into this file
+            os.getenv("XDG_RUNTIME_DIR", ""),  # Automatically wipe out the cache from Linux when user's ssh session ends. See also https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/690
+            "my_cache.bin")
         cache = msal.SerializableTokenCache()
-        if os.path.exists("my_cache.bin"):
-            cache.deserialize(open("my_cache.bin", "r").read())
+        if os.path.exists(cache_filename):
+            cache.deserialize(open(cache_filename, "r").read())
         atexit.register(lambda:
-            open("my_cache.bin", "w").write(cache.serialize())
+            open(cache_filename, "w").write(cache.serialize())
             # Hint: The following optional line persists only when state changed
             if cache.has_state_changed else None
             )
