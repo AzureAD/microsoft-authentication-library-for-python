@@ -11,7 +11,8 @@ from urllib.parse import urlparse  # Python 3+
 from collections import UserDict  # Python 3+
 from typing import Union  # Needed in Python 3.7 & 3.8
 from .token_cache import TokenCache
-from .throttled_http_client import ThrottledHttpClient
+from .individual_cache import _IndividualCache as IndividualCache
+from .throttled_http_client import ThrottledHttpClientBase, _parse_http_429_5xx_retry_after
 
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,22 @@ class UserAssignedManagedIdentity(ManagedIdentity):
                 "client_id, resource_id, object_id")
 
 
+class _ThrottledHttpClient(ThrottledHttpClientBase):
+    def __init__(self, http_client, http_cache):
+        super(_ThrottledHttpClient, self).__init__(http_client, http_cache)
+        self.get = IndividualCache(  # All MIs (except Cloud Shell) use GETs
+            mapping=self._expiring_mapping,
+            key_maker=lambda func, args, kwargs: "POST {} hash={} 429/5xx/Retry-After".format(
+                args[0],  # It is the endpoint, typically a constant per MI type
+                _hash(
+                    # Managed Identity flavors have inconsistent parameters.
+                    # We simply choose to hash them all.
+                    str(kwargs.get("params")) + str(kwargs.get("data"))),
+                ),
+            expires_in=_parse_http_429_5xx_retry_after,
+            )(http_client.get)
+
+
 class ManagedIdentityClient(object):
     """This API encapsulates multiple managed identity back-ends:
     VM, App Service, Azure Automation (Runbooks), Azure Function, Service Fabric,
@@ -138,6 +155,7 @@ class ManagedIdentityClient(object):
         *,
         http_client,
         token_cache=None,
+        http_cache=None,
     ):
         """Create a managed identity client.
 
@@ -163,6 +181,10 @@ class ManagedIdentityClient(object):
         :param token_cache:
             Optional. It accepts a :class:`msal.TokenCache` instance to store tokens.
             It will use an in-memory token cache by default.
+
+        :param http_cache:
+            Optional. It has the same characteristics as the
+            :paramref:`msal.ClientApplication.http_cache`.
 
         Recipe 1: Hard code a managed identity for your app::
 
@@ -191,12 +213,21 @@ class ManagedIdentityClient(object):
             token = client.acquire_token_for_client("resource")
         """
         self._managed_identity = managed_identity
-        if isinstance(http_client, ThrottledHttpClient):
-            raise ValueError(
-                # It is a precaution to reject application.py's throttled http_client,
-                # whose cache life on HTTP GET 200 is too long for Managed Identity.
-                "This class does not currently accept a ThrottledHttpClient.")
-        self._http_client = http_client
+        self._http_client = _ThrottledHttpClient(
+            # This class only throttles excess token acquisition requests.
+            # It does not provide retry.
+            # Retry is the http_client or caller's responsibility, not MSAL's.
+            #
+            # FWIW, here is the inconsistent retry recommendation.
+            # 1. Only MI on VM defines exotic 404 and 410 retry recommendations
+            #    ( https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/how-to-use-vm-token#error-handling )
+            #    (especially for 410 which was supposed to be a permanent failure).
+            # 2. MI on Service Fabric specifically suggests to not retry on 404.
+            #    ( https://learn.microsoft.com/en-us/azure/service-fabric/how-to-managed-cluster-managed-identity-service-fabric-app-code#error-handling )
+            http_client.http_client  # Patch the raw (unpatched) http client
+                if isinstance(http_client, ThrottledHttpClientBase) else http_client,
+            {} if http_cache is None else http_cache,  # Default to an in-memory dict
+        )
         self._token_cache = token_cache or TokenCache()
 
     def acquire_token_for_client(self, *, resource):  # We may support scope in the future

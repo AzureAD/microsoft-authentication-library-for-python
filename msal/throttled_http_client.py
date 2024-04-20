@@ -45,25 +45,42 @@ def _extract_data(kwargs, key, default=None):
     return data.get(key) if isinstance(data, dict) else default
 
 
-class ThrottledHttpClient(object):
-    def __init__(self, http_client, http_cache):
-        """Throttle the given http_client by storing and retrieving data from cache.
+class ThrottledHttpClientBase(object):
+    """Throttle the given http_client by storing and retrieving data from cache.
 
-        This wrapper exists so that our patching post() and get() would prevent
-        re-patching side effect when/if same http_client being reused.
-        """
-        expiring_mapping = ExpiringMapping(  # It will automatically clean up
+    This wrapper exists so that our patching post() and get() would prevent
+    re-patching side effect when/if same http_client being reused.
+
+    The subclass should implement post() and/or get()
+    """
+    def __init__(self, http_client, http_cache):
+        self.http_client = http_client
+        self._expiring_mapping = ExpiringMapping(  # It will automatically clean up
             mapping=http_cache if http_cache is not None else {},
             capacity=1024,  # To prevent cache blowing up especially for CCA
             lock=Lock(),  # TODO: This should ideally also allow customization
             )
+
+    def post(self, *args, **kwargs):
+        return self.http_client.post(*args, **kwargs)
+
+    def get(self, *args, **kwargs):
+        return self.http_client.get(*args, **kwargs)
+
+    def close(self):
+        return self.http_client.close()
+
+
+class ThrottledHttpClient(ThrottledHttpClientBase):
+    def __init__(self, http_client, http_cache):
+        super(ThrottledHttpClient, self).__init__(http_client, http_cache)
 
         _post = http_client.post  # We'll patch _post, and keep original post() intact
 
         _post = IndividualCache(
             # Internal specs requires throttling on at least token endpoint,
             # here we have a generic patch for POST on all endpoints.
-            mapping=expiring_mapping,
+            mapping=self._expiring_mapping,
             key_maker=lambda func, args, kwargs:
                 "POST {} client_id={} scope={} hash={} 429/5xx/Retry-After".format(
                     args[0],  # It is the url, typically containing authority and tenant
@@ -81,7 +98,7 @@ class ThrottledHttpClient(object):
             )(_post)
 
         _post = IndividualCache(  # It covers the "UI required cache"
-            mapping=expiring_mapping,
+            mapping=self._expiring_mapping,
             key_maker=lambda func, args, kwargs: "POST {} hash={} 400".format(
                 args[0],  # It is the url, typically containing authority and tenant
                 _hash(
@@ -120,7 +137,7 @@ class ThrottledHttpClient(object):
         self.post = _post
 
         self.get = IndividualCache(  # Typically those discovery GETs
-            mapping=expiring_mapping,
+            mapping=self._expiring_mapping,
             key_maker=lambda func, args, kwargs: "GET {} hash={} 2xx".format(
                 args[0],  # It is the url, sometimes containing inline params
                 _hash(kwargs.get("params", "")),
@@ -129,13 +146,7 @@ class ThrottledHttpClient(object):
                 3600*24 if 200 <= result.status_code < 300 else 0,
             )(http_client.get)
 
-        self._http_client = http_client
-
     # The following 2 methods have been defined dynamically by __init__()
     #def post(self, *args, **kwargs): pass
     #def get(self, *args, **kwargs): pass
-
-    def close(self):
-        """MSAL won't need this. But we allow throttled_http_client.close() anyway"""
-        return self._http_client.close()
 
