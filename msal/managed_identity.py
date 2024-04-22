@@ -12,7 +12,7 @@ from collections import UserDict  # Python 3+
 from typing import Union  # Needed in Python 3.7 & 3.8
 from .token_cache import TokenCache
 from .individual_cache import _IndividualCache as IndividualCache
-from .throttled_http_client import ThrottledHttpClientBase, _parse_http_429_5xx_retry_after
+from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
 
 
 logger = logging.getLogger(__name__)
@@ -109,18 +109,18 @@ class UserAssignedManagedIdentity(ManagedIdentity):
 
 
 class _ThrottledHttpClient(ThrottledHttpClientBase):
-    def __init__(self, http_client, http_cache):
-        super(_ThrottledHttpClient, self).__init__(http_client, http_cache)
+    def __init__(self, http_client, **kwargs):
+        super(_ThrottledHttpClient, self).__init__(http_client, **kwargs)
         self.get = IndividualCache(  # All MIs (except Cloud Shell) use GETs
             mapping=self._expiring_mapping,
-            key_maker=lambda func, args, kwargs: "POST {} hash={} 429/5xx/Retry-After".format(
+            key_maker=lambda func, args, kwargs: "REQ {} hash={} 429/5xx/Retry-After".format(
                 args[0],  # It is the endpoint, typically a constant per MI type
-                _hash(
+                self._hash(
                     # Managed Identity flavors have inconsistent parameters.
                     # We simply choose to hash them all.
                     str(kwargs.get("params")) + str(kwargs.get("data"))),
                 ),
-            expires_in=_parse_http_429_5xx_retry_after,
+            expires_in=RetryAfterParser(5).parse,  # 5 seconds default for non-PCA
             )(http_client.get)
 
 
@@ -226,7 +226,7 @@ class ManagedIdentityClient(object):
             #    ( https://learn.microsoft.com/en-us/azure/service-fabric/how-to-managed-cluster-managed-identity-service-fabric-app-code#error-handling )
             http_client.http_client  # Patch the raw (unpatched) http client
                 if isinstance(http_client, ThrottledHttpClientBase) else http_client,
-            {} if http_cache is None else http_cache,  # Default to an in-memory dict
+            http_cache=http_cache,
         )
         self._token_cache = token_cache or TokenCache()
 
