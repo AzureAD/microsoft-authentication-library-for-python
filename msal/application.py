@@ -533,7 +533,11 @@ class ClientApplication(object):
             self.http_client.mount("https://", a)
         self.http_client = ThrottledHttpClient(
             self.http_client,
-            {} if http_cache is None else http_cache,  # Default to an in-memory dict
+            http_cache=http_cache,
+            default_throttle_time=60
+                # The default value 60 was recommended mainly for PCA at the end of
+                # https://identitydivision.visualstudio.com/devex/_git/AuthLibrariesApiReview?version=GBdev&path=%2FService%20protection%2FIntial%20set%20of%20protection%20measures.md&_a=preview
+                if isinstance(self, PublicClientApplication) else 5,
             )
 
         self.app_name = app_name
