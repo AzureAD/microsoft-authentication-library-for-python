@@ -119,6 +119,30 @@ class AppServiceTestCase(ClientTestCase):
             self.assertEqual({}, self.app._token_cache._cache)
 
 
+@patch.dict(os.environ, {"MSI_ENDPOINT": "http://localhost", "MSI_SECRET": "foo"})
+class MachineLearningTestCase(ClientTestCase):
+
+    def test_happy_path(self):
+        with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
+            status_code=200,
+            text='{"access_token": "AT", "expires_on": "%s", "resource": "R"}' % (
+                int(time.time()) + 1234),
+        )) as mocked_method:
+            self._test_happy_path(self.app, mocked_method)
+
+    def test_machine_learning_error_should_be_normalized(self):
+        raw_error = '{"error": "placeholder", "message": "placeholder"}'
+        with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
+            status_code=500,
+            text=raw_error,
+        )) as mocked_method:
+            self.assertEqual({
+                "error": "invalid_scope",
+                "error_description": "{'error': 'placeholder', 'message': 'placeholder'}",
+            }, self.app.acquire_token_for_client(resource="R"))
+            self.assertEqual({}, self.app._token_cache._cache)
+
+
 @patch.dict(os.environ, {
     "IDENTITY_ENDPOINT": "http://localhost",
     "IDENTITY_HEADER": "foo",
