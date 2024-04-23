@@ -324,6 +324,15 @@ def _obtain_token(http_client, managed_identity, resource):
             managed_identity,
             resource,
         )
+    if "MSI_ENDPOINT" in os.environ and "MSI_SECRET" in os.environ:
+        # Back ported from https://github.com/Azure/azure-sdk-for-python/blob/azure-identity_1.15.0/sdk/identity/azure-identity/azure/identity/_credentials/azure_ml.py
+        return _obtain_token_on_machine_learning(
+            http_client,
+            os.environ["MSI_ENDPOINT"],
+            os.environ["MSI_SECRET"],
+            managed_identity,
+            resource,
+        )
     if "IDENTITY_ENDPOINT" in os.environ and "IMDS_ENDPOINT" in os.environ:
         if ManagedIdentity.is_user_assigned(managed_identity):
             raise ManagedIdentityError(  # Note: Azure Identity for Python raised exception too
@@ -340,6 +349,7 @@ def _obtain_token(http_client, managed_identity, resource):
 
 
 def _adjust_param(params, managed_identity):
+    # Modify the params dict in place
     id_name = ManagedIdentity._types_mapping.get(
         managed_identity.get(ManagedIdentity.ID_TYPE))
     if id_name:
@@ -411,6 +421,39 @@ def _obtain_token_on_app_service(
             "error": "invalid_scope",  # Empirically, wrong resource ends up with a vague statusCode=500
             "error_description": "{}, {}".format(
                 payload.get("statusCode"), payload.get("message")),
+            }
+    except json.decoder.JSONDecodeError:
+        logger.debug("IMDS emits unexpected payload: %s", resp.text)
+        raise
+
+def _obtain_token_on_machine_learning(
+    http_client, endpoint, secret, managed_identity, resource,
+):
+    # Could not find protocol docs from https://docs.microsoft.com/en-us/azure/machine-learning
+    # The following implementation is back ported from Azure Identity 1.15.0
+    logger.debug("Obtaining token via managed identity on Azure Machine Learning")
+    params = {"api-version": "2017-09-01", "resource": resource}
+    _adjust_param(params, managed_identity)
+    if params["api-version"] == "2017-09-01" and "client_id" in params:
+        # Workaround for a known bug in Azure ML 2017 API
+        params["clientid"] = params.pop("client_id")
+    resp = http_client.get(
+        endpoint,
+        params=params,
+        headers={"secret": secret},
+        )
+    try:
+        payload = json.loads(resp.text)
+        if payload.get("access_token") and payload.get("expires_on"):
+            return {  # Normalizing the payload into OAuth2 format
+                "access_token": payload["access_token"],
+                "expires_in": int(payload["expires_on"]) - int(time.time()),
+                "resource": payload.get("resource"),
+                "token_type": payload.get("token_type", "Bearer"),
+                }
+        return {
+            "error": "invalid_scope",  # TODO: To be tested
+            "error_description": "{}".format(payload),
             }
     except json.decoder.JSONDecodeError:
         logger.debug("IMDS emits unexpected payload: %s", resp.text)
