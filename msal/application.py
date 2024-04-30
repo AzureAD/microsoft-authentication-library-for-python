@@ -1387,7 +1387,7 @@ class ClientApplication(object):
                     refresh_reason = msal.telemetry.AT_EXPIRED
                     continue  # Removal is not necessary, it will be overwritten
                 if key_id and entry.get("key_id") != key_id:
-                    refresh_reason = msal.telemetry.AT_EXPIRED
+                    refresh_reason = msal.telemetry.AT_ABSENT
                     continue  # If the Key_Id is not matching, then it is not the token we are looking for
                 logger.debug("Cache hit an AT")
                 access_token_from_cache = {  # Mimic a real response
