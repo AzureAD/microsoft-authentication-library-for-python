@@ -16,7 +16,16 @@ from msal import (
     ManagedIdentityError,
     ArcPlatformNotSupportedError,
 )
-from msal.managed_identity import _supported_arc_platforms_and_their_prefixes
+from msal.managed_identity import (
+    _supported_arc_platforms_and_their_prefixes,
+    get_managed_identity_source,
+    APP_SERVICE,
+    AZURE_ARC,
+    CLOUD_SHELL,
+    MACHINE_LEARNING,
+    SERVICE_FABRIC,
+    DEFAULT_TO_VM,
+)
 
 
 class ManagedIdentityTestCase(unittest.TestCase):
@@ -233,4 +242,45 @@ class ArcTestCase(ClientTestCase):
             except ArcPlatformNotSupportedError:
                 if sys.platform in _supported_arc_platforms_and_their_prefixes:
                     self.fail("Should not raise ArcPlatformNotSupportedError")
+
+
+class GetManagedIdentitySourceTestCase(unittest.TestCase):
+
+    @patch.dict(os.environ, {
+        "IDENTITY_ENDPOINT": "http://localhost",
+        "IDENTITY_HEADER": "foo",
+        "IDENTITY_SERVER_THUMBPRINT": "bar",
+    })
+    def test_service_fabric(self):
+        self.assertEqual(get_managed_identity_source(), SERVICE_FABRIC)
+
+    @patch.dict(os.environ, {
+        "IDENTITY_ENDPOINT": "http://localhost",
+        "IDENTITY_HEADER": "foo",
+    })
+    def test_app_service(self):
+        self.assertEqual(get_managed_identity_source(), APP_SERVICE)
+
+    @patch.dict(os.environ, {
+        "MSI_ENDPOINT": "http://localhost",
+        "MSI_SECRET": "foo",
+    })
+    def test_machine_learning(self):
+        self.assertEqual(get_managed_identity_source(), MACHINE_LEARNING)
+
+    @patch.dict(os.environ, {
+        "IDENTITY_ENDPOINT": "http://localhost",
+        "IMDS_ENDPOINT": "http://localhost",
+    })
+    def test_arc(self):
+        self.assertEqual(get_managed_identity_source(), AZURE_ARC)
+
+    @patch.dict(os.environ, {
+        "AZUREPS_HOST_ENVIRONMENT": "cloud-shell-foo",
+    })
+    def test_cloud_shell(self):
+        self.assertEqual(get_managed_identity_source(), CLOUD_SHELL)
+
+    def test_default_to_vm(self):
+        self.assertEqual(get_managed_identity_source(), DEFAULT_TO_VM)
 

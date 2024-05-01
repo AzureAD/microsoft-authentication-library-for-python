@@ -13,6 +13,7 @@ from collections import UserDict  # Python 3+
 from .token_cache import TokenCache
 from .individual_cache import _IndividualCache as IndividualCache
 from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
+from .cloudshell import _is_running_in_cloud_shell
 
 
 logger = logging.getLogger(__name__)
@@ -297,6 +298,35 @@ def _scope_to_resource(scope):  # This is an experimental reasonable-effort appr
     if u.scheme:
         return "{}://{}".format(u.scheme, u.netloc)
     return scope  # There is no much else we can do here
+
+
+APP_SERVICE = object()
+AZURE_ARC = object()
+CLOUD_SHELL = object()  # In MSAL Python, token acquisition was done by
+    # PublicClientApplication(...).acquire_token_interactive(..., prompt="none")
+MACHINE_LEARNING = object()
+SERVICE_FABRIC = object()
+DEFAULT_TO_VM = object()  # Unknown environment; default to VM; you may want to probe
+def get_managed_identity_source():
+    """Detect the current environment and return the likely identity source.
+
+    When this function returns ``CLOUD_SHELL``, you should use
+    :func:`msal.PublicClientApplication.acquire_token_interactive` with ``prompt="none"``
+    to obtain a token.
+    """
+    if ("IDENTITY_ENDPOINT" in os.environ and "IDENTITY_HEADER" in os.environ
+            and "IDENTITY_SERVER_THUMBPRINT" in os.environ
+    ):
+        return SERVICE_FABRIC
+    if "IDENTITY_ENDPOINT" in os.environ and "IDENTITY_HEADER" in os.environ:
+        return APP_SERVICE
+    if "MSI_ENDPOINT" in os.environ and "MSI_SECRET" in os.environ:
+        return MACHINE_LEARNING
+    if "IDENTITY_ENDPOINT" in os.environ and "IMDS_ENDPOINT" in os.environ:
+        return AZURE_ARC
+    if _is_running_in_cloud_shell():
+        return CLOUD_SHELL
+    return DEFAULT_TO_VM
 
 
 def _obtain_token(http_client, managed_identity, resource):
