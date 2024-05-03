@@ -65,6 +65,29 @@ def _str2bytes(raw):
         return raw
 
 
+def _load_private_key_from_pfx_path(pfx_path, passphrase_bytes):
+    # Cert concepts https://security.stackexchange.com/a/226758/125264
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    with open(pfx_path, 'rb') as f:
+        private_key, cert, _ = pkcs12.load_key_and_certificates(  # cryptography 2.5+
+            # https://cryptography.io/en/latest/hazmat/primitives/asymmetric/serialization/#cryptography.hazmat.primitives.serialization.pkcs12.load_key_and_certificates
+            f.read(), passphrase_bytes)
+    sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # cryptography 0.7+
+        # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object
+    return private_key, sha1_thumbprint
+
+
+def _load_private_key_from_pem_str(private_key_pem_str, passphrase_bytes):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.backends import default_backend
+    return serialization.load_pem_private_key(  # cryptography 0.6+
+        _str2bytes(private_key_pem_str),
+        passphrase_bytes,
+        backend=default_backend(),  # It was a required param until 2020
+        )
+
+
 def _pii_less_home_account_id(home_account_id):
     parts = home_account_id.split(".")  # It could contain one or two parts
     parts[0] = "********"
@@ -253,6 +276,16 @@ class ClientApplication(object):
                 {
                     "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
                 }
+
+            .. admonition:: Supporting reading client cerficates from PFX files
+
+                *Added in version 1.29.0*:
+                Feed in a dictionary containing the path to a PFX file::
+
+                    {
+                        "private_key_pfx_path": "/path/to/your.pfx",
+                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
+                    }
 
         :type client_credential: Union[dict, str]
 
@@ -651,29 +684,37 @@ class ClientApplication(object):
             default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
-            assert (("private_key" in client_credential
-                    and "thumbprint" in client_credential) or
-                    "client_assertion" in client_credential)
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
-            if 'client_assertion' in client_credential:
+            # Use client_credential.get("...") rather than "..." in client_credential
+            # so that we can ignore an empty string came from an empty ENV VAR.
+            if client_credential.get("client_assertion"):
                 client_assertion = client_credential['client_assertion']
             else:
                 headers = {}
-                if 'public_certificate' in client_credential:
+                if client_credential.get('public_certificate'):
                     headers["x5c"] = extract_certs(client_credential['public_certificate'])
-                if not client_credential.get("passphrase"):
-                    unencrypted_private_key = client_credential['private_key']
+                passphrase_bytes = _str2bytes(
+                    client_credential["passphrase"]
+                    ) if client_credential.get("passphrase") else None
+                if client_credential.get("private_key_pfx_path"):
+                    private_key, sha1_thumbprint = _load_private_key_from_pfx_path(
+                        client_credential["private_key_pfx_path"], passphrase_bytes)
+                elif (
+                        client_credential.get("private_key")  # PEM blob
+                        and client_credential.get("thumbprint")):
+                    sha1_thumbprint = client_credential["thumbprint"]
+                    if passphrase_bytes:
+                        private_key = _load_private_key_from_pem_str(
+                            client_credential['private_key'], passphrase_bytes)
+                    else:  # PEM without passphrase
+                        private_key = client_credential['private_key']
                 else:
-                    from cryptography.hazmat.primitives import serialization
-                    from cryptography.hazmat.backends import default_backend
-                    unencrypted_private_key = serialization.load_pem_private_key(
-                        _str2bytes(client_credential["private_key"]),
-                        _str2bytes(client_credential["passphrase"]),
-                        backend=default_backend(),  # It was a required param until 2020
-                        )
+                    raise ValueError(
+                        "client_credential needs to follow this format "
+                        "https://msal-python.readthedocs.io/en/latest/#msal.ClientApplication.params.client_credential")
                 assertion = JwtAssertionCreator(
-                    unencrypted_private_key, algorithm="RS256",
-                    sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
+                    private_key, algorithm="RS256",
+                    sha1_thumbprint=sha1_thumbprint, headers=headers)
                 client_assertion = assertion.create_regenerative_assertion(
                     audience=authority.token_endpoint, issuer=self.client_id,
                     additional_claims=self.client_claims or {})

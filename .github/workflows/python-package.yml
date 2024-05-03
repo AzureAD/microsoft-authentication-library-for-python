@@ -18,6 +18,8 @@ jobs:
       TRAVIS: true
       LAB_APP_CLIENT_ID: ${{ secrets.LAB_APP_CLIENT_ID }}
       LAB_APP_CLIENT_SECRET: ${{ secrets.LAB_APP_CLIENT_SECRET }}
+      LAB_APP_CLIENT_CERT_BASE64: ${{ secrets.LAB_APP_CLIENT_CERT_BASE64 }}
+      LAB_APP_CLIENT_CERT_PFX_PATH: lab_cert.pfx
       LAB_OBO_CLIENT_SECRET: ${{ secrets.LAB_OBO_CLIENT_SECRET }}
       LAB_OBO_CONFIDENTIAL_CLIENT_ID: ${{ secrets.LAB_OBO_CONFIDENTIAL_CLIENT_ID }}
       LAB_OBO_PUBLIC_CLIENT_ID: ${{ secrets.LAB_OBO_PUBLIC_CLIENT_ID }}
@@ -43,6 +45,9 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install flake8 pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Populate lab cert.pfx
+      # https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions#storing-base64-binary-blobs-as-secrets
+      run: echo $LAB_APP_CLIENT_CERT_BASE64 | base64 -d > $LAB_APP_CLIENT_CERT_PFX_PATH
     - name: Test with pytest
       run: pytest --benchmark-skip
     - name: Lint with flake8
