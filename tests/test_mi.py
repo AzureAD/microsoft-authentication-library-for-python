@@ -4,9 +4,9 @@ import sys
 import time
 import unittest
 try:
-    from unittest.mock import patch, ANY, mock_open
+    from unittest.mock import patch, ANY, mock_open, Mock
 except:
-    from mock import patch, ANY, mock_open
+    from mock import patch, ANY, mock_open, Mock
 import requests
 
 from tests.http_client import MinimalResponse
@@ -14,7 +14,9 @@ from msal import (
     SystemAssignedManagedIdentity, UserAssignedManagedIdentity,
     ManagedIdentityClient,
     ManagedIdentityError,
+    ArcPlatformNotSupportedError,
 )
+from msal.managed_identity import _supported_arc_platforms_and_their_prefixes
 
 
 class ManagedIdentityTestCase(unittest.TestCase):
@@ -194,12 +196,13 @@ class ServiceFabricTestCase(ClientTestCase):
     new=mock_open(read_data="secret"),  # `new` requires no extra argument on the decorated function.
         #  https://docs.python.org/3/library/unittest.mock.html#unittest.mock.patch
 )
+@patch("os.stat", return_value=Mock(st_size=4096))
 class ArcTestCase(ClientTestCase):
     challenge = MinimalResponse(status_code=401, text="", headers={
         "WWW-Authenticate": "Basic realm=/tmp/foo",
         })
 
-    def test_happy_path(self):
+    def test_happy_path(self, mocked_stat):
         with patch.object(self.app._http_client, "get", side_effect=[
             self.challenge,
             MinimalResponse(
@@ -207,16 +210,27 @@ class ArcTestCase(ClientTestCase):
                 text='{"access_token": "AT", "expires_in": "1234", "resource": "R"}',
                 ),
         ]) as mocked_method:
-            super(ArcTestCase, self)._test_happy_path(self.app, mocked_method)
+            try:
+                super(ArcTestCase, self)._test_happy_path(self.app, mocked_method)
+                mocked_stat.assert_called_with(os.path.join(
+                    _supported_arc_platforms_and_their_prefixes[sys.platform],
+                    "foo.key"))
+            except ArcPlatformNotSupportedError:
+                if sys.platform in _supported_arc_platforms_and_their_prefixes:
+                    self.fail("Should not raise ArcPlatformNotSupportedError")
 
-    def test_arc_error_should_be_normalized(self):
+    def test_arc_error_should_be_normalized(self, mocked_stat):
         with patch.object(self.app._http_client, "get", side_effect=[
             self.challenge,
             MinimalResponse(status_code=400, text="undefined"),
         ]) as mocked_method:
-            self.assertEqual({
-                "error": "invalid_request",
-                "error_description": "undefined",
-            }, self.app.acquire_token_for_client(resource="R"))
-            self.assertEqual({}, self.app._token_cache._cache)
+            try:
+                self.assertEqual({
+                    "error": "invalid_request",
+                    "error_description": "undefined",
+                }, self.app.acquire_token_for_client(resource="R"))
+                self.assertEqual({}, self.app._token_cache._cache)
+            except ArcPlatformNotSupportedError:
+                if sys.platform in _supported_arc_platforms_and_their_prefixes:
+                    self.fail("Should not raise ArcPlatformNotSupportedError")
 

@@ -38,6 +38,7 @@ from .managed_identity import (
     SystemAssignedManagedIdentity, UserAssignedManagedIdentity,
     ManagedIdentityClient,
     ManagedIdentityError,
+    ArcPlatformNotSupportedError,
     )
 
 # Putting module-level exceptions into the package namespace, to make them
