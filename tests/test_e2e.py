@@ -963,8 +963,7 @@ class CiamTestCase(LabBasedTestCase):
     @classmethod
     def setUpClass(cls):
         super(CiamTestCase, cls).setUpClass()
-        cls.user = cls.get_lab_user(
-            federationProvider="ciam", signinAudience="azureadmyorg", publicClient="No")
+        cls.user = cls.get_lab_user(federationProvider="ciam")
         # FYI: Only single- or multi-tenant CIAM app can have other-than-OIDC
         # delegated permissions on Microsoft Graph.
         cls.app_config = cls.get_lab_app_object(cls.user["client_id"])
