@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import time
 from urllib.parse import urlparse  # Python 3+
 from collections import UserDict  # Python 3+
@@ -507,6 +508,14 @@ def _obtain_token_on_service_fabric(
         raise
 
 
+_supported_arc_platforms_and_their_prefixes = {
+    "linux": "/var/opt/azcmagent/tokens",
+    "win32": os.path.expandvars(r"%ProgramData%\AzureConnectedMachineAgent\Tokens"),
+}
+
+class ArcPlatformNotSupportedError(ManagedIdentityError):
+    pass
+
 def _obtain_token_on_arc(http_client, endpoint, resource):
     # https://learn.microsoft.com/en-us/azure/azure-arc/servers/managed-identity-authentication
     logger.debug("Obtaining token via managed identity on Azure Arc")
@@ -525,7 +534,16 @@ def _obtain_token_on_arc(http_client, endpoint, resource):
             len(challenge) == 2 and challenge[0].lower() == "basic realm"):
         raise ManagedIdentityError(
             "Unrecognizable WWW-Authenticate header: {}".format(resp.headers))
-    with open(challenge[1]) as f:
+    if sys.platform not in _supported_arc_platforms_and_their_prefixes:
+        raise ArcPlatformNotSupportedError(
+            f"Platform {sys.platform} was undefined and unsupported")
+    filename = os.path.join(
+        # This algorithm is documented in an internal doc https://msazure.visualstudio.com/One/_wiki/wikis/One.wiki/233012/VM-Extension-Authoring-for-Arc?anchor=2.-obtaining-tokens
+        _supported_arc_platforms_and_their_prefixes[sys.platform],
+        os.path.splitext(os.path.basename(challenge[1]))[0] + ".key")
+    if os.stat(filename).st_size > 4096:  # Check size BEFORE loading its content
+        raise ManagedIdentityError("Local key file shall not be larger than 4KB")
+    with open(filename) as f:
         secret = f.read()
     response = http_client.get(
         endpoint,
