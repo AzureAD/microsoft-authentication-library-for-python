@@ -283,6 +283,10 @@ class ClientApplication(object):
                         "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
                     }
 
+                The following command will generate a .pfx file from your .key and .pem file::
+
+                    openssl pkcs12 -export -out certificate.pfx -inkey privateKey.key -in certificate.pem
+
         :type client_credential: Union[dict, str]
 
         :param dict client_claims:
