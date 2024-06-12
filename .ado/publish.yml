@@ -1,0 +1,64 @@
+parameters:
+  Artifact: dist
+  Feed: pypi
+
+jobs:
+- job: Publish
+  dependsOn: Build
+  displayName: 'Publish to ${{ parameters.Feed }}'
+
+  variables:
+    DistDir: $(Pipeline.Workspace)\${{ parameters.Artifact }}
+
+  steps:
+  - checkout: none
+
+  - download: current
+    artifact: ${{ parameters.Artifact }}
+    displayName: 'Download built distribution'
+
+  - ${{ if eq(parameters.Feed, 'pypi') }}:
+    - task: EsrpRelease@4
+      displayName: 'ESRP Release to PyPI'
+      inputs:
+        ConnectedServiceName: 'Python ESRP Release'
+        Intent: PackageDistribution
+        ContentType: PyPI
+        FolderLocation: $(DistDir)
+        Owners: 'stevdo@microsoft.com'
+        Approvers: 'grwheele@microsoft.com'
+        ServiceEndpointUrl: 'https://api.esrp.microsoft.com'
+        MainPublisher: 'Python'
+        DomainTenantId: '72f988bf-86f1-41af-91ab-2d7cd011db47'
+
+  - ${{ else }}:
+    - task: PipAuthenticate@1
+      inputs:
+        artifactFeeds: Python
+      displayName: 'Authenticate pip for internal feed'
+
+    - powershell: python -m pip install twine
+      displayName: Install twine
+
+    - task: TwineAuthenticate@1
+      inputs:
+        artifactFeed: ${{ parameters.Feed }}
+      displayName: 'Authenticate internal feed'
+
+    - powershell: >
+        python -m twine
+        upload
+        --config-file "$(PYPIRC_PATH)"
+        "$(DistDir)/*.tar.gz"
+        "$(DistDir)/*.whl"
+      displayName: 'Push to internal feed'
+      env:
+        TWINE_REPOSITORY: ${{ parameters.Feed }}
+        TWINE_NON_INTERACTIVE: 1
+
+  - powershell: |
+      $feed = "${{ parameters.Feed }}" -replace '[^a-zA-Z]', '_'
+      echo "##vso[build.addbuildtag]published"
+      echo "##vso[build.addbuildtag]published-$feed"
+    displayName: 'Add publishedfeed tag'
+

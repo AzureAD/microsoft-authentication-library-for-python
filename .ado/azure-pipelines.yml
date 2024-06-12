@@ -1,0 +1,114 @@
+# Derived from https://dev.azure.com/mseng/Python/_git/dlltracer-python?path=/azure-pipelines.yml
+name: 0.$(Year:yyyy).$(DayOfYear).$(Rev:r)
+
+parameters:
+- name: Signed
+  displayName: "Real signed"
+  type: boolean
+  default: false
+- name: Publish
+  displayName: "Publish"
+  type: boolean
+  default: false
+- name: Feed
+  displayName: "Publish to feed"
+  type: string
+  default: "pypi"
+- name: SigningKeyCode
+  displayName: "Signing key (when 'Signed' is selected)"
+  type: string
+  #default: "CP-230072" # Testing (never trusted)
+  default: "CP-230012" # Real signed
+  #default: "CP-231522" # OSS real signed
+  #default: "CP-230856" # MSFT-internal signed
+- name: pythons
+  displayName: "Python versions (amd64)"
+  type: object
+  default:
+  - wheeltag: cp37-cp37-win_amd64
+    version: 3.7
+    arch: x64
+    id: 37x64
+  - wheeltag: cp38-cp38-win_amd64
+    version: 3.8
+    arch: x64
+    id: 38x64
+  - wheeltag: cp39-cp39-win_amd64
+    version: 3.9
+    arch: x64
+    id: 39x64
+  - wheeltag: cp310-cp310-win_amd64
+    version: '3.10.*'
+    arch: x64
+    id: 310x64
+  - wheeltag: cp311-cp311-win_amd64
+    version: 3.11
+    arch: x64
+    id: 311x64
+  - wheeltag: cp312-cp312-win_amd64
+    version: 3.12
+    arch: x64
+    id: 312x64
+
+
+resources:
+  repositories:
+  - repository: dlltracer
+    name: microsoft/dlltracer-python
+    type: github
+    ref: main
+    endpoint: zooba
+  - repository: 1esPipelines
+    type: git
+    name: 1ESPipelineTemplates/1ESPipelineTemplates
+    ref: refs/tags/release
+
+
+trigger: none
+
+
+variables:
+  REF: $[ resources.repositories['dlltracer'].ref ]
+  PIP_DISABLE_PIP_VERSION_CHECK: true
+  PIP_NO_COLOR: true
+  PIP_NO_INPUT: true
+  PIP_PROGRESS_BAR: off
+  PIP_REQUIRE_VIRTUALENV: false
+  PIP_VERBOSE: true
+  PYMSBUILD_VERBOSE: true
+
+
+extends:
+  template: v1/1ES.Official.PipelineTemplate.yml@1esPipelines
+  parameters:
+    pool:
+      name: Python-1ES-Hosted-Pool
+      image: windows-1espt
+      os: windows
+
+    sdl:
+      sourceRepositoriesToScan:
+        include:
+        - repository: dlltracer
+
+    customBuildTags:
+    - ${{ if eq(parameters.Signed, 'true') }}:
+      - signed
+      - signed-${{ parameters.SigningKeyCode }}
+    - ${{ each py in parameters.pythons }}:
+      - ${{ py.wheeltag }}
+
+    stages:
+    - stage: Stage
+      jobs:
+      - template: build.yml@self
+        parameters:
+          pythons: ${{ parameters.pythons }}
+          Signed: ${{ parameters.Signed }}
+          SigningKeyCode: ${{ parameters.SigningKeyCode }}
+
+      - ${{ if eq(parameters.Publish, 'true') }}:
+        - template: publish.yml@self
+          parameters:
+            Feed: ${{ parameters.Feed }}
+

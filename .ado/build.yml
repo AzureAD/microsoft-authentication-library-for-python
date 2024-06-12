@@ -1,0 +1,170 @@
+parameters:
+  Artifact: dist
+  pythons: []
+  Signed: false
+  SigningKeyCode: ''
+
+jobs:
+- job: Build
+
+  variables:
+  - ${{ if eq(parameters.Signed, 'true') }}:
+    - group: ESRPClient
+  - name: DistDir
+    value: $(Build.ArtifactStagingDirectory)/dist
+  - name: TempDir
+    value: $(Build.BinariesDirectory)/tmp
+  - name: LayoutDir
+    value: $(Build.BinariesDirectory)/layout
+
+  steps:
+  - checkout: dlltracer
+
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '>=3.10'
+      architecture: 'x64'
+    displayName: 'Use latest Python by default'
+
+  # Acquire a copy of each Python version, specifically for its Include and libs directories.
+  - ${{ each py in parameters.pythons }}:
+    - task: UsePythonVersion@0
+      name: 'py${{ py.id }}'
+      displayName: 'Download ${{ py.wheeltag }}'
+      inputs:
+        versionSpec: '${{ py.version }}'
+        architecture: '${{ py.arch }}'
+        addToPath: false
+
+  - task: PipAuthenticate@1
+    inputs:
+      artifactFeeds: Python
+    displayName: 'Authenticate pip for internal feed'
+
+  - powershell: |
+      python -m pip install pymsbuild Cython
+    displayName: 'Install dependencies'
+
+  - powershell: |
+      Write-Output "##vso[task.setvariable variable=GITHUB_REF]$(REF)"
+    displayName: 'Update build reference'
+    condition: and(succeeded(), startswith(variables['REF'], 'refs/tags/'))
+
+  ##############################################################################
+  # BUILD SDIST and EXTENSION MODULES
+  ##############################################################################
+
+  # sdist requires no signing/SBOM or special handling, so just build it
+  - powershell: |
+      python -m pymsbuild sdist -d $(DistDir)
+    displayName: 'Build sdist'
+
+  # Build the extension modules for this Python version, but do not
+  # pack the wheel yet (the '--layout' option achieves this)
+  - ${{ each py in parameters.pythons }}:
+    - powershell: |
+        $env:PYTHON_INCLUDES = Join-Path $env:PREFIX "Include"
+        $env:PYTHON_LIBS = Join-Path $env:PREFIX "libs"
+        python -m pymsbuild wheel -d $(DistDir) --layout "$(LayoutDir)/${{ py.id }}"
+        "" | Out-File -Encoding ascii "$(LayoutDir)/${{ py.id }}-extras.txt"
+      displayName: 'Build ${{ py.wheeltag }}'
+      env:
+        PREFIX: $(py${{ py.id }}.pythonLocation)
+        PYMSBUILD_WHEEL_TAG: ${{ py.wheeltag }}
+
+  ##############################################################################
+  # CODE SIGN EXTENSION MODULES
+  ##############################################################################
+
+  - ${{ if eq(parameters.Signed, 'true') }}:
+    - task: 1ES.Signing@1
+      displayName: 'Codesign modules'
+      inputs:
+        ClientID: $(ESRP.ClientID)
+        TenantID: $(ESRP.TenantID)
+        Directory: '$(LayoutDir)'
+        Pattern: |
+          **/*.pyd
+        Operations: |
+          [
+            {
+              "KeyCode" : "${{parameters.SigningKeyCode}}",
+              "OperationCode" : "SigntoolSign",
+              "Parameters" : {
+                "OpusName" : "dlltracer-python $(REF)",
+                "OpusInfo" : "https://github.com/microsoft/dlltracer-python/",
+                "Append" : "/as",
+                "FileDigest" : "/fd \"SHA256\"",
+                "PageHash" : "/NPH",
+                "TimeStamp" : "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+              },
+              "ToolName" : "sign",
+              "ToolVersion" : "1.0"
+            },
+            {
+              "KeyCode" : "${{parameters.SigningKeyCode}}",
+              "OperationCode" : "SigntoolVerify",
+              "Parameters" : {},
+              "ToolName" : "sign",
+              "ToolVersion" : "1.0"
+            }
+          ]
+
+  ##############################################################################
+  # GENERATE SBOM (only when signing)
+  ##############################################################################
+
+  - ${{ if eq(parameters.Signed, 'true') }}:
+    - ${{ each py in parameters.pythons }}:
+      - task: AzureArtifacts.manifest-generator-task.manifest-generator-task.ManifestGeneratorTask@0
+        displayName: 'Generate SBOM for Python ${{ py.wheeltag }}'
+        inputs:
+          BuildDropPath: "$(LayoutDir)/${{ py.id }}"
+
+      # Move the SBOM manifest directory into the dist-info directory
+      # and add its content to the list of files to include.
+      - powershell: |
+          $m = gi "*.dist-info" | select -first 1
+          mv _manifest $m -Force
+          $new_files = (gci "$m\_manifest" -File -Recurse).FullName
+          $new_files | Out-File "$(LayoutDir)\${{ py.id }}-extras.txt" -Encoding ascii
+        workingDirectory: '$(LayoutDir)/${{ py.id }}'
+        displayName: 'Add SBOM into ${{ py.wheeltag }} wheel'
+
+  ##############################################################################
+  # PACK WHEELS
+  ##############################################################################
+
+  - ${{ each py in parameters.pythons }}:
+    - powershell: >
+        python -m pymsbuild
+        pack
+        --layout-dir "$(LayoutDir)/${{ py.id }}"
+        --add "@$(LayoutDir)/${{ py.id }}-extras.txt"
+      displayName: 'Pack ${{ py.wheeltag }} wheel'
+
+  ##############################################################################
+  # SMOKE TESTS
+  ##############################################################################
+
+  - powershell: |
+      python -m pip wheel (gi "$(DistDir)\*.tar.gz") -w $(TempDir)
+    displayName: 'Test that SDist will build'
+
+  - powershell: |
+      python -m pip install dlltracer
+      if ($?) { python -c "import dlltracer, dlltracer._native" }
+    displayName: 'Check that built module will import'
+    env:
+      PIP_NO_DEPS: 1
+      PIP_NO_INDEX: 1
+      PIP_FIND_LINKS: $(TempDir)
+      PIP_ONLY_BINARY: ':all:'
+
+  templateContext:
+    outputs:
+    - output: pipelineArtifact
+      path: $(DistDir)
+      artifact: ${{ parameters.Artifact }}
+      displayName: 'Publish build to ${{ parameters.Artifact }}'
+
