@@ -480,12 +480,17 @@ def get_lab_app(
             http_client=MinimalHttpClient(timeout=timeout),
             **kwargs)
 
+class LabTokenError(RuntimeError):
+    pass
+
 def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confidential client flow
     logger.info("Creating session")
     result = lab_app.acquire_token_for_client(scopes)
-    assert result.get("access_token"), \
-        "Unable to obtain token for lab. Encountered {}: {}".format(
-            result.get("error"), result.get("error_description"))
+    if not result.get("access_token"):
+        raise LabTokenError(
+            "Unable to obtain token for lab. Encountered {}: {}".format(
+            result.get("error"), result.get("error_description")
+        ))
     session = requests.Session()
     session.headers.update({"Authorization": "Bearer %s" % result["access_token"]})
     session.hooks["response"].append(lambda r, *args, **kwargs: r.raise_for_status())
@@ -502,7 +507,13 @@ class LabBasedTestCase(E2eTestCase):
     @classmethod
     def setUpClass(cls):
         # https://docs.msidlab.com/accounts/apiaccess.html#code-snippet
-        cls.session = get_session(get_lab_app(), ["https://msidlab.com/.default"])
+        try:
+            cls.session = get_session(get_lab_app(), ["https://msidlab.com/.default"])
+        except LabTokenError:
+            cls.session = get_session(get_lab_app(), [
+                # A lab change since June 10, 2024 which may or may not be reverted
+                "https://request.msidlab.com/.default",
+            ])
 
     @classmethod
     def tearDownClass(cls):
