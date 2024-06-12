@@ -1,3 +1,4 @@
+# Derived from https://dev.azure.com/mseng/Python/_git/dlltracer-python?path=/build.yml
 parameters:
   Artifact: dist
   pythons: []
@@ -18,7 +19,8 @@ jobs:
     value: $(Build.BinariesDirectory)/layout
 
   steps:
-  - checkout: dlltracer
+  - checkout: self
+    submodules: false
 
   - task: UsePythonVersion@0
     inputs:
@@ -36,26 +38,30 @@ jobs:
         architecture: '${{ py.arch }}'
         addToPath: false
 
-  - task: PipAuthenticate@1
-    inputs:
-      artifactFeeds: Python
-    displayName: 'Authenticate pip for internal feed'
+  #- task: PipAuthenticate@1
+  #  inputs:
+  #    artifactFeeds: Python
+  #  displayName: 'Authenticate pip for internal feed'
 
-  - powershell: |
-      python -m pip install pymsbuild Cython
+  #- powershell: |
+  #    python -m pip install pymsbuild Cython
+  #  displayName: 'Install dependencies'
+  - script: |
+      python -m pip install pymsbuild
     displayName: 'Install dependencies'
 
-  - powershell: |
-      Write-Output "##vso[task.setvariable variable=GITHUB_REF]$(REF)"
-    displayName: 'Update build reference'
-    condition: and(succeeded(), startswith(variables['REF'], 'refs/tags/'))
+  #- powershell: |
+  #    Write-Output "##vso[task.setvariable variable=GITHUB_REF]$(REF)"
+  #  displayName: 'Update build reference'
+  #  condition: and(succeeded(), startswith(variables['REF'], 'refs/tags/'))
 
   ##############################################################################
   # BUILD SDIST and EXTENSION MODULES
   ##############################################################################
 
   # sdist requires no signing/SBOM or special handling, so just build it
-  - powershell: |
+  #- powershell: |
+  - script: |
       python -m pymsbuild sdist -d $(DistDir)
     displayName: 'Build sdist'
 
@@ -91,8 +97,8 @@ jobs:
               "KeyCode" : "${{parameters.SigningKeyCode}}",
               "OperationCode" : "SigntoolSign",
               "Parameters" : {
-                "OpusName" : "dlltracer-python $(REF)",
-                "OpusInfo" : "https://github.com/microsoft/dlltracer-python/",
+                "OpusName" : "microsoft-authentication-library-for-python $(REF)",
+                "OpusInfo" : "https://github.com/AzureAD/microsoft-authentication-library-for-python",
                 "Append" : "/as",
                 "FileDigest" : "/fd \"SHA256\"",
                 "PageHash" : "/NPH",
@@ -152,8 +158,8 @@ jobs:
     displayName: 'Test that SDist will build'
 
   - powershell: |
-      python -m pip install dlltracer
-      if ($?) { python -c "import dlltracer, dlltracer._native" }
+      python -m pip install -r requirements.txt
+      if ($?) { python -c "import msal; print(msal.__version__)" }
     displayName: 'Check that built module will import'
     env:
       PIP_NO_DEPS: 1

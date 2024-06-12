@@ -18,15 +18,15 @@ jobs:
     displayName: 'Download built distribution'
 
   - ${{ if eq(parameters.Feed, 'pypi') }}:
-    - task: EsrpRelease@4
+    - task: EsrpRelease@7
       displayName: 'ESRP Release to PyPI'
       inputs:
         ConnectedServiceName: 'Python ESRP Release'
         Intent: PackageDistribution
         ContentType: PyPI
         FolderLocation: $(DistDir)
-        Owners: 'stevdo@microsoft.com'
-        Approvers: 'grwheele@microsoft.com'
+        Owners: 'nugetaad@microsoft.com'
+        Approvers: 'rayluo@microsoft.com'
         ServiceEndpointUrl: 'https://api.esrp.microsoft.com'
         MainPublisher: 'Python'
         DomainTenantId: '72f988bf-86f1-41af-91ab-2d7cd011db47'

@@ -53,11 +53,11 @@ parameters:
 
 resources:
   repositories:
-  - repository: dlltracer
-    name: microsoft/dlltracer-python
+  - repository: source_repo
+    name: AzureAD/microsoft-authentication-library-for-python
     type: github
-    ref: main
-    endpoint: zooba
+    ref: main  # Branch to use?
+    #endpoint: github.com_Avery-Dunn  # Name of service connection
   - repository: 1esPipelines
     type: git
     name: 1ESPipelineTemplates/1ESPipelineTemplates
@@ -68,7 +68,7 @@ trigger: none
 
 
 variables:
-  REF: $[ resources.repositories['dlltracer'].ref ]
+  REF: $[ resources.repositories['source_repo'].ref ]
   PIP_DISABLE_PIP_VERSION_CHECK: true
   PIP_NO_COLOR: true
   PIP_NO_INPUT: true
@@ -89,7 +89,7 @@ extends:
     sdl:
       sourceRepositoriesToScan:
         include:
-        - repository: dlltracer
+        - repository: source_repo
 
     customBuildTags:
     - ${{ if eq(parameters.Signed, 'true') }}:
