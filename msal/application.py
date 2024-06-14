@@ -624,8 +624,12 @@ class ClientApplication(object):
             # We could make the developer pass these and then if they do they will
             # come back asking why they don't see refresh token or user information.
             raise ValueError(
-                "API does not accept {} value as user-provided scopes".format(
-                    reserved_scope))
+                """You cannot use any scope value that is reserved.
+Your input: {}
+The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
+            raise ValueError(
+                "You cannot use any scope value that is in this reserved list: {}".format(
+                    list(reserved_scope)))
 
         # client_id can also be used as a scope in B2C
         decorated = scope_set | reserved_scope
