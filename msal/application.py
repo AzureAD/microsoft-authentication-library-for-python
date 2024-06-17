@@ -1710,7 +1710,7 @@ class ClientApplication(object):
         """
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
-        if False:  # Disabled, for now. It was if self._enable_broker:
+        if self._enable_broker:
             from .broker import _signin_silently
             response = _signin_silently(
                 "https://{}/{}".format(self.authority.instance, self.authority.tenant),
