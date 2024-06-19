@@ -507,12 +507,8 @@ class LabBasedTestCase(E2eTestCase):
     @classmethod
     def setUpClass(cls):
         # https://docs.msidlab.com/accounts/apiaccess.html#code-snippet
-        try:
-            cls.session = get_session(get_lab_app(), ["https://msidlab.com/.default"])
-        except LabTokenError:
-            cls.session = get_session(get_lab_app(), [
-                # A lab change since June 10, 2024 which may or may not be reverted
-                "https://request.msidlab.com/.default",
+        cls.session = get_session(get_lab_app(), [
+                "https://request.msidlab.com/.default",  # A lab change since June 10, 2024
             ])
 
     @classmethod
