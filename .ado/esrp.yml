@@ -48,10 +48,14 @@ extends:
         - repository: self
           submodule: false
         runInSingleJob: true
-      sourceAnalysisPool:
-        name: azsdk-pool-mms-win-2022-general
-        image: azsdk-pool-mms-win-2022-1espt
-        os: windows
+      #sourceAnalysisPool:
+      #  name: azsdk-pool-mms-win-2022-general
+      #  image: azsdk-pool-mms-win-2022-1espt
+      #  os: windows
+      pool:
+        name: AzurePipelines-EO
+        image: 1ESPT-Ubuntu20.04
+        os: linux
       eslint:
         enabled: false
         justificationForDisabling: "ESLint injected task has failures because it uses an old version of mkdirp. We should not fail for tools not controlled by the repo. See: https://dev.azure.com/azur     19 e-sdk/internal/_build/results?buildId=3556850"
