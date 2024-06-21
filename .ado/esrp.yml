@@ -29,36 +29,40 @@ variables:
 
 resources:
   repositories:
-    - repository: templates
+    - repository: 1ESPipelineTemplates
       type: git
-      name: OneBranch.Pipelines/GovernedTemplates
-      ref: refs/heads/main
+      name: 1ESPipelineTemplates/1ESPipelineTemplates
+      ref: refs/tags/release
 
 extends:
-  template: v2/OneBranch.NonOfficial.CrossPlat.yml@templates # https://aka.ms/obpipelines/templates
+  template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
   parameters:
-    cloudvault: # https://aka.ms/obpipelines/cloudvault
-      'enabled': false
-    globalSdl: # https://aka.ms/obpipelines/sdl
-      asyncSdl: # https://aka.ms/obpipelines/asyncsdl
+    settings:
+      skipBuildTagsForGitHubPullRequests: true
+    sdl:
+      git:
+        longpaths: true
+        submodules: false
+      sourceRepositoriesToScan:
+        include:
+        - repository: self
+          submodule: false
+        runInSingleJob: true
+      sourceAnalysisPool:
+        name: azsdk-pool-mms-win-2022-general
+        image: azsdk-pool-mms-win-2022-1espt
+        os: windows
+      eslint:
         enabled: false
-      # tsa:
-      #   enabled: true
-      #   breakOnFailure: true
-      # credscan:
-      #   suppressionsFile: $(Build.SourcesDirectory)\.config\CredScanSuppression.json
-      binskim:
-        break: true # always break the build on binskim issues. You can disable it by setting to 'false'
-      policheck:
-        break: true # always break the build on policheck issues. You can disable it by setting to 'false'
-        exclusionsFile: $(Build.SourcesDirectory)\.config\PolicheckExclusion.xml
-      suppression:
-        suppressionFile: $(Build.SourcesDirectory)\.gdn\global.gdnsuppress #suppressing signing issues for Xamarin dlls
-      perStage:
-        sdl_sources:
-          checkout_all_repos: true
-    featureFlags:
-      WindowsHostVersion: '1ESWindows2022'
+        justificationForDisabling: "ESLint injected task has failures because it uses an old version of mkdirp. We should not fail for tools not controlled by the repo. See: https://dev.azure.com/azur     19 e-sdk/internal/_build/results?buildId=3556850"
+      codeql:
+        compiled:
+          enabled: false
+          justificationForDisabling: "CodeQL times our pipelines out by running for 2+ hours before being force canceled."
+      psscriptanalyzer:
+        compiled: true
+        break: true
+      policy: M365
 
     stages:
       - stage: build
@@ -67,17 +71,6 @@ extends:
             timeoutInMinutes: 120
             pool:
               type: windows  # read more about custom job pool types at https://aka.ms/obpipelines/yaml/jobs
-
-            variables:
-              ob_outputDirectory: '$(Build.ArtifactStagingDirectory)' # this directory is uploaded to pipeline artifacts, reddog and cloudvault. More info at https://aka.ms/obpipelines/artifacts
-              ob_sdl_binskim_break: true # https://aka.ms/obpipelines/sdl
-              ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}: # conditionally enable symbolsPublishing for default branch only
-                ob_symbolsPublishing_enabled: true # https://aka.ms/obpipelines/symbols
-              ob_symbolsPublishing_searchPattern: '**/*.pdb'
-              ob_symbolsPublishing_indexSources: true
-              ob_symbolsPublishing_symbolsFolder: $(Build.SourcesDirectory)/microsoft-authentication-library-for-java/msal4j-sdk/src
-              ${{ if eq(variables['variables.UploadPackages'], 'true') }}: #Uploads packages to VSTS feed. Only enabled on official build
-                ob_nugetPublishing_enabled: true
 
             steps:
               - checkout: self
