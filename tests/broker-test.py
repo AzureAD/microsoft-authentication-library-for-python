@@ -46,6 +46,15 @@ def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):
         )
     _assert(result, expected_token_type)
 
+def test_broker_username_password(scopes, expected_token_type):
+    print("Testing broker username password flows by using labs account: 'fidlab@msidlab4.com', please provide the password.")
+    username = "fidlab@msidlab4.com"
+    password = input("Password:")
+    result = pca.acquire_token_by_username_password(username, password, scopes)
+    _assert(result, expected_token_type)
+    assert(result.get("token_source") == "broker")
+    print("Username password test succeeds.")
+
 def _assert(result, expected_token_type):
     assert result.get("access_token"), f"We should obtain a token. Got {result} instead."
     assert result.get("token_source") == "broker", "Token should be obtained via broker"
@@ -64,3 +73,4 @@ interactive_and_silent(
     expected_token_type="ssh-cert",
     )
 
+test_broker_username_password(scopes=[SCOPE_ARM], expected_token_type="bearer")
