@@ -15,6 +15,8 @@ def _str2bytes(raw):
     except:  # Otherwise we treat it as bytes and return it as-is
         return raw
 
+def _encode_thumbprint(thumbprint):
+    return base64.urlsafe_b64encode(binascii.a2b_hex(thumbprint)).decode()
 
 class AssertionCreator(object):
     def create_normal_assertion(
@@ -65,7 +67,11 @@ class AutoRefresher(object):
 
 
 class JwtAssertionCreator(AssertionCreator):
-    def __init__(self, key, algorithm, sha1_thumbprint=None, headers=None):
+    def __init__(
+        self, key, algorithm, sha1_thumbprint=None, headers=None,
+        *,
+        sha256_thumbprint=None,
+    ):
         """Construct a Jwt assertion creator.
 
         Args:
@@ -80,13 +86,15 @@ class JwtAssertionCreator(AssertionCreator):
                 RSA and ECDSA algorithms require "pip install cryptography".
             sha1_thumbprint (str): The x5t aka X.509 certificate SHA-1 thumbprint.
             headers (dict): Additional headers, e.g. "kid" or "x5c" etc.
+            sha256_thumbprint (str): The x5t#S256 aka X.509 certificate SHA-256 thumbprint.
         """
         self.key = key
         self.algorithm = algorithm
         self.headers = headers or {}
+        if sha256_thumbprint:  # https://datatracker.ietf.org/doc/html/rfc7515#section-4.1.8
+            self.headers["x5t#S256"] = _encode_thumbprint(sha256_thumbprint)
         if sha1_thumbprint:  # https://tools.ietf.org/html/rfc7515#section-4.1.7
-            self.headers["x5t"] = base64.urlsafe_b64encode(
-                binascii.a2b_hex(sha1_thumbprint)).decode()
+            self.headers["x5t"] = _encode_thumbprint(sha1_thumbprint)
 
     def create_normal_assertion(
             self, audience, issuer, subject=None, expires_at=None, expires_in=600,
