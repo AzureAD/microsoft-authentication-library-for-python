@@ -679,11 +679,28 @@ class LabBasedTestCase(E2eTestCase):
 
 class PopWithExternalKeyTestCase(LabBasedTestCase):
     def _test_service_principal(self):
-        # Any SP can obtain an ssh-cert. Here we use the lab app.
-        result = get_lab_app().acquire_token_for_client(self.SCOPE, data=self.DATA1)
+        app = get_lab_app()  # Any SP can obtain an ssh-cert. Here we use the lab app.
+        result = app.acquire_token_for_client(self.SCOPE, data=self.DATA1)
         self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
             result.get("error"), result.get("error_description")))
         self.assertEqual(self.EXPECTED_TOKEN_TYPE, result["token_type"])
+        self.assertEqual(result["token_source"], "identity_provider")
+
+        # Test cache hit
+        cached_result = app.acquire_token_for_client(self.SCOPE, data=self.DATA1)
+        self.assertIsNotNone(
+            cached_result.get("access_token"), "Encountered {}: {}".format(
+            cached_result.get("error"), cached_result.get("error_description")))
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, cached_result["token_type"])
+        self.assertEqual(cached_result["token_source"], "cache")
+
+        # refresh_token grant can fetch an ssh-cert bound to a different key
+        refreshed_result = app.acquire_token_for_client(self.SCOPE, data=self.DATA2)
+        self.assertIsNotNone(
+            refreshed_result.get("access_token"), "Encountered {}: {}".format(
+            refreshed_result.get("error"), refreshed_result.get("error_description")))
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, refreshed_result["token_type"])
+        self.assertEqual(refreshed_result["token_source"], "identity_provider")
 
     def _test_user_account(self):
         lab_user = self.get_lab_user(usertype="cloud")
@@ -701,16 +718,30 @@ class PopWithExternalKeyTestCase(LabBasedTestCase):
         self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
             result.get("error"), result.get("error_description")))
         self.assertEqual(self.EXPECTED_TOKEN_TYPE, result["token_type"])
+        self.assertEqual(result["token_source"], "identity_provider")
         logger.debug("%s.cache = %s",
             self.id(), json.dumps(self.app.token_cache._cache, indent=4))
 
+        # refresh_token grant can hit an ssh-cert bound to the same key
+        account = self.app.get_accounts()[0]
+        cached_result = self.app.acquire_token_silent(
+            self.SCOPE, account=account, data=self.DATA1)
+        self.assertIsNotNone(cached_result)
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, cached_result["token_type"])
+        ## Actually, the self._test_acquire_token_interactive() already contained
+        ## a built-in refresh test, so the token in cache has been refreshed already.
+        ## Therefore, the following line won't pass, which is expected.
+        #self.assertEqual(result["access_token"], cached_result['access_token'])
+        self.assertEqual(cached_result["token_source"], "cache")
+
         # refresh_token grant can fetch an ssh-cert bound to a different key
         account = self.app.get_accounts()[0]
-        refreshed_ssh_cert = self.app.acquire_token_silent(
+        refreshed_result = self.app.acquire_token_silent(
             self.SCOPE, account=account, data=self.DATA2)
-        self.assertIsNotNone(refreshed_ssh_cert)
-        self.assertEqual(self.EXPECTED_TOKEN_TYPE, refreshed_ssh_cert["token_type"])
-        self.assertNotEqual(result["access_token"], refreshed_ssh_cert['access_token'])
+        self.assertIsNotNone(refreshed_result)
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, refreshed_result["token_type"])
+        self.assertNotEqual(result["access_token"], refreshed_result['access_token'])
+        self.assertEqual(refreshed_result["token_source"], "identity_provider")
 
 
 class SshCertTestCase(PopWithExternalKeyTestCase):

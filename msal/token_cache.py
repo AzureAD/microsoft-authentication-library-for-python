@@ -117,6 +117,12 @@ class TokenCache(object):
         with self._lock:
             return self._cache.get(credential_type, {}).get(key, default)
 
+    @staticmethod
+    def _is_matching(entry: dict, query: dict, target_set: set):
+        return is_subdict_of(query or {}, entry) and (
+            target_set <= set(entry.get("target", "").split())
+            if target_set else True)
+
     def _find(self, credential_type, target=None, query=None):  # O(n) generator
         """Returns a generator of matching entries.
 
@@ -125,6 +131,7 @@ class TokenCache(object):
         """
         target = sorted(target or [])  # Match the order sorted by add()
         assert isinstance(target, list), "Invalid parameter type"
+        target_set = set(target)
 
         preferred_result = None
         if (credential_type == self.CredentialType.ACCESS_TOKEN
@@ -135,20 +142,20 @@ class TokenCache(object):
             preferred_result = self._get_access_token(
                 query["home_account_id"], query["environment"],
                 query["client_id"], query["realm"], target)
-            if preferred_result:
+            if preferred_result and self._is_matching(
+                preferred_result, query, target_set,
+            ):
                 yield preferred_result
 
-        target_set = set(target)
         with self._lock:
             # Since the target inside token cache key is (per schema) unsorted,
             # there is no point to attempt an O(1) key-value search here.
             # So we always do an O(n) in-memory search.
             for entry in self._cache.get(credential_type, {}).values():
-                if is_subdict_of(query or {}, entry) and (
-                        target_set <= set(entry.get("target", "").split())
-                        if target else True):
-                    if entry != preferred_result:  # Avoid yielding the same entry twice
-                        yield entry
+                if (entry != preferred_result  # Avoid yielding the same entry twice
+                    and self._is_matching(entry, query, target_set)
+                ):
+                    yield entry
 
     def find(self, credential_type, target=None, query=None):  # Obsolete. Use _find() instead.
         return list(self._find(credential_type, target=target, query=query))
