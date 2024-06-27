@@ -6,6 +6,13 @@ Each time a new PyMsalRuntime is going to be released,
 we can use this script to test it with a given version of MSAL Python.
 """
 import msal
+import getpass
+import os
+try:
+    from dotenv import load_dotenv  # Use this only in local dev machine
+    load_dotenv()  # take environment variables from .env.
+except:
+    pass
 
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 SCOPE_ARM = "https://management.azure.com/.default"
@@ -46,6 +53,16 @@ def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):
         )
     _assert(result, expected_token_type)
 
+def test_broker_username_password(scopes, expected_token_type):
+    print("Testing broker username password flows by using accounts in local .env")
+    username = os.getenv("BROKER_TEST_ACCOUNT") or input("Input test account for broker test: ")
+    password = os.getenv("BROKER_TEST_ACCOUNT_PASSWORD") or getpass.getpass("Input test account's password: ")
+    assert(username and password, "You need to provide a test account and its password")
+    result = pca.acquire_token_by_username_password(username, password, scopes)
+    _assert(result, expected_token_type)
+    assert(result.get("token_source") == "broker")
+    print("Username password test succeeds.")
+
 def _assert(result, expected_token_type):
     assert result.get("access_token"), f"We should obtain a token. Got {result} instead."
     assert result.get("token_source") == "broker", "Token should be obtained via broker"
@@ -64,3 +81,4 @@ interactive_and_silent(
     expected_token_type="ssh-cert",
     )
 
+test_broker_username_password(scopes=[SCOPE_ARM], expected_token_type="bearer")
