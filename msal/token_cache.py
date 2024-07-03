@@ -2,6 +2,7 @@
 import threading
 import time
 import logging
+import warnings
 
 from .authority import canonicalize
 from .oauth2cli.oidc import decode_part, decode_id_token
@@ -123,7 +124,7 @@ class TokenCache(object):
             target_set <= set(entry.get("target", "").split())
             if target_set else True)
 
-    def _find(self, credential_type, target=None, query=None):  # O(n) generator
+    def search(self, credential_type, target=None, query=None):  # O(n) generator
         """Returns a generator of matching entries.
 
         It is O(1) for AT hits, and O(n) for other types.
@@ -157,8 +158,12 @@ class TokenCache(object):
                 ):
                     yield entry
 
-    def find(self, credential_type, target=None, query=None):  # Obsolete. Use _find() instead.
-        return list(self._find(credential_type, target=target, query=query))
+    def find(self, credential_type, target=None, query=None):
+        """Equivalent to list(search(...))."""
+        warnings.warn(
+            "Use list(search(...)) instead to explicitly get a list.",
+            DeprecationWarning)
+        return list(self.search(credential_type, target=target, query=query))
 
     def add(self, event, now=None):
         """Handle a token obtaining event, and add tokens into cache."""
@@ -360,11 +365,14 @@ class SerializableTokenCache(TokenCache):
     the following simple recipe for file-based persistence may be sufficient::
 
         import os, atexit, msal
+        cache_filename = os.path.join(  # Persist cache into this file
+            os.getenv("XDG_RUNTIME_DIR", ""),  # Automatically wipe out the cache from Linux when user's ssh session ends. See also https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/690
+            "my_cache.bin")
         cache = msal.SerializableTokenCache()
-        if os.path.exists("my_cache.bin"):
-            cache.deserialize(open("my_cache.bin", "r").read())
+        if os.path.exists(cache_filename):
+            cache.deserialize(open(cache_filename, "r").read())
         atexit.register(lambda:
-            open("my_cache.bin", "w").write(cache.serialize())
+            open(cache_filename, "w").write(cache.serialize())
             # Hint: The following optional line persists only when state changed
             if cache.has_state_changed else None
             )

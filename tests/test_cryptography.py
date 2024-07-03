@@ -7,7 +7,8 @@ import xml.etree.ElementTree as ET
 
 import requests
 
-from msal.application import _str2bytes
+from msal.application import (
+    _str2bytes, _load_private_key_from_pem_str, _load_private_key_from_pfx_path)
 
 
 latest_cryptography_version = ET.fromstring(
@@ -26,6 +27,10 @@ def get_current_ceiling():
     raise RuntimeError("Unable to find cryptography info from setup.cfg")
 
 
+def sibling(filename):
+    return os.path.join(os.path.dirname(__file__), filename)
+
+
 class CryptographyTestCase(TestCase):
 
     def test_should_be_run_with_latest_version_of_cryptography(self):
@@ -37,18 +42,13 @@ class CryptographyTestCase(TestCase):
             cryptography.__version__, latest_cryptography_version))
 
     def test_latest_cryptography_should_support_our_usage_without_warnings(self):
-        with open(os.path.join(
-                os.path.dirname(__file__), "certificate-with-password.pem")) as f:
-            cert = f.read()
+        passphrase_bytes = _str2bytes("password")
         with warnings.catch_warnings(record=True) as encountered_warnings:
-            # The usage was copied from application.py
-            from cryptography.hazmat.primitives import serialization
-            from cryptography.hazmat.backends import default_backend
-            unencrypted_private_key = serialization.load_pem_private_key(
-                 _str2bytes(cert),
-                _str2bytes("password"),
-                backend=default_backend(),  # It was a required param until 2020
-                )
+            with open(sibling("certificate-with-password.pem")) as f:
+                _load_private_key_from_pem_str(f.read(), passphrase_bytes)
+            pfx = sibling("certificate-with-password.pfx")  # Created by:
+                # openssl pkcs12 -export -inkey test/certificate-with-password.pem -in tests/certificate-with-password.pem -out tests/certificate-with-password.pfx
+            _load_private_key_from_pfx_path(pfx, passphrase_bytes)
             self.assertEqual(0, len(encountered_warnings),
                 "Did cryptography deprecate the functions that we used?")
 

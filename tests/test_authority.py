@@ -99,6 +99,37 @@ class TestCiamAuthority(unittest.TestCase):
             self.http_client)
 
 
+@patch("msal.authority._instance_discovery")
+@patch("msal.authority.tenant_discovery", return_value={
+    "authorization_endpoint": "https://contoso.com/authorize",
+    "token_endpoint": "https://contoso.com/token",
+    })
+class TestOidcAuthority(unittest.TestCase):
+    def test_authority_obj_should_do_oidc_discovery_and_skip_instance_discovery(
+            self, oidc_discovery, instance_discovery):
+        c = MinimalHttpClient()
+        a = Authority(None, c, oidc_authority_url="https://contoso.com/tenant")
+        instance_discovery.assert_not_called()
+        oidc_discovery.assert_called_once_with(
+            "https://contoso.com/tenant/.well-known/openid-configuration", c)
+        self.assertEqual(a.authorization_endpoint, 'https://contoso.com/authorize')
+        self.assertEqual(a.token_endpoint, 'https://contoso.com/token')
+
+    def test_application_obj_should_do_oidc_discovery_and_skip_instance_discovery(
+            self, oidc_discovery, instance_discovery):
+        app = msal.ClientApplication(
+            "id",
+            authority=None,
+            oidc_authority="https://contoso.com/tenant",
+            )
+        instance_discovery.assert_not_called()
+        oidc_discovery.assert_called_once_with(
+            "https://contoso.com/tenant/.well-known/openid-configuration",
+            app.http_client)
+        self.assertEqual(
+            app.authority.authorization_endpoint, 'https://contoso.com/authorize')
+        self.assertEqual(app.authority.token_endpoint, 'https://contoso.com/token')
+
 class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
 
     def test_canonicalize_tenant_followed_by_extra_paths(self):

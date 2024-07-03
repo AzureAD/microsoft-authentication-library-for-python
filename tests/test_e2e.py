@@ -1,7 +1,7 @@
 """If the following ENV VAR were available, many end-to-end test cases would run.
-LAB_APP_CLIENT_SECRET=...
 LAB_OBO_CLIENT_SECRET=...
 LAB_APP_CLIENT_ID=...
+LAB_APP_CLIENT_CERT_PFX_PATH=...
 LAB_OBO_PUBLIC_CLIENT_ID=...
 LAB_OBO_CONFIDENTIAL_CLIENT_ID=...
 """
@@ -446,6 +446,7 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
 def get_lab_app(
         env_client_id="LAB_APP_CLIENT_ID",
         env_name2="LAB_APP_CLIENT_SECRET",  # A var name that hopefully avoids false alarm
+        env_client_cert_path="LAB_APP_CLIENT_CERT_PFX_PATH",
         authority="https://login.microsoftonline.com/"
             "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
         timeout=None,
@@ -458,31 +459,38 @@ def get_lab_app(
         "Reading ENV variables %s and %s for lab app defined at "
         "https://docs.msidlab.com/accounts/confidentialclient.html",
         env_client_id, env_name2)
-    if os.getenv(env_client_id) and os.getenv(env_name2):
-        # A shortcut mainly for running tests on developer's local development machine
-        # or it could be setup on Travis CI
-        #   https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
+    if os.getenv(env_client_id) and os.getenv(env_client_cert_path):
+        # id came from https://docs.msidlab.com/accounts/confidentialclient.html
+        client_id = os.getenv(env_client_id)
+        # Cert came from https://ms.portal.azure.com/#@microsoft.onmicrosoft.com/asset/Microsoft_Azure_KeyVault/Certificate/https://msidlabs.vault.azure.net/certificates/LabVaultAccessCert
+        client_credential = {"private_key_pfx_path": os.getenv(env_client_cert_path)}
+    elif os.getenv(env_client_id) and os.getenv(env_name2):
         # Data came from here
         # https://docs.msidlab.com/accounts/confidentialclient.html
         client_id = os.getenv(env_client_id)
-        client_secret = os.getenv(env_name2)
+        client_credential = os.getenv(env_name2)
     else:
         logger.info("ENV variables are not defined. Fall back to MSI.")
         # See also https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API's.aspx
         raise unittest.SkipTest("MSI-based mechanism has not been implemented yet")
     return msal.ConfidentialClientApplication(
             client_id,
-            client_credential=client_secret,
+            client_credential=client_credential,
             authority=authority,
             http_client=MinimalHttpClient(timeout=timeout),
             **kwargs)
 
+class LabTokenError(RuntimeError):
+    pass
+
 def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confidential client flow
     logger.info("Creating session")
     result = lab_app.acquire_token_for_client(scopes)
-    assert result.get("access_token"), \
-        "Unable to obtain token for lab. Encountered {}: {}".format(
-            result.get("error"), result.get("error_description"))
+    if not result.get("access_token"):
+        raise LabTokenError(
+            "Unable to obtain token for lab. Encountered {}: {}".format(
+            result.get("error"), result.get("error_description")
+        ))
     session = requests.Session()
     session.headers.update({"Authorization": "Bearer %s" % result["access_token"]})
     session.hooks["response"].append(lambda r, *args, **kwargs: r.raise_for_status())
@@ -499,7 +507,9 @@ class LabBasedTestCase(E2eTestCase):
     @classmethod
     def setUpClass(cls):
         # https://docs.msidlab.com/accounts/apiaccess.html#code-snippet
-        cls.session = get_session(get_lab_app(), ["https://msidlab.com/.default"])
+        cls.session = get_session(get_lab_app(), [
+                "https://request.msidlab.com/.default",  # A lab change since June 10, 2024
+            ])
 
     @classmethod
     def tearDownClass(cls):
@@ -991,8 +1001,7 @@ class CiamTestCase(LabBasedTestCase):
     @classmethod
     def setUpClass(cls):
         super(CiamTestCase, cls).setUpClass()
-        cls.user = cls.get_lab_user(
-            federationProvider="ciam", signinAudience="azureadmyorg", publicClient="No")
+        cls.user = cls.get_lab_user(federationProvider="ciam")
         # FYI: Only single- or multi-tenant CIAM app can have other-than-OIDC
         # delegated permissions on Microsoft Graph.
         cls.app_config = cls.get_lab_app_object(cls.user["client_id"])
