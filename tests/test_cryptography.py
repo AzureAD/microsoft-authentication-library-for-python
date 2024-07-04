@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 import requests
 
 from msal.application import (
-    _str2bytes, _load_private_key_from_pem_str, _load_private_key_from_pfx_path)
+    _str2bytes, _load_private_key_from_pem_str, _parse_pfx)
 
 
 latest_cryptography_version = ET.fromstring(
@@ -48,7 +48,7 @@ class CryptographyTestCase(TestCase):
                 _load_private_key_from_pem_str(f.read(), passphrase_bytes)
             pfx = sibling("certificate-with-password.pfx")  # Created by:
                 # openssl pkcs12 -export -inkey test/certificate-with-password.pem -in tests/certificate-with-password.pem -out tests/certificate-with-password.pfx
-            _load_private_key_from_pfx_path(pfx, passphrase_bytes)
+            _parse_pfx(pfx, passphrase_bytes)
             self.assertEqual(0, len(encountered_warnings),
                 "Did cryptography deprecate the functions that we used?")
 

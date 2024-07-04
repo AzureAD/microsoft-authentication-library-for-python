@@ -61,17 +61,23 @@ def _str2bytes(raw):
         return raw
 
 
-def _load_private_key_from_pfx_path(pfx_path, passphrase_bytes):
+def _parse_pfx(pfx_path, passphrase_bytes):
     # Cert concepts https://security.stackexchange.com/a/226758/125264
-    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.serialization import pkcs12
     with open(pfx_path, 'rb') as f:
         private_key, cert, _ = pkcs12.load_key_and_certificates(  # cryptography 2.5+
             # https://cryptography.io/en/latest/hazmat/primitives/asymmetric/serialization/#cryptography.hazmat.primitives.serialization.pkcs12.load_key_and_certificates
             f.read(), passphrase_bytes)
+    if not (private_key and cert):
+        raise ValueError("Your PFX file shall contain both private key and cert")
+    cert_pem = cert.public_bytes(encoding=serialization.Encoding.PEM).decode()  # cryptography 1.0+
+    x5c = [
+        '\n'.join(cert_pem.splitlines()[1:-1])  # Strip the "--- header ---" and "--- footer ---"
+    ]
     sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # cryptography 0.7+
         # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object
-    return private_key, sha1_thumbprint
+    return private_key, sha1_thumbprint, x5c
 
 
 def _load_private_key_from_pem_str(private_key_pem_str, passphrase_bytes):
@@ -231,47 +237,71 @@ class ClientApplication(object):
 
         :param client_credential:
             For :class:`PublicClientApplication`, you use `None` here.
+
             For :class:`ConfidentialClientApplication`,
-            it can be a string containing client secret,
-            or an X509 certificate container in this form::
+            it supports many different input formats for different scenarios.
 
-                {
-                    "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
-                    "thumbprint": "A1B2C3D4E5F6...",
-                    "public_certificate": "...-----BEGIN CERTIFICATE-----... (Optional. See below.)",
-                    "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
-                }
+            .. admonition:: Support using a client secret.
 
-            MSAL Python requires a "private_key" in PEM format.
-            If your cert is in a PKCS12 (.pfx) format, you can also
-            `convert it to PEM and get the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L101-L123>`_.
+                Just feed in a string, such as ``"your client secret"``.
 
-            The thumbprint is available in your app's registration in Azure Portal.
-            Alternatively, you can `calculate the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L94-L97>`_.
+            .. admonition:: Support using a certificate in X.509 (.pem) format
 
-            *Added in version 0.5.0*:
-            public_certificate (optional) is public key certificate
-            which will be sent through 'x5c' JWT header only for
-            subject name and issuer authentication to support cert auto rolls.
+                Feed in a dict in this form::
 
-            Per `specs <https://tools.ietf.org/html/rfc7515#section-4.1.6>`_,
-            "the certificate containing
-            the public key corresponding to the key used to digitally sign the
-            JWS MUST be the first certificate.  This MAY be followed by
-            additional certificates, with each subsequent certificate being the
-            one used to certify the previous one."
-            However, your certificate's issuer may use a different order.
-            So, if your attempt ends up with an error AADSTS700027 -
-            "The provided signature value did not match the expected signature value",
-            you may try use only the leaf cert (in PEM/str format) instead.
+                    {
+                        "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
+                        "thumbprint": "A1B2C3D4E5F6...",
+                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
+                    }
 
-            *Added in version 1.13.0*:
-            It can also be a completely pre-signed assertion that you've assembled yourself.
-            Simply pass a container containing only the key "client_assertion", like this::
+                MSAL Python requires a "private_key" in PEM format.
+                If your cert is in PKCS12 (.pfx) format,
+                you can convert it to X.509 (.pem) format,
+                by ``openssl pkcs12 -in file.pfx -out file.pem -nodes``.
 
-                {
-                    "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
-                }
+                The thumbprint is available in your app's registration in Azure Portal.
+                Alternatively, you can `calculate the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L94-L97>`_.
+
+            .. admonition:: Support Subject Name/Issuer Auth with a cert in .pem
+
+                `Subject Name/Issuer Auth
+                <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
+                is an approach to allow easier certificate rotation.
+
+                *Added in version 0.5.0*::
+
+                    {
+                        "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
+                        "thumbprint": "A1B2C3D4E5F6...",
+                        "public_certificate": "...-----BEGIN CERTIFICATE-----...",
+                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
+                    }
+
+                ``public_certificate`` (optional) is public key certificate
+                which will be sent through 'x5c' JWT header only for
+                subject name and issuer authentication to support cert auto rolls.
+
+                Per `specs <https://tools.ietf.org/html/rfc7515#section-4.1.6>`_,
+                "the certificate containing
+                the public key corresponding to the key used to digitally sign the
+                JWS MUST be the first certificate.  This MAY be followed by
+                additional certificates, with each subsequent certificate being the
+                one used to certify the previous one."
+                However, your certificate's issuer may use a different order.
+                So, if your attempt ends up with an error AADSTS700027 -
+                "The provided signature value did not match the expected signature value",
+                you may try use only the leaf cert (in PEM/str format) instead.
+
+            .. admonition:: Supporting raw assertion obtained from elsewhere
+
+                *Added in version 1.13.0*:
+                It can also be a completely pre-signed assertion that you've assembled yourself.
+                Simply pass a container containing only the key "client_assertion", like this::
+
+                    {
+                        "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
+                    }
 
             .. admonition:: Supporting reading client cerficates from PFX files
 
@@ -280,14 +310,26 @@ class ClientApplication(object):
 
                     {
                         "private_key_pfx_path": "/path/to/your.pfx",
-                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
+                        "passphrase": "Passphrase if the private_key is encrypted (Optional)",
                     }
 
                 The following command will generate a .pfx file from your .key and .pem file::
 
                     openssl pkcs12 -export -out certificate.pfx -inkey privateKey.key -in certificate.pem
 
-        :type client_credential: Union[dict, str]
+            .. admonition:: Support Subject Name/Issuer Auth with a cert in .pfx
+
+                *Added in version 1.30.0*:
+                If your .pfx file contains both the private key and public cert,
+                you can opt in for Subject Name/Issuer Auth like this::
+
+                    {
+                        "private_key_pfx_path": "/path/to/your.pfx",
+                        "public_certificate": True,
+                        "passphrase": "Passphrase if the private_key is encrypted (Optional)",
+                    }
+
+        :type client_credential: Union[dict, str, None]
 
         :param dict client_claims:
             *Added in version 0.5.0*:
@@ -699,14 +741,15 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 client_assertion = client_credential['client_assertion']
             else:
                 headers = {}
-                if client_credential.get('public_certificate'):
-                    headers["x5c"] = extract_certs(client_credential['public_certificate'])
                 passphrase_bytes = _str2bytes(
                     client_credential["passphrase"]
                     ) if client_credential.get("passphrase") else None
                 if client_credential.get("private_key_pfx_path"):
-                    private_key, sha1_thumbprint = _load_private_key_from_pfx_path(
-                        client_credential["private_key_pfx_path"], passphrase_bytes)
+                    private_key, sha1_thumbprint, x5c = _parse_pfx(
+                        client_credential["private_key_pfx_path"],
+                        passphrase_bytes)
+                    if client_credential.get("public_certificate") is True and x5c:
+                        headers["x5c"] = x5c
                 elif (
                         client_credential.get("private_key")  # PEM blob
                         and client_credential.get("thumbprint")):
@@ -720,6 +763,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     raise ValueError(
                         "client_credential needs to follow this format "
                         "https://msal-python.readthedocs.io/en/latest/#msal.ClientApplication.params.client_credential")
+                if ("x5c" not in headers  # So we did not run the pfx code path
+                    and isinstance(client_credential.get('public_certificate'), str)
+                ):  # Then we treat the public_certificate value as PEM content
+                    headers["x5c"] = extract_certs(client_credential['public_certificate'])
                 assertion = JwtAssertionCreator(
                     private_key, algorithm="RS256",
                     sha1_thumbprint=sha1_thumbprint, headers=headers)
