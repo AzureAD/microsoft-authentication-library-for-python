@@ -80,7 +80,7 @@ def _get_hint(html_mode=None, username=None, lab_name=None, username_uri=None):
             else "the upn from {}".format(_render(
                 username_uri, description="here" if html_mode else None)),
         lab=_render(
-            "https://aka.ms/GetLabUserSecret?Secret=" + (lab_name or "msidlabXYZ"),
+            "https://aka.ms/GetLabSecret?Secret=" + (lab_name or "msidlabXYZ"),
             description="this password api" if html_mode else None,
             ),
         )
@@ -463,7 +463,10 @@ def get_lab_app(
         # id came from https://docs.msidlab.com/accounts/confidentialclient.html
         client_id = os.getenv(env_client_id)
         # Cert came from https://ms.portal.azure.com/#@microsoft.onmicrosoft.com/asset/Microsoft_Azure_KeyVault/Certificate/https://msidlabs.vault.azure.net/certificates/LabVaultAccessCert
-        client_credential = {"private_key_pfx_path": os.getenv(env_client_cert_path)}
+        client_credential = {
+            "private_key_pfx_path": os.getenv(env_client_cert_path),
+            "public_certificate": True,  # Opt in for SNI
+            }
     elif os.getenv(env_client_id) and os.getenv(env_name2):
         # Data came from here
         # https://docs.msidlab.com/accounts/confidentialclient.html
@@ -529,7 +532,7 @@ class LabBasedTestCase(E2eTestCase):
         lab_name = lab_name.lower()
         if lab_name not in cls._secrets:
             logger.info("Querying lab user password for %s", lab_name)
-            url = "https://msidlab.com/api/LabUserSecret?secret=%s" % lab_name
+            url = "https://msidlab.com/api/LabSecret?secret=%s" % lab_name
             resp = cls.session.get(url)
             cls._secrets[lab_name] = resp.json()["value"]
         return cls._secrets[lab_name]
@@ -860,7 +863,7 @@ class WorldWideTestCase(LabBasedTestCase):
 
         # https://msidlab.com/api/user?usertype=onprem&federationprovider=ADFSv2019
         username = "..."  # The upn from the link above
-        password="***"  # From https://aka.ms/GetLabUserSecret?Secret=msidlabXYZ
+        password="***"  # From https://aka.ms/GetLabSecret?Secret=msidlabXYZ
         """
         config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
         config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
@@ -953,7 +956,7 @@ class WorldWideTestCase(LabBasedTestCase):
 
             username="b2clocal@msidlabb2c.onmicrosoft.com"
                 # This won't work https://msidlab.com/api/user?usertype=b2c
-            password="***"  # From https://aka.ms/GetLabUserSecret?Secret=msidlabb2c
+            password="***"  # From https://aka.ms/GetLabSecret?Secret=msidlabb2c
         """
         config = self.get_lab_app_object(azureenvironment="azureb2ccloud")
         self._test_acquire_token_by_auth_code(
