@@ -118,7 +118,7 @@ class TokenCache(object):
             return self._cache.get(credential_type, {}).get(key, default)
 
     @staticmethod
-    def _is_matching(entry: dict, query: dict, target_set: set):
+    def _is_matching(entry: dict, query: dict, target_set: set = None) -> bool:
         return is_subdict_of(query or {}, entry) and (
             target_set <= set(entry.get("target", "").split())
             if target_set else True)
@@ -131,7 +131,6 @@ class TokenCache(object):
         """
         target = sorted(target or [])  # Match the order sorted by add()
         assert isinstance(target, list), "Invalid parameter type"
-        target_set = set(target)
 
         preferred_result = None
         if (credential_type == self.CredentialType.ACCESS_TOKEN
@@ -143,17 +142,19 @@ class TokenCache(object):
                 query["home_account_id"], query["environment"],
                 query["client_id"], query["realm"], target)
             if preferred_result and self._is_matching(
-                preferred_result, query, target_set,
+                preferred_result, query,
+                # Needs no target_set here because it is satisfied by dict key
             ):
                 yield preferred_result
 
+        target_set = set(target)
         with self._lock:
             # Since the target inside token cache key is (per schema) unsorted,
             # there is no point to attempt an O(1) key-value search here.
             # So we always do an O(n) in-memory search.
             for entry in self._cache.get(credential_type, {}).values():
                 if (entry != preferred_result  # Avoid yielding the same entry twice
-                    and self._is_matching(entry, query, target_set)
+                    and self._is_matching(entry, query, target_set=target_set)
                 ):
                     yield entry
 
