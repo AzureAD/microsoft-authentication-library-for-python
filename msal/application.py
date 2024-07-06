@@ -8,6 +8,7 @@ from threading import Lock
 import os
 
 from .oauth2cli import Client, JwtAssertionCreator
+from .oauth2cli.assertion import AutoRefresher
 from .oauth2cli.oidc import decode_part
 from .authority import Authority, WORLD_WIDE
 from .mex import send_request as mex_send_request
@@ -18,6 +19,7 @@ import msal.telemetry
 from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
 from .cloudshell import _is_running_in_cloud_shell
+from .managed_identity import ManagedIdentity, ManagedIdentityClient
 
 
 # The __init__.py will import this. Not the other way around.
@@ -249,29 +251,76 @@ class ClientApplication(object):
             The thumbprint is available in your app's registration in Azure Portal.
             Alternatively, you can `calculate the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L94-L97>`_.
 
-            *Added in version 0.5.0*:
-            public_certificate (optional) is public key certificate
-            which will be sent through 'x5c' JWT header only for
-            subject name and issuer authentication to support cert auto rolls.
+            .. admonition:: Using ``public_certificate`` to support Subject Name/Issuer Auth
 
-            Per `specs <https://tools.ietf.org/html/rfc7515#section-4.1.6>`_,
-            "the certificate containing
-            the public key corresponding to the key used to digitally sign the
-            JWS MUST be the first certificate.  This MAY be followed by
-            additional certificates, with each subsequent certificate being the
-            one used to certify the previous one."
-            However, your certificate's issuer may use a different order.
-            So, if your attempt ends up with an error AADSTS700027 -
-            "The provided signature value did not match the expected signature value",
-            you may try use only the leaf cert (in PEM/str format) instead.
+                *Added in version 0.5.0*:
+                public_certificate (optional) is public key certificate
+                which will be sent through 'x5c' JWT header only for
+                subject name and issuer authentication to support cert auto rolls.
 
-            *Added in version 1.13.0*:
-            It can also be a completely pre-signed assertion that you've assembled yourself.
-            Simply pass a container containing only the key "client_assertion", like this::
+                Per `specs <https://tools.ietf.org/html/rfc7515#section-4.1.6>`_,
+                "the certificate containing
+                the public key corresponding to the key used to digitally sign the
+                JWS MUST be the first certificate.  This MAY be followed by
+                additional certificates, with each subsequent certificate being the
+                one used to certify the previous one."
+                However, your certificate's issuer may use a different order.
+                So, if your attempt ends up with an error AADSTS700027 -
+                "The provided signature value did not match the expected signature value",
+                you may try use only the leaf cert (in PEM/str format) instead.
 
-                {
-                    "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
-                }
+            .. admonition:: Supporting raw assertion obtained from elsewhere
+
+                *Added in version 1.13.0*:
+                It can also be a completely pre-signed assertion that you've assembled yourself.
+                Simply pass a container containing only the key "client_assertion", like this::
+
+                    {
+                        "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
+                    }
+
+            .. admonition:: Supporting workload identity federated by Managed Identity
+
+                *Added in version 1.29.0*:
+                A confidential client app can authenticate via a managed identity.
+                This is known as "federated identity credential (FIC)" or
+                `"Workload identity federation" <https://learn.microsoft.com/entra/workload-id/workload-identity-federation>`_.
+
+                Once you setup the federation, the following declarative API
+                takes care of the managed identity token acquisition for you.
+                You just need to assign ``client_credential``
+                with an instance of :py:class:`msal.SystemAssignedManagedIdentity`
+                or :py:class:`msal.UserAssignedManagedIdentity`, for example::
+
+                    app = msal.ConfidentialClientApplication(
+                        "my_client_id",
+                        client_credential=msal.SystemAssignedManagedIdentity(),
+                        ...)
+
+                or their equivalent ``dict`` representation, such as::
+
+                    app = msal.ConfidentialClientApplication(
+                        "my_client_id",
+                        client_credential={
+                            "ManagedIdentityIdType": "SystemAssigned",
+                            "Id": None},
+                        ...)
+
+                The second example above also imples that you can
+                load the ``dict`` from its equivalent ``json`` representation,
+                which could in turn be read from an ENV VAR, for instance::
+
+                    ## Supposed this is one of your ENV VAR
+                    # CRED={"ManagedIdentityIdType": "SystemAssigned", "Id": null}
+                    ## Now you can read it like this
+                    app = msal.ConfidentialClientApplication(
+                        "my_client_id",
+                        client_credential=json.loads(os.getenv("CRED")),
+                        ...)
+
+                This way, your same Confidential Client Application implementation
+                can be configured to use either client secret or managed identity,
+                without code change. Write once, run anywhere with managed identity.
 
             .. admonition:: Supporting reading client cerficates from PFX files
 
@@ -288,6 +337,7 @@ class ClientApplication(object):
                     openssl pkcs12 -export -out certificate.pfx -inkey privateKey.key -in certificate.pem
 
         :type client_credential: Union[dict, str]
+
 
         :param dict client_claims:
             *Added in version 0.5.0*:
@@ -691,12 +741,29 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if self.app_version:
             default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
-        if isinstance(client_credential, dict):
+        if ManagedIdentity.is_managed_identity(client_credential):
+            # Federated Identity Credential (FIC), a.k.a. workload identity
+            # https://learn.microsoft.com/entra/workload-id/workload-identity-federation
+            client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
+            client_assertion = AutoRefresher(
+                lambda: ManagedIdentityClient(
+                    client_credential, self.http_client,
+                    ).acquire_token_for_client(
+                        resource="api://AzureADTokenExchange",  # TODO: Customizable
+                    ).get("access_token"),
+                expires_in=3600,  # Managed Identity token expires in 1 hour
+                )
+            logger.debug("CCA federated by Managed Identity specified via client_credential")
+        elif isinstance(client_credential, dict):
+            assert (("private_key" in client_credential
+                    and "thumbprint" in client_credential) or
+                    "client_assertion" in client_credential)
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
             # Use client_credential.get("...") rather than "..." in client_credential
             # so that we can ignore an empty string came from an empty ENV VAR.
             if client_credential.get("client_assertion"):
                 client_assertion = client_credential['client_assertion']
+                logger.debug("CCA authenticated by assertion specified in client_credential")
             else:
                 headers = {}
                 if client_credential.get('public_certificate'):
@@ -726,8 +793,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 client_assertion = assertion.create_regenerative_assertion(
                     audience=authority.token_endpoint, issuer=self.client_id,
                     additional_claims=self.client_claims or {})
+                logger.debug("CCA authenticated by certificate: {...}")
         else:
             default_body['client_secret'] = client_credential
+            logger.debug("CCA authenticated by secret: ******")
         central_configuration = {
             "authorization_endpoint": authority.authorization_endpoint,
             "token_endpoint": authority.token_endpoint,
