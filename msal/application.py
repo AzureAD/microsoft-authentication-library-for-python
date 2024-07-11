@@ -75,9 +75,10 @@ def _parse_pfx(pfx_path, passphrase_bytes):
     x5c = [
         '\n'.join(cert_pem.splitlines()[1:-1])  # Strip the "--- header ---" and "--- footer ---"
     ]
+    sha256_thumbprint = cert.fingerprint(hashes.SHA256()).hex()  # cryptography 0.7+
     sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # cryptography 0.7+
         # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object
-    return private_key, sha1_thumbprint, x5c
+    return private_key, sha256_thumbprint, sha1_thumbprint, x5c
 
 
 def _load_private_key_from_pem_str(private_key_pem_str, passphrase_bytes):
@@ -741,11 +742,12 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 client_assertion = client_credential['client_assertion']
             else:
                 headers = {}
+                sha1_thumbprint = sha256_thumbprint = None
                 passphrase_bytes = _str2bytes(
                     client_credential["passphrase"]
                     ) if client_credential.get("passphrase") else None
                 if client_credential.get("private_key_pfx_path"):
-                    private_key, sha1_thumbprint, x5c = _parse_pfx(
+                    private_key, sha256_thumbprint, sha1_thumbprint, x5c = _parse_pfx(
                         client_credential["private_key_pfx_path"],
                         passphrase_bytes)
                     if client_credential.get("public_certificate") is True and x5c:
@@ -763,13 +765,22 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     raise ValueError(
                         "client_credential needs to follow this format "
                         "https://msal-python.readthedocs.io/en/latest/#msal.ClientApplication.params.client_credential")
-                if ("x5c" not in headers  # So we did not run the pfx code path
+                if ("x5c" not in headers  # So the .pfx file contains no certificate
                     and isinstance(client_credential.get('public_certificate'), str)
                 ):  # Then we treat the public_certificate value as PEM content
                     headers["x5c"] = extract_certs(client_credential['public_certificate'])
+                if sha256_thumbprint and not authority.is_adfs:
+                    assertion_params = {
+                        "algorithm": "PS256", "sha256_thumbprint": sha256_thumbprint,
+                    }
+                else:  # Fall back
+                    if not sha1_thumbprint:
+                        raise ValueError("You shall provide a thumbprint in SHA1.")
+                    assertion_params = {
+                        "algorithm": "RS256", "sha1_thumbprint": sha1_thumbprint,
+                    }
                 assertion = JwtAssertionCreator(
-                    private_key, algorithm="RS256",
-                    sha1_thumbprint=sha1_thumbprint, headers=headers)
+                    private_key, headers=headers, **assertion_params)
                 client_assertion = assertion.create_regenerative_assertion(
                     audience=authority.token_endpoint, issuer=self.client_id,
                     additional_claims=self.client_claims or {})
