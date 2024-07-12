@@ -273,8 +273,10 @@ class ManagedIdentityClient(object):
                     "token_type": entry.get("token_type", "Bearer"),
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                 }
-                if "refresh_on" in entry and int(entry["refresh_on"]) < now:  # aging
-                    break  # With a fallback in hand, we break here to go refresh
+                if "refresh_on" in entry:
+                    access_token_from_cache["refresh_on"] = int(entry["refresh_on"])
+                    if int(entry["refresh_on"]) < now:  # aging
+                        break  # With a fallback in hand, we break here to go refresh
                 return access_token_from_cache  # It is still good as new
         try:
             result = _obtain_token(self._http_client, self._managed_identity, resource)
@@ -290,6 +292,8 @@ class ManagedIdentityClient(object):
                     params={},
                     data={},
                 ))
+                if "refresh_in" in result:
+                    result["refresh_on"] = int(now + result["refresh_in"])
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
         except:  # The exact HTTP exception is transportation-layer dependent

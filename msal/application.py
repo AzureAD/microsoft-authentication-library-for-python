@@ -104,11 +104,14 @@ def _clean_up(result):
                 "msalruntime_telemetry": result.get("_msalruntime_telemetry"),
                 "msal_python_telemetry": result.get("_msal_python_telemetry"),
                 }, separators=(",", ":"))
-        return {
+        return_value = {
             k: result[k] for k in result
             if k != "refresh_in"  # MSAL handled refresh_in, customers need not
             and not k.startswith('_')  # Skim internal properties
             }
+        if "refresh_in" in result:  # To encourage proactive refresh
+            return_value["refresh_on"] = int(time.time() + result["refresh_in"])
+        return return_value
     return result  # It could be None
 
 
@@ -1507,9 +1510,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     self._TOKEN_SOURCE: self._TOKEN_SOURCE_CACHE,
                     }
-                if "refresh_on" in entry and int(entry["refresh_on"]) < now:  # aging
-                    refresh_reason = msal.telemetry.AT_AGING
-                    break  # With a fallback in hand, we break here to go refresh
+                if "refresh_on" in entry:
+                    access_token_from_cache["refresh_on"] = int(entry["refresh_on"])
+                    if int(entry["refresh_on"]) < now:  # aging
+                        refresh_reason = msal.telemetry.AT_AGING
+                        break  # With a fallback in hand, we break here to go refresh
                 self._build_telemetry_context(-1).hit_an_access_token()
                 return access_token_from_cache  # It is still good as new
         else:

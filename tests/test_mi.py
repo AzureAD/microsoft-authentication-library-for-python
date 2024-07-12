@@ -26,6 +26,7 @@ from msal.managed_identity import (
     SERVICE_FABRIC,
     DEFAULT_TO_VM,
 )
+from msal.token_cache import is_subdict_of
 
 
 class ManagedIdentityTestCase(unittest.TestCase):
@@ -60,7 +61,7 @@ class ClientTestCase(unittest.TestCase):
             http_client=requests.Session(),
             )
 
-    def _test_token_cache(self, app):
+    def assertCacheStatus(self, app):
         cache = app._token_cache._cache
         self.assertEqual(1, len(cache.get("AccessToken", [])), "Should have 1 AT")
         at = list(cache["AccessToken"].values())[0]
@@ -70,30 +71,55 @@ class ClientTestCase(unittest.TestCase):
             "Should have expected client_id")
         self.assertEqual("managed_identity", at["realm"], "Should have expected realm")
 
-    def _test_happy_path(self, app, mocked_http):
-        result = app.acquire_token_for_client(resource="R")
+    def _test_happy_path(self, app, mocked_http, expires_in, resource="R"):
+        result = app.acquire_token_for_client(resource=resource)
         mocked_http.assert_called()
-        self.assertEqual({
+        call_count = mocked_http.call_count
+        expected_result = {
             "access_token": "AT",
-            "expires_in": 1234,
-            "resource": "R",
             "token_type": "Bearer",
-        }, result, "Should obtain a token response")
+        }
+        self.assertTrue(
+            is_subdict_of(expected_result, result),  # We will test refresh_on later
+            "Should obtain a token response")
+        self.assertEqual(expires_in, result["expires_in"], "Should have expected expires_in")
+        if expires_in >= 7200:
+            expected_refresh_on = int(time.time() + expires_in / 2)
+            self.assertTrue(
+                expected_refresh_on - 1 <= result["refresh_on"] <= expected_refresh_on + 1,
+                "Should have a refresh_on time around the middle of the token's life")
         self.assertEqual(
             result["access_token"],
-            app.acquire_token_for_client(resource="R").get("access_token"),
+            app.acquire_token_for_client(resource=resource).get("access_token"),
             "Should hit the same token from cache")
-        self._test_token_cache(app)
+
+        self.assertCacheStatus(app)
+
+        result = app.acquire_token_for_client(resource=resource)
+        self.assertEqual(
+            call_count, mocked_http.call_count,
+            "No new call to the mocked http should be made for a cache hit")
+        self.assertTrue(
+            is_subdict_of(expected_result, result),  # We will test refresh_on later
+            "Should obtain a token response")
+        self.assertTrue(
+            expires_in - 5 < result["expires_in"] <= expires_in,
+            "Should have similar expires_in")
+        if expires_in >= 7200:
+            self.assertTrue(
+                expected_refresh_on - 5 < result["refresh_on"] <= expected_refresh_on,
+                "Should have a refresh_on time around the middle of the token's life")
 
 
 class VmTestCase(ClientTestCase):
 
     def test_happy_path(self):
+        expires_in = 7890  # We test a bigger than 7200 value here
         with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
             status_code=200,
-            text='{"access_token": "AT", "expires_in": "1234", "resource": "R"}',
+            text='{"access_token": "AT", "expires_in": "%s", "resource": "R"}' % expires_in,
         )) as mocked_method:
-            self._test_happy_path(self.app, mocked_method)
+            self._test_happy_path(self.app, mocked_method, expires_in)
 
     def test_vm_error_should_be_returned_as_is(self):
         raw_error = '{"raw": "error format is undefined"}'
@@ -110,12 +136,13 @@ class VmTestCase(ClientTestCase):
 class AppServiceTestCase(ClientTestCase):
 
     def test_happy_path(self):
+        expires_in = 1234
         with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
             status_code=200,
             text='{"access_token": "AT", "expires_on": "%s", "resource": "R"}' % (
-                int(time.time()) + 1234),
+                int(time.time()) + expires_in),
         )) as mocked_method:
-            self._test_happy_path(self.app, mocked_method)
+            self._test_happy_path(self.app, mocked_method, expires_in)
 
     def test_app_service_error_should_be_normalized(self):
         raw_error = '{"statusCode": 500, "message": "error content is undefined"}'
@@ -134,12 +161,13 @@ class AppServiceTestCase(ClientTestCase):
 class MachineLearningTestCase(ClientTestCase):
 
     def test_happy_path(self):
+        expires_in = 1234
         with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
             status_code=200,
             text='{"access_token": "AT", "expires_on": "%s", "resource": "R"}' % (
-                int(time.time()) + 1234),
+                int(time.time()) + expires_in),
         )) as mocked_method:
-            self._test_happy_path(self.app, mocked_method)
+            self._test_happy_path(self.app, mocked_method, expires_in)
 
     def test_machine_learning_error_should_be_normalized(self):
         raw_error = '{"error": "placeholder", "message": "placeholder"}'
@@ -162,12 +190,14 @@ class MachineLearningTestCase(ClientTestCase):
 class ServiceFabricTestCase(ClientTestCase):
 
     def _test_happy_path(self, app):
+        expires_in = 1234
         with patch.object(app._http_client, "get", return_value=MinimalResponse(
             status_code=200,
             text='{"access_token": "AT", "expires_on": %s, "resource": "R", "token_type": "Bearer"}' % (
-                int(time.time()) + 1234),
+                int(time.time()) + expires_in),
         )) as mocked_method:
-            super(ServiceFabricTestCase, self)._test_happy_path(app, mocked_method)
+            super(ServiceFabricTestCase, self)._test_happy_path(
+                app, mocked_method, expires_in)
 
     def test_happy_path(self):
         self._test_happy_path(self.app)
@@ -212,15 +242,16 @@ class ArcTestCase(ClientTestCase):
         })
 
     def test_happy_path(self, mocked_stat):
+        expires_in = 1234
         with patch.object(self.app._http_client, "get", side_effect=[
             self.challenge,
             MinimalResponse(
                 status_code=200,
-                text='{"access_token": "AT", "expires_in": "1234", "resource": "R"}',
+                text='{"access_token": "AT", "expires_in": "%s", "resource": "R"}' % expires_in,
                 ),
         ]) as mocked_method:
             try:
-                super(ArcTestCase, self)._test_happy_path(self.app, mocked_method)
+                self._test_happy_path(self.app, mocked_method, expires_in)
                 mocked_stat.assert_called_with(os.path.join(
                     _supported_arc_platforms_and_their_prefixes[sys.platform],
                     "foo.key"))
