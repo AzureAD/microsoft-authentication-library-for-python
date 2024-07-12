@@ -1,6 +1,7 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
 import sys
+import time
 from msal.application import *
 from msal.application import _str2bytes
 import msal
@@ -353,10 +354,18 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
                 uid=self.uid, utid=self.utid, refresh_token=self.rt),
             })
 
+    def assertRefreshOn(self, result, refresh_in):
+        refresh_on = int(time.time() + refresh_in)
+        self.assertTrue(
+            refresh_on - 1 < result.get("refresh_on", 0) < refresh_on + 1,
+            "refresh_on should be set properly")
+
     def test_fresh_token_should_be_returned_from_cache(self):
         # a.k.a. Return unexpired token that is not above token refresh expiration threshold
+        refresh_in = 450
         access_token = "An access token prepopulated into cache"
-        self.populate_cache(access_token=access_token, expires_in=900, refresh_in=450)
+        self.populate_cache(
+            access_token=access_token, expires_in=900, refresh_in=refresh_in)
         result = self.app.acquire_token_silent(
             ['s1'], self.account,
             post=lambda url, *args, **kwargs:  # Utilize the undocumented test feature
@@ -365,32 +374,38 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_CACHE)
         self.assertEqual(access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+        self.assertRefreshOn(result, refresh_in)
 
     def test_aging_token_and_available_aad_should_return_new_token(self):
         # a.k.a. Attempt to refresh unexpired token when AAD available
         self.populate_cache(access_token="old AT", expires_in=3599, refresh_in=-1)
         new_access_token = "new AT"
+        new_refresh_in = 123
         def mock_post(url, headers=None, *args, **kwargs):
             self.assertEqual("4|84,4|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=200, text=json.dumps({
                 "access_token": new_access_token,
-                "refresh_in": 123,
+                "refresh_in": new_refresh_in,
                 }))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
         self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(new_access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+        self.assertRefreshOn(result, new_refresh_in)
 
     def test_aging_token_and_unavailable_aad_should_return_old_token(self):
         # a.k.a. Attempt refresh unexpired token when AAD unavailable
+        refresh_in = -1
         old_at = "old AT"
-        self.populate_cache(access_token=old_at, expires_in=3599, refresh_in=-1)
+        self.populate_cache(
+            access_token=old_at, expires_in=3599, refresh_in=refresh_in)
         def mock_post(url, headers=None, *args, **kwargs):
             self.assertEqual("4|84,4|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=400, text=json.dumps({"error": "foo"}))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
         self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_CACHE)
         self.assertEqual(old_at, result.get("access_token"))
+        self.assertRefreshOn(result, refresh_in)
 
     def test_expired_token_and_unavailable_aad_should_return_error(self):
         # a.k.a. Attempt refresh expired token when AAD unavailable
@@ -407,16 +422,18 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         # a.k.a. Attempt refresh expired token when AAD available
         self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
         new_access_token = "new AT"
+        new_refresh_in = 123
         def mock_post(url, headers=None, *args, **kwargs):
             self.assertEqual("4|84,3|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=200, text=json.dumps({
                 "access_token": new_access_token,
-                "refresh_in": 123,
+                "refresh_in": new_refresh_in,
                 }))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
         self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(new_access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+        self.assertRefreshOn(result, new_refresh_in)
 
 
 class TestTelemetryMaintainingOfflineState(unittest.TestCase):
