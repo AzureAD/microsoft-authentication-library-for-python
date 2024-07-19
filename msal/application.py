@@ -2050,15 +2050,14 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
               - If your app is a GUI app running on modern Windows system,
                 you are required to also provide its window handle,
                 so that the sign-in window will pop up on top of your window.
-              - If your app is a console app runnong on Windows system,
+              - If your app is a console app running on Windows system,
                 you can use a placeholder
                 ``PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
               - If your app is running on Mac,
                 you can use a placeholder
                 ``PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
 
-            If your app is a console app (most Python scripts are console apps),
-            you can use a placeholder value ``msal.PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
+            Most Python scripts are console apps.
 
             New in version 1.20.0.
 
