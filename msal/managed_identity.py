@@ -144,7 +144,7 @@ class ManagedIdentityClient(object):
         (like what a ``PublicClientApplication`` does),
         not a token with application permissions for an app.
     """
-    _instance, _tenant = socket.getfqdn(), "managed_identity"  # Placeholders
+    __instance, _tenant = None, "managed_identity"  # Placeholders
 
     def __init__(
         self,
@@ -232,6 +232,11 @@ class ManagedIdentityClient(object):
         )
         self._token_cache = token_cache or TokenCache()
 
+    def _get_instance(self):
+        if self.__instance is None:
+            self.__instance = socket.getfqdn()  # Moved from class definition to here
+        return self.__instance
+
     def acquire_token_for_client(self, *, resource):  # We may support scope in the future
         """Acquire token for the managed identity.
 
@@ -257,7 +262,7 @@ class ManagedIdentityClient(object):
                 target=[resource],
                 query=dict(
                     client_id=client_id_in_cache,
-                    environment=self._instance,
+                    environment=self._get_instance(),
                     realm=self._tenant,
                     home_account_id=None,
                 ),
@@ -287,7 +292,8 @@ class ManagedIdentityClient(object):
                 self._token_cache.add(dict(
                     client_id=client_id_in_cache,
                     scope=[resource],
-                    token_endpoint="https://{}/{}".format(self._instance, self._tenant),
+                    token_endpoint="https://{}/{}".format(
+                        self._get_instance(), self._tenant),
                     response=result,
                     params={},
                     data={},
