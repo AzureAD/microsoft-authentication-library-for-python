@@ -41,10 +41,15 @@ class BrokerTestCase(unittest.TestCase):
         self.assertIn("Status_AccountUnusable", result.get("error_description", ""))
 
     def test_unconfigured_app_should_raise_exception(self):
-        app_without_needed_redirect_uri = "289a413d-284b-4303-9c79-94380abe5d22"
+        self.skipTest(
+            "After PyMsalRuntime 0.13.2, "
+            "AADSTS error codes were removed from error_context; "
+            "it is not in telemetry either.")
+        app_without_needed_redirect_uri = "f62c5ae3-bf3a-4af5-afa8-a68b800396e9"  # This is the lab app. We repurpose it to be used here
         with self.assertRaises(RedirectUriError):
-            _signin_interactively(
+            result = _signin_interactively(
                 self._authority, app_without_needed_redirect_uri, self._scopes, None)
+            print(result)
         # Note: _acquire_token_silently() would raise same exception,
         #       we skip its test here due to the lack of a valid account_id
 

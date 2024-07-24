@@ -2,6 +2,7 @@
 import threading
 import time
 import logging
+import warnings
 
 from .authority import canonicalize
 from .oauth2cli.oidc import decode_part, decode_id_token
@@ -88,20 +89,82 @@ class TokenCache(object):
                     "appmetadata-{}-{}".format(environment or "", client_id or ""),
             }
 
-    def find(self, credential_type, target=None, query=None):
-        target = target or []
+    def _get_access_token(
+        self,
+        home_account_id, environment, client_id, realm, target,  # Together they form a compound key
+        default=None,
+    ):  # O(1)
+        return self._get(
+            self.CredentialType.ACCESS_TOKEN,
+            self.key_makers[TokenCache.CredentialType.ACCESS_TOKEN](
+                home_account_id=home_account_id,
+                environment=environment,
+                client_id=client_id,
+                realm=realm,
+                target=" ".join(target),
+                ),
+            default=default)
+
+    def _get_app_metadata(self, environment, client_id, default=None):  # O(1)
+        return self._get(
+            self.CredentialType.APP_METADATA,
+            self.key_makers[TokenCache.CredentialType.APP_METADATA](
+                environment=environment,
+                client_id=client_id,
+                ),
+            default=default)
+
+    def _get(self, credential_type, key, default=None):  # O(1)
+        with self._lock:
+            return self._cache.get(credential_type, {}).get(key, default)
+
+    @staticmethod
+    def _is_matching(entry: dict, query: dict, target_set: set = None) -> bool:
+        return is_subdict_of(query or {}, entry) and (
+            target_set <= set(entry.get("target", "").split())
+            if target_set else True)
+
+    def search(self, credential_type, target=None, query=None):  # O(n) generator
+        """Returns a generator of matching entries.
+
+        It is O(1) for AT hits, and O(n) for other types.
+        Note that it holds a lock during the entire search.
+        """
+        target = sorted(target or [])  # Match the order sorted by add()
         assert isinstance(target, list), "Invalid parameter type"
+
+        preferred_result = None
+        if (credential_type == self.CredentialType.ACCESS_TOKEN
+            and isinstance(query, dict)
+            and "home_account_id" in query and "environment" in query
+            and "client_id" in query and "realm" in query and target
+        ):  # Special case for O(1) AT lookup
+            preferred_result = self._get_access_token(
+                query["home_account_id"], query["environment"],
+                query["client_id"], query["realm"], target)
+            if preferred_result and self._is_matching(
+                preferred_result, query,
+                # Needs no target_set here because it is satisfied by dict key
+            ):
+                yield preferred_result
+
         target_set = set(target)
         with self._lock:
             # Since the target inside token cache key is (per schema) unsorted,
             # there is no point to attempt an O(1) key-value search here.
             # So we always do an O(n) in-memory search.
-            return [entry
-                for entry in self._cache.get(credential_type, {}).values()
-                if is_subdict_of(query or {}, entry)
-                and (target_set <= set(entry.get("target", "").split())
-		    if target else True)
-                ]
+            for entry in self._cache.get(credential_type, {}).values():
+                if (entry != preferred_result  # Avoid yielding the same entry twice
+                    and self._is_matching(entry, query, target_set=target_set)
+                ):
+                    yield entry
+
+    def find(self, credential_type, target=None, query=None):
+        """Equivalent to list(search(...))."""
+        warnings.warn(
+            "Use list(search(...)) instead to explicitly get a list.",
+            DeprecationWarning)
+        return list(self.search(credential_type, target=target, query=query))
 
     def add(self, event, now=None):
         """Handle a token obtaining event, and add tokens into cache."""
@@ -160,7 +223,7 @@ class TokenCache(object):
             decode_id_token(id_token, client_id=event["client_id"]) if id_token else {})
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
-        target = ' '.join(event.get("scope") or [])  # Per schema, we don't sort it
+        target = ' '.join(sorted(event.get("scope") or []))  # Schema should have required sorting
 
         with self._lock:
             now = int(time.time() if now is None else now)
@@ -300,19 +363,29 @@ class SerializableTokenCache(TokenCache):
 
     This class does NOT actually persist the cache on disk/db/etc..
     Depending on your need,
-    the following simple recipe for file-based persistence may be sufficient::
+    the following simple recipe for file-based, unencrypted persistence may be sufficient::
 
         import os, atexit, msal
+        cache_filename = os.path.join(  # Persist cache into this file
+            os.getenv(
+                # Automatically wipe out the cache from Linux when user's ssh session ends.
+                # See also https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/690
+                "XDG_RUNTIME_DIR", ""),
+            "my_cache.bin")
         cache = msal.SerializableTokenCache()
-        if os.path.exists("my_cache.bin"):
-            cache.deserialize(open("my_cache.bin", "r").read())
+        if os.path.exists(cache_filename):
+            cache.deserialize(open(cache_filename, "r").read())
         atexit.register(lambda:
-            open("my_cache.bin", "w").write(cache.serialize())
+            open(cache_filename, "w").write(cache.serialize())
             # Hint: The following optional line persists only when state changed
             if cache.has_state_changed else None
             )
         app = msal.ClientApplication(..., token_cache=cache)
         ...
+
+    Alternatively, you may use a more sophisticated cache persistence library,
+    `MSAL Extensions <https://github.com/AzureAD/microsoft-authentication-extensions-for-python>`_,
+    which provides token cache persistence with encryption, and more.
 
     :var bool has_state_changed:
         Indicates whether the cache state in the memory has changed since last

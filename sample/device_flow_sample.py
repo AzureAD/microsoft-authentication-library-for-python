@@ -1,36 +1,39 @@
 """
+This sample demonstrates a headless application that acquires a token using
+the device code flow and then calls a web API with the token.
 The configuration file would look like this:
 
-{
-    "authority": "https://login.microsoftonline.com/common",
-    "client_id": "your_client_id",
-    "scope": ["User.ReadBasic.All"],
-        // You can find the other permission names from this document
-        // https://docs.microsoft.com/en-us/graph/permissions-reference
-    "endpoint": "https://graph.microsoft.com/v1.0/users"
-        // You can find more Microsoft Graph API endpoints from Graph Explorer
-        // https://developer.microsoft.com/en-us/graph/graph-explorer
-}
+This sample loads its configuration from a .env file.
 
-You can then run this sample with a JSON configuration file:
+To make this sample work, you need to choose one of the following templates:
 
-    python sample.py parameters.json
+    .env.sample.entra-id
+    .env.sample.external-id
+    .env.sample.external-id-with-custom-domain
+
+Copy the chosen template to a new file named .env, and fill in the values.
+
+You can then run this sample:
+
+    python name_of_this_script.py
 """
 
-import sys  # For simplicity, we'll read config file from 1st CLI param sys.argv[1]
 import json
 import logging
+import os
+import sys
 import time
 
-import requests
+from dotenv import load_dotenv  # Need "pip install python-dotenv"
 import msal
+import requests
 
 
 # Optional logging
 # logging.basicConfig(level=logging.DEBUG)  # Enable DEBUG log for entire script
 # logging.getLogger("msal").setLevel(logging.INFO)  # Optionally disable MSAL DEBUG logs
 
-config = json.load(open(sys.argv[1]))
+load_dotenv()  # We use this to load configuration from a .env file
 
 # If for whatever reason you plan to recreate same ClientApplication periodically,
 # you shall create one global token cache and reuse it by each ClientApplication
@@ -39,10 +42,13 @@ global_token_cache = msal.TokenCache()  # The TokenCache() is in-memory.
 
 # Create a preferably long-lived app instance, to avoid the overhead of app creation
 global_app = msal.PublicClientApplication(
-    config["client_id"], authority=config["authority"],
+    os.getenv('CLIENT_ID'),
+    authority=os.getenv('AUTHORITY'),  # For Entra ID or External ID
+    oidc_authority=os.getenv('OIDC_AUTHORITY'),  # For External ID with custom domain
     token_cache=global_token_cache,  # Let this app (re)use an existing token cache.
         # If absent, ClientApplication will create its own empty token cache
     )
+scopes = os.getenv("SCOPE", "").split()
 
 
 def acquire_and_use_token():
@@ -61,12 +67,12 @@ def acquire_and_use_token():
         # Assuming the end user chose this one
         chosen = accounts[0]
         # Now let's try to find a token in cache for this account
-        result = global_app.acquire_token_silent(config["scope"], account=chosen)
+        result = global_app.acquire_token_silent(scopes, account=chosen)
 
     if not result:
         logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
 
-        flow = global_app.initiate_device_flow(scopes=config["scope"])
+        flow = global_app.initiate_device_flow(scopes=scopes)
         if "user_code" not in flow:
             raise ValueError(
                 "Fail to create device flow. Err: %s" % json.dumps(flow, indent=4))
@@ -85,13 +91,17 @@ def acquire_and_use_token():
 
     if "access_token" in result:
         print("Token was obtained from:", result["token_source"])  # Since MSAL 1.25
-        # Calling graph using the access token
-        graph_data = requests.get(  # Use token to call downstream service
-            config["endpoint"],
-            headers={'Authorization': 'Bearer ' + result['access_token']},).json()
-        print("Graph API call result: %s" % json.dumps(graph_data, indent=2))
+        if os.getenv('ENDPOINT'):
+            # Calling a web API using the access token
+            api_result = requests.get(
+                os.getenv('ENDPOINT'),
+                headers={'Authorization': 'Bearer ' + result['access_token']},
+                ).json()  # Assuming the response is JSON
+            print("Web API call result", json.dumps(api_result, indent=2))
+        else:
+            print("Token acquisition result", json.dumps(result, indent=2))
     else:
-        print("Token acquisition failed")  # Examine result["error_description"] etc. to diagnose error
+        print("Token acquisition failed", result)  # Examine result["error_description"] etc. to diagnose error
 
 
 while True:  # Here we mimic a long-lived daemon
