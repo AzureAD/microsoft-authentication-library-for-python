@@ -3,6 +3,7 @@ It relies on PyMsalRuntime which is the package providing broker's functionality
 """
 import json
 import logging
+import sys
 import time
 import uuid
 
@@ -168,10 +169,11 @@ def _signin_interactively(
     params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
     params.set_requested_scopes(scopes)
     params.set_redirect_uri(
-        # pymsalruntime on Windows requires non-empty str,
-        # the actual redirect_uri will be overridden by a value hardcoded by the broker
-        _redirect_uri_on_mac,
-        )
+        _redirect_uri_on_mac if sys.platform == "darwin" else
+        "https://login.microsoftonline.com/common/oauth2/nativeclient"
+        # This default redirect_uri value is not currently used by WAM
+        # but it is required by the MSAL.cpp to be set to a non-empty valid URI.
+    )
     if prompt:
         if prompt == "select_account":
             if login_hint:

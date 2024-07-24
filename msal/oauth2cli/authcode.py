@@ -102,6 +102,11 @@ def _escape(key_value_pairs):
     return {k: escape(v) for k, v in key_value_pairs.items()}
 
 
+def _printify(text):
+    # If an https request is sent to an http server, the text needs to be repr-ed
+    return repr(text) if isinstance(text, str) and not text.isprintable() else text
+
+
 class _AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # For flexibility, we choose to not check self.path matching redirect_uri
@@ -135,7 +140,8 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         self.wfile.write(body.encode("utf-8"))
 
     def log_message(self, format, *args):
-        logger.debug(format, *args)  # To override the default log-to-stderr behavior
+        # To override the default log-to-stderr behavior
+        logger.debug(format, *map(_printify, args))
 
 
 class _AuthCodeHttpServer(HTTPServer, object):

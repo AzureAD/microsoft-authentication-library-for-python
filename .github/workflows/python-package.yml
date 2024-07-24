@@ -18,6 +18,8 @@ jobs:
       TRAVIS: true
       LAB_APP_CLIENT_ID: ${{ secrets.LAB_APP_CLIENT_ID }}
       LAB_APP_CLIENT_SECRET: ${{ secrets.LAB_APP_CLIENT_SECRET }}
+      LAB_APP_CLIENT_CERT_BASE64: ${{ secrets.LAB_APP_CLIENT_CERT_BASE64 }}
+      LAB_APP_CLIENT_CERT_PFX_PATH: lab_cert.pfx
       LAB_OBO_CLIENT_SECRET: ${{ secrets.LAB_OBO_CLIENT_SECRET }}
       LAB_OBO_CONFIDENTIAL_CLIENT_ID: ${{ secrets.LAB_OBO_CONFIDENTIAL_CLIENT_ID }}
       LAB_OBO_PUBLIC_CLIENT_ID: ${{ secrets.LAB_OBO_PUBLIC_CLIENT_ID }}
@@ -31,17 +33,21 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       # It automatically takes care of pip cache, according to
       # https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#about-caching-workflow-dependencies
       with:
         python-version: ${{ matrix.python-version }}
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         python -m pip install flake8 pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Populate lab cert.pfx
+      # https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions#storing-base64-binary-blobs-as-secrets
+      run: echo $LAB_APP_CLIENT_CERT_BASE64 | base64 -d > $LAB_APP_CLIENT_CERT_PFX_PATH
     - name: Test with pytest
       run: pytest --benchmark-skip
     - name: Lint with flake8
@@ -56,18 +62,21 @@ jobs:
     # and then run benchmark only once (sampling with only one Python version).
     needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python 3.9
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: 3.9
+        cache: 'pip'
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Setup an updatable cache for Performance Baselines
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: .perf.baseline
         key: ${{ runner.os }}-performance-${{ hashFiles('tests/test_benchmark.py') }}
@@ -99,9 +108,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python 3.9
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: 3.9
+        cache: 'pip'
     - name: Build a package for release
       run: |
         python -m pip install build --user
