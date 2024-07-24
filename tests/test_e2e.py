@@ -1,7 +1,7 @@
 """If the following ENV VAR were available, many end-to-end test cases would run.
-LAB_APP_CLIENT_SECRET=...
 LAB_OBO_CLIENT_SECRET=...
 LAB_APP_CLIENT_ID=...
+LAB_APP_CLIENT_CERT_PFX_PATH=...
 LAB_OBO_PUBLIC_CLIENT_ID=...
 LAB_OBO_CONFIDENTIAL_CLIENT_ID=...
 """
@@ -80,7 +80,7 @@ def _get_hint(html_mode=None, username=None, lab_name=None, username_uri=None):
             else "the upn from {}".format(_render(
                 username_uri, description="here" if html_mode else None)),
         lab=_render(
-            "https://aka.ms/GetLabUserSecret?Secret=" + (lab_name or "msidlabXYZ"),
+            "https://aka.ms/GetLabSecret?Secret=" + (lab_name or "msidlabXYZ"),
             description="this password api" if html_mode else None,
             ),
         )
@@ -447,6 +447,7 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
 def get_lab_app(
         env_client_id="LAB_APP_CLIENT_ID",
         env_name2="LAB_APP_CLIENT_SECRET",  # A var name that hopefully avoids false alarm
+        env_client_cert_path="LAB_APP_CLIENT_CERT_PFX_PATH",
         authority="https://login.microsoftonline.com/"
             "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
         timeout=None,
@@ -459,31 +460,41 @@ def get_lab_app(
         "Reading ENV variables %s and %s for lab app defined at "
         "https://docs.msidlab.com/accounts/confidentialclient.html",
         env_client_id, env_name2)
-    if os.getenv(env_client_id) and os.getenv(env_name2):
-        # A shortcut mainly for running tests on developer's local development machine
-        # or it could be setup on Travis CI
-        #   https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
+    if os.getenv(env_client_id) and os.getenv(env_client_cert_path):
+        # id came from https://docs.msidlab.com/accounts/confidentialclient.html
+        client_id = os.getenv(env_client_id)
+        # Cert came from https://ms.portal.azure.com/#@microsoft.onmicrosoft.com/asset/Microsoft_Azure_KeyVault/Certificate/https://msidlabs.vault.azure.net/certificates/LabVaultAccessCert
+        client_credential = {
+            "private_key_pfx_path": os.getenv(env_client_cert_path),
+            "public_certificate": True,  # Opt in for SNI
+            }
+    elif os.getenv(env_client_id) and os.getenv(env_name2):
         # Data came from here
         # https://docs.msidlab.com/accounts/confidentialclient.html
         client_id = os.getenv(env_client_id)
-        client_secret = os.getenv(env_name2)
+        client_credential = os.getenv(env_name2)
     else:
         logger.info("ENV variables are not defined. Fall back to MSI.")
         # See also https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API's.aspx
         raise unittest.SkipTest("MSI-based mechanism has not been implemented yet")
     return msal.ConfidentialClientApplication(
             client_id,
-            client_credential=client_secret,
+            client_credential=client_credential,
             authority=authority,
             http_client=MinimalHttpClient(timeout=timeout),
             **kwargs)
 
+class LabTokenError(RuntimeError):
+    pass
+
 def get_session(lab_app, scopes):  # BTW, this infrastructure tests the confidential client flow
     logger.info("Creating session")
     result = lab_app.acquire_token_for_client(scopes)
-    assert result.get("access_token"), \
-        "Unable to obtain token for lab. Encountered {}: {}".format(
-            result.get("error"), result.get("error_description"))
+    if not result.get("access_token"):
+        raise LabTokenError(
+            "Unable to obtain token for lab. Encountered {}: {}".format(
+            result.get("error"), result.get("error_description")
+        ))
     session = requests.Session()
     session.headers.update({"Authorization": "Bearer %s" % result["access_token"]})
     session.hooks["response"].append(lambda r, *args, **kwargs: r.raise_for_status())
@@ -500,7 +511,9 @@ class LabBasedTestCase(E2eTestCase):
     @classmethod
     def setUpClass(cls):
         # https://docs.msidlab.com/accounts/apiaccess.html#code-snippet
-        cls.session = get_session(get_lab_app(), ["https://msidlab.com/.default"])
+        cls.session = get_session(get_lab_app(), [
+                "https://request.msidlab.com/.default",  # A lab change since June 10, 2024
+            ])
 
     @classmethod
     def tearDownClass(cls):
@@ -520,7 +533,7 @@ class LabBasedTestCase(E2eTestCase):
         lab_name = lab_name.lower()
         if lab_name not in cls._secrets:
             logger.info("Querying lab user password for %s", lab_name)
-            url = "https://msidlab.com/api/LabUserSecret?secret=%s" % lab_name
+            url = "https://msidlab.com/api/LabSecret?secret=%s" % lab_name
             resp = cls.session.get(url)
             cls._secrets[lab_name] = resp.json()["value"]
         return cls._secrets[lab_name]
@@ -680,11 +693,28 @@ class LabBasedTestCase(E2eTestCase):
 
 class PopWithExternalKeyTestCase(LabBasedTestCase):
     def _test_service_principal(self):
-        # Any SP can obtain an ssh-cert. Here we use the lab app.
-        result = get_lab_app().acquire_token_for_client(self.SCOPE, data=self.DATA1)
+        app = get_lab_app()  # Any SP can obtain an ssh-cert. Here we use the lab app.
+        result = app.acquire_token_for_client(self.SCOPE, data=self.DATA1)
         self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
             result.get("error"), result.get("error_description")))
         self.assertEqual(self.EXPECTED_TOKEN_TYPE, result["token_type"])
+        self.assertEqual(result["token_source"], "identity_provider")
+
+        # Test cache hit
+        cached_result = app.acquire_token_for_client(self.SCOPE, data=self.DATA1)
+        self.assertIsNotNone(
+            cached_result.get("access_token"), "Encountered {}: {}".format(
+            cached_result.get("error"), cached_result.get("error_description")))
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, cached_result["token_type"])
+        self.assertEqual(cached_result["token_source"], "cache")
+
+        # refresh_token grant can fetch an ssh-cert bound to a different key
+        refreshed_result = app.acquire_token_for_client(self.SCOPE, data=self.DATA2)
+        self.assertIsNotNone(
+            refreshed_result.get("access_token"), "Encountered {}: {}".format(
+            refreshed_result.get("error"), refreshed_result.get("error_description")))
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, refreshed_result["token_type"])
+        self.assertEqual(refreshed_result["token_source"], "identity_provider")
 
     def _test_user_account(self):
         lab_user = self.get_lab_user(usertype="cloud")
@@ -702,16 +732,30 @@ class PopWithExternalKeyTestCase(LabBasedTestCase):
         self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
             result.get("error"), result.get("error_description")))
         self.assertEqual(self.EXPECTED_TOKEN_TYPE, result["token_type"])
+        self.assertEqual(result["token_source"], "identity_provider")
         logger.debug("%s.cache = %s",
             self.id(), json.dumps(self.app.token_cache._cache, indent=4))
 
+        # refresh_token grant can hit an ssh-cert bound to the same key
+        account = self.app.get_accounts()[0]
+        cached_result = self.app.acquire_token_silent(
+            self.SCOPE, account=account, data=self.DATA1)
+        self.assertIsNotNone(cached_result)
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, cached_result["token_type"])
+        ## Actually, the self._test_acquire_token_interactive() already contained
+        ## a built-in refresh test, so the token in cache has been refreshed already.
+        ## Therefore, the following line won't pass, which is expected.
+        #self.assertEqual(result["access_token"], cached_result['access_token'])
+        self.assertEqual(cached_result["token_source"], "cache")
+
         # refresh_token grant can fetch an ssh-cert bound to a different key
         account = self.app.get_accounts()[0]
-        refreshed_ssh_cert = self.app.acquire_token_silent(
+        refreshed_result = self.app.acquire_token_silent(
             self.SCOPE, account=account, data=self.DATA2)
-        self.assertIsNotNone(refreshed_ssh_cert)
-        self.assertEqual(self.EXPECTED_TOKEN_TYPE, refreshed_ssh_cert["token_type"])
-        self.assertNotEqual(result["access_token"], refreshed_ssh_cert['access_token'])
+        self.assertIsNotNone(refreshed_result)
+        self.assertEqual(self.EXPECTED_TOKEN_TYPE, refreshed_result["token_type"])
+        self.assertNotEqual(result["access_token"], refreshed_result['access_token'])
+        self.assertEqual(refreshed_result["token_source"], "identity_provider")
 
 
 class SshCertTestCase(PopWithExternalKeyTestCase):
@@ -820,7 +864,7 @@ class WorldWideTestCase(LabBasedTestCase):
 
         # https://msidlab.com/api/user?usertype=onprem&federationprovider=ADFSv2019
         username = "..."  # The upn from the link above
-        password="***"  # From https://aka.ms/GetLabUserSecret?Secret=msidlabXYZ
+        password="***"  # From https://aka.ms/GetLabSecret?Secret=msidlabXYZ
         """
         config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
         config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
@@ -913,7 +957,7 @@ class WorldWideTestCase(LabBasedTestCase):
 
             username="b2clocal@msidlabb2c.onmicrosoft.com"
                 # This won't work https://msidlab.com/api/user?usertype=b2c
-            password="***"  # From https://aka.ms/GetLabUserSecret?Secret=msidlabb2c
+            password="***"  # From https://aka.ms/GetLabSecret?Secret=msidlabb2c
         """
         config = self.get_lab_app_object(azureenvironment="azureb2ccloud")
         self._test_acquire_token_by_auth_code(
@@ -961,8 +1005,7 @@ class CiamTestCase(LabBasedTestCase):
     @classmethod
     def setUpClass(cls):
         super(CiamTestCase, cls).setUpClass()
-        cls.user = cls.get_lab_user(
-            federationProvider="ciam", signinAudience="azureadmyorg", publicClient="No")
+        cls.user = cls.get_lab_user(federationProvider="ciam")
         # FYI: Only single- or multi-tenant CIAM app can have other-than-OIDC
         # delegated permissions on Microsoft Graph.
         cls.app_config = cls.get_lab_app_object(cls.user["client_id"])
@@ -1242,9 +1285,6 @@ class PopTestCase(LabBasedTestCase):
         resp = requests.get(api_endpoint, verify=False, headers={
             "Authorization": "pop {}".format(result["access_token"]),
             })
-        if resp.status_code != 200:
-            # TODO https://teams.microsoft.com/l/message/19:b1697a70b1de43ddaea281d98ff2e985@thread.v2/1700184847801?context=%7B%22contextType%22%3A%22chat%22%7D
-            self.skipTest("We haven't got this end-to-end test case working")
         self.assertEqual(resp.status_code, 200, "POP resource should be accessible")
 
     def _extract_pop_nonce(self, www_authenticate):

@@ -46,20 +46,19 @@ class TestAccountSourceBehavior(unittest.TestCase):
         mocked_broker_ats.assert_not_called()
         self.assertEqual(result["token_source"], "identity_provider")
 
-    def test_ropc_flow_and_its_silent_call_should_bypass_broker(self, _, mocked_broker_ats):
+    def test_ropc_flow_and_its_silent_call_should_invoke_broker(self, _, mocked_broker_ats):
         app = msal.PublicClientApplication("client_id", enable_broker_on_windows=True)
-        with patch.object(app.authority, "user_realm_discovery", return_value={}):
+        with patch("msal.broker._signin_silently", return_value=dict(TOKEN_RESPONSE, _account_id="placeholder")):
             result = app.acquire_token_by_username_password(
                 "username", "placeholder", [SCOPE], post=_mock_post)
-        self.assertEqual(result["token_source"], "identity_provider")
+        self.assertEqual(result["token_source"], "broker")
 
         account = app.get_accounts()[0]
-        self.assertEqual(account["account_source"], "password")
+        self.assertEqual(account["account_source"], "broker")
 
         result = app.acquire_token_silent_with_error(
             [SCOPE], account, force_refresh=True, post=_mock_post)
-        mocked_broker_ats.assert_not_called()
-        self.assertEqual(result["token_source"], "identity_provider")
+        self.assertEqual(result["token_source"], "broker")
 
     def test_interactive_flow_and_its_silent_call_should_invoke_broker(self, _, mocked_broker_ats):
         app = msal.PublicClientApplication("client_id", enable_broker_on_windows=True)

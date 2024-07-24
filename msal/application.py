@@ -1,10 +1,6 @@
 import functools
 import json
 import time
-try:  # Python 2
-    from urlparse import urljoin
-except:  # Python 3
-    from urllib.parse import urljoin
 import logging
 import sys
 import warnings
@@ -25,7 +21,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.27.0b2"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.30.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -65,6 +61,36 @@ def _str2bytes(raw):
         return raw
 
 
+def _parse_pfx(pfx_path, passphrase_bytes):
+    # Cert concepts https://security.stackexchange.com/a/226758/125264
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    with open(pfx_path, 'rb') as f:
+        private_key, cert, _ = pkcs12.load_key_and_certificates(  # cryptography 2.5+
+            # https://cryptography.io/en/latest/hazmat/primitives/asymmetric/serialization/#cryptography.hazmat.primitives.serialization.pkcs12.load_key_and_certificates
+            f.read(), passphrase_bytes)
+    if not (private_key and cert):
+        raise ValueError("Your PFX file shall contain both private key and cert")
+    cert_pem = cert.public_bytes(encoding=serialization.Encoding.PEM).decode()  # cryptography 1.0+
+    x5c = [
+        '\n'.join(cert_pem.splitlines()[1:-1])  # Strip the "--- header ---" and "--- footer ---"
+    ]
+    sha256_thumbprint = cert.fingerprint(hashes.SHA256()).hex()  # cryptography 0.7+
+    sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # cryptography 0.7+
+        # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object
+    return private_key, sha256_thumbprint, sha1_thumbprint, x5c
+
+
+def _load_private_key_from_pem_str(private_key_pem_str, passphrase_bytes):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.backends import default_backend
+    return serialization.load_pem_private_key(  # cryptography 0.6+
+        _str2bytes(private_key_pem_str),
+        passphrase_bytes,
+        backend=default_backend(),  # It was a required param until 2020
+        )
+
+
 def _pii_less_home_account_id(home_account_id):
     parts = home_account_id.split(".")  # It could contain one or two parts
     parts[0] = "********"
@@ -78,11 +104,14 @@ def _clean_up(result):
                 "msalruntime_telemetry": result.get("_msalruntime_telemetry"),
                 "msal_python_telemetry": result.get("_msal_python_telemetry"),
                 }, separators=(",", ":"))
-        return {
+        return_value = {
             k: result[k] for k in result
             if k != "refresh_in"  # MSAL handled refresh_in, customers need not
             and not k.startswith('_')  # Skim internal properties
             }
+        if "refresh_in" in result:  # To encourage proactive refresh
+            return_value["refresh_on"] = int(time.time() + result["refresh_in"])
+        return return_value
     return result  # It could be None
 
 
@@ -206,54 +235,107 @@ class ClientApplication(object):
             instance_discovery=None,
             allow_broker=None,
             enable_pii_log=None,
+            oidc_authority=None,
             ):
         """Create an instance of application.
 
-        :param str client_id: Your app has a client_id after you register it on AAD.
+        :param str client_id: Your app has a client_id after you register it on Microsoft Entra admin center.
 
-        :param Union[str, dict] client_credential:
-            For :class:`PublicClientApplication`, you simply use `None` here.
+        :param client_credential:
+            For :class:`PublicClientApplication`, you use `None` here.
+
             For :class:`ConfidentialClientApplication`,
-            it can be a string containing client secret,
-            or an X509 certificate container in this form::
+            it supports many different input formats for different scenarios.
 
-                {
-                    "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
-                    "thumbprint": "A1B2C3D4E5F6...",
-                    "public_certificate": "...-----BEGIN CERTIFICATE-----... (Optional. See below.)",
-                    "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
-                }
+            .. admonition:: Support using a client secret.
 
-            MSAL Python requires a "private_key" in PEM format.
-            If your cert is in a PKCS12 (.pfx) format, you can also
-            `convert it to PEM and get the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L101-L123>`_.
+                Just feed in a string, such as ``"your client secret"``.
 
-            The thumbprint is available in your app's registration in Azure Portal.
-            Alternatively, you can `calculate the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L94-L97>`_.
+            .. admonition:: Support using a certificate in X.509 (.pem) format
 
-            *Added in version 0.5.0*:
-            public_certificate (optional) is public key certificate
-            which will be sent through 'x5c' JWT header only for
-            subject name and issuer authentication to support cert auto rolls.
+                Feed in a dict in this form::
 
-            Per `specs <https://tools.ietf.org/html/rfc7515#section-4.1.6>`_,
-            "the certificate containing
-            the public key corresponding to the key used to digitally sign the
-            JWS MUST be the first certificate.  This MAY be followed by
-            additional certificates, with each subsequent certificate being the
-            one used to certify the previous one."
-            However, your certificate's issuer may use a different order.
-            So, if your attempt ends up with an error AADSTS700027 -
-            "The provided signature value did not match the expected signature value",
-            you may try use only the leaf cert (in PEM/str format) instead.
+                    {
+                        "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
+                        "thumbprint": "A1B2C3D4E5F6...",
+                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
+                    }
 
-            *Added in version 1.13.0*:
-            It can also be a completely pre-signed assertion that you've assembled yourself.
-            Simply pass a container containing only the key "client_assertion", like this::
+                MSAL Python requires a "private_key" in PEM format.
+                If your cert is in PKCS12 (.pfx) format,
+                you can convert it to X.509 (.pem) format,
+                by ``openssl pkcs12 -in file.pfx -out file.pem -nodes``.
 
-                {
-                    "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
-                }
+                The thumbprint is available in your app's registration in Azure Portal.
+                Alternatively, you can `calculate the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L94-L97>`_.
+
+            .. admonition:: Support Subject Name/Issuer Auth with a cert in .pem
+
+                `Subject Name/Issuer Auth
+                <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
+                is an approach to allow easier certificate rotation.
+
+                *Added in version 0.5.0*::
+
+                    {
+                        "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
+                        "thumbprint": "A1B2C3D4E5F6...",
+                        "public_certificate": "...-----BEGIN CERTIFICATE-----...",
+                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
+                    }
+
+                ``public_certificate`` (optional) is public key certificate
+                which will be sent through 'x5c' JWT header only for
+                subject name and issuer authentication to support cert auto rolls.
+
+                Per `specs <https://tools.ietf.org/html/rfc7515#section-4.1.6>`_,
+                "the certificate containing
+                the public key corresponding to the key used to digitally sign the
+                JWS MUST be the first certificate.  This MAY be followed by
+                additional certificates, with each subsequent certificate being the
+                one used to certify the previous one."
+                However, your certificate's issuer may use a different order.
+                So, if your attempt ends up with an error AADSTS700027 -
+                "The provided signature value did not match the expected signature value",
+                you may try use only the leaf cert (in PEM/str format) instead.
+
+            .. admonition:: Supporting raw assertion obtained from elsewhere
+
+                *Added in version 1.13.0*:
+                It can also be a completely pre-signed assertion that you've assembled yourself.
+                Simply pass a container containing only the key "client_assertion", like this::
+
+                    {
+                        "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
+                    }
+
+            .. admonition:: Supporting reading client cerficates from PFX files
+
+                *Added in version 1.29.0*:
+                Feed in a dictionary containing the path to a PFX file::
+
+                    {
+                        "private_key_pfx_path": "/path/to/your.pfx",
+                        "passphrase": "Passphrase if the private_key is encrypted (Optional)",
+                    }
+
+                The following command will generate a .pfx file from your .key and .pem file::
+
+                    openssl pkcs12 -export -out certificate.pfx -inkey privateKey.key -in certificate.pem
+
+            .. admonition:: Support Subject Name/Issuer Auth with a cert in .pfx
+
+                *Added in version 1.30.0*:
+                If your .pfx file contains both the private key and public cert,
+                you can opt in for Subject Name/Issuer Auth like this::
+
+                    {
+                        "private_key_pfx_path": "/path/to/your.pfx",
+                        "public_certificate": True,
+                        "passphrase": "Passphrase if the private_key is encrypted (Optional)",
+                    }
+
+        :type client_credential: Union[dict, str, None]
 
         :param dict client_claims:
             *Added in version 0.5.0*:
@@ -331,9 +413,11 @@ class ClientApplication(object):
             (STS) what this client is capable for,
             so STS can decide to turn on certain features.
             For example, if client is capable to handle *claims challenge*,
-            STS can then issue CAE access tokens to resources
-            knowing when the resource emits *claims challenge*
-            the client will be capable to handle.
+            STS may issue
+            `Continuous Access Evaluation (CAE) <https://learn.microsoft.com/entra/identity/conditional-access/concept-continuous-access-evaluation>`_
+            access tokens to resources,
+            knowing that when the resource emits a *claims challenge*
+            the client will be able to handle those challenges.
 
             Implementation details:
             Client capability is implemented using "claims" parameter on the wire,
@@ -457,6 +541,15 @@ class ClientApplication(object):
             The default behavior is False.
 
             New in version 1.24.0.
+
+        :param str oidc_authority:
+            *Added in version 1.28.0*:
+            It is a URL that identifies an OpenID Connect (OIDC) authority of
+            the format ``https://contoso.com/tenant``.
+            MSAL will append ".well-known/openid-configuration" to the authority
+            and retrieve the OIDC metadata from there, to figure out the endpoints.
+
+            Note: Broker will NOT be used for OIDC authority.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -494,13 +587,19 @@ class ClientApplication(object):
             self.http_client.mount("https://", a)
         self.http_client = ThrottledHttpClient(
             self.http_client,
-            {} if http_cache is None else http_cache,  # Default to an in-memory dict
+            http_cache=http_cache,
+            default_throttle_time=60
+                # The default value 60 was recommended mainly for PCA at the end of
+                # https://identitydivision.visualstudio.com/devex/_git/AuthLibrariesApiReview?version=GBdev&path=%2FService%20protection%2FIntial%20set%20of%20protection%20measures.md&_a=preview
+                if isinstance(self, PublicClientApplication) else 5,
             )
 
         self.app_name = app_name
         self.app_version = app_version
 
         # Here the self.authority will not be the same type as authority in input
+        if oidc_authority and authority:
+            raise ValueError("You can not provide both authority and oidc_authority")
         try:
             authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
             self.authority = Authority(
@@ -508,11 +607,12 @@ class ClientApplication(object):
                 self.http_client,
                 validate_authority=validate_authority,
                 instance_discovery=self._instance_discovery,
+                oidc_authority_url=oidc_authority,
                 )
         except ValueError:  # Those are explicit authority validation errors
             raise
         except Exception:  # The rest are typically connection errors
-            if validate_authority and azure_region:
+            if validate_authority and azure_region and not oidc_authority:
                 # Since caller opts in to use region, here we tolerate connection
                 # errors happened during authority validation at non-region endpoint
                 self.authority = Authority(
@@ -580,8 +680,12 @@ class ClientApplication(object):
             # We could make the developer pass these and then if they do they will
             # come back asking why they don't see refresh token or user information.
             raise ValueError(
-                "API does not accept {} value as user-provided scopes".format(
-                    reserved_scope))
+                """You cannot use any scope value that is reserved.
+Your input: {}
+The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
+            raise ValueError(
+                "You cannot use any scope value that is in this reserved list: {}".format(
+                    list(reserved_scope)))
 
         # client_id can also be used as a scope in B2C
         decorated = scope_set | reserved_scope
@@ -640,29 +744,52 @@ class ClientApplication(object):
             default_headers['x-app-ver'] = self.app_version
         default_body = {"client_info": 1}
         if isinstance(client_credential, dict):
-            assert (("private_key" in client_credential
-                    and "thumbprint" in client_credential) or
-                    "client_assertion" in client_credential)
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT
-            if 'client_assertion' in client_credential:
+            # Use client_credential.get("...") rather than "..." in client_credential
+            # so that we can ignore an empty string came from an empty ENV VAR.
+            if client_credential.get("client_assertion"):
                 client_assertion = client_credential['client_assertion']
             else:
                 headers = {}
-                if 'public_certificate' in client_credential:
-                    headers["x5c"] = extract_certs(client_credential['public_certificate'])
-                if not client_credential.get("passphrase"):
-                    unencrypted_private_key = client_credential['private_key']
+                sha1_thumbprint = sha256_thumbprint = None
+                passphrase_bytes = _str2bytes(
+                    client_credential["passphrase"]
+                    ) if client_credential.get("passphrase") else None
+                if client_credential.get("private_key_pfx_path"):
+                    private_key, sha256_thumbprint, sha1_thumbprint, x5c = _parse_pfx(
+                        client_credential["private_key_pfx_path"],
+                        passphrase_bytes)
+                    if client_credential.get("public_certificate") is True and x5c:
+                        headers["x5c"] = x5c
+                elif (
+                        client_credential.get("private_key")  # PEM blob
+                        and client_credential.get("thumbprint")):
+                    sha1_thumbprint = client_credential["thumbprint"]
+                    if passphrase_bytes:
+                        private_key = _load_private_key_from_pem_str(
+                            client_credential['private_key'], passphrase_bytes)
+                    else:  # PEM without passphrase
+                        private_key = client_credential['private_key']
                 else:
-                    from cryptography.hazmat.primitives import serialization
-                    from cryptography.hazmat.backends import default_backend
-                    unencrypted_private_key = serialization.load_pem_private_key(
-                        _str2bytes(client_credential["private_key"]),
-                        _str2bytes(client_credential["passphrase"]),
-                        backend=default_backend(),  # It was a required param until 2020
-                        )
+                    raise ValueError(
+                        "client_credential needs to follow this format "
+                        "https://msal-python.readthedocs.io/en/latest/#msal.ClientApplication.params.client_credential")
+                if ("x5c" not in headers  # So the .pfx file contains no certificate
+                    and isinstance(client_credential.get('public_certificate'), str)
+                ):  # Then we treat the public_certificate value as PEM content
+                    headers["x5c"] = extract_certs(client_credential['public_certificate'])
+                if sha256_thumbprint and not authority.is_adfs:
+                    assertion_params = {
+                        "algorithm": "PS256", "sha256_thumbprint": sha256_thumbprint,
+                    }
+                else:  # Fall back
+                    if not sha1_thumbprint:
+                        raise ValueError("You shall provide a thumbprint in SHA1.")
+                    assertion_params = {
+                        "algorithm": "RS256", "sha1_thumbprint": sha1_thumbprint,
+                    }
                 assertion = JwtAssertionCreator(
-                    unencrypted_private_key, algorithm="RS256",
-                    sha1_thumbprint=client_credential.get("thumbprint"), headers=headers)
+                    private_key, headers=headers, **assertion_params)
                 client_assertion = assertion.create_regenerative_assertion(
                     audience=authority.token_endpoint, issuer=self.client_id,
                     additional_claims=self.client_claims or {})
@@ -671,9 +798,7 @@ class ClientApplication(object):
         central_configuration = {
             "authorization_endpoint": authority.authorization_endpoint,
             "token_endpoint": authority.token_endpoint,
-            "device_authorization_endpoint":
-                authority.device_authorization_endpoint or
-                urljoin(authority.token_endpoint, "devicecode"),
+            "device_authorization_endpoint": authority.device_authorization_endpoint,
             }
         central_client = _ClientWithCcsRoutingInfo(
             central_configuration,
@@ -697,8 +822,7 @@ class ClientApplication(object):
                     "authorization_endpoint": regional_authority.authorization_endpoint,
                     "token_endpoint": regional_authority.token_endpoint,
                     "device_authorization_endpoint":
-                        regional_authority.device_authorization_endpoint or
-                        urljoin(regional_authority.token_endpoint, "devicecode"),
+                        regional_authority.device_authorization_endpoint,
                     }
                 regional_client = _ClientWithCcsRoutingInfo(
                     regional_configuration,
@@ -741,10 +865,11 @@ class ClientApplication(object):
             maintain state between the request and callback.
             If absent, this library will automatically generate one internally.
         :param str prompt:
-            By default, no prompt value will be sent, not even "none".
+            By default, no prompt value will be sent, not even string ``"none"``.
             You will have to specify a value explicitly.
-            Its valid values are defined in Open ID Connect specs
-            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+            Its valid values are the constants defined in
+            :class:`Prompt <msal.Prompt>`.
+
         :param str login_hint:
             Optional. Identifier of the user. Generally a User Principal Name (UPN).
         :param domain_hint:
@@ -844,10 +969,10 @@ class ClientApplication(object):
             `not recommended <https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-implicit-grant-flow#is-the-implicit-grant-suitable-for-my-app>`_.
 
         :param str prompt:
-            By default, no prompt value will be sent, not even "none".
+            By default, no prompt value will be sent, not even string ``"none"``.
             You will have to specify a value explicitly.
-            Its valid values are defined in Open ID Connect specs
-            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+            Its valid values are the constants defined in
+            :class:`Prompt <msal.Prompt>`.
         :param nonce:
             A cryptographically random value used to mitigate replay attacks. See also
             `OIDC specs <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
@@ -919,7 +1044,7 @@ class ClientApplication(object):
             OAuth2 was designed mostly for singleton services,
             where tokens are always meant for the same resource and the only
             changes are in the scopes.
-            In AAD, tokens can be issued for multiple 3rd party resources.
+            In Microsoft Entra, tokens can be issued for multiple 3rd party resources.
             You can ask authorization code for multiple resources,
             but when you redeem it, the token is for only one intended
             recipient, called audience.
@@ -989,7 +1114,7 @@ class ClientApplication(object):
             OAuth2 was designed mostly for singleton services,
             where tokens are always meant for the same resource and the only
             changes are in the scopes.
-            In AAD, tokens can be issued for multiple 3rd party resources.
+            In Microsoft Entra, tokens can be issued for multiple 3rd party resources.
             You can ask authorization code for multiple resources,
             but when you redeem it, the token is for only one intended
             recipient, called audience.
@@ -1007,7 +1132,7 @@ class ClientApplication(object):
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -1096,7 +1221,7 @@ class ClientApplication(object):
                     "local_account_id": a.get("local_account_id"),  # Tenant-specific
                     "realm": a.get("realm"),  # Tenant-specific
                 }
-            for a in self.token_cache.find(
+            for a in self.token_cache.search(
                 TokenCache.CredentialType.ACCOUNT,
                 query={"environment": environment})
             if a["authority_type"] in interested_authority_types
@@ -1127,12 +1252,13 @@ class ClientApplication(object):
 
     def remove_account(self, account):
         """Sign me out and forget me from token cache"""
-        self._forget_me(account)
         if self._enable_broker:
             from .broker import _signout_silently
             error = _signout_silently(self.client_id, account["local_account_id"])
             if error:
                 logger.debug("_signout_silently() returns error: %s", error)
+        # Broker sign-out has been attempted, even if the _forget_me() below throws.
+        self._forget_me(account)
 
     def _sign_out(self, home_account):
         # Remove all relevant RTs and ATs from token cache
@@ -1141,18 +1267,22 @@ class ClientApplication(object):
             "home_account_id": home_account["home_account_id"],}  # realm-independent
         app_metadata = self._get_app_metadata(home_account["environment"])
         # Remove RTs/FRTs, and they are realm-independent
-        for rt in [rt for rt in self.token_cache.find(
+        for rt in [  # Remove RTs from a static list (rather than from a dynamic generator),
+                    # to avoid changing self.token_cache while it is being iterated
+            rt for rt in self.token_cache.search(
                 TokenCache.CredentialType.REFRESH_TOKEN, query=owned_by_home_account)
                 # Do RT's app ownership check as a precaution, in case family apps
                 # and 3rd-party apps share same token cache, although they should not.
                 if rt["client_id"] == self.client_id or (
                     app_metadata.get("family_id")  # Now let's settle family business
                     and rt.get("family_id") == app_metadata["family_id"])
-                ]:
+        ]:
             self.token_cache.remove_rt(rt)
-        for at in self.token_cache.find(  # Remove ATs
-                # Regardless of realm, b/c we've removed realm-independent RTs anyway
-                TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_home_account):
+        for at in list(self.token_cache.search(  # Remove ATs from a static list,
+                # to avoid changing self.token_cache while it is being iterated
+            TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_home_account,
+            # Regardless of realm, b/c we've removed realm-independent RTs anyway
+        )):
             # To avoid the complexity of locating sibling family app's AT,
             # we skip AT's app ownership check.
             # It means ATs for other apps will also be removed, it is OK because:
@@ -1166,11 +1296,15 @@ class ClientApplication(object):
         owned_by_home_account = {
             "environment": home_account["environment"],
             "home_account_id": home_account["home_account_id"],}  # realm-independent
-        for idt in self.token_cache.find(  # Remove IDTs, regardless of realm
-                TokenCache.CredentialType.ID_TOKEN, query=owned_by_home_account):
+        for idt in list(self.token_cache.search(  # Remove IDTs from a static list,
+                # to avoid changing self.token_cache while it is being iterated
+            TokenCache.CredentialType.ID_TOKEN, query=owned_by_home_account, # regardless of realm
+        )):
             self.token_cache.remove_idt(idt)
-        for a in self.token_cache.find(  # Remove Accounts, regardless of realm
-                TokenCache.CredentialType.ACCOUNT, query=owned_by_home_account):
+        for a in list(self.token_cache.search(  # Remove Accounts from a static list,
+                # to avoid changing self.token_cache while it is being iterated
+            TokenCache.CredentialType.ACCOUNT, query=owned_by_home_account,  # regardless of realm
+        )):
             self.token_cache.remove_account(a)
 
     def _acquire_token_by_cloud_shell(self, scopes, data=None):
@@ -1303,12 +1437,12 @@ class ClientApplication(object):
             return result
         final_result = result
         for alias in self._get_authority_aliases(self.authority.instance):
-            if not self.token_cache.find(
+            if not list(self.token_cache.search(  # Need a list to test emptiness
                     self.token_cache.CredentialType.REFRESH_TOKEN,
                     # target=scopes,  # MUST NOT filter by scopes, because:
                         # 1. AAD RTs are scope-independent;
                         # 2. therefore target is optional per schema;
-                    query={"environment": alias}):
+                    query={"environment": alias})):
                 # Skip heavy weight logic when RT for this alias doesn't exist
                 continue
             the_authority = Authority(
@@ -1361,13 +1495,16 @@ class ClientApplication(object):
             key_id = kwargs.get("data", {}).get("key_id")
             if key_id:  # Some token types (SSH-certs, POP) are bound to a key
                 query["key_id"] = key_id
-            matches = self.token_cache.find(
-                self.token_cache.CredentialType.ACCESS_TOKEN,
-                target=scopes,
-                query=query)
             now = time.time()
             refresh_reason = msal.telemetry.AT_ABSENT
-            for entry in matches:
+            for entry in self.token_cache.search(  # A generator allows us to
+                    # break early in cache-hit without finding a full list
+                self.token_cache.CredentialType.ACCESS_TOKEN,
+                target=scopes,
+                query=query,
+            ):  # This loop is about token search, not about token deletion.
+                # Note that search() holds a lock during this loop;
+                # that is fine because this loop is fast
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
                     refresh_reason = msal.telemetry.AT_EXPIRED
@@ -1379,9 +1516,11 @@ class ClientApplication(object):
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     self._TOKEN_SOURCE: self._TOKEN_SOURCE_CACHE,
                     }
-                if "refresh_on" in entry and int(entry["refresh_on"]) < now:  # aging
-                    refresh_reason = msal.telemetry.AT_AGING
-                    break  # With a fallback in hand, we break here to go refresh
+                if "refresh_on" in entry:
+                    access_token_from_cache["refresh_on"] = int(entry["refresh_on"])
+                    if int(entry["refresh_on"]) < now:  # aging
+                        refresh_reason = msal.telemetry.AT_AGING
+                        break  # With a fallback in hand, we break here to go refresh
                 self._build_telemetry_context(-1).hit_an_access_token()
                 return access_token_from_cache  # It is still good as new
         else:
@@ -1496,20 +1635,18 @@ class ClientApplication(object):
             **kwargs) or last_resp
 
     def _get_app_metadata(self, environment):
-        apps = self.token_cache.find(  # Use find(), rather than token_cache.get(...)
-            TokenCache.CredentialType.APP_METADATA, query={
-                "environment": environment, "client_id": self.client_id})
-        return apps[0] if apps else {}
+        return self.token_cache._get_app_metadata(
+            environment=environment, client_id=self.client_id, default={})
 
     def _acquire_token_silent_by_finding_specific_refresh_token(
             self, authority, scopes, query,
             rt_remover=None, break_condition=lambda response: False,
             refresh_reason=None, correlation_id=None, claims_challenge=None,
             **kwargs):
-        matches = self.token_cache.find(
+        matches = list(self.token_cache.search(  # We want a list to test emptiness
             self.token_cache.CredentialType.REFRESH_TOKEN,
             # target=scopes,  # AAD RTs are scope-independent
-            query=query)
+            query=query))
         logger.debug("Found %d RTs matching %s", len(matches), {
             k: _pii_less_home_account_id(v) if k == "home_account_id" and v else v
             for k, v in query.items()
@@ -1643,15 +1780,14 @@ class ClientApplication(object):
 
             New in version 1.26.0.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
-        if False:  # Disabled, for now. It was if self._enable_broker and sys.platform != "darwin":
-            # _signin_silently() won't work on Mac. We may revisit on whether it shall work on Windows.
+        if self._enable_broker:
             from .broker import _signin_silently
             response = _signin_silently(
                 "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -1751,7 +1887,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
             You may set enable_broker_on_windows and/or enable_broker_on_mac to True.
 
-            What is a broker, and why use it?
+            **What is a broker, and why use it?**
 
             A broker is a component installed on your device.
             Broker implicitly gives your device an identity. By using a broker,
@@ -1768,10 +1904,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             so that your broker-enabled apps (even a CLI)
             could automatically SSO from a previously established signed-in session.
 
-            ADFS and B2C do not support broker.
-            MSAL will automatically fallback to use browser.
-
-            You shall only enable broker when your app:
+            **You shall only enable broker when your app:**
 
             1. is running on supported platforms,
                and already registered their corresponding redirect_uri
@@ -1785,6 +1918,29 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                e.g. ``pip install msal[broker]>=1.27.0b2,<2``.
 
             3. tested with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
+
+            **The fallback behaviors of MSAL Python's broker support**
+
+            MSAL will either error out, or silently fallback to non-broker flows.
+
+            1. MSAL will ignore the `enable_broker_...` and bypass broker
+               on those auth flows that are known to be NOT supported by broker.
+               This includes ADFS, B2C, etc..
+               For other "could-use-broker" scenarios, please see below.
+            2. MSAL errors out when app developer opted-in to use broker
+               but a direct dependency "mid-tier" package is not installed.
+               Error message guides app developer to declare the correct dependency
+               ``msal[broker]``.
+               We error out here because the error is actionable to app developers.
+            3. MSAL silently "deactivates" the broker and fallback to non-broker,
+               when opted-in, dependency installed yet failed to initialize.
+               We anticipate this would happen on a device whose OS is too old
+               or the underlying broker component is somehow unavailable.
+               There is not much an app developer or the end user can do here.
+               Eventually, the conditional access policy shall
+               force the user to switch to a different device.
+            4. MSAL errors out when broker is opted in, installed, initialized,
+               but subsequent token request(s) failed.
 
         :param boolean enable_broker_on_windows:
             This setting is only effective if your app is running on Windows 10+.
@@ -1835,10 +1991,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         :param list scopes:
             It is a list of case-sensitive strings.
         :param str prompt:
-            By default, no prompt value will be sent, not even "none".
+            By default, no prompt value will be sent, not even string ``"none"``.
             You will have to specify a value explicitly.
-            Its valid values are defined in Open ID Connect specs
-            https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+            Its valid values are the constants defined in
+            :class:`Prompt <msal.Prompt>`.
         :param str login_hint:
             Optional. Identifier of the user. Generally a User Principal Name (UPN).
         :param domain_hint:
@@ -1866,7 +2022,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             (The rest of the redirect_uri is hard coded as ``http://localhost``.)
 
         :param list extra_scopes_to_consent:
-            "Extra scopes to consent" is a concept only available in AAD.
+            "Extra scopes to consent" is a concept only available in Microsoft Entra.
             It refers to other resources you might want to prompt to consent for,
             in the same interaction, but for which you won't get back a
             token for in this particular operation.
@@ -1900,6 +2056,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
               - If your app is running on Mac,
                 you can use a placeholder
                 ``PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
+
+            If your app is a console app (most Python scripts are console apps),
+            you can use a placeholder value ``msal.PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
 
             New in version 1.20.0.
 
@@ -1969,7 +2128,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             return self._process_broker_response(response, scopes, data)
 
         if auth_scheme:
-            raise ValueError("auth_scheme is currently only available from broker")
+            raise ValueError(self._AUTH_SCHEME_UNSUPPORTED)
         on_before_launching_ui(ui="browser")
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_INTERACTIVE)
@@ -2118,7 +2277,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -2163,7 +2322,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
@@ -2202,6 +2361,20 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         telemetry_context.update_telemetry(response)
         return response
 
+    def remove_tokens_for_client(self):
+        """Remove all tokens that were previously acquired via
+        :func:`~acquire_token_for_client()` for the current client."""
+        for env in [self.authority.instance] + self._get_authority_aliases(
+                self.authority.instance):
+            for at in list(self.token_cache.search(  # Remove ATs from a snapshot
+                TokenCache.CredentialType.ACCESS_TOKEN, query={
+                "client_id": self.client_id,
+                "environment": env,
+                "home_account_id": None,  # These are mostly app-only tokens
+            })):
+                self.token_cache.remove_at(at)
+        # acquire_token_for_client() obtains no RTs, so we have no RT to remove
+
     def acquire_token_on_behalf_of(self, user_assertion, scopes, claims_challenge=None, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
 
@@ -2223,7 +2396,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
 
-        :return: A dict representing the json response from AAD:
+        :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
