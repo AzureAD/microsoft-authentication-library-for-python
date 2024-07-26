@@ -424,7 +424,7 @@ def _obtain_token_on_azure_vm(http_client, managed_identity, resource):
                 "resource": payload.get("resource"),
                 "token_type": payload.get("token_type", "Bearer"),
                 }
-        return payload  # Typically an error, but it is undefined in the doc above
+        return payload  # It would be {"error": ..., "error_description": ...} according to https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/how-to-use-vm-token#error-handling
     except json.decoder.JSONDecodeError:
         logger.debug("IMDS emits unexpected payload: %s", resp.text)
         raise
