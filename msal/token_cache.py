@@ -363,11 +363,14 @@ class SerializableTokenCache(TokenCache):
 
     This class does NOT actually persist the cache on disk/db/etc..
     Depending on your need,
-    the following simple recipe for file-based persistence may be sufficient::
+    the following simple recipe for file-based, unencrypted persistence may be sufficient::
 
         import os, atexit, msal
         cache_filename = os.path.join(  # Persist cache into this file
-            os.getenv("XDG_RUNTIME_DIR", ""),  # Automatically wipe out the cache from Linux when user's ssh session ends. See also https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/690
+            os.getenv(
+                # Automatically wipe out the cache from Linux when user's ssh session ends.
+                # See also https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/690
+                "XDG_RUNTIME_DIR", ""),
             "my_cache.bin")
         cache = msal.SerializableTokenCache()
         if os.path.exists(cache_filename):
@@ -379,6 +382,10 @@ class SerializableTokenCache(TokenCache):
             )
         app = msal.ClientApplication(..., token_cache=cache)
         ...
+
+    Alternatively, you may use a more sophisticated cache persistence library,
+    `MSAL Extensions <https://github.com/AzureAD/microsoft-authentication-extensions-for-python>`_,
+    which provides token cache persistence with encryption, and more.
 
     :var bool has_state_changed:
         Indicates whether the cache state in the memory has changed since last
