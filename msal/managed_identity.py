@@ -316,6 +316,17 @@ def _scope_to_resource(scope):  # This is an experimental reasonable-effort appr
     return scope  # There is no much else we can do here
 
 
+def _get_arc_endpoint():
+    if "IDENTITY_ENDPOINT" in os.environ and "IMDS_ENDPOINT" in os.environ:
+        return os.environ["IDENTITY_ENDPOINT"]
+    if (  # Defined in https://msazure.visualstudio.com/One/_wiki/wikis/One.wiki/233012/VM-Extension-Authoring-for-Arc?anchor=determining-which-endpoint-to-use
+        sys.platform == "linux" and os.path.exists("/var/opt/azcmagent/bin/himds")
+        or sys.platform == "win32" and os.path.exists(os.path.expandvars(
+            r"%ProgramFiles%\AzureConnectedMachineAgent\himds.exe"))
+    ):
+        return "http://localhost:40342/metadata/identity/oauth2/token"
+
+
 APP_SERVICE = object()
 AZURE_ARC = object()
 CLOUD_SHELL = object()  # In MSAL Python, token acquisition was done by
@@ -338,7 +349,7 @@ def get_managed_identity_source():
         return APP_SERVICE
     if "MSI_ENDPOINT" in os.environ and "MSI_SECRET" in os.environ:
         return MACHINE_LEARNING
-    if "IDENTITY_ENDPOINT" in os.environ and "IMDS_ENDPOINT" in os.environ:
+    if _get_arc_endpoint():
         return AZURE_ARC
     if _is_running_in_cloud_shell():
         return CLOUD_SHELL
@@ -380,18 +391,15 @@ def _obtain_token(http_client, managed_identity, resource):
             managed_identity,
             resource,
         )
-    if "IDENTITY_ENDPOINT" in os.environ and "IMDS_ENDPOINT" in os.environ:
+    arc_endpoint = _get_arc_endpoint()
+    if arc_endpoint:
         if ManagedIdentity.is_user_assigned(managed_identity):
             raise ManagedIdentityError(  # Note: Azure Identity for Python raised exception too
                 "Invalid managed_identity parameter. "
                 "Azure Arc supports only system-assigned managed identity, "
                 "See also "
                 "https://learn.microsoft.com/en-us/azure/service-fabric/configure-existing-cluster-enable-managed-identity-token-service")
-        return _obtain_token_on_arc(
-            http_client,
-            os.environ["IDENTITY_ENDPOINT"],
-            resource,
-        )
+        return _obtain_token_on_arc(http_client, arc_endpoint, resource)
     return _obtain_token_on_azure_vm(http_client, managed_identity, resource)
 
 
