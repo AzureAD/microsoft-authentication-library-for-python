@@ -411,9 +411,11 @@ class ClientApplication(object):
             (STS) what this client is capable for,
             so STS can decide to turn on certain features.
             For example, if client is capable to handle *claims challenge*,
-            STS can then issue CAE access tokens to resources
-            knowing when the resource emits *claims challenge*
-            the client will be capable to handle.
+            STS may issue
+            `Continuous Access Evaluation (CAE) <https://learn.microsoft.com/entra/identity/conditional-access/concept-continuous-access-evaluation>`_
+            access tokens to resources,
+            knowing that when the resource emits a *claims challenge*
+            the client will be able to handle those challenges.
 
             Implementation details:
             Client capability is implemented using "claims" parameter on the wire,
