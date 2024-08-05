@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import urlparse  # Python 3+
 from collections import UserDict  # Python 3+
-from typing import Union  # Needed in Python 3.7 & 3.8
+from typing import Optional, Union  # Needed in Python 3.7 & 3.8
 from .token_cache import TokenCache
 from .individual_cache import _IndividualCache as IndividualCache
 from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
@@ -145,6 +145,9 @@ class ManagedIdentityClient(object):
         not a token with application permissions for an app.
     """
     __instance, _tenant = None, "managed_identity"  # Placeholders
+    _TOKEN_SOURCE = "token_source"
+    _TOKEN_SOURCE_IDP = "identity_provider"
+    _TOKEN_SOURCE_CACHE = "cache"
 
     def __init__(
         self,
@@ -237,11 +240,30 @@ class ManagedIdentityClient(object):
             self.__instance = socket.getfqdn()  # Moved from class definition to here
         return self.__instance
 
-    def acquire_token_for_client(self, *, resource):  # We may support scope in the future
+    def acquire_token_for_client(
+        self,
+        *,
+        resource: str,  # If/when we support scope, resource will become optional
+        claims_challenge: Optional[str] = None,
+    ):
         """Acquire token for the managed identity.
 
         The result will be automatically cached.
         Subsequent calls will automatically search from cache first.
+
+        :param resource: The resource for which the token is acquired.
+
+        :param claims_challenge:
+            Optional.
+            It is a string representation of a JSON object
+            (which contains lists of claims being requested).
+
+            The tenant admin may choose to revoke all Managed Identity tokens,
+            and then a *claims challenge* will be returned by the target resource,
+            as a `claims_challenge` directive in the `www-authenticate` header,
+            even if the app developer did not opt in for the "CP1" client capability.
+            Upon receiving a `claims_challenge`, MSAL will skip a token cache read,
+            and will attempt to acquire a new token.
 
         .. note::
 
@@ -255,8 +277,8 @@ class ManagedIdentityClient(object):
         access_token_from_cache = None
         client_id_in_cache = self._managed_identity.get(
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
-        if True:  # Does not offer an "if not force_refresh" option, because
-                  # there would be built-in token cache in the service side anyway
+        now = time.time()
+        if not claims_challenge:  # Then attempt token cache search
             matches = self._token_cache.find(
                 self._token_cache.CredentialType.ACCESS_TOKEN,
                 target=[resource],
@@ -267,7 +289,6 @@ class ManagedIdentityClient(object):
                     home_account_id=None,
                 ),
             )
-            now = time.time()
             for entry in matches:
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
@@ -277,6 +298,7 @@ class ManagedIdentityClient(object):
                     "access_token": entry["secret"],
                     "token_type": entry.get("token_type", "Bearer"),
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
+                    self._TOKEN_SOURCE: self._TOKEN_SOURCE_CACHE,
                 }
                 if "refresh_on" in entry:
                     access_token_from_cache["refresh_on"] = int(entry["refresh_on"])
@@ -300,6 +322,7 @@ class ManagedIdentityClient(object):
                 ))
                 if "refresh_in" in result:
                     result["refresh_on"] = int(now + result["refresh_in"])
+                result[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
         except:  # The exact HTTP exception is transportation-layer dependent

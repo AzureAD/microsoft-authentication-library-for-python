@@ -82,20 +82,17 @@ class ClientTestCase(unittest.TestCase):
         self.assertTrue(
             is_subdict_of(expected_result, result),  # We will test refresh_on later
             "Should obtain a token response")
+        self.assertTrue(result["token_source"], "identity_provider")
         self.assertEqual(expires_in, result["expires_in"], "Should have expected expires_in")
         if expires_in >= 7200:
             expected_refresh_on = int(time.time() + expires_in / 2)
             self.assertTrue(
                 expected_refresh_on - 1 <= result["refresh_on"] <= expected_refresh_on + 1,
                 "Should have a refresh_on time around the middle of the token's life")
-        self.assertEqual(
-            result["access_token"],
-            app.acquire_token_for_client(resource=resource).get("access_token"),
-            "Should hit the same token from cache")
-
-        self.assertCacheStatus(app)
 
         result = app.acquire_token_for_client(resource=resource)
+        self.assertCacheStatus(app)
+        self.assertEqual("cache", result["token_source"], "Should hit cache")
         self.assertEqual(
             call_count, mocked_http.call_count,
             "No new call to the mocked http should be made for a cache hit")
@@ -109,6 +106,9 @@ class ClientTestCase(unittest.TestCase):
             self.assertTrue(
                 expected_refresh_on - 5 < result["refresh_on"] <= expected_refresh_on,
                 "Should have a refresh_on time around the middle of the token's life")
+
+        result = app.acquire_token_for_client(resource=resource, claims_challenge="foo")
+        self.assertEqual("identity_provider", result["token_source"], "Should miss cache")
 
 
 class VmTestCase(ClientTestCase):
@@ -249,7 +249,8 @@ class ArcTestCase(ClientTestCase):
                 status_code=200,
                 text='{"access_token": "AT", "expires_in": "%s", "resource": "R"}' % expires_in,
                 ),
-        ]) as mocked_method:
+            ] * 2,  # Duplicate a pair of mocks for _test_happy_path()'s CAE check
+        ) as mocked_method:
             try:
                 self._test_happy_path(self.app, mocked_method, expires_in)
                 mocked_stat.assert_called_with(os.path.join(
