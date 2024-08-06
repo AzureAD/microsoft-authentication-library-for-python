@@ -16,6 +16,7 @@ import os
 import json
 import time
 import unittest
+from urllib.parse import urlparse, parse_qs
 import sys
 try:
     from unittest.mock import patch, ANY
@@ -1005,7 +1006,10 @@ class CiamTestCase(LabBasedTestCase):
     @classmethod
     def setUpClass(cls):
         super(CiamTestCase, cls).setUpClass()
-        cls.user = cls.get_lab_user(federationProvider="ciam")
+        cls.user = cls.get_lab_user(
+            #federationProvider="ciam",  # This line would return ciam2 tenant
+            federationProvider="ciamcud", signinAudience="AzureAdMyOrg",  # ciam6
+        )
         # FYI: Only single- or multi-tenant CIAM app can have other-than-OIDC
         # delegated permissions on Microsoft Graph.
         cls.app_config = cls.get_lab_app_object(cls.user["client_id"])
@@ -1020,13 +1024,17 @@ class CiamTestCase(LabBasedTestCase):
             )
 
     def test_ciam_acquire_token_for_client(self):
+        raw_url = self.app_config["clientSecret"]
+        secret_url = urlparse(raw_url)
+        if secret_url.query:  # Ciam2 era has a query param Secret=name
+            secret_name = parse_qs(secret_url.query)["Secret"][0]
+        else:  # Ciam6 era has a URL path that ends with the secret name
+            secret_name = secret_url.path.split("/")[-1]
+        logger.info('Detected secret name "%s" from "%s"', secret_name, raw_url)
         self._test_acquire_token_by_client_secret(
             client_id=self.app_config["appId"],
-            client_secret=self.get_lab_user_secret(
-                self.app_config["clientSecret"].split("=")[-1]),
+            client_secret=self.get_lab_user_secret(secret_name),
             authority=self.app_config["authority"],
-            #scope=["{}/.default".format(self.app_config["appId"])],  # AADSTS500207: The account type can't be used for the resource you're trying to access.
-            #scope=["api://{}/.default".format(self.app_config["appId"])],  # AADSTS500011: The resource principal named api://ced781e7-bdb0-4c99-855c-d3bacddea88a was not found in the tenant named MSIDLABCIAM2. This can happen if the application has not been installed by the administrator of the tenant or consented to by any user in the tenant. You might have sent your authentication request to the wrong tenant.
             scope=self.app_config["scopes"],  # It shall ends with "/.default"
             )
 
@@ -1046,6 +1054,8 @@ class CiamTestCase(LabBasedTestCase):
             scope=self.app_config["scopes"],
             )
 
+    @unittest.skip("""As of Aug 2024, in both ciam2 and ciam6, sign-in fails with
+AADSTS500208: The domain is not a valid login domain for the account type.""")
     def test_ciam_device_flow(self):
         self._test_device_flow(
             authority=self.app_config["authority"],
