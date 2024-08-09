@@ -2047,13 +2047,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             * If your app opts in to use broker,
               ``parent_window_handle`` is required.
 
-              - If your app is a GUI app running on modern Windows system,
+              - If your app is a GUI app running on Windows or Mac system,
                 you are required to also provide its window handle,
                 so that the sign-in window will pop up on top of your window.
-              - If your app is a console app running on Windows system,
-                you can use a placeholder
-                ``PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
-              - If your app is running on Mac,
+              - If your app is a console app running on Windows or Mac system,
                 you can use a placeholder
                 ``PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
 
