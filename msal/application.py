@@ -26,6 +26,11 @@ __version__ = "1.30.0"  # When releasing, also check and bump our dependencies's
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
 
+def _init_broker(enable_pii_log):  # Make it a function to allow mocking
+    from . import broker  # Trigger Broker's initialization, lazily
+    if enable_pii_log:
+        broker._enable_pii_log()
+
 def extract_certs(public_cert_content):
     # Parses raw public certificate file contents and returns a list of strings
     # Usage: headers = {"x5c": extract_certs(open("my_cert.pem").read())}
@@ -655,9 +660,7 @@ class ClientApplication(object):
         if (self._enable_broker and not is_confidential_app
                 and not self.authority.is_adfs and not self.authority._is_b2c):
             try:
-                from . import broker  # Trigger Broker's initialization
-                if enable_pii_log:
-                    broker._enable_pii_log()
+                _init_broker(enable_pii_log)
             except RuntimeError:
                 self._enable_broker = False
                 logger.exception(
