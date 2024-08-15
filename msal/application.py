@@ -221,8 +221,6 @@ class ClientApplication(object):
         "You can enable broker by following these instructions. "
         "https://msal-python.readthedocs.io/en/latest/#publicclientapplication")
 
-    _enable_broker = False
-
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
@@ -651,14 +649,22 @@ class ClientApplication(object):
                 "enable_broker_on_windows=True, "
                 "enable_broker_on_mac=...)",
                 DeprecationWarning)
-        self._enable_broker = self._enable_broker or (
+        opted_in_for_broker = (
+            self._enable_broker  # True means Opted-in from PCA
+            or (
             # When we started the broker project on Windows platform,
             # the allow_broker was meant to be cross-platform. Now we realize
             # that other platforms have different redirect_uri requirements,
             # so the old allow_broker is deprecated and will only for Windows.
             allow_broker and sys.platform == "win32")
-        if (self._enable_broker and not is_confidential_app
-                and not self.authority.is_adfs and not self.authority._is_b2c):
+        )
+        self._enable_broker = (  # This same variable will also store the state
+            opted_in_for_broker
+            and not is_confidential_app
+            and not self.authority.is_adfs
+            and not self.authority._is_b2c
+        )
+        if self._enable_broker:
             try:
                 _init_broker(enable_pii_log)
             except RuntimeError:
