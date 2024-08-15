@@ -26,6 +26,11 @@ __version__ = "1.30.0"  # When releasing, also check and bump our dependencies's
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
 
+def _init_broker(enable_pii_log):  # Make it a function to allow mocking
+    from . import broker  # Trigger Broker's initialization, lazily
+    if enable_pii_log:
+        broker._enable_pii_log()
+
 def extract_certs(public_cert_content):
     # Parses raw public certificate file contents and returns a list of strings
     # Usage: headers = {"x5c": extract_certs(open("my_cert.pem").read())}
@@ -215,8 +220,6 @@ class ClientApplication(object):
         "auth_scheme is currently only available from broker. "
         "You can enable broker by following these instructions. "
         "https://msal-python.readthedocs.io/en/latest/#publicclientapplication")
-
-    _enable_broker = False
 
     def __init__(
             self, client_id,
@@ -646,18 +649,24 @@ class ClientApplication(object):
                 "enable_broker_on_windows=True, "
                 "enable_broker_on_mac=...)",
                 DeprecationWarning)
-        self._enable_broker = self._enable_broker or (
+        opted_in_for_broker = (
+            self._enable_broker  # True means Opted-in from PCA
+            or (
             # When we started the broker project on Windows platform,
             # the allow_broker was meant to be cross-platform. Now we realize
             # that other platforms have different redirect_uri requirements,
             # so the old allow_broker is deprecated and will only for Windows.
             allow_broker and sys.platform == "win32")
-        if (self._enable_broker and not is_confidential_app
-                and not self.authority.is_adfs and not self.authority._is_b2c):
+        )
+        self._enable_broker = (  # This same variable will also store the state
+            opted_in_for_broker
+            and not is_confidential_app
+            and not self.authority.is_adfs
+            and not self.authority._is_b2c
+        )
+        if self._enable_broker:
             try:
-                from . import broker  # Trigger Broker's initialization
-                if enable_pii_log:
-                    broker._enable_pii_log()
+                _init_broker(enable_pii_log)
             except RuntimeError:
                 self._enable_broker = False
                 logger.exception(

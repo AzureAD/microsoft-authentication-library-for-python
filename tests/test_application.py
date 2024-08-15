@@ -1,11 +1,16 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
+import json
+import logging
 import sys
 import time
-from msal.application import *
-from msal.application import _str2bytes
+from unittest.mock import patch, Mock
 import msal
-from msal.application import _merge_claims_challenge_and_capabilities
+from msal.application import (
+    extract_certs,
+    ClientApplication, PublicClientApplication, ConfidentialClientApplication,
+    _str2bytes, _merge_claims_challenge_and_capabilities,
+)
 from tests import unittest
 from tests.test_token_cache import build_id_token, build_response
 from tests.http_client import MinimalHttpClient, MinimalResponse
@@ -721,4 +726,64 @@ class TestScopeDecoration(unittest.TestCase):
     def test_client_id_should_be_a_valid_scope(self):
         self._test_client_id_should_be_a_valid_scope("client_id", [])
         self._test_client_id_should_be_a_valid_scope("client_id", ["foo"])
+
+
+@patch("sys.platform", new="darwin")  # Pretend running on Mac.
+@patch("msal.authority.tenant_discovery", new=Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    }))
+@patch("msal.application._init_broker", new=Mock())  # Allow testing without pymsalruntime
+class TestBrokerFallback(unittest.TestCase):
+
+    def test_broker_should_be_disabled_by_default(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_broker_should_be_enabled_when_opted_in(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertTrue(app._enable_broker)
+
+    def test_should_fallback_to_non_broker_when_using_adfs(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://contoso.com/adfs",
+            #instance_discovery=False,  # Automatically skipped when detected ADFS
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_should_fallback_to_non_broker_when_using_b2c(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://contoso.b2clogin.com/contoso/policy",
+            #instance_discovery=False,  # Automatically skipped when detected B2C
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_should_use_broker_when_disabling_instance_discovery(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://contoso.com/path",
+            instance_discovery=False,  # Need this for a generic authority url
+            enable_broker_on_mac=True,
+            )
+        # TODO: Shall we bypass broker when opted out of instance discovery?
+        self.assertTrue(app._enable_broker)  # Current implementation enables broker
+
+    def test_should_fallback_to_non_broker_when_using_oidc_authority(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            oidc_authority="https://contoso.com/path",
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
 
