@@ -1,4 +1,5 @@
-﻿import json
+﻿import hashlib
+import json
 import threading
 import time
 import logging
@@ -61,6 +62,7 @@ class TokenCache(object):
                         realm=None, target=None,
                         # Note: New field(s) can be added here
                         #key_id=None,
+                        req_ds_cnf=None,
                         **ignored_payload_from_a_real_token:
                     "-".join([  # Note: Could use a hash here to shorten key length
                         home_account_id or "",
@@ -70,6 +72,13 @@ class TokenCache(object):
                         realm or "",
                         target or "",
                         #key_id or "",  # So ATs of different key_id can coexist
+                        hashlib.sha256(req_ds_cnf.encode()).hexdigest()
+                            # TODO: Could hash the entire key eventually.
+                            #       But before that project, we better first
+                            #       change the scope to use input scope
+                            #       instead of response scope,
+                            #       so that a search() can probably have O(1) hit.
+                            if req_ds_cnf else "",  # CDT
                         ]).lower(),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
@@ -267,10 +276,13 @@ class TokenCache(object):
                     "expires_on": str(now + expires_in),  # Same here
                     "extended_expires_on": str(now + ext_expires_in)  # Same here
                     }
+                if response.get("xms_ds_nonce"):  # Available for CDT
+                    at["xms_ds_nonce"] = response["xms_ds_nonce"]
                 at.update({k: data[k] for k in data if k in {
                     # Also store extra data which we explicitly allow
                     # So that we won't accidentally store a user's password etc.
                     "key_id",  # It happens in SSH-cert or POP scenario
+                    "req_ds_cnf",  # Used in CDT
                 }})
                 if "refresh_in" in response:
                     refresh_in = response["refresh_in"]  # It is an integer

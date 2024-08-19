@@ -11,6 +11,7 @@ from msal.application import (
     ClientApplication, PublicClientApplication, ConfidentialClientApplication,
     _str2bytes, _merge_claims_challenge_and_capabilities,
 )
+from msal.oauth2cli.oidc import decode_part
 from tests import unittest
 from tests.test_token_cache import build_id_token, build_response
 from tests.http_client import MinimalHttpClient, MinimalResponse
@@ -855,4 +856,86 @@ class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
                 parent_window_handle=app.CONSOLE_WINDOW_HANDLE,
                 )
             self.assertEqual(result.get("error"), "broker_error")
+
+
+class CdtTestCase(unittest.TestCase):
+
+    def createConstraint(self, typ: str, action: str, targets: list[str]) -> dict:
+        return {"ver": "1.0", "typ": typ, "a": action, "target": [
+            {"val": t} for t in targets
+        ]}
+
+    def test_constraint_format(self):
+        self.assertEqual([
+             self.createConstraint("ns:usr", "create", ["guid1", "guid2"]),
+             self.createConstraint("ns:app", "update", ["guid3", "guid4"]),
+             self.createConstraint("ns:subscription", "read", ["guid5", "guid6"]),
+         ], [  # Format defined in https://microsoft-my.sharepoint-df.com/:w:/p/rohitshende/EZgP9niwOvhKn-CUbj1NgG4BTZ6FSD9_16vXvsaXTiUzkg?e=j5DcQu&nav=eyJoIjoiODU5NDAyNjI4In0
+            {"ver": "1.0", "typ": "ns:usr", "a": "create", "target": [
+                {"val": "guid1"}, {"val": "guid2"},
+                ],
+            },
+            {"ver": "1.0", "typ": "ns:app", "a": "update", "target": [
+                {"val": "guid3"}, {"val": "guid4"},
+                ],
+            },
+            {"ver": "1.0", "typ": "ns:subscription", "a": "read", "target": [
+                {"val": "guid5"}, {"val": "guid6"},
+                ],
+            },
+        ], "Constraint format is correct")  # MSAL actually accepts arbitrary JSON blob
+
+    def assertCdt(self, result: dict, constraints: list[dict]) -> None:
+        self.assertIsNotNone(
+            result.get("access_token"), "Encountered {}: {}".format(
+                result.get("error"), result.get("error_description")))
+        _expectancy = "The return value should look like a Bearer response"
+        self.assertEqual(result["token_type"], "Bearer", _expectancy)
+        self.assertNotIn("xms_ds_nonce", result, _expectancy)
+        headers = json.loads(decode_part(result["access_token"].split(".")[0]))
+        self.assertEqual(headers.get("typ"), "cdt+jwt", "typ should be cdt+jwt")
+        payload = json.loads(decode_part(result["access_token"].split(".")[1]))
+        self.assertIsNotNone(payload.get("t") and payload.get("c"))
+        cdt_envelope = json.loads(decode_part(payload["c"].split(".")[1]))
+        self.assertIn("xms_ds_nonce", cdt_envelope)
+        self.assertEqual(cdt_envelope["constraints"], constraints)
+
+    def assertAppObtainsCdt(self, client_app, scopes) -> None:
+        constraints1 = [self.createConstraint("ns:usr", "create", ["guid1"])]
+        result = client_app.acquire_token_for_client(
+            scopes, delegation_constraints=constraints1,
+        )
+        self.assertCdt(result, constraints1)
+
+        constraints2 = [self.createConstraint("ns:app", "update", ["guid2"])]
+        result = client_app.acquire_token_for_client(
+            scopes, delegation_constraints=constraints2,
+        )
+        self.assertEqual(result["token_source"], "cache", "App token Should hit cache")
+        self.assertCdt(result, constraints2)
+
+        result = client_app.acquire_token_for_client(
+            scopes, delegation_constraints=constraints2,
+            delegation_confirmation_key=client_app._get_rsa_key("new"),
+        )
+        self.assertEqual(
+            result["token_source"], "identity_provider",
+            "Different key should result in a new app token")
+        self.assertCdt(result, constraints2)
+
+    @patch("msal.authority.tenant_discovery", new=Mock(return_value={
+        "authorization_endpoint": "https://contoso.com/placeholder",
+        "token_endpoint": "https://contoso.com/placeholder",
+        }))
+    def test_acquire_token_for_client_should_return_a_cdt(self):
+        app = msal.ConfidentialClientApplication("id", client_credential="secret")
+        with patch.object(app.http_client, "post", return_value=MinimalResponse(
+            status_code=200, text=json.dumps({
+                "token_type": "Bearer",
+                "access_token": "app token",
+                "expires_in": 3600,
+                "xms_ds_nonce": "nonce",
+        }))) as mocked_post:
+            self.assertAppObtainsCdt(app, ["scope1", "scope2"])
+            mocked_post.assert_called_once()
 

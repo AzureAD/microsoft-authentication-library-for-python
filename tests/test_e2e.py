@@ -27,8 +27,10 @@ import requests
 
 import msal
 from tests.http_client import MinimalHttpClient, MinimalResponse
+from tests.test_application import CdtTestCase
 from msal.oauth2cli import AuthCodeReceiver
 from msal.oauth2cli.oidc import decode_part
+from msal.application import _build_req_cnf
 
 try:
     import pymsalruntime
@@ -533,7 +535,7 @@ class LabBasedTestCase(E2eTestCase):
         cls.session.close()
 
     @classmethod
-    def get_lab_app_object(cls, client_id=None, **query):  # https://msidlab.com/swagger/index.html
+    def get_lab_app_object(cls, client_id=None, **query) -> dict:  # https://msidlab.com/swagger/index.html
         url = "https://msidlab.com/api/app/{}".format(client_id or "")
         resp = cls.session.get(url, params=query)
         result = resp.json()[0]
@@ -791,12 +793,12 @@ class SshCertTestCase(PopWithExternalKeyTestCase):
         self._test_user_account()
 
 
-def _data_for_pop(key):
-    raw_req_cnf = json.dumps({"kid": key, "xms_ksl": "sw"})
+def _data_for_pop(key_id):
     return {  # Sampled from Azure CLI's plugin connectedk8s
         'token_type': 'pop',
-        'key_id': key,
-        "req_cnf": base64.urlsafe_b64encode(raw_req_cnf.encode('utf-8')).decode('utf-8').rstrip('='),
+        'key_id': key_id,
+        "req_cnf": _build_req_cnf(
+            {"kid": key_id, "xms_ksl": "sw"}, remove_padding=True),
             # Note: Sending raw_req_cnf without base64 encoding would result in an http 500 error
     }  # See also https://github.com/Azure/azure-cli-extensions/blob/main/src/connectedk8s/azext_connectedk8s/_clientproxyutils.py#L86-L92
 
@@ -815,6 +817,23 @@ class AtPopWithExternalKeyTestCase(PopWithExternalKeyTestCase):
 
     def test_user_account(self):
         self._test_user_account()
+
+
+class CdtTestCase(LabBasedTestCase, CdtTestCase):
+    def test_acquire_token_for_client_should_return_a_cdt(self):
+        resource = self.get_lab_app_object(  # This resource has opted in to CDT
+            publicClient="no", signinAudience="AzureAdMyOrg")
+        client_app = msal.ConfidentialClientApplication(
+            # Any CCA can use a CDT, as long as the resource opted in for a CDT
+            # Here we use the OBO app which is in same tenant as the resource.
+            os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
+            client_credential=os.getenv("LAB_OBO_CLIENT_SECRET"),
+            authority="{}{}.onmicrosoft.com".format(
+                resource["authority"],
+                resource["labName"].lower().rstrip(".com"),
+                ),
+            )
+        self.assertAppObtainsCdt(client_app, [f"{resource['appId']}/.default"])
 
 
 class WorldWideTestCase(LabBasedTestCase):

@@ -1,3 +1,5 @@
+import base64
+import datetime
 import functools
 import json
 import time
@@ -165,6 +167,17 @@ def _preferred_browser():
     return None
 
 
+def _build_req_cnf(jwk:dict, remove_padding:bool = False) -> str:
+    """req_cnf usually requires base64url encoding.
+
+    https://datatracker.ietf.org/doc/html/draft-ietf-oauth-pop-key-distribution-07#section-4.2.1
+    https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/e967ebeb-9e9f-443e-857a-5208802943c2
+    """
+    raw = json.dumps(jwk)
+    encoded = base64.urlsafe_b64encode(raw.encode('utf-8')).decode('utf-8')
+    return encoded.rstrip('=') if remove_padding else encoded
+
+
 class _ClientWithCcsRoutingInfo(Client):
 
     def initiate_auth_code_flow(self, **kwargs):
@@ -231,12 +244,21 @@ class ClientApplication(object):
     _TOKEN_SOURCE_IDP = "identity_provider"
     _TOKEN_SOURCE_CACHE = "cache"
     _TOKEN_SOURCE_BROKER = "broker"
+    _XMS_DS_NONCE = "xms_ds_nonce"
 
     _enable_broker = False
     _AUTH_SCHEME_UNSUPPORTED = (
         "auth_scheme is currently only available from broker. "
         "You can enable broker by following these instructions. "
         "https://msal-python.readthedocs.io/en/latest/#publicclientapplication")
+
+    @functools.lru_cache(maxsize=2)
+    def __get_rsa_key(self, _bucket):  # _bucket is used with lru_cache pattern
+        from .crypto import _generate_rsa_key
+        return _generate_rsa_key()
+
+    def _get_rsa_key(self, _bucket=None):  # Return the same RSA key, cached for a day
+        return self.__get_rsa_key(_bucket or datetime.date.today())
 
     def __init__(
             self, client_id,
@@ -1552,6 +1574,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
                     self._TOKEN_SOURCE: self._TOKEN_SOURCE_CACHE,
                     }
+                if self._XMS_DS_NONCE in entry:  # CDT needs this
+                    access_token_from_cache[self._XMS_DS_NONCE] = entry[
+                        self._XMS_DS_NONCE]
                 if "refresh_on" in entry:
                     access_token_from_cache["refresh_on"] = int(entry["refresh_on"])
                     if int(entry["refresh_on"]) < now:  # aging
@@ -2340,7 +2365,16 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
     except that ``allow_broker`` parameter shall remain ``None``.
     """
 
-    def acquire_token_for_client(self, scopes, claims_challenge=None, **kwargs):
+    def acquire_token_for_client(
+        self,
+        scopes,
+        claims_challenge=None,
+        *,
+        delegation_constraints: Optional[list] = None,
+        delegation_confirmation_key=None,  # A Cyprtography's RSAPrivateKey-like object
+            # TODO: Support ECC key? https://github.com/pyca/cryptography/issues/4093
+        **kwargs
+    ):
         """Acquires token for the current confidential client, not for an end user.
 
         Since MSAL Python 1.23, it will automatically look for token from cache,
@@ -2363,8 +2397,36 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             raise ValueError(  # We choose to disallow force_refresh
                 "Historically, this method does not support force_refresh behavior. "
             )
-        return _clean_up(self._acquire_token_silent_with_error(
-            scopes, None, claims_challenge=claims_challenge, **kwargs))
+        if delegation_constraints:
+            private_key = delegation_confirmation_key or self._get_rsa_key()
+            from .crypto import _convert_rsa_keys
+            _, jwk = _convert_rsa_keys(private_key)
+        result = _clean_up(self._acquire_token_silent_with_error(
+            scopes, None, claims_challenge=claims_challenge, data=dict(
+                kwargs.pop("data", {}),
+                req_ds_cnf=_build_req_cnf(jwk)  # It is part of token cache key
+                    if delegation_constraints else None,
+                ),
+            **kwargs))
+        if delegation_constraints and not result.get("error"):
+            if not result.get(self._XMS_DS_NONCE):  # Available in cached token, too
+                raise ValueError(
+                    "The resource did not opt in to xms_ds_cnf claim. "
+                    "After its opt-in, call this function again with "
+                    "a new app object or a new delegation_confirmation_key"
+                    # in order to invalidate the token in cache
+                    )
+            import jwt  # Lazy loading
+            cdt_envelope = jwt.encode({
+                "constraints": delegation_constraints,
+                self._XMS_DS_NONCE: result[self._XMS_DS_NONCE],
+                }, private_key, algorithm="PS256")
+            result["access_token"] = jwt.encode({
+                "t": result["access_token"],
+                "c": cdt_envelope,
+                }, None, algorithm=None, headers={"typ": "cdt+jwt"})
+            del result[self._XMS_DS_NONCE]  # Caller shouldn't need to know that
+        return result
 
     def _acquire_token_for_client(
         self,
