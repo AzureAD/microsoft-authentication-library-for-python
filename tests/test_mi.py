@@ -61,6 +61,14 @@ class ClientTestCase(unittest.TestCase):
             http_client=requests.Session(),
             )
 
+    def test_error_out_on_invalid_input(self):
+        with self.assertRaises(ManagedIdentityError):
+            ManagedIdentityClient({"foo": "bar"}, http_client=requests.Session())
+        with self.assertRaises(ManagedIdentityError):
+            ManagedIdentityClient(
+                {"ManagedIdentityIdType": "undefined", "Id": "foo"},
+                http_client=requests.Session())
+
     def assertCacheStatus(self, app):
         cache = app._token_cache._cache
         self.assertEqual(1, len(cache.get("AccessToken", [])), "Should have 1 AT")
@@ -240,6 +248,9 @@ class ArcTestCase(ClientTestCase):
     challenge = MinimalResponse(status_code=401, text="", headers={
         "WWW-Authenticate": "Basic realm=/tmp/foo",
         })
+
+    def test_error_out_on_invalid_input(self, mocked_stat):
+        return super(ArcTestCase, self).test_error_out_on_invalid_input()
 
     def test_happy_path(self, mocked_stat):
         expires_in = 1234

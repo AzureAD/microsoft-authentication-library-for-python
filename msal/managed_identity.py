@@ -46,8 +46,9 @@ class ManagedIdentity(UserDict):
 
     @classmethod
     def is_managed_identity(cls, unknown):
-        return isinstance(unknown, ManagedIdentity) or (
-            isinstance(unknown, dict) and cls.ID_TYPE in unknown)
+        return (isinstance(unknown, ManagedIdentity)
+            or cls.is_system_assigned(unknown)
+            or cls.is_user_assigned(unknown))
 
     @classmethod
     def is_system_assigned(cls, unknown):
@@ -217,6 +218,9 @@ class ManagedIdentityClient(object):
                 )
             token = client.acquire_token_for_client("resource")
         """
+        if not ManagedIdentity.is_managed_identity(managed_identity):
+            raise ManagedIdentityError(
+                f"Incorrect managed_identity: {managed_identity}")
         self._managed_identity = managed_identity
         self._http_client = _ThrottledHttpClient(
             # This class only throttles excess token acquisition requests.
