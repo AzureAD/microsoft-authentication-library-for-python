@@ -1,3 +1,4 @@
+import base64
 import functools
 import json
 import time
@@ -5,6 +6,7 @@ import logging
 import sys
 import warnings
 from threading import Lock
+from typing import Optional  # Needed in Python 3.7 & 3.8
 import os
 
 from .oauth2cli import Client, JwtAssertionCreator
@@ -162,6 +164,17 @@ def _preferred_browser():
         except ImportError:
             pass  # We may still proceed
     return None
+
+
+def _build_req_cnf(jwk:dict, remove_padding:bool = False) -> str:
+    """req_cnf usually requires base64url encoding.
+
+    https://datatracker.ietf.org/doc/html/draft-ietf-oauth-pop-key-distribution-07#section-4.2.1
+    https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/e967ebeb-9e9f-443e-857a-5208802943c2
+    """
+    raw = json.dumps(jwk)
+    encoded = base64.urlsafe_b64encode(raw.encode('utf-8')).decode('utf-8')
+    return encoded.rstrip('=') if remove_padding else encoded
 
 
 class _ClientWithCcsRoutingInfo(Client):
@@ -2344,6 +2357,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         scopes,
         refresh_reason,
         claims_challenge=None,
+        *,
+        delegation_constraints: Optional[list] = None,
+        req_ds_cnf: Optional[dict] = None,
         **kwargs
     ):
         if self.authority.tenant.lower() in ["common", "organizations"]:
@@ -2360,9 +2376,15 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             headers=telemetry_context.generate_headers(),
             data=dict(
                 kwargs.pop("data", {}),
+                req_ds_cnf=_build_req_cnf(req_ds_cnf) if req_ds_cnf else None,
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
             **kwargs)
+        if (
+            req_ds_cnf
+            and not response.get("error") and not response.get("xms_ds_nonce")
+        ):
+            raise ValueError("Your app shall opt in to xms_ds_cnf claim first")
         telemetry_context.update_telemetry(response)
         return response
 

@@ -29,6 +29,7 @@ import msal
 from tests.http_client import MinimalHttpClient, MinimalResponse
 from msal.oauth2cli import AuthCodeReceiver
 from msal.oauth2cli.oidc import decode_part
+from msal.application import _build_req_cnf
 
 try:
     import pymsalruntime
@@ -791,12 +792,12 @@ class SshCertTestCase(PopWithExternalKeyTestCase):
         self._test_user_account()
 
 
-def _data_for_pop(key):
-    raw_req_cnf = json.dumps({"kid": key, "xms_ksl": "sw"})
+def _data_for_pop(key_id):
     return {  # Sampled from Azure CLI's plugin connectedk8s
         'token_type': 'pop',
-        'key_id': key,
-        "req_cnf": base64.urlsafe_b64encode(raw_req_cnf.encode('utf-8')).decode('utf-8').rstrip('='),
+        'key_id': key_id,
+        "req_cnf": _build_req_cnf(
+            {"kid": key_id, "xms_ksl": "sw"}, remove_padding=True),
             # Note: Sending raw_req_cnf without base64 encoding would result in an http 500 error
     }  # See also https://github.com/Azure/azure-cli-extensions/blob/main/src/connectedk8s/azext_connectedk8s/_clientproxyutils.py#L86-L92
 
@@ -815,6 +816,38 @@ class AtPopWithExternalKeyTestCase(PopWithExternalKeyTestCase):
 
     def test_user_account(self):
         self._test_user_account()
+
+
+class CdtTestCase(LabBasedTestCase):
+    _JWK1 = {"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}
+    def test_service_principal(self):
+        """
+        app = get_lab_app(
+            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com"
+            "?dc=ESTS-PUB-JPELR1-AZ1-FD000-TEST1",
+            )
+        """
+        app = msal.ConfidentialClientApplication(
+            os.getenv("RAY_APP_CLIENT_ID"),
+            client_credential=os.getenv("RAY_APP_CLIENT_SECRET"),
+            authority="https://login.microsoftonline.com/msidlab4.onmicrosoft.com"
+            "?dc=ESTS-PUB-JPELR1-AZ1-FD000-TEST1",  # Accessible within AzVPN
+        )
+        from http.client import HTTPConnection
+        HTTPConnection.debuglevel = 1
+        result = app.acquire_token_for_client(
+            [f"{app.client_id}/.default"],
+            delegation_constraints=[
+                {"typ": "usr", "a": "C", "target": ["constraint1", "constraint4"]},
+                {"typ": "app", "a": "R", "target": ["constraint2", "constraint5"]},
+                {"typ": "subscription", "a": "U", "target": ["constraint3"]},
+            ],
+            req_ds_cnf=self._JWK1,
+        )
+        self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
+            result.get("error"), result.get("error_description")))
+        print("Test case result:", result)
+        self.assertIsNotNone(result.get("xms_ds_nonce"))
 
 
 class WorldWideTestCase(LabBasedTestCase):
