@@ -8,6 +8,7 @@ we can use this script to test it with a given version of MSAL Python.
 import msal
 import getpass
 import os
+import sys
 try:
     from dotenv import load_dotenv  # Use this only in local dev machine
     load_dotenv()  # take environment variables from .env.
@@ -25,10 +26,19 @@ _JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBD
 _SSH_CERT_DATA = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": _JWK1}
 _SSH_CERT_SCOPE = "https://pas.windows.net/CheckMyAccess/Linux/.default"
 
-pca = msal.PublicClientApplication(
-    _AZURE_CLI,
-    authority="https://login.microsoftonline.com/organizations",
-    enable_broker_on_windows=True)
+if sys.platform == "win32":
+    pca = msal.PublicClientApplication(
+        _AZURE_CLI,
+        authority="https://login.microsoftonline.com/organizations",
+        enable_broker_on_windows=True)
+elif sys.platform == "darwin":
+    pca = msal.PublicClientApplication(
+        _AZURE_CLI,
+        authority="https://login.microsoftonline.com/organizations",
+        enable_broker_on_mac=True)
+else:
+    print("Platform not supported yet.")
+    exit()
 
 def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):
     print("An account picker shall be pop up, possibly behind this console. Continue from there.")
