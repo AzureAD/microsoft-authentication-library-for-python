@@ -4,6 +4,16 @@ Although not fully automated, it requires only several clicks to finish.
 
 Each time a new PyMsalRuntime is going to be released,
 we can use this script to test it with a given version of MSAL Python.
+
+1. If you are on a modern Windows device, broker WAM is already built-in;
+   If you are on a mac device, install CP (Company Portal), login an account in CP and finish the MDM process.
+2. For installing MSAL Python from its latest `dev` branch:
+   `pip install --force-reinstall "git+https://github.com/AzureAD/microsoft-authentication-library-for-python.git[broker]"`
+3. (Optional) A proper version of `PyMsalRuntime` has already been installed by the previous command.
+   But if you want to test a specific version of `PyMsalRuntime`,
+   you shall manually install that version now.
+4. Run this test by `python broker-test.py` and make sure all the tests passed.
+
 """
 import msal
 import getpass
