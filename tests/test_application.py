@@ -733,8 +733,48 @@ class TestScopeDecoration(unittest.TestCase):
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
     }))
-@patch("msal.application._init_broker", new=Mock())  # Allow testing without pymsalruntime
-class TestBrokerFallback(unittest.TestCase):
+class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
+
+    @patch("msal.application._init_broker", new=Mock(side_effect=ImportError(
+        "PyMsalRuntime not installed"
+    )))
+    def test_broker_should_be_disabled_by_default(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            )
+        self.assertFalse(app._enable_broker)
+
+    @patch("msal.application._init_broker", new=Mock(side_effect=ImportError(
+        "PyMsalRuntime not installed"
+    )))
+    def test_should_error_out_when_opted_in_yet_pymsalruntime_not_installed(self):
+        with self.assertRaises(ImportError):
+            app = msal.PublicClientApplication(
+                "client_id",
+                authority="https://login.microsoftonline.com/common",
+                enable_broker_on_mac=True,
+                )
+
+    @patch("msal.application._init_broker", new=Mock(side_effect=RuntimeError(
+        "PyMsalRuntime raises RuntimeError when broker initialization failed"
+    )))
+    def test_should_fallback_when_pymsalruntime_failed_to_initialize_broker(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+
+@patch("sys.platform", new="darwin")  # Pretend running on Mac.
+@patch("msal.authority.tenant_discovery", new=Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    }))
+@patch("msal.application._init_broker", new=Mock())  # Pretend pymsalruntime installed and working
+class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
 
     def test_broker_should_be_disabled_by_default(self):
         app = msal.PublicClientApplication(
