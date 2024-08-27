@@ -2241,7 +2241,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 # _signin_silently() only gets tokens for default account,
                 # but this seems to have been fixed in PyMsalRuntime 0.11.2
                 "access_token" in response and login_hint
-                and response.get("id_token_claims", {}) != login_hint)
+                and login_hint != response.get(
+                    "id_token_claims", {}).get("preferred_username"))
             wrong_account_error_message = (
                 'prompt="none" will not work for login_hint="non-default-user"')
             if is_wrong_account:
