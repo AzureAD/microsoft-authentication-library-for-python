@@ -692,14 +692,16 @@ class LabBasedTestCase(E2eTestCase):
         result = cca.acquire_token_silent(config_cca["scope"], account)
         self.assertEqual(cca_result["access_token"], result["access_token"])
 
-    def _test_acquire_token_by_client_secret(
-            self, client_id=None, client_secret=None, authority=None, scope=None,
+    def _test_acquire_token_for_client(
+            self, client_id=None, client_credential=None, authority=None, scope=None,
             oidc_authority=None,
             **ignored):
-        assert client_id and client_secret and scope and (
+        assert client_id and client_credential and scope and (
             authority or oidc_authority)
         self.app = msal.ConfidentialClientApplication(
-            client_id, client_credential=client_secret, authority=authority,
+            client_id,
+            client_credential=client_credential,
+            authority=authority,
             oidc_authority=oidc_authority,
             http_client=MinimalHttpClient())
         result = self.app.acquire_token_for_client(scope)
@@ -936,9 +938,9 @@ class WorldWideTestCase(LabBasedTestCase):
         # Vastly different than ArlingtonCloudTestCase.test_acquire_token_by_client_secret()
         _app = self.get_lab_app_object(
             publicClient="no", signinAudience="AzureAdMyOrg")
-        self._test_acquire_token_by_client_secret(
+        self._test_acquire_token_for_client(
             client_id=_app["appId"],
-            client_secret=self.get_lab_user_secret(
+            client_credential=self.get_lab_user_secret(
                 _app["clientSecret"].split("/")[-1]),
             authority="{}{}.onmicrosoft.com".format(
                 _app["authority"], _app["labName"].lower().rstrip(".com")),
@@ -1047,9 +1049,9 @@ class CiamTestCase(LabBasedTestCase):
         else:  # Ciam6 era has a URL path that ends with the secret name
             secret_name = secret_url.path.split("/")[-1]
         logger.info('Detected secret name "%s" from "%s"', secret_name, raw_url)
-        self._test_acquire_token_by_client_secret(
+        self._test_acquire_token_for_client(
             client_id=self.app_config["appId"],
-            client_secret=self.get_lab_user_secret(secret_name),
+            client_credential=self.get_lab_user_secret(secret_name),
             authority=self.app_config.get("authority"),
             oidc_authority=self.app_config.get("oidc_authority"),
             scope=self.app_config["scopes"],  # It shall ends with "/.default"
@@ -1212,8 +1214,8 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
 
     def test_acquire_token_by_client_secret(self):
         config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
-        config["client_secret"] = self.get_lab_user_secret("ARLMSIDLAB1-IDLASBS-App-CC-Secret")
-        self._test_acquire_token_by_client_secret(**config)
+        config["client_credential"] = self.get_lab_user_secret("ARLMSIDLAB1-IDLASBS-App-CC-Secret")
+        self._test_acquire_token_for_client(**config)
 
     def test_acquire_token_obo(self):
         config_cca = self.get_lab_user(

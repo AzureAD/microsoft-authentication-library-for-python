@@ -45,4 +45,5 @@ from .managed_identity import (
 # 1. officially part of the MSAL public API, and
 # 2. can still be caught by the user code even if we change the module structure.
 from .oauth2cli.oauth2 import BrowserInteractionTimeoutError
+from .oauth2cli.assertion import AutoRefresher
 

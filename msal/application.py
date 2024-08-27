@@ -304,7 +304,30 @@ class ClientApplication(object):
 
             .. admonition:: Supporting raw assertion obtained from elsewhere
 
+                *Added in version 1.32.0*:
+
+                MSAL Python accepts a callback which shall obtain an assertion::
+
+                    import msal
+
+                    def assertion_callback():
+                        return '''A fresh JWT with claims:
+                            aud, exp, iss, jti, nbf, and sub'''
+
+                    smart_callback = msal.AutoRefresher(
+                        assertion_callback,
+                        expires_in=3600,  # Whatever value that you see fit
+                    )  # This ensures the original callback will be cached
+
+                    app = msal.ConfidentialClientApplication(
+                       ...,
+                       client_credential={"client_assertion": smart_callback},
+                    )
+
                 *Added in version 1.13.0*:
+
+                Deprecated.
+
                 It can also be a completely pre-signed assertion that you've assembled yourself.
                 Simply pass a container containing only the key "client_assertion", like this::
 
@@ -757,6 +780,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             # Use client_credential.get("...") rather than "..." in client_credential
             # so that we can ignore an empty string came from an empty ENV VAR.
             if client_credential.get("client_assertion"):
+                if isinstance(client_credential["client_assertion"], str):
+                    warnings.warn(
+                        "Please use a callback instead of a string. See also "
+                        "https://msal-python.readthedocs.io/en/latest/#msal.ClientApplication.params.client_credential",
+                        DeprecationWarning)
                 client_assertion = client_credential['client_assertion']
             else:
                 headers = {}
