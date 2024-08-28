@@ -1552,12 +1552,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     correlation_id=correlation_id,
                     auth_scheme=auth_scheme,
                     **data)
-                if response:  # Broker provides a decisive outcome
-                    account_was_established_by_broker = account.get(
-                        "account_source") == _GRANT_TYPE_BROKER
-                    broker_attempt_succeeded_just_now = "error" not in response
-
-                    if (response.get("access_token") and force_refresh):
+                
+                if (force_refresh and response.get("access_token")):
                         at_to_renew = response.get("access_token")
                         response = _acquire_token_silently(
                             "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -1570,6 +1566,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                             auth_scheme=auth_scheme,
                             at_to_renew= at_to_renew,
                             **data)
+                
+                if response:  # Broker provides a decisive outcome
+                    account_was_established_by_broker = account.get(
+                        "account_source") == _GRANT_TYPE_BROKER
+                    broker_attempt_succeeded_just_now = "error" not in response
 
                     if account_was_established_by_broker or broker_attempt_succeeded_just_now:
                         return self._process_broker_response(response, scopes, data)
