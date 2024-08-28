@@ -214,7 +214,7 @@ def _signin_interactively(
 
 def _acquire_token_silently(
         authority, client_id, account_id, scopes, claims=None, correlation_id=None,
-        auth_scheme=None,
+        auth_scheme=None, at_to_renew=None,
         **kwargs):
     # For MSA PT scenario where you use the /organizations, yes,
     # acquireTokenSilently is expected to fail.  - Sam Wilson
@@ -224,6 +224,8 @@ def _acquire_token_silently(
         return
     params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
     params.set_requested_scopes(scopes)
+    if at_to_renew:
+        params.set_access_token_to_renew(at_to_renew)
     if claims:
         params.set_decoded_claims(claims)
     if auth_scheme:

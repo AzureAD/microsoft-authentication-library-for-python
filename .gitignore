@@ -49,6 +49,7 @@ src/build
 docs/_build/
 # Visual Studio Files
 /.vs/*
+.vscode/*
 /tests/.vs/*
 
 # vim files
