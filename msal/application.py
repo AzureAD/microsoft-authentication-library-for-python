@@ -1568,20 +1568,35 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 None,  # Unknown data from older MSAL. Broker might still work.
             ):
                 from .broker import _acquire_token_silently
+                _authority = "https://{}/{}".format(
+                    self.authority.instance, self.authority.tenant)
+                claims = _merge_claims_challenge_and_capabilities(
+                    self._client_capabilities, claims_challenge)
                 response = _acquire_token_silently(
-                    "https://{}/{}".format(self.authority.instance, self.authority.tenant),
+                    _authority,
                     self.client_id,
                     account["local_account_id"],
                     scopes,
-                    claims=_merge_claims_challenge_and_capabilities(
-                        self._client_capabilities, claims_challenge),
+                    claims=claims,
                     correlation_id=correlation_id,
                     auth_scheme=auth_scheme,
                     **data)
+                if force_refresh and response.get("access_token"):
+                    response = _acquire_token_silently(
+                        _authority,
+                        self.client_id,
+                        account["local_account_id"],
+                        scopes,
+                        claims=claims,
+                        correlation_id=correlation_id,
+                        auth_scheme=auth_scheme,
+                        at_to_renew=response.get("access_token"),
+                        **data)
                 if response:  # Broker provides a decisive outcome
                     account_was_established_by_broker = account.get(
                         "account_source") == _GRANT_TYPE_BROKER
                     broker_attempt_succeeded_just_now = "error" not in response
+
                     if account_was_established_by_broker or broker_attempt_succeeded_just_now:
                         return self._process_broker_response(response, scopes, data)
 
