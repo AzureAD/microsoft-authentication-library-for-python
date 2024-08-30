@@ -139,6 +139,22 @@ class VmTestCase(ClientTestCase):
                 json.loads(raw_error), self.app.acquire_token_for_client(resource="R"))
             self.assertEqual({}, self.app._token_cache._cache)
 
+    def test_vm_resource_id_parameter_should_be_msi_res_id(self):
+        app = ManagedIdentityClient(
+            {"ManagedIdentityIdType": "ResourceId", "Id": "1234"},
+            http_client=requests.Session(),
+            )
+        with patch.object(app._http_client, "get", return_value=MinimalResponse(
+            status_code=200,
+            text='{"access_token": "AT", "expires_in": 3600, "resource": "R"}',
+        )) as mocked_method:
+            app.acquire_token_for_client(resource="R")
+            mocked_method.assert_called_with(
+                'http://169.254.169.254/metadata/identity/oauth2/token',
+                params={'api-version': '2018-02-01', 'resource': 'R', 'msi_res_id': '1234'},
+                headers={'Metadata': 'true'},
+                )
+
 
 @patch.dict(os.environ, {"IDENTITY_ENDPOINT": "http://localhost", "IDENTITY_HEADER": "foo"})
 class AppServiceTestCase(ClientTestCase):
@@ -163,6 +179,22 @@ class AppServiceTestCase(ClientTestCase):
                 "error_description": "500, error content is undefined",
             }, self.app.acquire_token_for_client(resource="R"))
             self.assertEqual({}, self.app._token_cache._cache)
+
+    def test_app_service_resource_id_parameter_should_be_mi_res_id(self):
+        app = ManagedIdentityClient(
+            {"ManagedIdentityIdType": "ResourceId", "Id": "1234"},
+            http_client=requests.Session(),
+            )
+        with patch.object(app._http_client, "get", return_value=MinimalResponse(
+            status_code=200,
+            text='{"access_token": "AT", "expires_on": 12345, "resource": "R"}',
+        )) as mocked_method:
+            app.acquire_token_for_client(resource="R")
+            mocked_method.assert_called_with(
+                'http://localhost',
+                params={'api-version': '2019-08-01', 'resource': 'R', 'mi_res_id': '1234'},
+                headers={'X-IDENTITY-HEADER': 'foo', 'Metadata': 'true'},
+                )
 
 
 @patch.dict(os.environ, {"MSI_ENDPOINT": "http://localhost", "MSI_SECRET": "foo"})
