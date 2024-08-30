@@ -40,7 +40,7 @@ class ManagedIdentity(UserDict):
 
     _types_mapping = {  # Maps type name in configuration to type name on wire
         CLIENT_ID: "client_id",
-        RESOURCE_ID: "mi_res_id",
+        RESOURCE_ID: "msi_res_id",  # VM's IMDS prefers msi_res_id https://github.com/Azure/azure-rest-api-specs/blob/dba6ed1f03bda88ac6884c0a883246446cc72495/specification/imds/data-plane/Microsoft.InstanceMetadataService/stable/2018-10-01/imds.json#L233-L239
         OBJECT_ID: "object_id",
     }
 
@@ -430,9 +430,9 @@ def _obtain_token(http_client, managed_identity, resource):
     return _obtain_token_on_azure_vm(http_client, managed_identity, resource)
 
 
-def _adjust_param(params, managed_identity):
+def _adjust_param(params, managed_identity, types_mapping=None):
     # Modify the params dict in place
-    id_name = ManagedIdentity._types_mapping.get(
+    id_name = (types_mapping or ManagedIdentity._types_mapping).get(
         managed_identity.get(ManagedIdentity.ID_TYPE))
     if id_name:
         params[id_name] = managed_identity[ManagedIdentity.ID]
@@ -479,7 +479,12 @@ def _obtain_token_on_app_service(
         "api-version": "2019-08-01",
         "resource": resource,
         }
-    _adjust_param(params, managed_identity)
+    _adjust_param(params, managed_identity, types_mapping={
+        ManagedIdentity.CLIENT_ID: "client_id",
+        ManagedIdentity.RESOURCE_ID: "mi_res_id",  # App Service's resource id uses "mi_res_id"
+        ManagedIdentity.OBJECT_ID: "object_id",
+    })
+
     resp = http_client.get(
         endpoint,
         params=params,
