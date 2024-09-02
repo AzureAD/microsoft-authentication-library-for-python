@@ -23,7 +23,15 @@ try:
 except (ImportError, AttributeError):  # AttributeError happens when a prior pymsalruntime uninstallation somehow leaved an empty folder behind
     # PyMsalRuntime currently supports these Windows versions, listed in this MSFT internal link
     # https://github.com/AzureAD/microsoft-authentication-library-for-cpp/pull/2406/files
-    raise ImportError('You need to install dependency by: pip install "msal[broker]>=1.20,<2"')
+    min_ver = {
+        "win32": "1.20",
+        "darwin": "1.31",
+    }.get(sys.platform)
+    if min_ver:
+        raise ImportError(
+            f'You must install dependency by: pip install "msal[broker]>={min_ver},<2"')
+    else:  # Unsupported platform
+        raise ImportError("Dependency pymsalruntime unavailable on current platform")
 # It could throw RuntimeError when running on ancient versions of Windows
 
 
