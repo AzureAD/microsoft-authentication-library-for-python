@@ -194,6 +194,21 @@ class _ClientWithCcsRoutingInfo(Client):
             username, password, headers=headers, **kwargs)
 
 
+def _msal_extension_check():
+    # Can't run this in module or class level otherwise you'll get circular import error
+    try:
+        from msal_extensions import __version__ as v
+        major, minor, _ = v.split(".", maxsplit=3)
+        if not (int(major) >= 1 and int(minor) >= 2):
+            warnings.warn(
+                "Please upgrade msal-extensions. "
+                "Only msal-extensions 1.2+ can work with msal 1.30+")
+    except ImportError:
+        pass  # The optional msal_extensions is not installed. Business as usual.
+    except ValueError:
+        logger.exception(f"msal_extensions version {v} not in major.minor.patch format")
+
+
 class ClientApplication(object):
     """You do not usually directly use this class. Use its subclasses instead:
     :class:`PublicClientApplication` and :class:`ConfidentialClientApplication`.
@@ -635,6 +650,8 @@ class ClientApplication(object):
         self.authority_groups = None
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
+        _msal_extension_check()
+
 
     def _decide_broker(self, allow_broker, enable_pii_log):
         is_confidential_app = self.client_credential or isinstance(
