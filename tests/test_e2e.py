@@ -819,7 +819,7 @@ class AtPopWithExternalKeyTestCase(PopWithExternalKeyTestCase):
 
 
 class CdtTestCase(LabBasedTestCase):
-    _JWK1 = {"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}
+    #_JWK1 = {"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}
     def test_service_principal(self):
         """
         app = get_lab_app(
@@ -835,14 +835,14 @@ class CdtTestCase(LabBasedTestCase):
         )
         from http.client import HTTPConnection
         HTTPConnection.debuglevel = 1
+        delegation_constraints = [
+            {"typ": "usr", "a": "C", "target": ["constraint1", "constraint4"]},
+            {"typ": "app", "a": "R", "target": ["constraint2", "constraint5"]},
+            {"typ": "subscription", "a": "U", "target": ["constraint3"]},
+        ]
         result = app.acquire_token_for_client(
             [f"{app.client_id}/.default"],
-            delegation_constraints=[
-                {"typ": "usr", "a": "C", "target": ["constraint1", "constraint4"]},
-                {"typ": "app", "a": "R", "target": ["constraint2", "constraint5"]},
-                {"typ": "subscription", "a": "U", "target": ["constraint3"]},
-            ],
-            req_ds_cnf=self._JWK1,
+            delegation_constraints=delegation_constraints,
         )
         self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
             result.get("error"), result.get("error_description")))

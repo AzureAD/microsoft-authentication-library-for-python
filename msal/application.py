@@ -2359,7 +2359,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         claims_challenge=None,
         *,
         delegation_constraints: Optional[list] = None,
-        req_ds_cnf: Optional[dict] = None,
+        delegation_scope_key=None,  # A Cyprtography's RSAPrivateKey-like object
+            # TODO: Support ECC key? https://github.com/pyca/cryptography/issues/4093
         **kwargs
     ):
         if self.authority.tenant.lower() in ["common", "organizations"]:
@@ -2371,17 +2372,20 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_FOR_CLIENT_ID, refresh_reason=refresh_reason)
         client = self._regional_client or self.client
+        if delegation_constraints:
+            from .crypto import _generate_rsa_key, _convert_rsa_keys
+            _, jwk = _convert_rsa_keys(delegation_scope_key or _generate_rsa_key())
         response = client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers=telemetry_context.generate_headers(),
             data=dict(
                 kwargs.pop("data", {}),
-                req_ds_cnf=_build_req_cnf(req_ds_cnf) if req_ds_cnf else None,
+                req_ds_cnf=_build_req_cnf(jwk) if delegation_constraints else None,
                 claims=_merge_claims_challenge_and_capabilities(
                     self._client_capabilities, claims_challenge)),
             **kwargs)
         if (
-            req_ds_cnf
+            delegation_constraints
             and not response.get("error") and not response.get("xms_ds_nonce")
         ):
             raise ValueError("Your app shall opt in to xms_ds_cnf claim first")
