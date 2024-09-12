@@ -249,8 +249,11 @@ class TokenCache(object):
                     "expires_on": str(now + expires_in),  # Same here
                     "extended_expires_on": str(now + ext_expires_in)  # Same here
                     }
-                if data.get("key_id"):  # It happens in SSH-cert or POP scenario
-                    at["key_id"] = data.get("key_id")
+                at.update({k: data[k] for k in data if k in {
+                    # Also store extra data which we explicitly allow
+                    # So that we won't accidentally store a user's password etc.
+                    "key_id",  # It happens in SSH-cert or POP scenario
+                }})
                 if "refresh_in" in response:
                     refresh_in = response["refresh_in"]  # It is an integer
                     at["refresh_on"] = str(now + refresh_in)  # Schema wants a string
