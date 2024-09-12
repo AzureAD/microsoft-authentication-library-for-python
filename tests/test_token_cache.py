@@ -206,6 +206,38 @@ class TokenCacheTestCase(unittest.TestCase):
                 "appmetadata-fs.msidlab8.com-my_client_id")
             )
 
+    def assertFoundAccessToken(self, *, scopes, query, data=None):
+        cached_at = None
+        for cached_at in self.cache.search(
+                TokenCache.CredentialType.ACCESS_TOKEN, target=scopes, query=query):
+            for k, v in (data or {}).items():  # The extra data, if any
+                self.assertEqual(cached_at.get(k), v, f"AT should contain {k}={v}")
+        self.assertTrue(cached_at, "AT should be cached and searchable")
+        return cached_at
+
+    def _test_data_should_be_saved_and_searchable_in_access_token(self, data):
+        scopes = ["s2", "s1", "s3"]  # Not in particular order
+        self.cache.add({
+            "data": data,
+            "client_id": "my_client_id",
+            "scope": scopes,
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "response": build_response(
+                uid="uid", utid="utid",  # client_info
+                expires_in=3600, access_token="an access token",
+                refresh_token="a refresh token"),
+            }, now=1000)
+        self.assertFoundAccessToken(scopes=scopes, data=data, query=dict(
+            data,  # Also use the extra data as a query criteria
+            client_id="my_client_id",
+            environment="login.example.com",
+            realm="contoso",
+            home_account_id="uid.utid",
+        ))
+
+    def test_extra_data_should_also_be_recorded_and_searchable_in_access_token(self):
+        self._test_data_should_be_saved_and_searchable_in_access_token({"key_id": "1"})
+
     def test_key_id_is_also_recorded(self):
         my_key_id = "some_key_id_123"
         self.cache.add({
@@ -258,7 +290,7 @@ class TokenCacheTestCase(unittest.TestCase):
             )
 
 
-class SerializableTokenCacheTestCase(TokenCacheTestCase):
+class SerializableTokenCacheTestCase(unittest.TestCase):
     # Run all inherited test methods, and have extra check in tearDown()
 
     def setUp(self):
