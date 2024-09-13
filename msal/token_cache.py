@@ -43,6 +43,8 @@ class TokenCache(object):
         self._lock = threading.RLock()
         self._cache = {}
         self.key_makers = {
+            # Note: We have changed token key format before when ordering scopes;
+            #       changing token key won't result in cache miss.
             self.CredentialType.REFRESH_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         target=None, **ignored_payload_from_a_real_token:
@@ -56,14 +58,18 @@ class TokenCache(object):
                         ]).lower(),
             self.CredentialType.ACCESS_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
-                        realm=None, target=None, **ignored_payload_from_a_real_token:
-                    "-".join([
+                        realm=None, target=None,
+                        # Note: New field(s) can be added here
+                        #key_id=None,
+                        **ignored_payload_from_a_real_token:
+                    "-".join([  # Note: Could use a hash here to shorten key length
                         home_account_id or "",
                         environment or "",
                         self.CredentialType.ACCESS_TOKEN,
                         client_id or "",
                         realm or "",
                         target or "",
+                        #key_id or "",  # So ATs of different key_id can coexist
                         ]).lower(),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
@@ -150,9 +156,7 @@ class TokenCache(object):
 
         target_set = set(target)
         with self._lock:
-            # Since the target inside token cache key is (per schema) unsorted,
-            # there is no point to attempt an O(1) key-value search here.
-            # So we always do an O(n) in-memory search.
+            # O(n) search. The key is NOT used in search.
             for entry in self._cache.get(credential_type, {}).values():
                 if (entry != preferred_result  # Avoid yielding the same entry twice
                     and self._is_matching(entry, query, target_set=target_set)
