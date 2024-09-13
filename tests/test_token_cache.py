@@ -3,7 +3,7 @@ import base64
 import json
 import time
 
-from msal.token_cache import *
+from msal.token_cache import TokenCache, SerializableTokenCache
 from tests import unittest
 
 
@@ -51,6 +51,8 @@ class TokenCacheTestCase(unittest.TestCase):
 
     def setUp(self):
         self.cache = TokenCache()
+        self.at_key_maker = self.cache.key_makers[
+            TokenCache.CredentialType.ACCESS_TOKEN]
 
     def testAddByAad(self):
         client_id = "my_client_id"
@@ -78,11 +80,8 @@ class TokenCacheTestCase(unittest.TestCase):
                 'target': 's1 s2 s3',  # Sorted
                 'token_type': 'some type',
             }
-        self.assertEqual(
-            access_token_entry,
-            self.cache._cache["AccessToken"].get(
-                'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s1 s2 s3')
-            )
+        self.assertEqual(access_token_entry, self.cache._cache["AccessToken"].get(
+            self.at_key_maker(**access_token_entry)))
         self.assertIn(
             access_token_entry,
             self.cache.find(self.cache.CredentialType.ACCESS_TOKEN),
@@ -144,8 +143,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 expires_in=3600, access_token="an access token",
                 id_token=id_token, refresh_token="a refresh token"),
             }, now=1000)
-        self.assertEqual(
-            {
+        access_token_entry = {
                 'cached_at': "1000",
                 'client_id': 'my_client_id',
                 'credential_type': 'AccessToken',
@@ -157,10 +155,9 @@ class TokenCacheTestCase(unittest.TestCase):
                 'secret': 'an access token',
                 'target': 's1 s2 s3',  # Sorted
                 'token_type': 'some type',
-            },
-            self.cache._cache["AccessToken"].get(
-                'subject-fs.msidlab8.com-accesstoken-my_client_id-adfs-s1 s2 s3')
-            )
+            }
+        self.assertEqual(access_token_entry, self.cache._cache["AccessToken"].get(
+            self.at_key_maker(**access_token_entry)))
         self.assertEqual(
             {
                 'client_id': 'my_client_id',
@@ -238,37 +235,32 @@ class TokenCacheTestCase(unittest.TestCase):
     def test_extra_data_should_also_be_recorded_and_searchable_in_access_token(self):
         self._test_data_should_be_saved_and_searchable_in_access_token({"key_id": "1"})
 
-    def test_key_id_is_also_recorded(self):
-        my_key_id = "some_key_id_123"
-        self.cache.add({
-            "data": {"key_id": my_key_id},
-            "client_id": "my_client_id",
-            "scope": ["s2", "s1", "s3"],  # Not in particular order
-            "token_endpoint": "https://login.example.com/contoso/v2/token",
-            "response": build_response(
-                uid="uid", utid="utid",  # client_info
-                expires_in=3600, access_token="an access token",
-                refresh_token="a refresh token"),
-            }, now=1000)
-        cached_key_id = self.cache._cache["AccessToken"].get(
-            'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s1 s2 s3',
-            {}).get("key_id")
-        self.assertEqual(my_key_id, cached_key_id, "AT should be bound to the key")
+    def test_access_tokens_with_different_key_id(self):
+        self._test_data_should_be_saved_and_searchable_in_access_token({"key_id": "1"})
+        self._test_data_should_be_saved_and_searchable_in_access_token({"key_id": "2"})
+        self.assertEqual(
+            len(self.cache._cache["AccessToken"]),
+            1, """Historically, tokens are not keyed by key_id,
+so a new token overwrites the old one, and we would end up with 1 token in cache""")
 
     def test_refresh_in_should_be_recorded_as_refresh_on(self):  # Sounds weird. Yep.
+        scopes = ["s2", "s1", "s3"]  # Not in particular order
         self.cache.add({
             "client_id": "my_client_id",
-            "scope": ["s2", "s1", "s3"],  # Not in particular order
+            "scope": scopes,
             "token_endpoint": "https://login.example.com/contoso/v2/token",
             "response": build_response(
                 uid="uid", utid="utid",  # client_info
                 expires_in=3600, refresh_in=1800, access_token="an access token",
                 ),  #refresh_token="a refresh token"),
             }, now=1000)
-        refresh_on = self.cache._cache["AccessToken"].get(
-            'uid.utid-login.example.com-accesstoken-my_client_id-contoso-s1 s2 s3',
-            {}).get("refresh_on")
-        self.assertEqual("2800", refresh_on, "Should save refresh_on")
+        at = self.assertFoundAccessToken(scopes=scopes, query=dict(
+            client_id="my_client_id",
+            environment="login.example.com",
+            realm="contoso",
+            home_account_id="uid.utid",
+        ))
+        self.assertEqual("2800", at.get("refresh_on"), "Should save refresh_on")
 
     def test_old_rt_data_with_wrong_key_should_still_be_salvaged_into_new_rt(self):
         sample = {
