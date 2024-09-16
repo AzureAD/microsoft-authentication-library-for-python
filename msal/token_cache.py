@@ -130,7 +130,7 @@ class TokenCache(object):
             target_set <= set(entry.get("target", "").split())
             if target_set else True)
 
-    def search(self, credential_type, target=None, query=None):  # O(n) generator
+    def search(self, credential_type, target=None, query=None, *, now=None):  # O(n) generator
         """Returns a generator of matching entries.
 
         It is O(1) for AT hits, and O(n) for other types.
@@ -157,18 +157,32 @@ class TokenCache(object):
         target_set = set(target)
         with self._lock:
             # O(n) search. The key is NOT used in search.
+            now = int(time.time() if now is None else now)
+            expired_access_tokens = [
+                # Especially when/if we key ATs by ephemeral fields such as key_id,
+                # stale ATs keyed by an old key_id would stay forever.
+                # Here we collect them for their removal.
+            ]
             for entry in self._cache.get(credential_type, {}).values():
+                if (  # Automatically delete expired access tokens
+                    credential_type == self.CredentialType.ACCESS_TOKEN
+                    and int(entry["expires_on"]) < now
+                ):
+                    expired_access_tokens.append(entry)  # Can't delete them within current for-loop
+                    continue
                 if (entry != preferred_result  # Avoid yielding the same entry twice
                     and self._is_matching(entry, query, target_set=target_set)
                 ):
                     yield entry
+            for at in expired_access_tokens:
+                self.remove_at(at)
 
-    def find(self, credential_type, target=None, query=None):
+    def find(self, credential_type, target=None, query=None, *, now=None):
         """Equivalent to list(search(...))."""
         warnings.warn(
             "Use list(search(...)) instead to explicitly get a list.",
             DeprecationWarning)
-        return list(self.search(credential_type, target=target, query=query))
+        return list(self.search(credential_type, target=target, query=query, now=now))
 
     def add(self, event, now=None):
         """Handle a token obtaining event, and add tokens into cache."""

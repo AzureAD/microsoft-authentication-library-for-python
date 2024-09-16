@@ -58,6 +58,7 @@ class TokenCacheTestCase(unittest.TestCase):
         client_id = "my_client_id"
         id_token = build_id_token(
             oid="object1234", preferred_username="John Doe", aud=client_id)
+        now = 1000
         self.cache.add({
             "client_id": client_id,
             "scope": ["s2", "s1", "s3"],  # Not in particular order
@@ -66,7 +67,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 uid="uid", utid="utid",  # client_info
                 expires_in=3600, access_token="an access token",
                 id_token=id_token, refresh_token="a refresh token"),
-            }, now=1000)
+            }, now=now)
         access_token_entry = {
                 'cached_at': "1000",
                 'client_id': 'my_client_id',
@@ -84,7 +85,7 @@ class TokenCacheTestCase(unittest.TestCase):
             self.at_key_maker(**access_token_entry)))
         self.assertIn(
             access_token_entry,
-            self.cache.find(self.cache.CredentialType.ACCESS_TOKEN),
+            self.cache.find(self.cache.CredentialType.ACCESS_TOKEN, now=now),
             "find(..., query=None) should not crash, even though MSAL does not use it")
         self.assertEqual(
             {
@@ -203,10 +204,12 @@ class TokenCacheTestCase(unittest.TestCase):
                 "appmetadata-fs.msidlab8.com-my_client_id")
             )
 
-    def assertFoundAccessToken(self, *, scopes, query, data=None):
+    def assertFoundAccessToken(self, *, scopes, query, data=None, now=None):
         cached_at = None
         for cached_at in self.cache.search(
-                TokenCache.CredentialType.ACCESS_TOKEN, target=scopes, query=query):
+                TokenCache.CredentialType.ACCESS_TOKEN,
+                target=scopes, query=query, now=now,
+        ):
             for k, v in (data or {}).items():  # The extra data, if any
                 self.assertEqual(cached_at.get(k), v, f"AT should contain {k}={v}")
         self.assertTrue(cached_at, "AT should be cached and searchable")
@@ -214,6 +217,7 @@ class TokenCacheTestCase(unittest.TestCase):
 
     def _test_data_should_be_saved_and_searchable_in_access_token(self, data):
         scopes = ["s2", "s1", "s3"]  # Not in particular order
+        now = 1000
         self.cache.add({
             "data": data,
             "client_id": "my_client_id",
@@ -223,8 +227,8 @@ class TokenCacheTestCase(unittest.TestCase):
                 uid="uid", utid="utid",  # client_info
                 expires_in=3600, access_token="an access token",
                 refresh_token="a refresh token"),
-            }, now=1000)
-        self.assertFoundAccessToken(scopes=scopes, data=data, query=dict(
+            }, now=now)
+        self.assertFoundAccessToken(scopes=scopes, data=data, now=now, query=dict(
             data,  # Also use the extra data as a query criteria
             client_id="my_client_id",
             environment="login.example.com",
