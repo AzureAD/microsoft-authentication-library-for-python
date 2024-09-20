@@ -29,12 +29,9 @@ import msal
 from tests.http_client import MinimalHttpClient, MinimalResponse
 from msal.oauth2cli import AuthCodeReceiver
 from msal.oauth2cli.oidc import decode_part
+from tests.broker_util import is_pymsalruntime_installed
 
-try:
-    import pymsalruntime
-    broker_available = True
-except ImportError:
-    broker_available = False
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG if "-v" in sys.argv else logging.INFO)
 
@@ -44,6 +41,7 @@ try:
 except ImportError:
     logger.warn("Run pip install -r requirements.txt for optional dependency")
 
+_PYMSALRUNTIME_INSTALLED = is_pymsalruntime_installed()
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 
 def _get_app_and_auth_code(
@@ -187,19 +185,14 @@ class E2eTestCase(unittest.TestCase):
                 http_client=http_client or MinimalHttpClient(),
             )
         else:
-            # Reuse same test cases, by run them with and without broker
-            try:
-                import pymsalruntime
-                broker_available = True
-            except ImportError:
-                broker_available = False
+            # Reuse same test cases, by running them with and without PyMsalRuntime installed
             return msal.PublicClientApplication(
                 client_id,
                 authority=authority,
                 oidc_authority=oidc_authority,
                 http_client=http_client or MinimalHttpClient(),
-                enable_broker_on_windows=broker_available,
-                enable_broker_on_mac=broker_available,
+                enable_broker_on_windows=_PYMSALRUNTIME_INSTALLED,
+                enable_broker_on_mac=_PYMSALRUNTIME_INSTALLED,
                 )
 
     def _test_username_password(self,
@@ -1307,7 +1300,7 @@ class ArlingtonCloudTestCase(LabBasedTestCase):
         #       it means MSAL Python is not affected by that.
 
 
-@unittest.skipUnless(broker_available, "AT POP feature is only supported by using broker")
+@unittest.skipUnless(_PYMSALRUNTIME_INSTALLED, "AT POP feature is only supported by using broker")
 class PopTestCase(LabBasedTestCase):
     def test_at_pop_should_contain_pop_scheme_content(self):
         auth_scheme = msal.PopAuthScheme(

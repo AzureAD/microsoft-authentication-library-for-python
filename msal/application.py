@@ -675,7 +675,8 @@ class ClientApplication(object):
                 "allow_broker is deprecated. "
                 "Please use PublicClientApplication(..., "
                 "enable_broker_on_windows=True, "
-                "enable_broker_on_mac=...)",
+                # No need to mention non-Windows platforms, because allow_broker is only for Windows
+                "...)",
                 DeprecationWarning)
         opted_in_for_broker = (
             self._enable_broker  # True means Opted-in from PCA
@@ -697,7 +698,7 @@ class ClientApplication(object):
                 _init_broker(enable_pii_log)
             except RuntimeError:
                 self._enable_broker = False
-                logger.exception(
+                logger.warning(  # It is common on Mac and Linux where broker is not built-in
                     "Broker is unavailable on this platform. "
                     "We will fallback to non-broker.")
         logger.debug("Broker enabled? %s", self._enable_broker)
