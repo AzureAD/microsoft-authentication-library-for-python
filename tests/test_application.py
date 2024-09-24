@@ -340,6 +340,7 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
     account = {"home_account_id": "{}.{}".format(uid, utid)}
     rt = "this is a rt"
     client_id = "my_app"
+    soon = 60  # application.py considers tokens within 5 minutes as expired
 
     @classmethod
     def setUpClass(cls):  # Initialization at runtime, not interpret-time
@@ -414,7 +415,8 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
 
     def test_expired_token_and_unavailable_aad_should_return_error(self):
         # a.k.a. Attempt refresh expired token when AAD unavailable
-        self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
+        self.populate_cache(
+            access_token="expired at", expires_in=self.soon, refresh_in=-900)
         error = "something went wrong"
         def mock_post(url, headers=None, *args, **kwargs):
             self.assertEqual("4|84,3|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
@@ -425,7 +427,8 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
 
     def test_expired_token_and_available_aad_should_return_new_token(self):
         # a.k.a. Attempt refresh expired token when AAD available
-        self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
+        self.populate_cache(
+            access_token="expired at", expires_in=self.soon, refresh_in=-900)
         new_access_token = "new AT"
         new_refresh_in = 123
         def mock_post(url, headers=None, *args, **kwargs):
