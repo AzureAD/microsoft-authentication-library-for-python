@@ -647,6 +647,7 @@ class ClientApplication(object):
                 "allow_broker is deprecated. "
                 "Please use PublicClientApplication(..., "
                 "enable_broker_on_windows=True, "
+                "enable_broker_on_linux=True, "
                 "enable_broker_on_mac=...)",
                 DeprecationWarning)
         opted_in_for_broker = (
@@ -1894,7 +1895,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
         .. note::
 
-            You may set enable_broker_on_windows and/or enable_broker_on_mac to True.
+            You may set enable_broker_on_windows and/or enable_broker_on_mac and/or enable_broker_on_linux to True.
 
             **What is a broker, and why use it?**
 
@@ -1962,15 +1963,23 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
             New in MSAL Python 1.31.0.
+            
+        :param boolean enable_broker_on_linux:
+            This setting is only effective if your app is running on Linux.
+            This parameter defaults to None, which means MSAL will not utilize a broker.
+
+            New in MSAL Python 1.x.z.           
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
         # Using kwargs notation for now. We will switch to keyword-only arguments.
         enable_broker_on_windows = kwargs.pop("enable_broker_on_windows", False)
         enable_broker_on_mac = kwargs.pop("enable_broker_on_mac", False)
+        enable_broker_on_linux = kwargs.pop("enable_broker_on_linux", False)
         self._enable_broker = bool(
             enable_broker_on_windows and sys.platform == "win32"
-            or enable_broker_on_mac and sys.platform == "darwin")
+            or enable_broker_on_mac and sys.platform == "darwin"
+            or enable_broker_on_linux and sys.platform == "linux")
         super(PublicClientApplication, self).__init__(
             client_id, client_credential=None, **kwargs)
 

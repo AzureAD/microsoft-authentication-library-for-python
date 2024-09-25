@@ -21,7 +21,9 @@ atexit.register(lambda:
     )
 
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+# _AZURE_CLI = "4b0db8c2-9f26-4417-8bde-3f0e3656f8e0"
 _VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
+
 placeholder_auth_scheme = msal.PopAuthScheme(
     http_method=msal.PopAuthScheme.HTTP_GET,
     url="https://example.com/endpoint",
@@ -300,6 +302,7 @@ def _main():
         instance_discovery=instance_discovery,
         enable_broker_on_windows=enable_broker,
         enable_broker_on_mac=enable_broker,
+        enable_broker_on_linux=enable_broker,
         enable_pii_log=enable_pii_log,
         token_cache=global_cache,
         ) if not is_cca else msal.ConfidentialClientApplication(

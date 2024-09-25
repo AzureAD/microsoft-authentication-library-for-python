@@ -41,7 +41,7 @@ _redirect_uri_on_mac = "msauth.com.msauth.unsignedapp://auth"  # Note:
     # Besides, the homebrew-installed Pythons have no team_id
     # so they have to use a generic placeholder anyway.
     # The v-team chose to combine two situations into using same placeholder.
-
+#
 
 def _convert_error(error, client_id):
     context = error.get_context()  # Available since pymsalruntime 0.0.4

@@ -39,7 +39,8 @@ pca = msal.PublicClientApplication(
     _AZURE_CLI,
     authority="https://login.microsoftonline.com/organizations",
     enable_broker_on_mac=True,
-    enable_broker_on_windows=True)
+    enable_broker_on_windows=True,
+    enable_broker_on_linux=True)
 
 def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):
     print("An account picker shall be pop up, possibly behind this console. Continue from there.")
