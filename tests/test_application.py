@@ -751,7 +751,8 @@ class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
     @patch("msal.application._init_broker", new=Mock(side_effect=ImportError(
         "PyMsalRuntime not installed"
     )))
-    def test_should_error_out_when_opted_in_yet_pymsalruntime_not_installed(self):
+    def test_opt_in_should_error_out_when_pymsalruntime_not_installed(self):
+        """Because it is actionable to app developer to add dependency declaration"""
         with self.assertRaises(ImportError):
             app = msal.PublicClientApplication(
                 "client_id",
@@ -829,4 +830,29 @@ class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
             enable_broker_on_mac=True,
             )
         self.assertFalse(app._enable_broker)
+
+    def test_app_did_not_register_redirect_uri_should_error_out(self):
+        """Because it is actionable to app developer to add redirect URI"""
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertTrue(app._enable_broker)
+        with patch.object(
+            # Note: We tried @patch("msal.broker.foo", ...) but it ended up with
+            # "module msal does not have attribute broker"
+            app, "_acquire_token_interactive_via_broker", return_value={
+                "error": "broker_error",
+                "error_description":
+                    "(pii).  "  # pymsalruntime no longer surfaces AADSTS error,
+                                # So MSAL Python can't raise RedirectUriError.
+                    "Status: Response_Status.Status_ApiContractViolation, "
+                    "Error code: 3399614473, Tag 557973642",
+            }):
+            result = app.acquire_token_interactive(
+                ["scope"],
+                parent_window_handle=app.CONSOLE_WINDOW_HANDLE,
+                )
+            self.assertEqual(result.get("error"), "broker_error")
 
