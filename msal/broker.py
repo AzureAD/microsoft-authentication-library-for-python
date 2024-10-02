@@ -214,7 +214,8 @@ def _signin_interactively(
 
 def _acquire_token_silently(
         authority, client_id, account_id, scopes, claims=None, correlation_id=None,
-        auth_scheme=None, at_to_renew=None,
+        auth_scheme=None,
+        at_to_renew=None,
         **kwargs):
     # For MSA PT scenario where you use the /organizations, yes,
     # acquireTokenSilently is expected to fail.  - Sam Wilson

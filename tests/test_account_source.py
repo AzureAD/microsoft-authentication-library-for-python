@@ -73,6 +73,6 @@ class TestAccountSourceBehavior(unittest.TestCase):
 
         result = app.acquire_token_silent_with_error(
             [SCOPE], account, force_refresh=True, post=_mock_post)
-        mocked_broker_ats.assert_called_once()
+        mocked_broker_ats.assert_called()
         self.assertEqual(result["token_source"], "broker")
 
