@@ -5,6 +5,7 @@ import logging
 import sys
 import warnings
 from threading import Lock
+from typing import Optional  # Needed in Python 3.7 & 3.8
 import os
 
 from .oauth2cli import Client, JwtAssertionCreator
@@ -225,6 +226,7 @@ class ClientApplication(object):
     REMOVE_ACCOUNT_ID = "903"
 
     ATTEMPT_REGION_DISCOVERY = True  # "TryAutoDetect"
+    DISABLE_MSAL_FORCE_REGION = False  # Used in azure_region to disable MSAL_FORCE_REGION behavior
     _TOKEN_SOURCE = "token_source"
     _TOKEN_SOURCE_IDP = "identity_provider"
     _TOKEN_SOURCE_CACHE = "cache"
@@ -448,11 +450,14 @@ class ClientApplication(object):
             Instructs MSAL to use the Entra regional token service. This legacy feature is only available to
             first-party applications. Only ``acquire_token_for_client()`` is supported.
 
-            Supports 3 values:
+            Supports 4 values:
 
-              ``azure_region=None`` - meaning no region is used. This is the default value.
-              ``azure_region="some_region"`` - meaning the specified region is used.
-              ``azure_region=True`` - meaning MSAL will try to auto-detect the region. This is not recommended.
+            1. ``azure_region=None`` - This default value means no region is configured.
+               MSAL will use the region defined in env var ``MSAL_FORCE_REGION``.
+            2. ``azure_region="some_region"`` - meaning the specified region is used.
+            3. ``azure_region=True`` - meaning
+               MSAL will try to auto-detect the region. This is not recommended.
+            4. ``azure_region=False`` - meaning MSAL will use no region.
 
             .. note::
                 Region auto-discovery has been tested on VMs and on Azure Functions. It is unreliable.
@@ -630,7 +635,10 @@ class ClientApplication(object):
         except ValueError:  # Those are explicit authority validation errors
             raise
         except Exception:  # The rest are typically connection errors
-            if validate_authority and azure_region and not oidc_authority:
+            if validate_authority and not oidc_authority and (
+                azure_region  # Opted in to use region
+                or (azure_region is None and os.getenv("MSAL_FORCE_REGION"))  # Will use region
+            ):
                 # Since caller opts in to use region, here we tolerate connection
                 # errors happened during authority validation at non-region endpoint
                 self.authority = Authority(
@@ -724,9 +732,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             self._telemetry_buffer, self._telemetry_lock, api_id,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
-    def _get_regional_authority(self, central_authority):
-        if not self._region_configured:  # User did not opt-in to ESTS-R
+    def _get_regional_authority(self, central_authority) -> Optional[Authority]:
+        if self._region_configured is False:  # User opts out of ESTS-R
             return None  # Short circuit to completely bypass region detection
+        if self._region_configured is None:  # User did not make an ESTS-R choice
+            self._region_configured = os.getenv("MSAL_FORCE_REGION") or None
         self._region_detected = self._region_detected or _detect_region(
             self.http_client if self._region_configured is not None else None)
         if (self._region_configured != self.ATTEMPT_REGION_DISCOVERY

@@ -1130,10 +1130,22 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
     def test_acquire_token_for_client_should_hit_global_endpoint_by_default(self):
         self._test_acquire_token_for_client(None, None)
 
-    def test_acquire_token_for_client_should_ignore_env_var_by_default(self):
+    def test_acquire_token_for_client_should_ignore_env_var_region_name_by_default(self):
         os.environ["REGION_NAME"] = "eastus"
         self._test_acquire_token_for_client(None, None)
         del os.environ["REGION_NAME"]
+
+    @patch.dict(os.environ, {"MSAL_FORCE_REGION": "eastus"})
+    def test_acquire_token_for_client_should_use_env_var_msal_force_region_by_default(self):
+        self._test_acquire_token_for_client(None, "eastus")
+
+    @patch.dict(os.environ, {"MSAL_FORCE_REGION": "eastus"})
+    def test_acquire_token_for_client_should_prefer_the_explicit_region(self):
+        self._test_acquire_token_for_client("westus", "westus")
+
+    @patch.dict(os.environ, {"MSAL_FORCE_REGION": "eastus"})
+    def test_acquire_token_for_client_should_allow_opt_out_env_var_msal_force_region(self):
+        self._test_acquire_token_for_client(False, None)
 
     def test_acquire_token_for_client_should_use_a_specified_region(self):
         self._test_acquire_token_for_client("westus", "westus")
