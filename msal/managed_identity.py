@@ -134,6 +134,23 @@ class ManagedIdentityClient(object):
 
     It also provides token cache support.
 
+    .. admonition:: Special case when your local development wants to use a managed identity on Azure VM.
+
+        By setting the environment variable ``MSAL_MANAGED_IDENTITY_ENDPOINT``
+        you override the default identity URL used in MSAL's Azure VM managed identity
+        code path.
+
+        This is useful during local development where it may be desirable to
+        utilise the credentials assigned to an actual VM instance via SSH tunnelling.
+
+        For example, if you create your SSH tunnel this way (assuming your VM is on ``192.0.2.1``)::
+
+            ssh -L 8000:169.254.169.254:80 192.0.2.1
+
+        Then your code could run locally using::
+
+            env MSAL_MANAGED_IDENTITY_ENDPOINT=http://localhost:8000/metadata/identity/oauth2/token python your_script.py
+
     .. note::
 
         Cloud Shell support is NOT implemented in this class.
@@ -446,7 +463,7 @@ def _obtain_token_on_azure_vm(http_client, managed_identity, resource):
         }
     _adjust_param(params, managed_identity)
     resp = http_client.get(
-        "http://169.254.169.254/metadata/identity/oauth2/token",
+        os.getenv('MSAL_MANAGED_IDENTITY_ENDPOINT', 'http://169.254.169.254/metadata/identity/oauth2/token'),
         params=params,
         headers={"Metadata": "true"},
         )
