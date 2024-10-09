@@ -1,4 +1,5 @@
 ﻿from __future__ import annotations
+import hashlib
 import json
 import threading
 import time
@@ -82,6 +83,7 @@ class TokenCache(object):
                         realm=None, target=None,
                         # Note: New field(s) can be added here
                         #key_id=None,
+                        req_ds_cnf=None,
                         **ignored_payload_from_a_real_token:
                     "-".join([  # Note: Could use a hash here to shorten key length
                         home_account_id or "",
@@ -91,6 +93,13 @@ class TokenCache(object):
                         realm or "",
                         target or "",
                         #key_id or "",  # So ATs of different key_id can coexist
+                        hashlib.sha256(req_ds_cnf.encode()).hexdigest()
+                            # TODO: Could hash the entire key eventually.
+                            #       But before that project, we better first
+                            #       change the scope to use input scope
+                            #       instead of response scope,
+                            #       so that a search() can probably have O(1) hit.
+                            if req_ds_cnf else "",  # CDT
                         ]).lower(),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
