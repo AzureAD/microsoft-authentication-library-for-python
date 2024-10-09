@@ -1919,7 +1919,12 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     DEVICE_FLOW_CORRELATION_ID = "_correlation_id"
     CONSOLE_WINDOW_HANDLE = object()
 
-    def __init__(self, client_id, client_credential=None, **kwargs):
+    def __init__(
+        self, client_id, client_credential=None,
+        *,
+        enable_broker_on_windows=None,
+        enable_broker_on_mac=None,
+        **kwargs):
         """Same as :func:`ClientApplication.__init__`,
         except that ``client_credential`` parameter shall remain ``None``.
 
@@ -1996,9 +2001,6 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
-        # Using kwargs notation for now. We will switch to keyword-only arguments.
-        enable_broker_on_windows = kwargs.pop("enable_broker_on_windows", False)
-        enable_broker_on_mac = kwargs.pop("enable_broker_on_mac", False)
         self._enable_broker = bool(
             enable_broker_on_windows and sys.platform == "win32"
             or enable_broker_on_mac and sys.platform == "darwin")
