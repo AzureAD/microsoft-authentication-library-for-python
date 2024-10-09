@@ -218,6 +218,7 @@ class TokenCacheTestCase(unittest.TestCase):
     def _test_data_should_be_saved_and_searchable_in_access_token(self, data):
         scopes = ["s2", "s1", "s3"]  # Not in particular order
         now = 1000
+        self.cache._set(data_to_at={"key_id": "key_id"})
         self.cache.add({
             "data": data,
             "client_id": "my_client_id",

@@ -1,6 +1,7 @@
 ﻿import json
 import threading
 import time
+from typing import Optional  # Needed in Python 3.7 & 3.8
 import logging
 import warnings
 
@@ -38,6 +39,25 @@ class TokenCache(object):
     class AuthorityType:
         ADFS = "ADFS"
         MSSTS = "MSSTS"  # MSSTS means AAD v2 for both AAD & MSA
+
+    _data_to_at: dict[str, str] = {  # field_in_data: field_in_cache
+        # Store extra data which we explicitly allow,
+        # so that we won't accidentally store a user's password etc.
+        # It can be used to store for example key_id used in SSH-cert or POP
+    }
+    _response_to_at: dict[str, str] = {  # field_in_response: field_in_cache
+    }
+
+    def _set(
+        self,
+        *,
+        data_to_at: Optional[dict[str, str]] = None,
+        response_to_at: Optional[dict[str, str]] = None,
+    ) -> None:
+        # This helper should probably be better in __init__(),
+        # but there is no easy way for MSAL EX to pick up a kwargs
+        self._data_to_at = data_to_at or {}
+        self._response_to_at = response_to_at or {}
 
     def __init__(self):
         self._lock = threading.RLock()
@@ -267,11 +287,14 @@ class TokenCache(object):
                     "expires_on": str(now + expires_in),  # Same here
                     "extended_expires_on": str(now + ext_expires_in)  # Same here
                     }
-                at.update({k: data[k] for k in data if k in {
-                    # Also store extra data which we explicitly allow
-                    # So that we won't accidentally store a user's password etc.
-                    "key_id",  # It happens in SSH-cert or POP scenario
-                }})
+                for field_in_resp, field_in_cache in self._response_to_at.items():
+                    value = response.get(field_in_resp)
+                    if value:
+                        at[field_in_cache] = value
+                for field_in_data, field_in_cache in self._data_to_at.items():
+                    value = data.get(field_in_data)
+                    if value:
+                        at[field_in_cache] = value
                 if "refresh_in" in response:
                     refresh_in = response["refresh_in"]  # It is an integer
                     at["refresh_on"] = str(now + refresh_in)  # Schema wants a string

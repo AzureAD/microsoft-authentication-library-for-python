@@ -238,6 +238,10 @@ class ClientApplication(object):
         "You can enable broker by following these instructions. "
         "https://msal-python.readthedocs.io/en/latest/#publicclientapplication")
 
+    _TOKEN_CACHE_DATA: dict[str, str] = {  # field_in_data: field_in_cache
+        "key_id": "key_id",  # Some token types (SSH-certs, POP) are bound to a key
+    }
+
     def __init__(
             self, client_id,
             client_credential=None, authority=None, validate_authority=True,
@@ -651,6 +655,7 @@ class ClientApplication(object):
 
         self._decide_broker(allow_broker, enable_pii_log)
         self.token_cache = token_cache or TokenCache()
+        self.token_cache._set(data_to_at=self._TOKEN_CACHE_DATA)
         self._region_configured = azure_region
         self._region_detected = None
         self.client, self._regional_client = self._build_client(
@@ -1528,9 +1533,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     "realm": authority.tenant,
                     "home_account_id": (account or {}).get("home_account_id"),
                     }
-            key_id = kwargs.get("data", {}).get("key_id")
-            if key_id:  # Some token types (SSH-certs, POP) are bound to a key
-                query["key_id"] = key_id
+            for field_in_data, field_in_cache in self._TOKEN_CACHE_DATA.items():
+                value = kwargs.get("data", {}).get(field_in_data)
+                if value:
+                    query[field_in_cache] = value
             now = time.time()
             refresh_reason = msal.telemetry.AT_ABSENT
             for entry in self.token_cache.search(  # A generator allows us to
