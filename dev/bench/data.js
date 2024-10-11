@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1728686092980,
+  "lastUpdate": 1728686709031,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -22515,6 +22515,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000014118170961526004",
             "extra": "mean: 127.69116873612177 usec\nrounds: 4107"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "alex@digriz.org.uk",
+            "name": "Alexander Clouter",
+            "username": "jimdigriz"
+          },
+          "committer": {
+            "email": "alex@digriz.org.uk",
+            "name": "Alexander Clouter",
+            "username": "jimdigriz"
+          },
+          "distinct": true,
+          "id": "1212f6abcd307de37dae9a502d121b8e0f627852",
+          "message": "allow MI endpoint changing through environment variable\n\nuseful during development where you are using SSH tunnelling to utilise\nthe credentials assigned to an actual instance",
+          "timestamp": "2024-10-11T06:46:34+01:00",
+          "tree_id": "93885676b97b397050bcca3a80de163f603ea8d9",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/1212f6abcd307de37dae9a502d121b8e0f627852"
+        },
+        "date": 1728686708016,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 42157.796291832754,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002250327500793201",
+            "extra": "mean: 23.72040495375064 usec\nrounds: 8559"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 42523.16975351269,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000022946757369419297",
+            "extra": "mean: 23.51659120889956 usec\nrounds: 15766"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8159.077939622214,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001467173886478078",
+            "extra": "mean: 122.56286891730595 usec\nrounds: 4295"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8107.538845963769,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014780927178768062",
+            "extra": "mean: 123.34199305105234 usec\nrounds: 4317"
           }
         ]
       }
