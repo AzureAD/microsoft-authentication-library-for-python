@@ -11,7 +11,7 @@ import os
 from .oauth2cli import Client, JwtAssertionCreator
 from .oauth2cli.oidc import decode_part
 from .authority import Authority, WORLD_WIDE
-from .mex import send_request as mex_send_request
+from .mex import send_request as mex_send_request, send_request_iwa as mex_send_request_iwa
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER
@@ -222,6 +222,7 @@ class ClientApplication(object):
     ACQUIRE_TOKEN_FOR_CLIENT_ID = "730"
     ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID = "832"
     ACQUIRE_TOKEN_INTERACTIVE = "169"
+    ACQUIRE_TOKEN_INTEGRATED_WINDOWS_AUTH_ID = "870"
     GET_ACCOUNTS_ID = "902"
     REMOVE_ACCOUNT_ID = "903"
 
@@ -237,6 +238,7 @@ class ClientApplication(object):
         "auth_scheme is currently only available from broker. "
         "You can enable broker by following these instructions. "
         "https://msal-python.readthedocs.io/en/latest/#publicclientapplication")
+
 
     def __init__(
             self, client_id,
@@ -1888,11 +1890,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             wstrust_endpoint.get("action"), self.http_client)
         if not ("token" in wstrust_result and "type" in wstrust_result):
             raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
-        GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
         grant_type = {
-            SAML_TOKEN_TYPE_V1: GRANT_TYPE_SAML1_1,
+            SAML_TOKEN_TYPE_V1: self.client.GRANT_TYPE_SAML1_1,
             SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
-            WSS_SAML_TOKEN_PROFILE_V1_1: GRANT_TYPE_SAML1_1,
+            WSS_SAML_TOKEN_PROFILE_V1_1: self.client.GRANT_TYPE_SAML1_1,
             WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
             }.get(wstrust_result.get("type"))
         if not grant_type:
@@ -2334,6 +2335,78 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         telemetry_context.update_telemetry(response)
         return response
 
+    def acquire_token_integrated_windows_auth(self, username, scopes="openid", **kwargs):
+        """Gets a token for a given resource via Integrated Windows Authentication (IWA).
+
+        :param str username: Typically a UPN in the form of an email address.
+        :param str scopes: Scopes requested to access a protected API (a resource).
+
+        :return: A dict representing the json response from AAD:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
+        """
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_INTEGRATED_WINDOWS_AUTH_ID)
+        headers = telemetry_context.generate_headers()
+        user_realm_result = self.authority.user_realm_discovery(
+            username,
+            correlation_id=headers[msal.telemetry.CLIENT_REQUEST_ID]
+        )
+        if user_realm_result.get("account_type") != "Federated":
+            raise ValueError("Server returned an unknown account type: %s" % user_realm_result.get("account_type"))
+        response = _clean_up(self._acquire_token_by_iwa_federated(user_realm_result, username, scopes, **kwargs))
+        if response is None:  # Either ADFS or not federated
+            raise ValueError("Integrated Windows Authentication failed for this user: %s", username)
+        if "access_token" in response:
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
+        telemetry_context.update_telemetry(response)
+        return response
+
+    def _acquire_token_by_iwa_federated(
+            self, user_realm_result, username, scopes="openid", **kwargs):
+        wstrust_endpoint = {}
+        if user_realm_result.get("federation_metadata_url"):
+            mex_endpoint = user_realm_result.get("federation_metadata_url")
+            logger.debug(
+                "Attempting mex at: %(mex_endpoint)s",
+                {"mex_endpoint": mex_endpoint})
+            wstrust_endpoint = mex_send_request_iwa(mex_endpoint, self.http_client)
+            if wstrust_endpoint is None:
+                raise ValueError("Unable to find wstrust endpoint from MEX. "
+                                 "This typically happens when attempting MSA accounts. "
+                                 "More details available here. "
+                                 "https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication")
+        logger.debug("wstrust_endpoint = %s", wstrust_endpoint)
+        wstrust_result = wst_send_request(
+            None, None,
+            user_realm_result.get("cloud_audience_urn", "urn:federation:MicrosoftOnline"),
+            wstrust_endpoint.get("address",
+                                 # Fallback to an AAD supplied endpoint
+                                 user_realm_result.get("federation_active_auth_url")),
+            wstrust_endpoint.get("action"), self.http_client)
+        if not ("token" in wstrust_result and "type" in wstrust_result):
+            raise RuntimeError("Unsuccessful RSTR. %s" % wstrust_result)
+        grant_type = {
+            SAML_TOKEN_TYPE_V1: self.client.GRANT_TYPE_SAML1_1,
+            SAML_TOKEN_TYPE_V2: self.client.GRANT_TYPE_SAML2,
+            WSS_SAML_TOKEN_PROFILE_V1_1: self.client.GRANT_TYPE_SAML1_1,
+            WSS_SAML_TOKEN_PROFILE_V2: self.client.GRANT_TYPE_SAML2
+        }.get(wstrust_result.get("type"))
+        if not grant_type:
+            raise RuntimeError(
+                "RSTR returned unknown token type: %s", wstrust_result.get("type"))
+        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
+            grant_type, self.client.encode_saml_assertion)
+        return self.client.obtain_token_by_assertion(
+            wstrust_result["token"], grant_type, scope=scopes,
+            on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                event,
+                environment=self.authority.instance,
+                username=username,  # Useful in case IDT contains no such info
+                iwa=True
+            )),
+            **kwargs)
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
     """Same as :func:`ClientApplication.__init__`,

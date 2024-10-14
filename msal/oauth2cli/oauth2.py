@@ -300,6 +300,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         "DEVICE_CODE": "device_code",
         }
     DEVICE_FLOW_RETRIABLE_ERRORS = ("authorization_pending", "slow_down")
+    GRANT_TYPE_SAML1_1 = 'urn:ietf:params:oauth:grant-type:saml1_1-bearer'
     GRANT_TYPE_SAML2 = "urn:ietf:params:oauth:grant-type:saml2-bearer"  # RFC7522
     GRANT_TYPE_JWT = "urn:ietf:params:oauth:grant-type:jwt-bearer"  # RFC7523
     grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}

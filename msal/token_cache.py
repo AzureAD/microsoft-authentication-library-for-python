@@ -240,8 +240,8 @@ class TokenCache(object):
             # Only use decode_id_token() when necessary, it contains time-sensitive validation
             decode_id_token(id_token, client_id=event["client_id"]) if id_token else {})
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
-
         target = ' '.join(sorted(event.get("scope") or []))  # Schema should have required sorting
+        iwa = event.get("iwa", False)  # Integrated Windows Authentication
 
         with self._lock:
             now = int(time.time() if now is None else now)
@@ -277,7 +277,7 @@ class TokenCache(object):
                     at["refresh_on"] = str(now + refresh_in)  # Schema wants a string
                 self.modify(self.CredentialType.ACCESS_TOKEN, at, at)
 
-            if client_info and not event.get("skip_account_creation"):
+            if (client_info or iwa) and not event.get("skip_account_creation"):
                 account = {
                     "home_account_id": home_account_id,
                     "environment": environment,
