@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 def send_request(
         username, password, cloud_audience_urn, endpoint_address, soap_action, http_client,
         **kwargs):
+    iwa = username is None and password is None
     if not endpoint_address:
         raise ValueError("WsTrust endpoint address can not be empty")
     if soap_action is None:
@@ -49,10 +50,18 @@ def send_request(
             "Contact your administrator to check your ADFS's MEX settings." % soap_action)
     data = _build_rst(
         username, password, cloud_audience_urn, endpoint_address, soap_action)
-    resp = http_client.post(endpoint_address, data=data, headers={
+    if iwa:
+        # Make request kerberized
+        from requests_kerberos import HTTPKerberosAuth, DISABLED
+        resp = http_client.post(endpoint_address, data=data, headers={
             'Content-type':'application/soap+xml; charset=utf-8',
             'SOAPAction': soap_action,
-            }, **kwargs)
+        }, auth=HTTPKerberosAuth(mutual_authentication=DISABLED), allow_redirects=True)
+    else:
+        resp = http_client.post(endpoint_address, data=data, headers={
+                'Content-type':'application/soap+xml; charset=utf-8',
+                'SOAPAction': soap_action,
+                }, **kwargs)
     if resp.status_code >= 400:
         logger.debug("Unsuccessful WsTrust request receives: %s", resp.text)
     # It turns out ADFS uses 5xx status code even with client-side incorrect password error
@@ -76,16 +85,11 @@ def wsu_time_format(datetime_obj):
 
 
 def _build_rst(username, password, cloud_audience_urn, endpoint_address, soap_action):
+    iwa = username is None and password is None
     now = datetime.utcnow()
-    return """<s:Envelope xmlns:s='{s}' xmlns:wsa='{wsa}' xmlns:wsu='{wsu}'>
-        <s:Header>
-            <wsa:Action s:mustUnderstand='1'>{soap_action}</wsa:Action>
-            <wsa:MessageID>urn:uuid:{message_id}</wsa:MessageID>
-            <wsa:ReplyTo>
-            <wsa:Address>http://www.w3.org/2005/08/addressing/anonymous</wsa:Address>
-            </wsa:ReplyTo>
-            <wsa:To s:mustUnderstand='1'>{endpoint_address}</wsa:To>
-
+    _security_header = ""
+    if not iwa:
+        _security_header = """
             <wsse:Security s:mustUnderstand='1'
             xmlns:wsse='http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd'>
                 <wsu:Timestamp wsu:Id='_0'>
@@ -97,7 +101,21 @@ def _build_rst(username, password, cloud_audience_urn, endpoint_address, soap_ac
                     <wsse:Password>{password}</wsse:Password>
                 </wsse:UsernameToken>
             </wsse:Security>
-
+        """.format(
+            username = username,
+            password = escape_password(password),
+            time_now=wsu_time_format(now),
+            time_expire=wsu_time_format(now + timedelta(minutes=10)),
+        )
+    return """<s:Envelope xmlns:s='{s}' xmlns:wsa='{wsa}' xmlns:wsu='{wsu}'>
+        <s:Header>
+            <wsa:Action s:mustUnderstand='1'>{soap_action}</wsa:Action>
+            <wsa:MessageID>urn:uuid:{message_id}</wsa:MessageID>
+            <wsa:ReplyTo>
+            <wsa:Address>http://www.w3.org/2005/08/addressing/anonymous</wsa:Address>
+            </wsa:ReplyTo>
+            <wsa:To s:mustUnderstand='1'>{endpoint_address}</wsa:To>
+            {security_header}
         </s:Header>
         <s:Body>
         <wst:RequestSecurityToken xmlns:wst='{wst}'>
@@ -114,9 +132,6 @@ def _build_rst(username, password, cloud_audience_urn, endpoint_address, soap_ac
             s=Mex.NS["s"], wsu=Mex.NS["wsu"], wsa=Mex.NS["wsa10"],
             soap_action=soap_action, message_id=str(uuid.uuid4()),
             endpoint_address=endpoint_address,
-            time_now=wsu_time_format(now),
-            time_expire=wsu_time_format(now + timedelta(minutes=10)),
-            username=username, password=escape_password(password),
             wst=Mex.NS["wst"] if soap_action == Mex.ACTION_13 else Mex.NS["wst2005"],
             applies_to=cloud_audience_urn,
             key_type='http://docs.oasis-open.org/ws-sx/ws-trust/200512/Bearer'
@@ -125,5 +140,6 @@ def _build_rst(username, password, cloud_audience_urn, endpoint_address, soap_ac
             request_type='http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue'
                 if soap_action == Mex.ACTION_13 else
                 'http://schemas.xmlsoap.org/ws/2005/02/trust/Issue',
+            security_header=_security_header
         )
 
