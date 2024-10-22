@@ -934,10 +934,10 @@ class WorldWideTestCase(LabBasedTestCase):
         "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
-        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
     @unittest.skipUnless(
         os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"),
-        "Need LAB_OBO_PUBLIC_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+        "Need LAB_OBO_PUBLIC_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
     def test_acquire_token_obo(self):
         config = self.get_lab_user(usertype="cloud")
 
@@ -998,7 +998,7 @@ class WorldWideTestCase(LabBasedTestCase):
         "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
-        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
     def test_confidential_client_acquire_token_by_username_password(self):
         # This approach won't work:
         #       config = self.get_lab_user(usertype="cloud", publicClient="no")
@@ -1215,10 +1215,10 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
         "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
-        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
     @unittest.skipUnless(
         os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"),
-        "Need LAB_OBO_PUBLIC_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+        "Need LAB_OBO_PUBLIC_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
     def test_cca_obo_should_bypass_regional_endpoint_therefore_still_work(self):
         """We test OBO because it is implemented in sub class ConfidentialClientApplication"""
         config = self.get_lab_user(usertype="cloud")
@@ -1246,7 +1246,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
         "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
     @unittest.skipUnless(
         os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
-        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://docs.msidlab.com/flows/onbehalfofflow.html")
+        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
     def test_cca_ropc_should_bypass_regional_endpoint_therefore_still_work(self):
         """We test ROPC because it is implemented in base class ClientApplication"""
         config = self.get_lab_user(usertype="cloud")
