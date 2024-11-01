@@ -154,7 +154,7 @@ class ManagedIdentityClient(object):
         self,
         managed_identity: Union[
             dict,
-            ManagedIdentity,  # Could use Type[ManagedIdentity] but it is deprecatred in Python 3.9+
+            ManagedIdentity,  # Could use Type[ManagedIdentity] but it is deprecated in Python 3.9+
             SystemAssignedManagedIdentity,
             UserAssignedManagedIdentity,
             ],
@@ -206,7 +206,7 @@ class ManagedIdentityClient(object):
         you may use an environment variable (such as MY_MANAGED_IDENTITY_CONFIG)
         to store a json blob like
         ``{"ManagedIdentityIdType": "ClientId", "Id": "foo"}`` or
-        ``{"ManagedIdentityIdType": "SystemAssignedManagedIdentity", "Id": null})``.
+        ``{"ManagedIdentityIdType": "SystemAssigned", "Id": null}``.
         The following app can load managed identity configuration dynamically::
 
             import json, os, msal, requests
@@ -648,4 +648,3 @@ def _obtain_token_on_arc(http_client, endpoint, resource):
         "error": "invalid_request",
         "error_description": response.text,
         }
-
