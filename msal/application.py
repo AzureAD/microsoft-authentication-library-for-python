@@ -329,7 +329,7 @@ class ClientApplication(object):
                         "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
                     }
 
-            .. admonition:: Supporting reading client cerficates from PFX files
+            .. admonition:: Supporting reading client certificates from PFX files
 
                 *Added in version 1.29.0*:
                 Feed in a dictionary containing the path to a PFX file::
