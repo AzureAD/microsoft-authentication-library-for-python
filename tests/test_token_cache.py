@@ -2,6 +2,7 @@ import logging
 import base64
 import json
 import time
+import warnings
 
 from msal.token_cache import TokenCache, SerializableTokenCache
 from tests import unittest
@@ -83,10 +84,11 @@ class TokenCacheTestCase(unittest.TestCase):
             }
         self.assertEqual(access_token_entry, self.cache._cache["AccessToken"].get(
             self.at_key_maker(**access_token_entry)))
-        self.assertIn(
-            access_token_entry,
-            self.cache.find(self.cache.CredentialType.ACCESS_TOKEN, now=now),
-            "find(..., query=None) should not crash, even though MSAL does not use it")
+        with warnings.catch_warnings():
+            self.assertIn(
+                access_token_entry,
+                self.cache.find(self.cache.CredentialType.ACCESS_TOKEN, now=now),
+                "find(..., query=None) should not crash, even though MSAL does not use it")
         self.assertEqual(
             {
                 'client_id': 'my_client_id',
