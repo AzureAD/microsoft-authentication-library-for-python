@@ -43,6 +43,8 @@ class TokenCache(object):
         self._lock = threading.RLock()
         self._cache = {}
         self.key_makers = {
+            # Note: We have changed token key format before when ordering scopes;
+            #       changing token key won't result in cache miss.
             self.CredentialType.REFRESH_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         target=None, **ignored_payload_from_a_real_token:
@@ -56,14 +58,18 @@ class TokenCache(object):
                         ]).lower(),
             self.CredentialType.ACCESS_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
-                        realm=None, target=None, **ignored_payload_from_a_real_token:
-                    "-".join([
+                        realm=None, target=None,
+                        # Note: New field(s) can be added here
+                        #key_id=None,
+                        **ignored_payload_from_a_real_token:
+                    "-".join([  # Note: Could use a hash here to shorten key length
                         home_account_id or "",
                         environment or "",
                         self.CredentialType.ACCESS_TOKEN,
                         client_id or "",
                         realm or "",
                         target or "",
+                        #key_id or "",  # So ATs of different key_id can coexist
                         ]).lower(),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
@@ -124,7 +130,7 @@ class TokenCache(object):
             target_set <= set(entry.get("target", "").split())
             if target_set else True)
 
-    def search(self, credential_type, target=None, query=None):  # O(n) generator
+    def search(self, credential_type, target=None, query=None, *, now=None):  # O(n) generator
         """Returns a generator of matching entries.
 
         It is O(1) for AT hits, and O(n) for other types.
@@ -150,21 +156,33 @@ class TokenCache(object):
 
         target_set = set(target)
         with self._lock:
-            # Since the target inside token cache key is (per schema) unsorted,
-            # there is no point to attempt an O(1) key-value search here.
-            # So we always do an O(n) in-memory search.
+            # O(n) search. The key is NOT used in search.
+            now = int(time.time() if now is None else now)
+            expired_access_tokens = [
+                # Especially when/if we key ATs by ephemeral fields such as key_id,
+                # stale ATs keyed by an old key_id would stay forever.
+                # Here we collect them for their removal.
+            ]
             for entry in self._cache.get(credential_type, {}).values():
+                if (  # Automatically delete expired access tokens
+                    credential_type == self.CredentialType.ACCESS_TOKEN
+                    and int(entry["expires_on"]) < now
+                ):
+                    expired_access_tokens.append(entry)  # Can't delete them within current for-loop
+                    continue
                 if (entry != preferred_result  # Avoid yielding the same entry twice
                     and self._is_matching(entry, query, target_set=target_set)
                 ):
                     yield entry
+            for at in expired_access_tokens:
+                self.remove_at(at)
 
-    def find(self, credential_type, target=None, query=None):
+    def find(self, credential_type, target=None, query=None, *, now=None):
         """Equivalent to list(search(...))."""
         warnings.warn(
             "Use list(search(...)) instead to explicitly get a list.",
             DeprecationWarning)
-        return list(self.search(credential_type, target=target, query=query))
+        return list(self.search(credential_type, target=target, query=query, now=now))
 
     def add(self, event, now=None):
         """Handle a token obtaining event, and add tokens into cache."""
@@ -249,8 +267,11 @@ class TokenCache(object):
                     "expires_on": str(now + expires_in),  # Same here
                     "extended_expires_on": str(now + ext_expires_in)  # Same here
                     }
-                if data.get("key_id"):  # It happens in SSH-cert or POP scenario
-                    at["key_id"] = data.get("key_id")
+                at.update({k: data[k] for k in data if k in {
+                    # Also store extra data which we explicitly allow
+                    # So that we won't accidentally store a user's password etc.
+                    "key_id",  # It happens in SSH-cert or POP scenario
+                }})
                 if "refresh_in" in response:
                     refresh_in = response["refresh_in"]  # It is an integer
                     at["refresh_on"] = str(now + refresh_in)  # Schema wants a string

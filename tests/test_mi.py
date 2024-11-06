@@ -61,6 +61,14 @@ class ClientTestCase(unittest.TestCase):
             http_client=requests.Session(),
             )
 
+    def test_error_out_on_invalid_input(self):
+        with self.assertRaises(ManagedIdentityError):
+            ManagedIdentityClient({"foo": "bar"}, http_client=requests.Session())
+        with self.assertRaises(ManagedIdentityError):
+            ManagedIdentityClient(
+                {"ManagedIdentityIdType": "undefined", "Id": "foo"},
+                http_client=requests.Session())
+
     def assertCacheStatus(self, app):
         cache = app._token_cache._cache
         self.assertEqual(1, len(cache.get("AccessToken", [])), "Should have 1 AT")
@@ -82,20 +90,17 @@ class ClientTestCase(unittest.TestCase):
         self.assertTrue(
             is_subdict_of(expected_result, result),  # We will test refresh_on later
             "Should obtain a token response")
+        self.assertTrue(result["token_source"], "identity_provider")
         self.assertEqual(expires_in, result["expires_in"], "Should have expected expires_in")
         if expires_in >= 7200:
             expected_refresh_on = int(time.time() + expires_in / 2)
             self.assertTrue(
                 expected_refresh_on - 1 <= result["refresh_on"] <= expected_refresh_on + 1,
                 "Should have a refresh_on time around the middle of the token's life")
-        self.assertEqual(
-            result["access_token"],
-            app.acquire_token_for_client(resource=resource).get("access_token"),
-            "Should hit the same token from cache")
-
-        self.assertCacheStatus(app)
 
         result = app.acquire_token_for_client(resource=resource)
+        self.assertCacheStatus(app)
+        self.assertEqual("cache", result["token_source"], "Should hit cache")
         self.assertEqual(
             call_count, mocked_http.call_count,
             "No new call to the mocked http should be made for a cache hit")
@@ -109,6 +114,9 @@ class ClientTestCase(unittest.TestCase):
             self.assertTrue(
                 expected_refresh_on - 5 < result["refresh_on"] <= expected_refresh_on,
                 "Should have a refresh_on time around the middle of the token's life")
+
+        result = app.acquire_token_for_client(resource=resource, claims_challenge="foo")
+        self.assertEqual("identity_provider", result["token_source"], "Should miss cache")
 
 
 class VmTestCase(ClientTestCase):
@@ -130,6 +138,22 @@ class VmTestCase(ClientTestCase):
             self.assertEqual(
                 json.loads(raw_error), self.app.acquire_token_for_client(resource="R"))
             self.assertEqual({}, self.app._token_cache._cache)
+
+    def test_vm_resource_id_parameter_should_be_msi_res_id(self):
+        app = ManagedIdentityClient(
+            {"ManagedIdentityIdType": "ResourceId", "Id": "1234"},
+            http_client=requests.Session(),
+            )
+        with patch.object(app._http_client, "get", return_value=MinimalResponse(
+            status_code=200,
+            text='{"access_token": "AT", "expires_in": 3600, "resource": "R"}',
+        )) as mocked_method:
+            app.acquire_token_for_client(resource="R")
+            mocked_method.assert_called_with(
+                'http://169.254.169.254/metadata/identity/oauth2/token',
+                params={'api-version': '2018-02-01', 'resource': 'R', 'msi_res_id': '1234'},
+                headers={'Metadata': 'true'},
+                )
 
 
 @patch.dict(os.environ, {"IDENTITY_ENDPOINT": "http://localhost", "IDENTITY_HEADER": "foo"})
@@ -155,6 +179,22 @@ class AppServiceTestCase(ClientTestCase):
                 "error_description": "500, error content is undefined",
             }, self.app.acquire_token_for_client(resource="R"))
             self.assertEqual({}, self.app._token_cache._cache)
+
+    def test_app_service_resource_id_parameter_should_be_mi_res_id(self):
+        app = ManagedIdentityClient(
+            {"ManagedIdentityIdType": "ResourceId", "Id": "1234"},
+            http_client=requests.Session(),
+            )
+        with patch.object(app._http_client, "get", return_value=MinimalResponse(
+            status_code=200,
+            text='{"access_token": "AT", "expires_on": 12345, "resource": "R"}',
+        )) as mocked_method:
+            app.acquire_token_for_client(resource="R")
+            mocked_method.assert_called_with(
+                'http://localhost',
+                params={'api-version': '2019-08-01', 'resource': 'R', 'mi_res_id': '1234'},
+                headers={'X-IDENTITY-HEADER': 'foo', 'Metadata': 'true'},
+                )
 
 
 @patch.dict(os.environ, {"MSI_ENDPOINT": "http://localhost", "MSI_SECRET": "foo"})
@@ -241,6 +281,9 @@ class ArcTestCase(ClientTestCase):
         "WWW-Authenticate": "Basic realm=/tmp/foo",
         })
 
+    def test_error_out_on_invalid_input(self, mocked_stat):
+        return super(ArcTestCase, self).test_error_out_on_invalid_input()
+
     def test_happy_path(self, mocked_stat):
         expires_in = 1234
         with patch.object(self.app._http_client, "get", side_effect=[
@@ -249,7 +292,8 @@ class ArcTestCase(ClientTestCase):
                 status_code=200,
                 text='{"access_token": "AT", "expires_in": "%s", "resource": "R"}' % expires_in,
                 ),
-        ]) as mocked_method:
+            ] * 2,  # Duplicate a pair of mocks for _test_happy_path()'s CAE check
+        ) as mocked_method:
             try:
                 self._test_happy_path(self.app, mocked_method, expires_in)
                 mocked_stat.assert_called_with(os.path.join(

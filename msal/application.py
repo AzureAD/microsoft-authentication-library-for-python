@@ -5,6 +5,7 @@ import logging
 import sys
 import warnings
 from threading import Lock
+from typing import Optional  # Needed in Python 3.7 & 3.8
 import os
 
 from .oauth2cli import Client, JwtAssertionCreator
@@ -21,10 +22,15 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.30.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.31.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
+
+def _init_broker(enable_pii_log):  # Make it a function to allow mocking
+    from . import broker  # Trigger Broker's initialization, lazily
+    if enable_pii_log:
+        broker._enable_pii_log()
 
 def extract_certs(public_cert_content):
     # Parses raw public certificate file contents and returns a list of strings
@@ -189,6 +195,21 @@ class _ClientWithCcsRoutingInfo(Client):
             username, password, headers=headers, **kwargs)
 
 
+def _msal_extension_check():
+    # Can't run this in module or class level otherwise you'll get circular import error
+    try:
+        from msal_extensions import __version__ as v
+        major, minor, _ = v.split(".", maxsplit=3)
+        if not (int(major) >= 1 and int(minor) >= 2):
+            warnings.warn(
+                "Please upgrade msal-extensions. "
+                "Only msal-extensions 1.2+ can work with msal 1.30+")
+    except ImportError:
+        pass  # The optional msal_extensions is not installed. Business as usual.
+    except ValueError:
+        logger.exception(f"msal_extensions version {v} not in major.minor.patch format")
+
+
 class ClientApplication(object):
     """You do not usually directly use this class. Use its subclasses instead:
     :class:`PublicClientApplication` and :class:`ConfidentialClientApplication`.
@@ -205,6 +226,7 @@ class ClientApplication(object):
     REMOVE_ACCOUNT_ID = "903"
 
     ATTEMPT_REGION_DISCOVERY = True  # "TryAutoDetect"
+    DISABLE_MSAL_FORCE_REGION = False  # Used in azure_region to disable MSAL_FORCE_REGION behavior
     _TOKEN_SOURCE = "token_source"
     _TOKEN_SOURCE_IDP = "identity_provider"
     _TOKEN_SOURCE_CACHE = "cache"
@@ -411,9 +433,11 @@ class ClientApplication(object):
             (STS) what this client is capable for,
             so STS can decide to turn on certain features.
             For example, if client is capable to handle *claims challenge*,
-            STS can then issue CAE access tokens to resources
-            knowing when the resource emits *claims challenge*
-            the client will be capable to handle.
+            STS may issue
+            `Continuous Access Evaluation (CAE) <https://learn.microsoft.com/entra/identity/conditional-access/concept-continuous-access-evaluation>`_
+            access tokens to resources,
+            knowing that when the resource emits a *claims challenge*
+            the client will be able to handle those challenges.
 
             Implementation details:
             Client capability is implemented using "claims" parameter on the wire,
@@ -426,11 +450,14 @@ class ClientApplication(object):
             Instructs MSAL to use the Entra regional token service. This legacy feature is only available to
             first-party applications. Only ``acquire_token_for_client()`` is supported.
 
-            Supports 3 values:
+            Supports 4 values:
 
-              ``azure_region=None`` - meaning no region is used. This is the default value.
-              ``azure_region="some_region"`` - meaning the specified region is used.
-              ``azure_region=True`` - meaning MSAL will try to auto-detect the region. This is not recommended.
+            1. ``azure_region=None`` - This default value means no region is configured.
+               MSAL will use the region defined in env var ``MSAL_FORCE_REGION``.
+            2. ``azure_region="some_region"`` - meaning the specified region is used.
+            3. ``azure_region=True`` - meaning
+               MSAL will try to auto-detect the region. This is not recommended.
+            4. ``azure_region=False`` - meaning MSAL will use no region.
 
             .. note::
                 Region auto-discovery has been tested on VMs and on Azure Functions. It is unreliable.
@@ -608,7 +635,10 @@ class ClientApplication(object):
         except ValueError:  # Those are explicit authority validation errors
             raise
         except Exception:  # The rest are typically connection errors
-            if validate_authority and azure_region and not oidc_authority:
+            if validate_authority and not oidc_authority and (
+                azure_region  # Opted in to use region
+                or (azure_region is None and os.getenv("MSAL_FORCE_REGION"))  # Will use region
+            ):
                 # Since caller opts in to use region, here we tolerate connection
                 # errors happened during authority validation at non-region endpoint
                 self.authority = Authority(
@@ -628,6 +658,8 @@ class ClientApplication(object):
         self.authority_groups = None
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
+        _msal_extension_check()
+
 
     def _decide_broker(self, allow_broker, enable_pii_log):
         is_confidential_app = self.client_credential or isinstance(
@@ -638,20 +670,28 @@ class ClientApplication(object):
         if allow_broker:
             warnings.warn(
                 "allow_broker is deprecated. "
-                "Please use PublicClientApplication(..., enable_broker_on_windows=True)",
+                "Please use PublicClientApplication(..., "
+                "enable_broker_on_windows=True, "
+                "enable_broker_on_mac=...)",
                 DeprecationWarning)
-        self._enable_broker = self._enable_broker or (
+        opted_in_for_broker = (
+            self._enable_broker  # True means Opted-in from PCA
+            or (
             # When we started the broker project on Windows platform,
             # the allow_broker was meant to be cross-platform. Now we realize
             # that other platforms have different redirect_uri requirements,
             # so the old allow_broker is deprecated and will only for Windows.
             allow_broker and sys.platform == "win32")
-        if (self._enable_broker and not is_confidential_app
-                and not self.authority.is_adfs and not self.authority._is_b2c):
+        )
+        self._enable_broker = (  # This same variable will also store the state
+            opted_in_for_broker
+            and not is_confidential_app
+            and not self.authority.is_adfs
+            and not self.authority._is_b2c
+        )
+        if self._enable_broker:
             try:
-                from . import broker  # Trigger Broker's initialization
-                if enable_pii_log:
-                    broker._enable_pii_log()
+                _init_broker(enable_pii_log)
             except RuntimeError:
                 self._enable_broker = False
                 logger.exception(
@@ -692,9 +732,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             self._telemetry_buffer, self._telemetry_lock, api_id,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
 
-    def _get_regional_authority(self, central_authority):
-        if not self._region_configured:  # User did not opt-in to ESTS-R
+    def _get_regional_authority(self, central_authority) -> Optional[Authority]:
+        if self._region_configured is False:  # User opts out of ESTS-R
             return None  # Short circuit to completely bypass region detection
+        if self._region_configured is None:  # User did not make an ESTS-R choice
+            self._region_configured = os.getenv("MSAL_FORCE_REGION") or None
         self._region_detected = self._region_detected or _detect_region(
             self.http_client if self._region_configured is not None else None)
         if (self._region_configured != self.ATTEMPT_REGION_DISCOVERY
@@ -1879,7 +1921,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
         .. note::
 
-            You may set enable_broker_on_windows to True.
+            You may set enable_broker_on_windows and/or enable_broker_on_mac to True.
 
             **What is a broker, and why use it?**
 
@@ -1905,9 +1947,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
                * ``ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id``
                  if your app is expected to run on Windows 10+
+               * ``msauth.com.msauth.unsignedapp://auth``
+                 if your app is expected to run on Mac
 
             2. installed broker dependency,
-               e.g. ``pip install msal[broker]>=1.25,<2``.
+               e.g. ``pip install msal[broker]>=1.31,<2``.
 
             3. tested with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
 
@@ -1939,12 +1983,21 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
             New in MSAL Python 1.25.0.
+
+        :param boolean enable_broker_on_mac:
+            This setting is only effective if your app is running on Mac.
+            This parameter defaults to None, which means MSAL will not utilize a broker.
+
+            New in MSAL Python 1.31.0.
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
         # Using kwargs notation for now. We will switch to keyword-only arguments.
         enable_broker_on_windows = kwargs.pop("enable_broker_on_windows", False)
-        self._enable_broker = enable_broker_on_windows and sys.platform == "win32"
+        enable_broker_on_mac = kwargs.pop("enable_broker_on_mac", False)
+        self._enable_broker = bool(
+            enable_broker_on_windows and sys.platform == "win32"
+            or enable_broker_on_mac and sys.platform == "darwin")
         super(PublicClientApplication, self).__init__(
             client_id, client_credential=None, **kwargs)
 
@@ -2022,14 +2075,22 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             New in version 1.15.
 
         :param int parent_window_handle:
-            Required if your app is running on Windows and opted in to use broker.
+            OPTIONAL.
 
-            If your app is a GUI app,
-            you are recommended to also provide its window handle,
-            so that the sign in UI window will properly pop up on top of your window.
+            * If your app does not opt in to use broker,
+              you do not need to provide a ``parent_window_handle`` here.
 
-            If your app is a console app (most Python scripts are console apps),
-            you can use a placeholder value ``msal.PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
+            * If your app opts in to use broker,
+              ``parent_window_handle`` is required.
+
+              - If your app is a GUI app running on Windows or Mac system,
+                you are required to also provide its window handle,
+                so that the sign-in window will pop up on top of your window.
+              - If your app is a console app running on Windows or Mac system,
+                you can use a placeholder
+                ``PublicClientApplication.CONSOLE_WINDOW_HANDLE``.
+
+            Most Python scripts are console apps.
 
             New in version 1.20.0.
 

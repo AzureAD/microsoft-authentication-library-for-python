@@ -16,6 +16,7 @@ import os
 import json
 import time
 import unittest
+from urllib.parse import urlparse, parse_qs
 import sys
 try:
     from unittest.mock import patch, ANY
@@ -171,6 +172,7 @@ class E2eTestCase(unittest.TestCase):
             client_id,
             client_credential=None,
             authority="https://login.microsoftonline.com/common",
+            oidc_authority=None,
             scopes=["https://graph.microsoft.com/.default"],  # Microsoft Graph
             http_client=None,
             azure_region=None,
@@ -180,6 +182,7 @@ class E2eTestCase(unittest.TestCase):
                 client_id,
                 client_credential=client_credential,
                 authority=authority,
+                oidc_authority=oidc_authority,
                 azure_region=azure_region,
                 http_client=http_client or MinimalHttpClient(),
             )
@@ -193,20 +196,24 @@ class E2eTestCase(unittest.TestCase):
             return msal.PublicClientApplication(
                 client_id,
                 authority=authority,
+                oidc_authority=oidc_authority,
                 http_client=http_client or MinimalHttpClient(),
                 enable_broker_on_windows=broker_available,
+                enable_broker_on_mac=broker_available,
                 )
 
     def _test_username_password(self,
             authority=None, client_id=None, username=None, password=None, scope=None,
+            oidc_authority=None,
             client_secret=None,  # Since MSAL 1.11, confidential client has ROPC too
             azure_region=None,
             http_client=None,
             auth_scheme=None,
             **ignored):
-        assert authority and client_id and username and password and scope
+        assert client_id and username and password and scope and (
+            authority or oidc_authority)
         self.app = self._build_app(
-            client_id, authority=authority,
+            client_id, authority=authority, oidc_authority=oidc_authority,
             http_client=http_client,
             azure_region=azure_region,  # Regional endpoint does not support ROPC.
                 # Here we just use it to test a regional app won't break ROPC.
@@ -227,9 +234,14 @@ class E2eTestCase(unittest.TestCase):
         os.getenv("TRAVIS"),  # It is set when running on TravisCI or Github Actions
         "Although it is doable, we still choose to skip device flow to save time")
     def _test_device_flow(
-            self, client_id=None, authority=None, scope=None, **ignored):
-        assert client_id and authority and scope
-        self.app = self._build_app(client_id, authority=authority)
+        self,
+        *,
+        client_id=None, authority=None, oidc_authority=None, scope=None,
+        **ignored
+    ):
+        assert client_id and scope and (authority or oidc_authority)
+        self.app = self._build_app(
+            client_id, authority=authority, oidc_authority=oidc_authority)
         flow = self.app.initiate_device_flow(scopes=scope)
         assert "user_code" in flow, "DF does not seem to be provisioned: %s".format(
             json.dumps(flow, indent=4))
@@ -253,7 +265,8 @@ class E2eTestCase(unittest.TestCase):
 
     @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
     def _test_acquire_token_interactive(
-            self, client_id=None, authority=None, scope=None, port=None,
+            self, *, client_id=None, authority=None, scope=None, port=None,
+            oidc_authority=None,
             username=None, lab_name=None,
             username_uri="",  # Unnecessary if you provided username and lab_name
             data=None,  # Needed by ssh-cert feature
@@ -261,8 +274,9 @@ class E2eTestCase(unittest.TestCase):
             enable_msa_passthrough=None,
             auth_scheme=None,
             **ignored):
-        assert client_id and authority and scope
-        self.app = self._build_app(client_id, authority=authority)
+        assert client_id and scope and (authority or oidc_authority)
+        self.app = self._build_app(
+            client_id, authority=authority, oidc_authority=oidc_authority)
         logger.info(_get_hint(  # Useful when testing broker which shows no welcome_template
             username=username, lab_name=lab_name, username_uri=username_uri))
         result = self.app.acquire_token_interactive(
@@ -680,10 +694,13 @@ class LabBasedTestCase(E2eTestCase):
 
     def _test_acquire_token_by_client_secret(
             self, client_id=None, client_secret=None, authority=None, scope=None,
+            oidc_authority=None,
             **ignored):
-        assert client_id and client_secret and authority and scope
+        assert client_id and client_secret and scope and (
+            authority or oidc_authority)
         self.app = msal.ConfidentialClientApplication(
             client_id, client_credential=client_secret, authority=authority,
+            oidc_authority=oidc_authority,
             http_client=MinimalHttpClient())
         result = self.app.acquire_token_for_client(scope)
         self.assertIsNotNone(result.get("access_token"), "Got %s instead" % result)
@@ -1004,14 +1021,18 @@ class CiamTestCase(LabBasedTestCase):
     @classmethod
     def setUpClass(cls):
         super(CiamTestCase, cls).setUpClass()
-        cls.user = cls.get_lab_user(federationProvider="ciam")
+        cls.user = cls.get_lab_user(
+            #federationProvider="ciam",  # This line would return ciam2 tenant
+            federationProvider="ciamcud", signinAudience="AzureAdMyOrg",  # ciam6
+        )
         # FYI: Only single- or multi-tenant CIAM app can have other-than-OIDC
         # delegated permissions on Microsoft Graph.
         cls.app_config = cls.get_lab_app_object(cls.user["client_id"])
 
     def test_ciam_acquire_token_interactive(self):
         self._test_acquire_token_interactive(
-            authority=self.app_config["authority"],
+            authority=self.app_config.get("authority"),
+            oidc_authority=self.app_config.get("oidc_authority"),
             client_id=self.app_config["appId"],
             scope=self.app_config["scopes"],
             username=self.user["username"],
@@ -1019,13 +1040,18 @@ class CiamTestCase(LabBasedTestCase):
             )
 
     def test_ciam_acquire_token_for_client(self):
+        raw_url = self.app_config["clientSecret"]
+        secret_url = urlparse(raw_url)
+        if secret_url.query:  # Ciam2 era has a query param Secret=name
+            secret_name = parse_qs(secret_url.query)["Secret"][0]
+        else:  # Ciam6 era has a URL path that ends with the secret name
+            secret_name = secret_url.path.split("/")[-1]
+        logger.info('Detected secret name "%s" from "%s"', secret_name, raw_url)
         self._test_acquire_token_by_client_secret(
             client_id=self.app_config["appId"],
-            client_secret=self.get_lab_user_secret(
-                self.app_config["clientSecret"].split("=")[-1]),
-            authority=self.app_config["authority"],
-            #scope=["{}/.default".format(self.app_config["appId"])],  # AADSTS500207: The account type can't be used for the resource you're trying to access.
-            #scope=["api://{}/.default".format(self.app_config["appId"])],  # AADSTS500011: The resource principal named api://ced781e7-bdb0-4c99-855c-d3bacddea88a was not found in the tenant named MSIDLABCIAM2. This can happen if the application has not been installed by the administrator of the tenant or consented to by any user in the tenant. You might have sent your authentication request to the wrong tenant.
+            client_secret=self.get_lab_user_secret(secret_name),
+            authority=self.app_config.get("authority"),
+            oidc_authority=self.app_config.get("oidc_authority"),
             scope=self.app_config["scopes"],  # It shall ends with "/.default"
             )
 
@@ -1038,19 +1064,33 @@ class CiamTestCase(LabBasedTestCase):
         # and enabling "Allow public client flows".
         # Otherwise it would hit AADSTS7000218.
         self._test_username_password(
-            authority=self.app_config["authority"],
+            authority=self.app_config.get("authority"),
+            oidc_authority=self.app_config.get("oidc_authority"),
             client_id=self.app_config["appId"],
             username=self.user["username"],
             password=self.get_lab_user_secret(self.user["lab_name"]),
             scope=self.app_config["scopes"],
             )
 
+    @unittest.skip("""As of Aug 2024, in both ciam2 and ciam6, sign-in fails with
+AADSTS500208: The domain is not a valid login domain for the account type.""")
     def test_ciam_device_flow(self):
         self._test_device_flow(
-            authority=self.app_config["authority"],
+            authority=self.app_config.get("authority"),
+            oidc_authority=self.app_config.get("oidc_authority"),
             client_id=self.app_config["appId"],
             scope=self.app_config["scopes"],
             )
+
+
+class CiamCudTestCase(CiamTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super(CiamCudTestCase, cls).setUpClass()
+        cls.app_config["authority"] = None
+        cls.app_config["oidc_authority"] = (
+            # Derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.63.0/tests/Microsoft.Identity.Test.Integration.netcore/HeadlessTests/CiamIntegrationTests.cs#L156
+            "https://login.msidlabsciam.com/fe362aec-5d43-45d1-b730-9755e60dc3b9/v2.0")
 
 
 class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
@@ -1090,10 +1130,22 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
     def test_acquire_token_for_client_should_hit_global_endpoint_by_default(self):
         self._test_acquire_token_for_client(None, None)
 
-    def test_acquire_token_for_client_should_ignore_env_var_by_default(self):
+    def test_acquire_token_for_client_should_ignore_env_var_region_name_by_default(self):
         os.environ["REGION_NAME"] = "eastus"
         self._test_acquire_token_for_client(None, None)
         del os.environ["REGION_NAME"]
+
+    @patch.dict(os.environ, {"MSAL_FORCE_REGION": "eastus"})
+    def test_acquire_token_for_client_should_use_env_var_msal_force_region_by_default(self):
+        self._test_acquire_token_for_client(None, "eastus")
+
+    @patch.dict(os.environ, {"MSAL_FORCE_REGION": "eastus"})
+    def test_acquire_token_for_client_should_prefer_the_explicit_region(self):
+        self._test_acquire_token_for_client("westus", "westus")
+
+    @patch.dict(os.environ, {"MSAL_FORCE_REGION": "eastus"})
+    def test_acquire_token_for_client_should_allow_opt_out_env_var_msal_force_region(self):
+        self._test_acquire_token_for_client(False, None)
 
     def test_acquire_token_for_client_should_use_a_specified_region(self):
         self._test_acquire_token_for_client("westus", "westus")

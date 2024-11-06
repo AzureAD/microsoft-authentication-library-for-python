@@ -1,11 +1,16 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
+import json
+import logging
 import sys
 import time
-from msal.application import *
-from msal.application import _str2bytes
+from unittest.mock import patch, Mock
 import msal
-from msal.application import _merge_claims_challenge_and_capabilities
+from msal.application import (
+    extract_certs,
+    ClientApplication, PublicClientApplication, ConfidentialClientApplication,
+    _str2bytes, _merge_claims_challenge_and_capabilities,
+)
 from tests import unittest
 from tests.test_token_cache import build_id_token, build_response
 from tests.http_client import MinimalHttpClient, MinimalResponse
@@ -335,6 +340,7 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
     account = {"home_account_id": "{}.{}".format(uid, utid)}
     rt = "this is a rt"
     client_id = "my_app"
+    soon = 60  # application.py considers tokens within 5 minutes as expired
 
     @classmethod
     def setUpClass(cls):  # Initialization at runtime, not interpret-time
@@ -409,7 +415,8 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
 
     def test_expired_token_and_unavailable_aad_should_return_error(self):
         # a.k.a. Attempt refresh expired token when AAD unavailable
-        self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
+        self.populate_cache(
+            access_token="expired at", expires_in=self.soon, refresh_in=-900)
         error = "something went wrong"
         def mock_post(url, headers=None, *args, **kwargs):
             self.assertEqual("4|84,3|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
@@ -420,7 +427,8 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
 
     def test_expired_token_and_available_aad_should_return_new_token(self):
         # a.k.a. Attempt refresh expired token when AAD available
-        self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
+        self.populate_cache(
+            access_token="expired at", expires_in=self.soon, refresh_in=-900)
         new_access_token = "new AT"
         new_refresh_in = 123
         def mock_post(url, headers=None, *args, **kwargs):
@@ -721,4 +729,130 @@ class TestScopeDecoration(unittest.TestCase):
     def test_client_id_should_be_a_valid_scope(self):
         self._test_client_id_should_be_a_valid_scope("client_id", [])
         self._test_client_id_should_be_a_valid_scope("client_id", ["foo"])
+
+
+@patch("sys.platform", new="darwin")  # Pretend running on Mac.
+@patch("msal.authority.tenant_discovery", new=Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    }))
+class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
+
+    @patch("msal.application._init_broker", new=Mock(side_effect=ImportError(
+        "PyMsalRuntime not installed"
+    )))
+    def test_broker_should_be_disabled_by_default(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            )
+        self.assertFalse(app._enable_broker)
+
+    @patch("msal.application._init_broker", new=Mock(side_effect=ImportError(
+        "PyMsalRuntime not installed"
+    )))
+    def test_opt_in_should_error_out_when_pymsalruntime_not_installed(self):
+        """Because it is actionable to app developer to add dependency declaration"""
+        with self.assertRaises(ImportError):
+            app = msal.PublicClientApplication(
+                "client_id",
+                authority="https://login.microsoftonline.com/common",
+                enable_broker_on_mac=True,
+                )
+
+    @patch("msal.application._init_broker", new=Mock(side_effect=RuntimeError(
+        "PyMsalRuntime raises RuntimeError when broker initialization failed"
+    )))
+    def test_should_fallback_when_pymsalruntime_failed_to_initialize_broker(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+
+@patch("sys.platform", new="darwin")  # Pretend running on Mac.
+@patch("msal.authority.tenant_discovery", new=Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    }))
+@patch("msal.application._init_broker", new=Mock())  # Pretend pymsalruntime installed and working
+class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
+
+    def test_broker_should_be_disabled_by_default(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_broker_should_be_enabled_when_opted_in(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertTrue(app._enable_broker)
+
+    def test_should_fallback_to_non_broker_when_using_adfs(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://contoso.com/adfs",
+            #instance_discovery=False,  # Automatically skipped when detected ADFS
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_should_fallback_to_non_broker_when_using_b2c(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://contoso.b2clogin.com/contoso/policy",
+            #instance_discovery=False,  # Automatically skipped when detected B2C
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_should_use_broker_when_disabling_instance_discovery(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://contoso.com/path",
+            instance_discovery=False,  # Need this for a generic authority url
+            enable_broker_on_mac=True,
+            )
+        # TODO: Shall we bypass broker when opted out of instance discovery?
+        self.assertTrue(app._enable_broker)  # Current implementation enables broker
+
+    def test_should_fallback_to_non_broker_when_using_oidc_authority(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            oidc_authority="https://contoso.com/path",
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_app_did_not_register_redirect_uri_should_error_out(self):
+        """Because it is actionable to app developer to add redirect URI"""
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertTrue(app._enable_broker)
+        with patch.object(
+            # Note: We tried @patch("msal.broker.foo", ...) but it ended up with
+            # "module msal does not have attribute broker"
+            app, "_acquire_token_interactive_via_broker", return_value={
+                "error": "broker_error",
+                "error_description":
+                    "(pii).  "  # pymsalruntime no longer surfaces AADSTS error,
+                                # So MSAL Python can't raise RedirectUriError.
+                    "Status: Response_Status.Status_ApiContractViolation, "
+                    "Error code: 3399614473, Tag 557973642",
+            }):
+            result = app.acquire_token_interactive(
+                ["scope"],
+                parent_window_handle=app.CONSOLE_WINDOW_HANDLE,
+                )
+            self.assertEqual(result.get("error"), "broker_error")
 

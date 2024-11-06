@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import urlparse  # Python 3+
 from collections import UserDict  # Python 3+
-from typing import Union  # Needed in Python 3.7 & 3.8
+from typing import Optional, Union  # Needed in Python 3.7 & 3.8
 from .token_cache import TokenCache
 from .individual_cache import _IndividualCache as IndividualCache
 from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
@@ -40,14 +40,15 @@ class ManagedIdentity(UserDict):
 
     _types_mapping = {  # Maps type name in configuration to type name on wire
         CLIENT_ID: "client_id",
-        RESOURCE_ID: "mi_res_id",
+        RESOURCE_ID: "msi_res_id",  # VM's IMDS prefers msi_res_id https://github.com/Azure/azure-rest-api-specs/blob/dba6ed1f03bda88ac6884c0a883246446cc72495/specification/imds/data-plane/Microsoft.InstanceMetadataService/stable/2018-10-01/imds.json#L233-L239
         OBJECT_ID: "object_id",
     }
 
     @classmethod
     def is_managed_identity(cls, unknown):
-        return isinstance(unknown, ManagedIdentity) or (
-            isinstance(unknown, dict) and cls.ID_TYPE in unknown)
+        return (isinstance(unknown, ManagedIdentity)
+            or cls.is_system_assigned(unknown)
+            or cls.is_user_assigned(unknown))
 
     @classmethod
     def is_system_assigned(cls, unknown):
@@ -133,6 +134,23 @@ class ManagedIdentityClient(object):
 
     It also provides token cache support.
 
+    .. admonition:: Special case when your local development wants to use a managed identity on Azure VM.
+
+        By setting the environment variable ``MSAL_MANAGED_IDENTITY_ENDPOINT``
+        you override the default identity URL used in MSAL's Azure VM managed identity
+        code path.
+
+        This is useful during local development where it may be desirable to
+        utilise the credentials assigned to an actual VM instance via SSH tunnelling.
+
+        For example, if you create your SSH tunnel this way (assuming your VM is on ``192.0.2.1``)::
+
+            ssh -L 8000:169.254.169.254:80 192.0.2.1
+
+        Then your code could run locally using::
+
+            env MSAL_MANAGED_IDENTITY_ENDPOINT=http://localhost:8000/metadata/identity/oauth2/token python your_script.py
+
     .. note::
 
         Cloud Shell support is NOT implemented in this class.
@@ -145,6 +163,9 @@ class ManagedIdentityClient(object):
         not a token with application permissions for an app.
     """
     __instance, _tenant = None, "managed_identity"  # Placeholders
+    _TOKEN_SOURCE = "token_source"
+    _TOKEN_SOURCE_IDP = "identity_provider"
+    _TOKEN_SOURCE_CACHE = "cache"
 
     def __init__(
         self,
@@ -214,6 +235,9 @@ class ManagedIdentityClient(object):
                 )
             token = client.acquire_token_for_client("resource")
         """
+        if not ManagedIdentity.is_managed_identity(managed_identity):
+            raise ManagedIdentityError(
+                f"Incorrect managed_identity: {managed_identity}")
         self._managed_identity = managed_identity
         self._http_client = _ThrottledHttpClient(
             # This class only throttles excess token acquisition requests.
@@ -237,11 +261,30 @@ class ManagedIdentityClient(object):
             self.__instance = socket.getfqdn()  # Moved from class definition to here
         return self.__instance
 
-    def acquire_token_for_client(self, *, resource):  # We may support scope in the future
+    def acquire_token_for_client(
+        self,
+        *,
+        resource: str,  # If/when we support scope, resource will become optional
+        claims_challenge: Optional[str] = None,
+    ):
         """Acquire token for the managed identity.
 
         The result will be automatically cached.
         Subsequent calls will automatically search from cache first.
+
+        :param resource: The resource for which the token is acquired.
+
+        :param claims_challenge:
+            Optional.
+            It is a string representation of a JSON object
+            (which contains lists of claims being requested).
+
+            The tenant admin may choose to revoke all Managed Identity tokens,
+            and then a *claims challenge* will be returned by the target resource,
+            as a `claims_challenge` directive in the `www-authenticate` header,
+            even if the app developer did not opt in for the "CP1" client capability.
+            Upon receiving a `claims_challenge`, MSAL will skip a token cache read,
+            and will attempt to acquire a new token.
 
         .. note::
 
@@ -255,8 +298,8 @@ class ManagedIdentityClient(object):
         access_token_from_cache = None
         client_id_in_cache = self._managed_identity.get(
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
-        if True:  # Does not offer an "if not force_refresh" option, because
-                  # there would be built-in token cache in the service side anyway
+        now = time.time()
+        if not claims_challenge:  # Then attempt token cache search
             matches = self._token_cache.find(
                 self._token_cache.CredentialType.ACCESS_TOKEN,
                 target=[resource],
@@ -267,7 +310,6 @@ class ManagedIdentityClient(object):
                     home_account_id=None,
                 ),
             )
-            now = time.time()
             for entry in matches:
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
@@ -277,6 +319,7 @@ class ManagedIdentityClient(object):
                     "access_token": entry["secret"],
                     "token_type": entry.get("token_type", "Bearer"),
                     "expires_in": int(expires_in),  # OAuth2 specs defines it as int
+                    self._TOKEN_SOURCE: self._TOKEN_SOURCE_CACHE,
                 }
                 if "refresh_on" in entry:
                     access_token_from_cache["refresh_on"] = int(entry["refresh_on"])
@@ -300,6 +343,7 @@ class ManagedIdentityClient(object):
                 ))
                 if "refresh_in" in result:
                     result["refresh_on"] = int(now + result["refresh_in"])
+                result[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
         except:  # The exact HTTP exception is transportation-layer dependent
@@ -405,9 +449,9 @@ def _obtain_token(http_client, managed_identity, resource):
     return _obtain_token_on_azure_vm(http_client, managed_identity, resource)
 
 
-def _adjust_param(params, managed_identity):
+def _adjust_param(params, managed_identity, types_mapping=None):
     # Modify the params dict in place
-    id_name = ManagedIdentity._types_mapping.get(
+    id_name = (types_mapping or ManagedIdentity._types_mapping).get(
         managed_identity.get(ManagedIdentity.ID_TYPE))
     if id_name:
         params[id_name] = managed_identity[ManagedIdentity.ID]
@@ -421,7 +465,7 @@ def _obtain_token_on_azure_vm(http_client, managed_identity, resource):
         }
     _adjust_param(params, managed_identity)
     resp = http_client.get(
-        "http://169.254.169.254/metadata/identity/oauth2/token",
+        os.getenv('MSAL_MANAGED_IDENTITY_ENDPOINT', 'http://169.254.169.254/metadata/identity/oauth2/token'),
         params=params,
         headers={"Metadata": "true"},
         )
@@ -454,7 +498,12 @@ def _obtain_token_on_app_service(
         "api-version": "2019-08-01",
         "resource": resource,
         }
-    _adjust_param(params, managed_identity)
+    _adjust_param(params, managed_identity, types_mapping={
+        ManagedIdentity.CLIENT_ID: "client_id",
+        ManagedIdentity.RESOURCE_ID: "mi_res_id",  # App Service's resource id uses "mi_res_id"
+        ManagedIdentity.OBJECT_ID: "object_id",
+    })
+
     resp = http_client.get(
         endpoint,
         params=params,
