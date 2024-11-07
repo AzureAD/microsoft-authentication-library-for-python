@@ -672,6 +672,7 @@ class ClientApplication(object):
                 "allow_broker is deprecated. "
                 "Please use PublicClientApplication(..., "
                 "enable_broker_on_windows=True, "
+                "enable_broker_on_linux=True, "
                 "enable_broker_on_mac=...)",
                 DeprecationWarning)
         opted_in_for_broker = (
@@ -1921,7 +1922,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
         .. note::
 
-            You may set enable_broker_on_windows and/or enable_broker_on_mac to True.
+            You may set enable_broker_on_windows and/or enable_broker_on_mac and/or enable_broker_on_linux to True.
 
             **What is a broker, and why use it?**
 
@@ -1989,6 +1990,12 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
             New in MSAL Python 1.31.0.
+            
+        :param boolean enable_broker_on_linux:
+            This setting is only effective if your app is running on Linux.
+            This parameter defaults to None, which means MSAL will not utilize a broker.
+            
+            New in MSAL Python 1.32.0. 
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")

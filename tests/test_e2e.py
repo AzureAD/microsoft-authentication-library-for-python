@@ -200,6 +200,7 @@ class E2eTestCase(unittest.TestCase):
                 http_client=http_client or MinimalHttpClient(),
                 enable_broker_on_windows=broker_available,
                 enable_broker_on_mac=broker_available,
+                enable_broker_on_linux=broker_available,
                 )
 
     def _test_username_password(self,
