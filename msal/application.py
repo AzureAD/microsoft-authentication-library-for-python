@@ -22,7 +22,7 @@ from .cloudshell import _is_running_in_cloud_shell
 
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.31.0"  # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.32.0"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -1994,7 +1994,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         :param boolean enable_broker_on_linux:
             This setting is only effective if your app is running on Linux.
             This parameter defaults to None, which means MSAL will not utilize a broker.
-            
+
             New in MSAL Python 1.32.0. 
         """
         if client_credential is not None:
@@ -2002,9 +2002,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         # Using kwargs notation for now. We will switch to keyword-only arguments.
         enable_broker_on_windows = kwargs.pop("enable_broker_on_windows", False)
         enable_broker_on_mac = kwargs.pop("enable_broker_on_mac", False)
+        enable_broker_on_linux = kwargs.pop("enable_broker_on_linux", False)
         self._enable_broker = bool(
             enable_broker_on_windows and sys.platform == "win32"
-            or enable_broker_on_mac and sys.platform == "darwin")
+            or enable_broker_on_mac and sys.platform == "darwin"
+            or enable_broker_on_linux and sys.platform == "linux")
         super(PublicClientApplication, self).__init__(
             client_id, client_credential=None, **kwargs)
 
