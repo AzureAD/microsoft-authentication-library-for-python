@@ -25,6 +25,7 @@ from msal.managed_identity import (
     MACHINE_LEARNING,
     SERVICE_FABRIC,
     DEFAULT_TO_VM,
+    _parse_expires_on,
 )
 from msal.token_cache import is_subdict_of
 
@@ -47,6 +48,21 @@ class ManagedIdentityTestCase(unittest.TestCase):
         self.assertEqual(
             SystemAssignedManagedIdentity(),
             {"ManagedIdentityIdType": "SystemAssigned", "Id": None})
+
+
+class ExpiresOnTestCase(unittest.TestCase):
+    def test_expires_on_parsing(self):
+        for input, epoch in {
+            "1234567890": 1234567890,
+            "1970-01-01T00:00:12.0000000+00:00": 12,
+            "2024-10-18T19:51:37.0000000+00:00": 1729281097,  # Copied from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/issues/4963
+            "01/01/1970 00:00:12 +00:00": 12,
+            "06/20/2019 02:57:58 +00:00": 1560999478,  # Derived from https://github.com/Azure/azure-sdk-for-python/blob/azure-identity_1.21.0/sdk/identity/azure-identity/azure/identity/_credentials/azure_ml.py#L52
+            "1/1/1970 12:0:12 AM +00:00": 12,
+            "1/1/1970 12:0:12 PM +00:00": 43212,
+            "1/16/2020 5:24:12 AM +00:00": 1579152252,  # Derived from https://github.com/Azure/azure-sdk-for-python/blob/azure-identity_1.21.0/sdk/identity/azure-identity/azure/identity/_credentials/azure_ml.py#L51
+        }.items():
+            self.assertEqual(_parse_expires_on(input), epoch, f'Should parse "{input}" to {epoch}')
 
 
 class ClientTestCase(unittest.TestCase):
