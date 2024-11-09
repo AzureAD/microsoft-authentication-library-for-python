@@ -672,8 +672,7 @@ class ClientApplication(object):
                 "allow_broker is deprecated. "
                 "Please use PublicClientApplication(..., "
                 "enable_broker_on_windows=True, "
-                "enable_broker_on_linux=True, "
-                "enable_broker_on_mac=...)",
+                "...)",
                 DeprecationWarning)
         opted_in_for_broker = (
             self._enable_broker  # True means Opted-in from PCA
