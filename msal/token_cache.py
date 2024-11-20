@@ -84,6 +84,7 @@ class TokenCache(object):
                         # Note: New field(s) can be added here
                         #key_id=None,
                         req_ds_cnf=None,
+                        fmi_path=None,
                         **ignored_payload_from_a_real_token:
                     "-".join([  # Note: Could use a hash here to shorten key length
                         home_account_id or "",
@@ -100,6 +101,7 @@ class TokenCache(object):
                             #       instead of response scope,
                             #       so that a search() can probably have O(1) hit.
                             if req_ds_cnf else "",  # CDT
+                        fmi_path or "",  # See the TODO above
                         ]).lower(),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,

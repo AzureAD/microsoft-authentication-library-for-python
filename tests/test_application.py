@@ -931,3 +931,62 @@ class CdtTestCase(unittest.TestCase):
             self.assertAppObtainsCdt(app, ["scope1", "scope2"])
             self.assertEqual(mocked_post.call_count, 2)
 
+
+@patch("msal.authority.tenant_discovery", new=Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    }))
+class FmiTestCase(unittest.TestCase):
+
+    def assertFmi(self, result: dict) -> None:
+        self.assertIsNotNone(
+            result.get("access_token"), "Encountered {}: {}".format(
+                result.get("error"), result.get("error_description")))
+        self.assertIn(result["token_type"], ("fmi_cred", "fmi_token"))
+
+    def assertAppObtainsAndCaches(self, app, scopes, fmi_path) -> dict:
+        result = app.acquire_token_for_client(scopes, fmi_path=fmi_path)
+        self.assertFmi(result)
+        self.assertEqual(result["token_source"], "identity_provider")
+
+        result = app.acquire_token_for_client(scopes, fmi_path=fmi_path)
+        self.assertFmi(result)
+        self.assertEqual(result["token_source"], "cache")
+
+        return result
+
+    def assertAppCachesByFmipath(self, app, scopes, fmi_path) -> dict:
+        with patch.object(app.http_client, "post", return_value=MinimalResponse(
+            status_code=200, text=json.dumps({
+                "token_type": "fmi_cred"
+                    if scopes == ["api://AzureFMITokenExchange"] else "fmi_token",
+                "access_token": "payload",
+                "expires_in": 3600,
+        }))) as mocked_post:
+            result = self.assertAppObtainsAndCaches(app, scopes, fmi_path)
+            self.assertAppObtainsAndCaches(app, scopes, fmi_path + "/subpath")
+            self.assertEqual(mocked_post.call_count, 2)
+            self.assertEqual(
+                2,
+                len(list(app.token_cache.search(
+                    msal.TokenCache.CredentialType.ACCESS_TOKEN))),
+                "Should cache both tokens")
+            logger.debug("cache=%s", json.dumps(app.token_cache._cache, indent=2))
+            return result
+
+    def test_fmi_with_rma_and_sub_rma(self):
+        fmi_cred = self.assertAppCachesByFmipath(
+            msal.ConfidentialClientApplication(
+                "rma_client_id",
+                client_credential={"client_assertion": "some assertion"},
+            ),
+            ["api://AzureFMITokenExchange"],
+            "/eid1/c/<cloud>/t/<tenantid>/a/<rma>/<fmi_path>")
+        self.assertAppCachesByFmipath(
+            msal.ConfidentialClientApplication(
+                "urn:microsoft:identity:fmi",
+                client_credential={"client_assertion": fmi_cred["access_token"]},
+            ),
+            ["https://graph.microsoft.com/.default"],
+            "/eid1/c/<cloud>/t/<tenantid>/a/<rma>/<fmi_path>/foo")
+

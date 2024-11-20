@@ -256,6 +256,7 @@ class ClientApplication(object):
     _TOKEN_CACHE_DATA: dict[str, str] = {  # field_in_data: field_in_cache
         "key_id": "key_id",  # Some token types (SSH-certs, POP) are bound to a key
         "req_ds_cnf": "req_ds_cnf",  # Used in CDT scenario
+        "fmi_path": "fmi_path",  # FMI artifacts are bound to their path
     }
 
     @functools.lru_cache(maxsize=2)
@@ -2386,6 +2387,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         delegation_constraints: Optional[list] = None,
         delegation_confirmation_key=None,  # A Cyprtography's RSAPrivateKey-like object
             # TODO: Support ECC key? https://github.com/pyca/cryptography/issues/4093
+        fmi_path: Optional[str] = None,
         **kwargs
     ):
         """Acquires token for the current confidential client, not for an end user.
@@ -2419,6 +2421,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 kwargs.pop("data", {}),
                 req_ds_cnf=_build_req_cnf(jwk)  # It is part of token cache key
                     if delegation_constraints else None,
+                fmi_path=fmi_path,
                 ),
             **kwargs))
         if delegation_constraints and not result.get("error"):
