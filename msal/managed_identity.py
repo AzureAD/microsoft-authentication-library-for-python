@@ -134,23 +134,6 @@ class ManagedIdentityClient(object):
 
     It also provides token cache support.
 
-    .. admonition:: Special case when your local development wants to use a managed identity on Azure VM.
-
-        By setting the environment variable ``MSAL_MANAGED_IDENTITY_ENDPOINT``
-        you override the default identity URL used in MSAL's Azure VM managed identity
-        code path.
-
-        This is useful during local development where it may be desirable to
-        utilise the credentials assigned to an actual VM instance via SSH tunnelling.
-
-        For example, if you create your SSH tunnel this way (assuming your VM is on ``192.0.2.1``)::
-
-            ssh -L 8000:169.254.169.254:80 192.0.2.1
-
-        Then your code could run locally using::
-
-            env MSAL_MANAGED_IDENTITY_ENDPOINT=http://localhost:8000/metadata/identity/oauth2/token python your_script.py
-
     .. note::
 
         Cloud Shell support is NOT implemented in this class.
@@ -171,7 +154,7 @@ class ManagedIdentityClient(object):
         self,
         managed_identity: Union[
             dict,
-            ManagedIdentity,  # Could use Type[ManagedIdentity] but it is deprecatred in Python 3.9+
+            ManagedIdentity,  # Could use Type[ManagedIdentity] but it is deprecated in Python 3.9+
             SystemAssignedManagedIdentity,
             UserAssignedManagedIdentity,
             ],
@@ -223,7 +206,7 @@ class ManagedIdentityClient(object):
         you may use an environment variable (such as MY_MANAGED_IDENTITY_CONFIG)
         to store a json blob like
         ``{"ManagedIdentityIdType": "ClientId", "Id": "foo"}`` or
-        ``{"ManagedIdentityIdType": "SystemAssignedManagedIdentity", "Id": null})``.
+        ``{"ManagedIdentityIdType": "SystemAssigned", "Id": null}``.
         The following app can load managed identity configuration dynamically::
 
             import json, os, msal, requests
@@ -363,10 +346,12 @@ def _scope_to_resource(scope):  # This is an experimental reasonable-effort appr
 def _get_arc_endpoint():
     if "IDENTITY_ENDPOINT" in os.environ and "IMDS_ENDPOINT" in os.environ:
         return os.environ["IDENTITY_ENDPOINT"]
-    if (  # Defined in https://msazure.visualstudio.com/One/_wiki/wikis/One.wiki/233012/VM-Extension-Authoring-for-Arc?anchor=determining-which-endpoint-to-use
-        sys.platform == "linux" and os.path.exists("/var/opt/azcmagent/bin/himds")
+    if (  # Defined in https://eng.ms/docs/cloud-ai-platform/azure-core/azure-management-and-platforms/control-plane-bburns/hybrid-resource-provider/azure-arc-for-servers/specs/extension_authoring
+        sys.platform == "linux" and os.path.exists("/opt/azcmagent/bin/himds")
         or sys.platform == "win32" and os.path.exists(os.path.expandvars(
-            r"%ProgramFiles%\AzureConnectedMachineAgent\himds.exe"))
+            # Avoid Windows-only "%EnvVar%" syntax so that tests can be run on Linux
+            r"${ProgramFiles}\AzureConnectedMachineAgent\himds.exe"
+        ))
     ):
         return "http://localhost:40342/metadata/identity/oauth2/token"
 
@@ -463,7 +448,7 @@ def _obtain_token_on_azure_vm(http_client, managed_identity, resource):
         }
     _adjust_param(params, managed_identity)
     resp = http_client.get(
-        os.getenv('MSAL_MANAGED_IDENTITY_ENDPOINT', 'http://169.254.169.254/metadata/identity/oauth2/token'),
+        "http://169.254.169.254/metadata/identity/oauth2/token",
         params=params,
         headers={"Metadata": "true"},
         )
@@ -663,4 +648,3 @@ def _obtain_token_on_arc(http_client, endpoint, resource):
         "error": "invalid_request",
         "error_description": response.text,
         }
-

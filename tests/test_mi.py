@@ -347,8 +347,22 @@ class GetManagedIdentitySourceTestCase(unittest.TestCase):
         "IDENTITY_ENDPOINT": "http://localhost",
         "IMDS_ENDPOINT": "http://localhost",
     })
-    def test_arc(self):
+    def test_arc_by_env_var(self):
         self.assertEqual(get_managed_identity_source(), AZURE_ARC)
+
+    @patch("msal.managed_identity.os.path.exists", return_value=True)
+    @patch("msal.managed_identity.sys.platform", new="linux")
+    def test_arc_by_file_existence_on_linux(self, mocked_exists):
+        self.assertEqual(get_managed_identity_source(), AZURE_ARC)
+        mocked_exists.assert_called_with("/opt/azcmagent/bin/himds")
+
+    @patch("msal.managed_identity.os.path.exists", return_value=True)
+    @patch("msal.managed_identity.sys.platform", new="win32")
+    @patch.dict(os.environ, {"ProgramFiles": "C:\Program Files"})
+    def test_arc_by_file_existence_on_windows(self, mocked_exists):
+        self.assertEqual(get_managed_identity_source(), AZURE_ARC)
+        mocked_exists.assert_called_with(
+            r"C:\Program Files\AzureConnectedMachineAgent\himds.exe")
 
     @patch.dict(os.environ, {
         "AZUREPS_HOST_ENVIRONMENT": "cloud-shell-foo",
