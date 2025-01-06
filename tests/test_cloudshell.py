@@ -12,8 +12,10 @@ class TestScopeToResource(unittest.TestCase):
             "https://double-slash.com//scope": "https://double-slash.com/",
             "https://single-slash.com/scope": "https://single-slash.com",
             "guid/some/scope": "guid",
-            "797f4846-ba00-4fd7-ba43-dac1f8f63013/.default":  # Realistic GUID
-                "797f4846-ba00-4fd7-ba43-dac1f8f63013"
+            "6dae42f8-4368-4678-94ff-3960e28e3630/.default":
+                # The real guid of AKS resource
+                # https://learn.microsoft.com/en-us/azure/aks/kubelogin-authentication#how-to-use-kubelogin-with-aks
+                "6dae42f8-4368-4678-94ff-3960e28e3630",
         }.items():
             self.assertEqual(_scope_to_resource(scope), expected_resource)
 
