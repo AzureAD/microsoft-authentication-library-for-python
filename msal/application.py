@@ -1951,7 +1951,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                  if your app is expected to run on Mac
 
             2. installed broker dependency,
-               e.g. ``pip install msal[broker]>=1.31,<2``.
+               e.g. ``pip install msal[broker]>=1.32,<2``.
 
             3. tested with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
 
