@@ -32,8 +32,12 @@ def _scope_to_resource(scope):  # This is an experimental reasonable-effort appr
         if scope.startswith(a):
             return a
     u = urlparse(scope)
+    if not u.scheme and not u.netloc:  # Typically the "GUID/scope" case
+        return u.path.split("/")[0]
     if u.scheme:
-        return "{}://{}".format(u.scheme, u.netloc)
+        trailer = (  # https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc#trailing-slash-and-default
+            "/" if u.path.startswith("//") else "")
+        return "{}://{}{}".format(u.scheme, u.netloc, trailer)
     return scope  # There is no much else we can do here
 
 
