@@ -25,10 +25,10 @@ jobs:
       LAB_OBO_PUBLIC_CLIENT_ID: ${{ secrets.LAB_OBO_PUBLIC_CLIENT_ID }}
 
     # Derived from https://docs.github.com/en/actions/guides/building-and-testing-python#starting-with-the-python-workflow-template
-    runs-on: ubuntu-latest  # It switched to 22.04 shortly after 2022-Nov-8
+    runs-on: ubuntu-22.04  # ubuntu-latest switched to 22.04 shortly after 2022-Nov-8
     strategy:
       matrix:
-        python-version: [3.7, 3.8, 3.9, "3.10", "3.11", "3.12"]
+        python-version: [3.7, 3.8, 3.9, "3.10", "3.11", "3.12", 3.13]
 
     steps:
     - uses: actions/checkout@v4
