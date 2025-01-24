@@ -701,7 +701,7 @@ class ClientApplication(object):
 
     def is_pop_supported(self):
         """Returns True if this client supports Proof-of-Possession Access Token."""
-        return self._enable_broker
+        return self._enable_broker and sys.platform != "linux"
 
     def _decorate_scope(
             self, scopes,
@@ -1438,6 +1438,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             - None when there is simply no token in the cache.
             - A dict containing an "error" key, when token refresh failed.
         """
+        print("dharshanb acquire_token_silent_with_error line 1441")
         if not account:
             return None  # A backward-compatible NO-OP to drop the account=None usage
         return _clean_up(self._acquire_token_silent_with_error(
@@ -1453,6 +1454,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             claims_challenge=None,
             auth_scheme=None,
             **kwargs):
+        print("dharshanb _acquire_token_silent_with_error line 1457")
         assert isinstance(scopes, list), "Invalid parameter type"
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         correlation_id = msal.telemetry._get_new_correlation_id()
@@ -1520,6 +1522,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         # This internal method has two calling patterns:
         # it accepts a non-empty account to find token for a user,
         # and accepts account=None to find a token for the current app.
+        print("dharshanb _acquire_token_silent_from_cache_and_possibly_refresh_it line 1525")
         access_token_from_cache = None
         if not (force_refresh or claims_challenge or auth_scheme):  # Then attempt AT cache
             query={
@@ -1573,11 +1576,16 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     raise ValueError("auth_scheme is not supported in Cloud Shell")
                 return self._acquire_token_by_cloud_shell(scopes, data=data)
 
+            is_ssh_cert_or_pop_request = (
+                data.get("token_type") == "ssh-cert" or
+                data.get("token_type") == "pop" or
+                isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme)) 
             if self._enable_broker and account and account.get("account_source") in (
                 _GRANT_TYPE_BROKER,  # Broker successfully established this account previously.
                 None,  # Unknown data from older MSAL. Broker might still work.
-            ):
+            ) and (sys.platform != "linux" or not is_ssh_cert_or_pop_request):
                 from .broker import _acquire_token_silently
+                print("dharshanb .broker import _acquire_token_silently line 1584")
                 response = _acquire_token_silently(
                     "https://{}/{}".format(self.authority.instance, self.authority.tenant),
                     self.client_id,
@@ -1823,7 +1831,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         """
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
-        if self._enable_broker:
+        # dharshanb
+        if self._enable_broker and sys.platform != "linux":
             from .broker import _signin_silently
             response = _signin_silently(
                 "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -2121,6 +2130,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
               and typically contains an "access_token" key.
             - A dict containing an "error" key, when token refresh failed.
         """
+        print("dharshanb acquire_token_interactive application.py")
         data = kwargs.pop("data", {})
         enable_msa_passthrough = kwargs.pop(  # MUST remove it from kwargs
             "enable_msa_passthrough",  # Keep it as a hidden param, for now.
@@ -2134,6 +2144,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             False
             ) and data.get("token_type") != "ssh-cert"  # Work around a known issue as of PyMsalRuntime 0.8
         self._validate_ssh_cert_input_data(data)
+        print("dharshanb data.get(token_type)", data.get("token_type"))
+        is_ssh_cert_or_pop_request = (
+            data.get("token_type") == "ssh-cert" or
+            data.get("token_type") == "pop" or
+            isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme)) 
         if not on_before_launching_ui:
             on_before_launching_ui = lambda **kwargs: None
         if _is_running_in_cloud_shell() and prompt == "none":
@@ -2142,7 +2157,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             return self._acquire_token_by_cloud_shell(scopes, data=data)
         claims = _merge_claims_challenge_and_capabilities(
             self._client_capabilities, claims_challenge)
-        if self._enable_broker:
+        print("dharshanb sys.platform", sys.platform)
+        print("dharshanb is_ssh_cert_or_pop_request", is_ssh_cert_or_pop_request)
+        if self._enable_broker and (sys.platform != "linux" or not is_ssh_cert_or_pop_request):
+            print("dharshanb self._enable_broker and (sys.platform != linux or not is_ssh_cert_or_pop_request)")
             if parent_window_handle is None:
                 raise ValueError(
                     "parent_window_handle is required when you opted into using broker. "
@@ -2167,8 +2185,11 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 )
             return self._process_broker_response(response, scopes, data)
 
-        if auth_scheme:
+        if isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme) and sys.platform == "linux":
+            raise ValueError("POP is not supported on Linux")
+        elif auth_scheme:
             raise ValueError(self._AUTH_SCHEME_UNSUPPORTED)
+        
         on_before_launching_ui(ui="browser")
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_INTERACTIVE)

@@ -33,7 +33,9 @@ from msal.oauth2cli.oidc import decode_part
 try:
     import pymsalruntime
     broker_available = True
+    print("dharshanb Broker available")
 except ImportError:
+    print("dharshanb Broker is false")
     broker_available = False
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG if "-v" in sys.argv else logging.INFO)

@@ -129,6 +129,8 @@ def _acquire_token_interactive(app, scopes=None, data=None):
             accept_nonempty_string=True,
             )
         login_hint = raw_login_hint["username"] if isinstance(raw_login_hint, dict) else raw_login_hint
+
+    print("dharshanb calling acquire_token_interactive")
     result = app.acquire_token_interactive(
         scopes,
         parent_window_handle=app.CONSOLE_WINDOW_HANDLE,  # This test app is a console app
