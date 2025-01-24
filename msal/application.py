@@ -701,7 +701,7 @@ class ClientApplication(object):
 
     def is_pop_supported(self):
         """Returns True if this client supports Proof-of-Possession Access Token."""
-        return self._enable_broker
+        return self._enable_broker and sys.platform != "linux"
 
     def _decorate_scope(
             self, scopes,
@@ -1573,10 +1573,14 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     raise ValueError("auth_scheme is not supported in Cloud Shell")
                 return self._acquire_token_by_cloud_shell(scopes, data=data)
 
+            is_ssh_cert_or_pop_request = (
+                data.get("token_type") == "ssh-cert" or
+                data.get("token_type") == "pop" or
+                isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme)) 
             if self._enable_broker and account and account.get("account_source") in (
                 _GRANT_TYPE_BROKER,  # Broker successfully established this account previously.
                 None,  # Unknown data from older MSAL. Broker might still work.
-            ):
+            ) and (sys.platform != "linux" or not is_ssh_cert_or_pop_request):
                 from .broker import _acquire_token_silently
                 response = _acquire_token_silently(
                     "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -1823,7 +1827,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         """
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
-        if self._enable_broker:
+        if self._enable_broker and sys.platform != "linux":
             from .broker import _signin_silently
             response = _signin_silently(
                 "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -2134,6 +2138,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             False
             ) and data.get("token_type") != "ssh-cert"  # Work around a known issue as of PyMsalRuntime 0.8
         self._validate_ssh_cert_input_data(data)
+        is_ssh_cert_or_pop_request = (
+            data.get("token_type") == "ssh-cert" or
+            data.get("token_type") == "pop" or
+            isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme)) 
         if not on_before_launching_ui:
             on_before_launching_ui = lambda **kwargs: None
         if _is_running_in_cloud_shell() and prompt == "none":
@@ -2142,7 +2150,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             return self._acquire_token_by_cloud_shell(scopes, data=data)
         claims = _merge_claims_challenge_and_capabilities(
             self._client_capabilities, claims_challenge)
-        if self._enable_broker:
+        if self._enable_broker and (sys.platform != "linux" or not is_ssh_cert_or_pop_request):
             if parent_window_handle is None:
                 raise ValueError(
                     "parent_window_handle is required when you opted into using broker. "
@@ -2167,7 +2175,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 )
             return self._process_broker_response(response, scopes, data)
 
-        if auth_scheme:
+        if isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme) and sys.platform == "linux":
+            raise ValueError("POP is not supported on Linux")
+        elif auth_scheme:
             raise ValueError(self._AUTH_SCHEME_UNSUPPORTED)
         on_before_launching_ui(ui="browser")
         telemetry_context = self._build_telemetry_context(
