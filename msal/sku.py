@@ -2,5 +2,5 @@
 """
 
 # The __init__.py will import this. Not the other way around.
-__version__ = "1.31.1" # When releasing, also check and bump our dependencies's versions if needed
+__version__ = "1.32.0"
 SKU = "MSAL.Python"
