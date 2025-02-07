@@ -9,10 +9,7 @@ import uuid
 
 from .sku import __version__, SKU
 
-
 logger = logging.getLogger(__name__)
-
-
 try:
     import pymsalruntime  # Its API description is available in site-packages/pymsalruntime/PyMsalRuntime.pyi
     pymsalruntime.register_logging_callback(lambda message, level: {  # New in pymsalruntime 0.7
