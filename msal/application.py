@@ -19,10 +19,9 @@ import msal.telemetry
 from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
 from .cloudshell import _is_running_in_cloud_shell
+from .sku import SKU, __version__
 
 
-# The __init__.py will import this. Not the other way around.
-__version__ = "1.31.1"  # When releasing, also check and bump our dependencies's versions if needed
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
@@ -770,7 +769,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         client_assertion = None
         client_assertion_type = None
         default_headers = {
-            "x-client-sku": "MSAL.Python", "x-client-ver": __version__,
+            "x-client-sku": SKU, "x-client-ver": __version__,
             "x-client-os": sys.platform,
             "x-ms-lib-capability": "retry-after, h429",
         }

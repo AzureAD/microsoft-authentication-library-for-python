@@ -7,7 +7,7 @@ import sys
 import time
 import uuid
 
-from .application import __version__
+from .sku import __version__, SKU
 
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ def _enable_msa_pt(params):
 
 def _build_msal_runtime_auth_params(client_id, authority):
     params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
-    params.set_additional_parameter("msal_client_sku", "MSAL.Python")
+    params.set_additional_parameter("msal_client_sku", SKU)
     params.set_additional_parameter("msal_client_ver", __version__)
     return params
 

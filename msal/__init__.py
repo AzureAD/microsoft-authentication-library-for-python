@@ -26,12 +26,12 @@
 #------------------------------------------------------------------------------
 
 from .application import (
-    __version__,
     ClientApplication,
     ConfidentialClientApplication,
     PublicClientApplication,
     )
 from .oauth2cli.oidc import Prompt, IdTokenError
+from .sku import __version__
 from .token_cache import TokenCache, SerializableTokenCache
 from .auth_scheme import PopAuthScheme
 from .managed_identity import (
