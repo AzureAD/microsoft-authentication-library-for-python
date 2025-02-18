@@ -1953,6 +1953,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                  if your app is expected to run on Windows 10+
                * ``msauth.com.msauth.unsignedapp://auth``
                  if your app is expected to run on Mac
+               * ``ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id``
+                 if your app is expected to run on Linux, especially WSL
 
             2. installed broker dependency,
                e.g. ``pip install msal[broker]>=1.32,<2``.
