@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 
+from .sku import __version__, SKU
 
 logger = logging.getLogger(__name__)
 try:
@@ -136,13 +137,18 @@ def _get_new_correlation_id():
 def _enable_msa_pt(params):
     params.set_additional_parameter("msal_request_type", "consumer_passthrough")  # PyMsalRuntime 0.8+
 
+def _build_msal_runtime_auth_params(client_id, authority):
+    params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
+    params.set_additional_parameter("msal_client_sku", SKU)
+    params.set_additional_parameter("msal_client_ver", __version__)
+    return params
 
 def _signin_silently(
         authority, client_id, scopes, correlation_id=None, claims=None,
         enable_msa_pt=False,
         auth_scheme=None,
         **kwargs):
-    params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
+    params = _build_msal_runtime_auth_params(client_id, authority)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
@@ -175,7 +181,7 @@ def _signin_interactively(
         enable_msa_pt=False,
         auth_scheme=None,
         **kwargs):
-    params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
+    params = _build_msal_runtime_auth_params(client_id, authority)
     params.set_requested_scopes(scopes)
     params.set_redirect_uri(
         _redirect_uri_on_mac if sys.platform == "darwin" else
@@ -231,7 +237,7 @@ def _acquire_token_silently(
     account = _read_account_by_id(account_id, correlation_id)
     if account is None:
         return
-    params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
+    params = _build_msal_runtime_auth_params(client_id, authority)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
