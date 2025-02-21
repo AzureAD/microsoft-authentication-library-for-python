@@ -2,6 +2,7 @@
 # All rights reserved.
 #
 # This code is licensed under the MIT License.
+import hashlib
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ import sys
 import time
 from urllib.parse import urlparse  # Python 3+
 from collections import UserDict  # Python 3+
-from typing import Optional, Union  # Needed in Python 3.7 & 3.8
+from typing import List, Optional, Union  # Needed in Python 3.7 & 3.8
 from .token_cache import TokenCache
 from .individual_cache import _IndividualCache as IndividualCache
 from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
@@ -162,6 +163,7 @@ class ManagedIdentityClient(object):
         http_client,
         token_cache=None,
         http_cache=None,
+        client_capabilities: Optional[List[str]] = None,
     ):
         """Create a managed identity client.
 
@@ -191,6 +193,17 @@ class ManagedIdentityClient(object):
         :param http_cache:
             Optional. It has the same characteristics as the
             :paramref:`msal.ClientApplication.http_cache`.
+
+        :param list[str] client_capabilities: (optional)
+            Allows configuration of one or more client capabilities, e.g. ["CP1"].
+
+            Client capability is meant to inform the Microsoft identity platform
+            (STS) what this client is capable for,
+            so STS can decide to turn on certain features.
+
+            Implementation details:
+            Client capability in Managed Identity is relayed as-is
+            via ``xms_cc`` parameter on the wire.
 
         Recipe 1: Hard code a managed identity for your app::
 
@@ -238,6 +251,7 @@ class ManagedIdentityClient(object):
             http_cache=http_cache,
         )
         self._token_cache = token_cache or TokenCache()
+        self._client_capabilities = client_capabilities
 
     def _get_instance(self):
         if self.__instance is None:
@@ -266,8 +280,7 @@ class ManagedIdentityClient(object):
             and then a *claims challenge* will be returned by the target resource,
             as a `claims_challenge` directive in the `www-authenticate` header,
             even if the app developer did not opt in for the "CP1" client capability.
-            Upon receiving a `claims_challenge`, MSAL will skip a token cache read,
-            and will attempt to acquire a new token.
+            Upon receiving a `claims_challenge`, MSAL will attempt to acquire a new token.
 
         .. note::
 
@@ -278,11 +291,13 @@ class ManagedIdentityClient(object):
             This is a service-side behavior that cannot be changed by this library.
             `Azure VM docs <https://learn.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/how-to-use-vm-token#get-a-token-using-http>`_
         """
+        access_token_to_refresh = None  # This could become a public parameter in the future
         access_token_from_cache = None
         client_id_in_cache = self._managed_identity.get(
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
         now = time.time()
-        if not claims_challenge:  # Then attempt token cache search
+        if True:  # Attempt cache search even if receiving claims_challenge,
+                  # because we want to locate the existing token (if any) and refresh it
             matches = self._token_cache.find(
                 self._token_cache.CredentialType.ACCESS_TOKEN,
                 target=[resource],
@@ -297,6 +312,11 @@ class ManagedIdentityClient(object):
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
                     continue  # Removal is not necessary, it will be overwritten
+                if claims_challenge and not access_token_to_refresh:
+                    # Since caller did not pinpoint the token causing claims challenge,
+                    # we have to assume it is the first token we found in cache.
+                    access_token_to_refresh = entry["secret"]
+                    break
                 logger.debug("Cache hit an AT")
                 access_token_from_cache = {  # Mimic a real response
                     "access_token": entry["secret"],
@@ -310,7 +330,13 @@ class ManagedIdentityClient(object):
                         break  # With a fallback in hand, we break here to go refresh
                 return access_token_from_cache  # It is still good as new
         try:
-            result = _obtain_token(self._http_client, self._managed_identity, resource)
+            result = _obtain_token(
+                self._http_client, self._managed_identity, resource,
+                access_token_sha256_to_refresh=hashlib.sha256(
+                    access_token_to_refresh.encode("utf-8")).hexdigest()
+                    if access_token_to_refresh else None,
+                client_capabilities=self._client_capabilities,
+            )
             if "access_token" in result:
                 expires_in = result.get("expires_in", 3600)
                 if "refresh_in" not in result and expires_in >= 7200:
@@ -385,8 +411,12 @@ def get_managed_identity_source():
     return DEFAULT_TO_VM
 
 
-def _obtain_token(http_client, managed_identity, resource):
-    # A unified low-level API that talks to different Managed Identity
+def _obtain_token(
+    http_client, managed_identity, resource,
+    *,
+    access_token_sha256_to_refresh: Optional[str] = None,
+    client_capabilities: Optional[List[str]] = None,
+):
     if ("IDENTITY_ENDPOINT" in os.environ and "IDENTITY_HEADER" in os.environ
             and "IDENTITY_SERVER_THUMBPRINT" in os.environ
     ):
@@ -402,6 +432,8 @@ def _obtain_token(http_client, managed_identity, resource):
             os.environ["IDENTITY_HEADER"],
             os.environ["IDENTITY_SERVER_THUMBPRINT"],
             resource,
+            access_token_sha256_to_refresh=access_token_sha256_to_refresh,
+            client_capabilities=client_capabilities,
         )
     if "IDENTITY_ENDPOINT" in os.environ and "IDENTITY_HEADER" in os.environ:
         return _obtain_token_on_app_service(
@@ -553,6 +585,9 @@ def _obtain_token_on_machine_learning(
 
 def _obtain_token_on_service_fabric(
     http_client, endpoint, identity_header, server_thumbprint, resource,
+    *,
+    access_token_sha256_to_refresh: str = None,
+    client_capabilities: Optional[List[str]] = None,
 ):
     """Obtains token for
     `Service Fabric <https://learn.microsoft.com/en-us/azure/service-fabric/>`_
@@ -563,7 +598,12 @@ def _obtain_token_on_service_fabric(
     logger.debug("Obtaining token via managed identity on Azure Service Fabric")
     resp = http_client.get(
         endpoint,
-        params={"api-version": "2019-07-01-preview", "resource": resource},
+        params={k: v for k, v in {
+            "api-version": "2019-07-01-preview",
+            "resource": resource,
+            "token_sha256_to_refresh": access_token_sha256_to_refresh,
+            "xms_cc": ",".join(client_capabilities) if client_capabilities else None,
+            }.items() if v is not None},
         headers={"Secret": identity_header},
         )
     try:
@@ -584,7 +624,7 @@ def _obtain_token_on_service_fabric(
             "ArgumentNullOrEmpty": "invalid_scope",
             }
         return {
-            "error": error_mapping.get(payload["error"]["code"], "invalid_request"),
+            "error": error_mapping.get(error.get("code"), "invalid_request"),
             "error_description": resp.text,
             }
     except json.decoder.JSONDecodeError:
