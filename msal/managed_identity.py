@@ -448,7 +448,9 @@ def _obtain_token_on_azure_vm(http_client, managed_identity, resource):
         }
     _adjust_param(params, managed_identity)
     resp = http_client.get(
-        "http://169.254.169.254/metadata/identity/oauth2/token",
+        os.getenv(
+            "AZURE_POD_IDENTITY_AUTHORITY_HOST", "http://169.254.169.254"
+            ).strip("/") + "/metadata/identity/oauth2/token",
         params=params,
         headers={"Metadata": "true"},
         )

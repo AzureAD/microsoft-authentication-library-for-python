@@ -121,13 +121,29 @@ class ClientTestCase(unittest.TestCase):
 
 class VmTestCase(ClientTestCase):
 
-    def test_happy_path(self):
+    def _test_happy_path(self) -> callable:
         expires_in = 7890  # We test a bigger than 7200 value here
         with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
             status_code=200,
             text='{"access_token": "AT", "expires_in": "%s", "resource": "R"}' % expires_in,
         )) as mocked_method:
-            self._test_happy_path(self.app, mocked_method, expires_in)
+            super(VmTestCase, self)._test_happy_path(self.app, mocked_method, expires_in)
+            return mocked_method
+
+    def test_happy_path_of_vm(self):
+        self._test_happy_path().assert_called_with(
+            'http://169.254.169.254/metadata/identity/oauth2/token',
+            params={'api-version': '2018-02-01', 'resource': 'R'},
+            headers={'Metadata': 'true'},
+            )
+
+    @patch.dict(os.environ, {"AZURE_POD_IDENTITY_AUTHORITY_HOST": "http://localhost:1234//"})
+    def test_happy_path_of_pod_identity(self):
+        self._test_happy_path().assert_called_with(
+            'http://localhost:1234/metadata/identity/oauth2/token',
+            params={'api-version': '2018-02-01', 'resource': 'R'},
+            headers={'Metadata': 'true'},
+            )
 
     def test_vm_error_should_be_returned_as_is(self):
         raw_error = '{"raw": "error format is undefined"}'
