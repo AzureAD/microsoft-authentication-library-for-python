@@ -4,8 +4,25 @@ Although not fully automated, it requires only several clicks to finish.
 
 Each time a new PyMsalRuntime is going to be released,
 we can use this script to test it with a given version of MSAL Python.
+
+1. If you are on a modern Windows device, broker WAM is already built-in;
+   If you are on a mac device, install CP (Company Portal), login an account in CP and finish the MDM process.
+2. For installing MSAL Python from its latest `dev` branch:
+   `pip install --force-reinstall "git+https://github.com/AzureAD/microsoft-authentication-library-for-python.git[broker]"`
+3. (Optional) A proper version of `PyMsalRuntime` has already been installed by the previous command.
+   But if you want to test a specific version of `PyMsalRuntime`,
+   you shall manually install that version now.
+4. Run this test by `python broker-test.py` and make sure all the tests passed.
+
 """
 import msal
+import getpass
+import os
+try:
+    from dotenv import load_dotenv  # Use this only in local dev machine
+    load_dotenv()  # take environment variables from .env.
+except:
+    pass
 
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 SCOPE_ARM = "https://management.azure.com/.default"
@@ -21,6 +38,7 @@ _SSH_CERT_SCOPE = "https://pas.windows.net/CheckMyAccess/Linux/.default"
 pca = msal.PublicClientApplication(
     _AZURE_CLI,
     authority="https://login.microsoftonline.com/organizations",
+    enable_broker_on_mac=True,
     enable_broker_on_windows=True)
 
 def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):
@@ -46,6 +64,16 @@ def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):
         )
     _assert(result, expected_token_type)
 
+def test_broker_username_password(scopes, expected_token_type):
+    print("Testing broker username password flows by using accounts in local .env")
+    username = os.getenv("BROKER_TEST_ACCOUNT") or input("Input test account for broker test: ")
+    password = os.getenv("BROKER_TEST_ACCOUNT_PASSWORD") or getpass.getpass("Input test account's password: ")
+    assert(username and password, "You need to provide a test account and its password")
+    result = pca.acquire_token_by_username_password(username, password, scopes)
+    _assert(result, expected_token_type)
+    assert(result.get("token_source") == "broker")
+    print("Username password test succeeds.")
+
 def _assert(result, expected_token_type):
     assert result.get("access_token"), f"We should obtain a token. Got {result} instead."
     assert result.get("token_source") == "broker", "Token should be obtained via broker"
@@ -64,3 +92,4 @@ interactive_and_silent(
     expected_token_type="ssh-cert",
     )
 
+test_broker_username_password(scopes=[SCOPE_ARM], expected_token_type="bearer")

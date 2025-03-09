@@ -40,11 +40,10 @@ class CloseMethodCalled(Exception):
 class TestHttpDecoration(unittest.TestCase):
 
     def test_throttled_http_client_should_not_alter_original_http_client(self):
-        http_cache = {}
         original_http_client = DummyHttpClient()
         original_get = original_http_client.get
         original_post = original_http_client.post
-        throttled_http_client = ThrottledHttpClient(original_http_client, http_cache)
+        throttled_http_client = ThrottledHttpClient(original_http_client)
         goal = """The implementation should wrap original http_client
             and keep it intact, instead of monkey-patching it"""
         self.assertNotEqual(throttled_http_client, original_http_client, goal)
@@ -54,7 +53,7 @@ class TestHttpDecoration(unittest.TestCase):
     def _test_RetryAfter_N_seconds_should_keep_entry_for_N_seconds(
             self, http_client, retry_after):
         http_cache = {}
-        http_client = ThrottledHttpClient(http_client, http_cache)
+        http_client = ThrottledHttpClient(http_client, http_cache=http_cache)
         resp1 = http_client.post("https://example.com")  # We implemented POST only
         resp2 = http_client.post("https://example.com")  # We implemented POST only
         logger.debug(http_cache)
@@ -90,7 +89,7 @@ class TestHttpDecoration(unittest.TestCase):
         http_cache = {}
         http_client = DummyHttpClient(
             status_code=429, response_headers={"Retry-After": 2})
-        http_client = ThrottledHttpClient(http_client, http_cache)
+        http_client = ThrottledHttpClient(http_client, http_cache=http_cache)
         resp1 = http_client.post("https://example.com", data={
             "scope": "one", "claims": "bar", "grant_type": "authorization_code"})
         resp2 = http_client.post("https://example.com", data={
@@ -102,7 +101,7 @@ class TestHttpDecoration(unittest.TestCase):
         http_cache = {}
         http_client = DummyHttpClient(
             status_code=429, response_headers={"Retry-After": 2})
-        http_client = ThrottledHttpClient(http_client, http_cache)
+        http_client = ThrottledHttpClient(http_client, http_cache=http_cache)
         resp1 = http_client.post("https://example.com", data={"scope": "one"})
         resp2 = http_client.post("https://example.com", data={"scope": "two"})
         logger.debug(http_cache)
@@ -112,7 +111,7 @@ class TestHttpDecoration(unittest.TestCase):
         http_cache = {}
         http_client = DummyHttpClient(
             status_code=400)  # It covers invalid_grant and interaction_required
-        http_client = ThrottledHttpClient(http_client, http_cache)
+        http_client = ThrottledHttpClient(http_client, http_cache=http_cache)
         resp1 = http_client.post("https://example.com", data={"claims": "foo"})
         logger.debug(http_cache)
         resp1_again = http_client.post("https://example.com", data={"claims": "foo"})
@@ -146,7 +145,7 @@ class TestHttpDecoration(unittest.TestCase):
         http_cache = {}
         http_client = DummyHttpClient(
             status_code=200)  # It covers UserRealm discovery and OIDC discovery
-        http_client = ThrottledHttpClient(http_client, http_cache)
+        http_client = ThrottledHttpClient(http_client, http_cache=http_cache)
         resp1 = http_client.get("https://example.com?foo=bar")
         resp2 = http_client.get("https://example.com?foo=bar")
         logger.debug(http_cache)
@@ -156,7 +155,7 @@ class TestHttpDecoration(unittest.TestCase):
         DEVICE_AUTH_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
         http_cache = {}
         http_client = DummyHttpClient(status_code=400)
-        http_client = ThrottledHttpClient(http_client, http_cache)
+        http_client = ThrottledHttpClient(http_client, http_cache=http_cache)
         resp1 = http_client.post(
             "https://example.com", data={"grant_type": DEVICE_AUTH_GRANT})
         resp2 = http_client.post(
@@ -165,9 +164,8 @@ class TestHttpDecoration(unittest.TestCase):
         self.assertNotEqual(resp1.text, resp2.text, "Should return a new response")
 
     def test_throttled_http_client_should_provide_close(self):
-        http_cache = {}
         http_client = DummyHttpClient(status_code=200)
-        http_client = ThrottledHttpClient(http_client, http_cache)
+        http_client = ThrottledHttpClient(http_client)
         with self.assertRaises(CloseMethodCalled):
             http_client.close()
 

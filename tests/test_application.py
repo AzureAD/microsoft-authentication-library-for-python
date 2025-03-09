@@ -1,10 +1,16 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
+import json
+import logging
 import sys
-from msal.application import *
-from msal.application import _str2bytes
+import time
+from unittest.mock import patch, Mock
 import msal
-from msal.application import _merge_claims_challenge_and_capabilities
+from msal.application import (
+    extract_certs,
+    ClientApplication, PublicClientApplication, ConfidentialClientApplication,
+    _str2bytes, _merge_claims_challenge_and_capabilities,
+)
 from tests import unittest
 from tests.test_token_cache import build_id_token, build_response
 from tests.http_client import MinimalHttpClient, MinimalResponse
@@ -13,6 +19,12 @@ from msal.telemetry import CLIENT_CURRENT_TELEMETRY, CLIENT_LAST_TELEMETRY
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
+
+_OIDC_DISCOVERY = "msal.authority.tenant_discovery"
+_OIDC_DISCOVERY_MOCK = Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+})
 
 
 class TestHelperExtractCerts(unittest.TestCase):  # It is used by SNI scenario
@@ -52,10 +64,9 @@ class TestBytesConversion(unittest.TestCase):
 
 class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
 
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(
-            self.authority_url, MinimalHttpClient())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -110,12 +121,11 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
         self.assertEqual("", result.get("classification"))
 
 
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(
-            self.authority_url, MinimalHttpClient())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -142,7 +152,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             self.assertEqual(self.frt, data.get("refresh_token"), "Should attempt the FRT")
             return MinimalResponse(status_code=400, text=error_response)
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self.authority, self.scopes, self.account, post=tester)
+            app.authority, self.scopes, self.account, post=tester)
         self.assertNotEqual([], app.token_cache.find(
             msal.TokenCache.CredentialType.REFRESH_TOKEN, query={"secret": self.frt}),
             "The FRT should not be removed from the cache")
@@ -162,7 +172,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             self.assertEqual(rt, data.get("refresh_token"), "Should attempt the RT")
             return MinimalResponse(status_code=200, text='{}')
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self.authority, self.scopes, self.account, post=tester)
+            app.authority, self.scopes, self.account, post=tester)
 
     def test_unknown_family_app_will_attempt_frt_and_join_family(self):
         def tester(url, data=None, **kwargs):
@@ -174,7 +184,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         app = ClientApplication(
             "unknown_family_app", authority=self.authority_url, token_cache=self.cache)
         at = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self.authority, self.scopes, self.account, post=tester)
+            app.authority, self.scopes, self.account, post=tester)
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         self.assertEqual("at", at.get("access_token"), "New app should get a new AT")
         app_metadata = app.token_cache.find(
@@ -196,7 +206,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         app = ClientApplication(
             "preexisting_family_app", authority=self.authority_url, token_cache=self.cache)
         resp = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self.authority, self.scopes, self.account, post=tester)
+            app.authority, self.scopes, self.account, post=tester)
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         self.assertEqual(json.loads(error_response), resp, "Error raised will be returned")
 
@@ -231,7 +241,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
 class TestClientApplicationForAuthorityMigration(unittest.TestCase):
 
-    @classmethod
+    # Chose to not mock oidc discovery, because AuthorityMigration might rely on real data
     def setUp(self):
         self.environment_in_cache = "sts.windows.net"
         self.authority_url_in_app = "https://login.microsoftonline.com/common"
@@ -334,6 +344,7 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
     account = {"home_account_id": "{}.{}".format(uid, utid)}
     rt = "this is a rt"
     client_id = "my_app"
+    soon = 60  # application.py considers tokens within 5 minutes as expired
 
     @classmethod
     def setUpClass(cls):  # Initialization at runtime, not interpret-time
@@ -353,10 +364,18 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
                 uid=self.uid, utid=self.utid, refresh_token=self.rt),
             })
 
+    def assertRefreshOn(self, result, refresh_in):
+        refresh_on = int(time.time() + refresh_in)
+        self.assertTrue(
+            refresh_on - 1 < result.get("refresh_on", 0) < refresh_on + 1,
+            "refresh_on should be set properly")
+
     def test_fresh_token_should_be_returned_from_cache(self):
         # a.k.a. Return unexpired token that is not above token refresh expiration threshold
+        refresh_in = 450
         access_token = "An access token prepopulated into cache"
-        self.populate_cache(access_token=access_token, expires_in=900, refresh_in=450)
+        self.populate_cache(
+            access_token=access_token, expires_in=900, refresh_in=refresh_in)
         result = self.app.acquire_token_silent(
             ['s1'], self.account,
             post=lambda url, *args, **kwargs:  # Utilize the undocumented test feature
@@ -365,36 +384,43 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_CACHE)
         self.assertEqual(access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+        self.assertRefreshOn(result, refresh_in)
 
     def test_aging_token_and_available_aad_should_return_new_token(self):
         # a.k.a. Attempt to refresh unexpired token when AAD available
         self.populate_cache(access_token="old AT", expires_in=3599, refresh_in=-1)
         new_access_token = "new AT"
+        new_refresh_in = 123
         def mock_post(url, headers=None, *args, **kwargs):
             self.assertEqual("4|84,4|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=200, text=json.dumps({
                 "access_token": new_access_token,
-                "refresh_in": 123,
+                "refresh_in": new_refresh_in,
                 }))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
         self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(new_access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+        self.assertRefreshOn(result, new_refresh_in)
 
     def test_aging_token_and_unavailable_aad_should_return_old_token(self):
         # a.k.a. Attempt refresh unexpired token when AAD unavailable
+        refresh_in = -1
         old_at = "old AT"
-        self.populate_cache(access_token=old_at, expires_in=3599, refresh_in=-1)
+        self.populate_cache(
+            access_token=old_at, expires_in=3599, refresh_in=refresh_in)
         def mock_post(url, headers=None, *args, **kwargs):
             self.assertEqual("4|84,4|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=400, text=json.dumps({"error": "foo"}))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
         self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_CACHE)
         self.assertEqual(old_at, result.get("access_token"))
+        self.assertRefreshOn(result, refresh_in)
 
     def test_expired_token_and_unavailable_aad_should_return_error(self):
         # a.k.a. Attempt refresh expired token when AAD unavailable
-        self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
+        self.populate_cache(
+            access_token="expired at", expires_in=self.soon, refresh_in=-900)
         error = "something went wrong"
         def mock_post(url, headers=None, *args, **kwargs):
             self.assertEqual("4|84,3|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
@@ -405,20 +431,24 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
 
     def test_expired_token_and_available_aad_should_return_new_token(self):
         # a.k.a. Attempt refresh expired token when AAD available
-        self.populate_cache(access_token="expired at", expires_in=-1, refresh_in=-900)
+        self.populate_cache(
+            access_token="expired at", expires_in=self.soon, refresh_in=-900)
         new_access_token = "new AT"
+        new_refresh_in = 123
         def mock_post(url, headers=None, *args, **kwargs):
             self.assertEqual("4|84,3|", (headers or {}).get(CLIENT_CURRENT_TELEMETRY))
             return MinimalResponse(status_code=200, text=json.dumps({
                 "access_token": new_access_token,
-                "refresh_in": 123,
+                "refresh_in": new_refresh_in,
                 }))
         result = self.app.acquire_token_silent(['s1'], self.account, post=mock_post)
         self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(new_access_token, result.get("access_token"))
         self.assertNotIn("refresh_in", result, "Customers need not know refresh_in")
+        self.assertRefreshOn(result, new_refresh_in)
 
 
+# TODO Patching oidc discovery ends up failing. But we plan to remove offline telemetry anyway.
 class TestTelemetryMaintainingOfflineState(unittest.TestCase):
     authority_url = "https://login.microsoftonline.com/common"
     scopes = ["s1", "s2"]
@@ -499,6 +529,7 @@ class TestTelemetryMaintainingOfflineState(unittest.TestCase):
 
 class TestTelemetryOnClientApplication(unittest.TestCase):
     @classmethod
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
     def setUpClass(cls):  # Initialization at runtime, not interpret-time
         cls.app = ClientApplication(
             "client_id", authority="https://login.microsoftonline.com/common")
@@ -527,6 +558,7 @@ class TestTelemetryOnClientApplication(unittest.TestCase):
 
 class TestTelemetryOnPublicClientApplication(unittest.TestCase):
     @classmethod
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
     def setUpClass(cls):  # Initialization at runtime, not interpret-time
         cls.app = PublicClientApplication(
             "client_id", authority="https://login.microsoftonline.com/common")
@@ -556,6 +588,7 @@ class TestTelemetryOnPublicClientApplication(unittest.TestCase):
 
 class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
     @classmethod
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
     def setUpClass(cls):  # Initialization at runtime, not interpret-time
         cls.app = ConfidentialClientApplication(
             "client_id", client_credential="secret",
@@ -601,6 +634,7 @@ class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
         self.assertEqual(at, result.get("access_token"))
 
 
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestClientApplicationWillGroupAccounts(unittest.TestCase):
     def test_get_accounts(self):
         client_id = "my_app"
@@ -653,15 +687,24 @@ class TestClientCredentialGrant(unittest.TestCase):
         with self.assertWarns(DeprecationWarning):
             app.acquire_token_for_client(["scope"], post=mock_post)
 
+    @patch(_OIDC_DISCOVERY, new=Mock(return_value={
+        "authorization_endpoint": "https://contoso.com/common",
+        "token_endpoint": "https://contoso.com/common",
+        }))
     def test_common_authority_should_emit_warning(self):
         self._test_certain_authority_should_emit_warning(
             authority="https://login.microsoftonline.com/common")
 
+    @patch(_OIDC_DISCOVERY, new=Mock(return_value={
+        "authorization_endpoint": "https://contoso.com/organizations",
+        "token_endpoint": "https://contoso.com/organizations",
+        }))
     def test_organizations_authority_should_emit_warning(self):
         self._test_certain_authority_should_emit_warning(
             authority="https://login.microsoftonline.com/organizations")
 
 
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestRemoveTokensForClient(unittest.TestCase):
     def test_remove_tokens_for_client_should_remove_client_tokens_only(self):
         at_for_user = "AT for user"
@@ -691,6 +734,7 @@ class TestRemoveTokensForClient(unittest.TestCase):
         self.assertEqual(at_for_user, remaining_tokens[0].get("secret"))
 
 
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestScopeDecoration(unittest.TestCase):
     def _test_client_id_should_be_a_valid_scope(self, client_id, other_scopes):
         # B2C needs this https://learn.microsoft.com/en-us/azure/active-directory-b2c/access-tokens#openid-connect-scopes
@@ -705,3 +749,128 @@ class TestScopeDecoration(unittest.TestCase):
         self._test_client_id_should_be_a_valid_scope("client_id", [])
         self._test_client_id_should_be_a_valid_scope("client_id", ["foo"])
 
+
+@patch("sys.platform", new="darwin")  # Pretend running on Mac.
+@patch("msal.authority.tenant_discovery", new=Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    }))
+class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
+
+    @patch("msal.application._init_broker", new=Mock(side_effect=ImportError(
+        "PyMsalRuntime not installed"
+    )))
+    def test_broker_should_be_disabled_by_default(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            )
+        self.assertFalse(app._enable_broker)
+
+    @patch("msal.application._init_broker", new=Mock(side_effect=ImportError(
+        "PyMsalRuntime not installed"
+    )))
+    def test_opt_in_should_error_out_when_pymsalruntime_not_installed(self):
+        """Because it is actionable to app developer to add dependency declaration"""
+        with self.assertRaises(ImportError):
+            app = msal.PublicClientApplication(
+                "client_id",
+                authority="https://login.microsoftonline.com/common",
+                enable_broker_on_mac=True,
+                )
+
+    @patch("msal.application._init_broker", new=Mock(side_effect=RuntimeError(
+        "PyMsalRuntime raises RuntimeError when broker initialization failed"
+    )))
+    def test_should_fallback_when_pymsalruntime_failed_to_initialize_broker(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+
+@patch("sys.platform", new="darwin")  # Pretend running on Mac.
+@patch("msal.authority.tenant_discovery", new=Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    }))
+@patch("msal.application._init_broker", new=Mock())  # Pretend pymsalruntime installed and working
+class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
+
+    def test_broker_should_be_disabled_by_default(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_broker_should_be_enabled_when_opted_in(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertTrue(app._enable_broker)
+
+    def test_should_fallback_to_non_broker_when_using_adfs(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://contoso.com/adfs",
+            #instance_discovery=False,  # Automatically skipped when detected ADFS
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_should_fallback_to_non_broker_when_using_b2c(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://contoso.b2clogin.com/contoso/policy",
+            #instance_discovery=False,  # Automatically skipped when detected B2C
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_should_use_broker_when_disabling_instance_discovery(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://contoso.com/path",
+            instance_discovery=False,  # Need this for a generic authority url
+            enable_broker_on_mac=True,
+            )
+        # TODO: Shall we bypass broker when opted out of instance discovery?
+        self.assertTrue(app._enable_broker)  # Current implementation enables broker
+
+    def test_should_fallback_to_non_broker_when_using_oidc_authority(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            oidc_authority="https://contoso.com/path",
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+    def test_app_did_not_register_redirect_uri_should_error_out(self):
+        """Because it is actionable to app developer to add redirect URI"""
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertTrue(app._enable_broker)
+        with patch.object(
+            # Note: We tried @patch("msal.broker.foo", ...) but it ended up with
+            # "module msal does not have attribute broker"
+            app, "_acquire_token_interactive_via_broker", return_value={
+                "error": "broker_error",
+                "error_description":
+                    "(pii).  "  # pymsalruntime no longer surfaces AADSTS error,
+                                # So MSAL Python can't raise RedirectUriError.
+                    "Status: Response_Status.Status_ApiContractViolation, "
+                    "Error code: 3399614473, Tag 557973642",
+            }):
+            result = app.acquire_token_interactive(
+                ["scope"],
+                parent_window_handle=app.CONSOLE_WINDOW_HANDLE,
+                )
+            self.assertEqual(result.get("error"), "broker_error")

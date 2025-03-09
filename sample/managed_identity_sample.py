@@ -1,14 +1,12 @@
 """
 This sample demonstrates a daemon application that acquires a token using a
-client secret and then calls a web API with the token.
+managed identity and then calls a web API with the token.
 
 This sample loads its configuration from a .env file.
 
-To make this sample work, you need to choose one of the following templates:
+To make this sample work, you need to choose this template:
 
-    .env.sample.entra-id
-    .env.sample.external-id
-    .env.sample.external-id-with-custom-domain
+    .env.sample.managed_identity
 
 Copy the chosen template to a new file named .env, and fill in the values.
 
@@ -16,7 +14,6 @@ You can then run this sample:
 
     python name_of_this_script.py
 """
-
 import json
 import logging
 import os
@@ -38,25 +35,28 @@ load_dotenv()  # We use this to load configuration from a .env file
 global_token_cache = msal.TokenCache()  # The TokenCache() is in-memory.
     # See more options in https://msal-python.readthedocs.io/en/latest/#tokencache
 
+# Create a managed identity instance based on the environment variable value
+if os.getenv('MANAGED_IDENTITY'):
+    managed_identity = json.loads(os.getenv('MANAGED_IDENTITY'))
+else:
+    managed_identity = msal.SystemAssignedManagedIdentity()
+
 # Create a preferably long-lived app instance, to avoid the overhead of app creation
-global_app = msal.ConfidentialClientApplication(
-    os.getenv('CLIENT_ID'),
-    authority=os.getenv('AUTHORITY'),  # For Entra ID or External ID
-    oidc_authority=os.getenv('OIDC_AUTHORITY'),  # For External ID with custom domain
-    client_credential=os.getenv('CLIENT_SECRET'),
+global_app = msal.ManagedIdentityClient(
+    managed_identity,
+    http_client=requests.Session(),
     token_cache=global_token_cache,  # Let this app (re)use an existing token cache.
         # If absent, ClientApplication will create its own empty token cache
     )
-scopes = os.getenv("SCOPE", "").split()
+resource = os.getenv("RESOURCE")
 
 
 def acquire_and_use_token():
-    # Since MSAL 1.23, acquire_token_for_client(...) will automatically look up
+    # ManagedIdentityClient.acquire_token_for_client(...) will automatically look up
     # a token from cache, and fall back to acquire a fresh token when needed.
-    result = global_app.acquire_token_for_client(scopes=scopes)
+    result = global_app.acquire_token_for_client(resource=resource)
 
     if "access_token" in result:
-        print("Token was obtained from:", result["token_source"])  # Since MSAL 1.25
         if os.getenv('ENDPOINT'):
             # Calling a web API using the access token
             api_result = requests.get(

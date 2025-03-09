@@ -104,31 +104,62 @@ class TestCiamAuthority(unittest.TestCase):
     "authorization_endpoint": "https://contoso.com/authorize",
     "token_endpoint": "https://contoso.com/token",
     })
-class TestOidcAuthority(unittest.TestCase):
+class OidcAuthorityTestCase(unittest.TestCase):
+    authority = "https://contoso.com/tenant"
+
+    def setUp(self):
+        # setUp() gives subclass a dynamic setup based on their authority
+        self.oidc_discovery_endpoint = (
+            # MSAL Python always does OIDC Discovery,
+            # not to be confused with Instance Discovery
+            # Here the test is to confirm the OIDC endpoint contains no "/v2.0"
+            self.authority + "/.well-known/openid-configuration")
+
     def test_authority_obj_should_do_oidc_discovery_and_skip_instance_discovery(
             self, oidc_discovery, instance_discovery):
         c = MinimalHttpClient()
-        a = Authority(None, c, oidc_authority_url="https://contoso.com/tenant")
+        a = Authority(None, c, oidc_authority_url=self.authority)
         instance_discovery.assert_not_called()
-        oidc_discovery.assert_called_once_with(
-            "https://contoso.com/tenant/.well-known/openid-configuration", c)
+        oidc_discovery.assert_called_once_with(self.oidc_discovery_endpoint, c)
         self.assertEqual(a.authorization_endpoint, 'https://contoso.com/authorize')
         self.assertEqual(a.token_endpoint, 'https://contoso.com/token')
 
     def test_application_obj_should_do_oidc_discovery_and_skip_instance_discovery(
             self, oidc_discovery, instance_discovery):
         app = msal.ClientApplication(
-            "id",
-            authority=None,
-            oidc_authority="https://contoso.com/tenant",
-            )
+            "id", authority=None, oidc_authority=self.authority)
         instance_discovery.assert_not_called()
         oidc_discovery.assert_called_once_with(
-            "https://contoso.com/tenant/.well-known/openid-configuration",
-            app.http_client)
+            self.oidc_discovery_endpoint, app.http_client)
         self.assertEqual(
             app.authority.authorization_endpoint, 'https://contoso.com/authorize')
         self.assertEqual(app.authority.token_endpoint, 'https://contoso.com/token')
+
+
+class DstsAuthorityTestCase(OidcAuthorityTestCase):
+    # Inherits OidcAuthority's test cases and run them with a dSTS authority
+    authority = (  # dSTS is single tenanted with a tenant placeholder
+        'https://test-instance1-dsts.dsts.core.azure-test.net/dstsv2/common')
+    authorization_endpoint = (
+        "https://some.url.dsts.core.azure-test.net/dstsv2/common/oauth2/authorize")
+    token_endpoint = (
+        "https://some.url.dsts.core.azure-test.net/dstsv2/common/oauth2/token")
+
+    @patch("msal.authority._instance_discovery")
+    @patch("msal.authority.tenant_discovery", return_value={
+        "authorization_endpoint": authorization_endpoint,
+        "token_endpoint": token_endpoint,
+    })  # We need to create new patches (i.e. mocks) for non-inherited test cases
+    def test_application_obj_should_accept_dsts_url_as_an_authority(
+            self, oidc_discovery, instance_discovery):
+        app = msal.ClientApplication("id", authority=self.authority)
+        instance_discovery.assert_not_called()
+        oidc_discovery.assert_called_once_with(
+            self.oidc_discovery_endpoint, app.http_client)
+        self.assertEqual(
+            app.authority.authorization_endpoint, self.authorization_endpoint)
+        self.assertEqual(app.authority.token_endpoint, self.token_endpoint)
+
 
 class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
 

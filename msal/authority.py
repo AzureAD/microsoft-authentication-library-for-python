@@ -68,11 +68,11 @@ class Authority(object):
         """
         self._http_client = http_client
         if oidc_authority_url:
-            logger.info("Initializing with OIDC authority: %s", oidc_authority_url)
+            logger.debug("Initializing with OIDC authority: %s", oidc_authority_url)
             tenant_discovery_endpoint = self._initialize_oidc_authority(
                 oidc_authority_url)
         else:
-            logger.info("Initializing with Entra authority: %s", authority_url)
+            logger.debug("Initializing with Entra authority: %s", authority_url)
             tenant_discovery_endpoint = self._initialize_entra_authority(
                 authority_url, validate_authority, instance_discovery)
         try:

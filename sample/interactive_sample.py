@@ -46,7 +46,8 @@ global_app = msal.PublicClientApplication(
     authority=os.getenv('AUTHORITY'),  # For Entra ID or External ID
     oidc_authority=os.getenv('OIDC_AUTHORITY'),  # For External ID with custom domain
     #enable_broker_on_windows=True,  # Opted in. You will be guided to meet the prerequisites, if your app hasn't already
-        # See also: https://docs.microsoft.com/en-us/azure/active-directory/develop/scenario-desktop-acquire-token-wam#wam-value-proposition
+    #enable_broker_on_mac=True,  # Opted in. You will be guided to meet the prerequisites, if your app hasn't already
+
     token_cache=global_token_cache,  # Let this app (re)use an existing token cache.
         # If absent, ClientApplication will create its own empty token cache
     )
