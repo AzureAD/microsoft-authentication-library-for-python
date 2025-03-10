@@ -705,7 +705,7 @@ class ClientApplication(object):
 
     def is_pop_supported(self):
         """Returns True if this client supports Proof-of-Possession Access Token."""
-        return self._enable_broker and sys.platform != "linux"
+        return self._enable_broker and sys.platform in ("win32", "darwin")
 
     def _decorate_scope(
             self, scopes,
@@ -1510,6 +1510,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 }.get(final_result["suberror"], final_result["suberror"])
         return final_result
 
+    def _is_ssh_cert_or_pop_request(token_type, auth_scheme) -> bool:
+        return token_type == "ssh-cert" or token_type == "pop" or isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme)
+
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
             self,
             scopes,  # type: List[str]
@@ -1577,10 +1580,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     raise ValueError("auth_scheme is not supported in Cloud Shell")
                 return self._acquire_token_by_cloud_shell(scopes, data=data)
 
-            is_ssh_cert_or_pop_request = (
-                data.get("token_type") == "ssh-cert" or
-                data.get("token_type") == "pop" or
-                isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme)) 
+            is_ssh_cert_or_pop_request = _is_ssh_cert_or_pop_request(data.get("token_type"), auth_scheme)
+
             if self._enable_broker and account and account.get("account_source") in (
                 _GRANT_TYPE_BROKER,  # Broker successfully established this account previously.
                 None,  # Unknown data from older MSAL. Broker might still work.
@@ -1928,6 +1929,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         *,
         enable_broker_on_windows=None,
         enable_broker_on_mac=None,
+        enable_broker_on_linux=None,
         **kwargs):
         """Same as :func:`ClientApplication.__init__`,
         except that ``client_credential`` parameter shall remain ``None``.
@@ -2144,11 +2146,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 # https://microsoft.sharepoint.com/:w:/t/Identity-DevEx/EatIUauX3c9Ctw1l7AQ6iM8B5CeBZxc58eoQCE0IuZ0VFw?e=tgc3jP&CID=39c853be-76ea-79d7-ee73-f1b2706ede05
             False
             ) and data.get("token_type") != "ssh-cert"  # Work around a known issue as of PyMsalRuntime 0.8
-        self._validate_ssh_cert_input_data(data)
-        is_ssh_cert_or_pop_request = (
-            data.get("token_type") == "ssh-cert" or
-            data.get("token_type") == "pop" or
-            isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme)) 
+        self._validate_ssh_cert_input_data(data) 
+        is_ssh_cert_or_pop_request = _is_ssh_cert_or_pop_request(data.get("token_type"), auth_scheme)
+
         if not on_before_launching_ui:
             on_before_launching_ui = lambda **kwargs: None
         if _is_running_in_cloud_shell() and prompt == "none":
