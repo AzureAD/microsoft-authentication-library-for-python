@@ -41,6 +41,7 @@ pca = msal.PublicClientApplication(
     enable_broker_on_mac=True,
     enable_broker_on_windows=True,
     enable_broker_on_linux=True,
+    enable_broker_on_wsl=True,
     )
 
 def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):

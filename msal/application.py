@@ -21,7 +21,7 @@ from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
 from .cloudshell import _is_running_in_cloud_shell
 from .sku import SKU, __version__
-
+from .oauth2cli.authcode import is_wsl
 
 
 logger = logging.getLogger(__name__)
@@ -1929,13 +1929,14 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         enable_broker_on_windows=None,
         enable_broker_on_mac=None,
         enable_broker_on_linux=None,
+        enable_broker_on_wsl=None,
         **kwargs):
         """Same as :func:`ClientApplication.__init__`,
         except that ``client_credential`` parameter shall remain ``None``.
 
         .. note::
 
-            You may set enable_broker_on_windows and/or enable_broker_on_mac and/or enable_broker_on_linux to True.
+            You may set enable_broker_on_windows and/or enable_broker_on_mac and/or enable_broker_on_linux and/or enable_broker_on_wsl to True.
 
             **What is a broker, and why use it?**
 
@@ -2011,13 +2012,21 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
             New in MSAL Python 1.32.0. 
+
+        :param boolean enable_broker_on_wsl:
+            This setting is only effective if your app is running on WSL.
+            This parameter defaults to None, which means MSAL will not utilize a broker.
+
+            New in MSAL Python 1.32.0.
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
+
         self._enable_broker = bool(
             enable_broker_on_windows and sys.platform == "win32"
             or enable_broker_on_mac and sys.platform == "darwin"
-            or enable_broker_on_linux and sys.platform == "linux")
+            or (enable_broker_on_linux or (enable_broker_on_wsl and is_wsl())) and sys.platform == "linux")
+
         super(PublicClientApplication, self).__init__(
             client_id, client_credential=None, **kwargs)
 
