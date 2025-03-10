@@ -164,6 +164,8 @@ def _preferred_browser():
             pass  # We may still proceed
     return None
 
+def _is_ssh_cert_or_pop_request(token_type, auth_scheme) -> bool:
+    return token_type == "ssh-cert" or token_type == "pop" or isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme)
 
 class _ClientWithCcsRoutingInfo(Client):
 
@@ -1509,9 +1511,6 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 "device_authentication_failed": "",
                 }.get(final_result["suberror"], final_result["suberror"])
         return final_result
-
-    def _is_ssh_cert_or_pop_request(token_type, auth_scheme) -> bool:
-        return token_type == "ssh-cert" or token_type == "pop" or isinstance(auth_scheme, msal.auth_scheme.PopAuthScheme)
 
     def _acquire_token_silent_from_cache_and_possibly_refresh_it(
             self,
