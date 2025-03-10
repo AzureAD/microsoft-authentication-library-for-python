@@ -1584,7 +1584,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             if self._enable_broker and account and account.get("account_source") in (
                 _GRANT_TYPE_BROKER,  # Broker successfully established this account previously.
                 None,  # Unknown data from older MSAL. Broker might still work.
-            ) and (sys.platform != "linux" or not is_ssh_cert_or_pop_request):
+            ) and (sys.platform in ("win32", "darwin") or not is_ssh_cert_or_pop_request):
                 from .broker import _acquire_token_silently
                 response = _acquire_token_silently(
                     "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -1831,7 +1831,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         """
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
-        if self._enable_broker and sys.platform != "linux":
+        if self._enable_broker and sys.platform in ("win32", "darwin"):
             from .broker import _signin_silently
             response = _signin_silently(
                 "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -2165,7 +2165,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             return self._acquire_token_by_cloud_shell(scopes, data=data)
         claims = _merge_claims_challenge_and_capabilities(
             self._client_capabilities, claims_challenge)
-        if self._enable_broker and (sys.platform != "linux" or not is_ssh_cert_or_pop_request):
+        if self._enable_broker and (sys.platform in ("win32", "darwin") or not is_ssh_cert_or_pop_request):
             if parent_window_handle is None:
                 raise ValueError(
                     "parent_window_handle is required when you opted into using broker. "
