@@ -20,6 +20,12 @@ from msal.telemetry import CLIENT_CURRENT_TELEMETRY, CLIENT_LAST_TELEMETRY
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
+_OIDC_DISCOVERY = "msal.authority.tenant_discovery"
+_OIDC_DISCOVERY_MOCK = Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+})
+
 
 class TestHelperExtractCerts(unittest.TestCase):  # It is used by SNI scenario
 
@@ -58,10 +64,9 @@ class TestBytesConversion(unittest.TestCase):
 
 class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
 
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(
-            self.authority_url, MinimalHttpClient())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -116,12 +121,11 @@ class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
         self.assertEqual("", result.get("classification"))
 
 
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
     def setUp(self):
         self.authority_url = "https://login.microsoftonline.com/common"
-        self.authority = msal.authority.Authority(
-            self.authority_url, MinimalHttpClient())
         self.scopes = ["s1", "s2"]
         self.uid = "my_uid"
         self.utid = "my_utid"
@@ -148,7 +152,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             self.assertEqual(self.frt, data.get("refresh_token"), "Should attempt the FRT")
             return MinimalResponse(status_code=400, text=error_response)
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self.authority, self.scopes, self.account, post=tester)
+            app.authority, self.scopes, self.account, post=tester)
         self.assertNotEqual([], app.token_cache.find(
             msal.TokenCache.CredentialType.REFRESH_TOKEN, query={"secret": self.frt}),
             "The FRT should not be removed from the cache")
@@ -168,7 +172,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             self.assertEqual(rt, data.get("refresh_token"), "Should attempt the RT")
             return MinimalResponse(status_code=200, text='{}')
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self.authority, self.scopes, self.account, post=tester)
+            app.authority, self.scopes, self.account, post=tester)
 
     def test_unknown_family_app_will_attempt_frt_and_join_family(self):
         def tester(url, data=None, **kwargs):
@@ -180,7 +184,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         app = ClientApplication(
             "unknown_family_app", authority=self.authority_url, token_cache=self.cache)
         at = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self.authority, self.scopes, self.account, post=tester)
+            app.authority, self.scopes, self.account, post=tester)
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         self.assertEqual("at", at.get("access_token"), "New app should get a new AT")
         app_metadata = app.token_cache.find(
@@ -202,7 +206,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         app = ClientApplication(
             "preexisting_family_app", authority=self.authority_url, token_cache=self.cache)
         resp = app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
-            self.authority, self.scopes, self.account, post=tester)
+            app.authority, self.scopes, self.account, post=tester)
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         self.assertEqual(json.loads(error_response), resp, "Error raised will be returned")
 
@@ -237,7 +241,7 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
 
 class TestClientApplicationForAuthorityMigration(unittest.TestCase):
 
-    @classmethod
+    # Chose to not mock oidc discovery, because AuthorityMigration might rely on real data
     def setUp(self):
         self.environment_in_cache = "sts.windows.net"
         self.authority_url_in_app = "https://login.microsoftonline.com/common"
@@ -444,6 +448,7 @@ class TestApplicationForRefreshInBehaviors(unittest.TestCase):
         self.assertRefreshOn(result, new_refresh_in)
 
 
+# TODO Patching oidc discovery ends up failing. But we plan to remove offline telemetry anyway.
 class TestTelemetryMaintainingOfflineState(unittest.TestCase):
     authority_url = "https://login.microsoftonline.com/common"
     scopes = ["s1", "s2"]
@@ -524,6 +529,7 @@ class TestTelemetryMaintainingOfflineState(unittest.TestCase):
 
 class TestTelemetryOnClientApplication(unittest.TestCase):
     @classmethod
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
     def setUpClass(cls):  # Initialization at runtime, not interpret-time
         cls.app = ClientApplication(
             "client_id", authority="https://login.microsoftonline.com/common")
@@ -552,6 +558,7 @@ class TestTelemetryOnClientApplication(unittest.TestCase):
 
 class TestTelemetryOnPublicClientApplication(unittest.TestCase):
     @classmethod
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
     def setUpClass(cls):  # Initialization at runtime, not interpret-time
         cls.app = PublicClientApplication(
             "client_id", authority="https://login.microsoftonline.com/common")
@@ -581,6 +588,7 @@ class TestTelemetryOnPublicClientApplication(unittest.TestCase):
 
 class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
     @classmethod
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
     def setUpClass(cls):  # Initialization at runtime, not interpret-time
         cls.app = ConfidentialClientApplication(
             "client_id", client_credential="secret",
@@ -626,6 +634,7 @@ class TestTelemetryOnConfidentialClientApplication(unittest.TestCase):
         self.assertEqual(at, result.get("access_token"))
 
 
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestClientApplicationWillGroupAccounts(unittest.TestCase):
     def test_get_accounts(self):
         client_id = "my_app"
@@ -678,15 +687,24 @@ class TestClientCredentialGrant(unittest.TestCase):
         with self.assertWarns(DeprecationWarning):
             app.acquire_token_for_client(["scope"], post=mock_post)
 
+    @patch(_OIDC_DISCOVERY, new=Mock(return_value={
+        "authorization_endpoint": "https://contoso.com/common",
+        "token_endpoint": "https://contoso.com/common",
+        }))
     def test_common_authority_should_emit_warning(self):
         self._test_certain_authority_should_emit_warning(
             authority="https://login.microsoftonline.com/common")
 
+    @patch(_OIDC_DISCOVERY, new=Mock(return_value={
+        "authorization_endpoint": "https://contoso.com/organizations",
+        "token_endpoint": "https://contoso.com/organizations",
+        }))
     def test_organizations_authority_should_emit_warning(self):
         self._test_certain_authority_should_emit_warning(
             authority="https://login.microsoftonline.com/organizations")
 
 
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestRemoveTokensForClient(unittest.TestCase):
     def test_remove_tokens_for_client_should_remove_client_tokens_only(self):
         at_for_user = "AT for user"
@@ -716,6 +734,7 @@ class TestRemoveTokensForClient(unittest.TestCase):
         self.assertEqual(at_for_user, remaining_tokens[0].get("secret"))
 
 
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestScopeDecoration(unittest.TestCase):
     def _test_client_id_should_be_a_valid_scope(self, client_id, other_scopes):
         # B2C needs this https://learn.microsoft.com/en-us/azure/active-directory-b2c/access-tokens#openid-connect-scopes
@@ -855,4 +874,3 @@ class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
                 parent_window_handle=app.CONSOLE_WINDOW_HANDLE,
                 )
             self.assertEqual(result.get("error"), "broker_error")
-

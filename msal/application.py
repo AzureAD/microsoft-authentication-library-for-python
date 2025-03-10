@@ -675,6 +675,7 @@ class ClientApplication(object):
                 "allow_broker is deprecated. "
                 "Please use PublicClientApplication(..., "
                 "enable_broker_on_windows=True, "
+                # No need to mention non-Windows platforms, because allow_broker is only for Windows
                 "...)",
                 DeprecationWarning)
         opted_in_for_broker = (
@@ -697,7 +698,7 @@ class ClientApplication(object):
                 _init_broker(enable_pii_log)
             except RuntimeError:
                 self._enable_broker = False
-                logger.exception(
+                logger.warning(  # It is common on Mac and Linux where broker is not built-in
                     "Broker is unavailable on this platform. "
                     "We will fallback to non-broker.")
         logger.debug("Broker enabled? %s", self._enable_broker)
@@ -1922,7 +1923,12 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
     DEVICE_FLOW_CORRELATION_ID = "_correlation_id"
     CONSOLE_WINDOW_HANDLE = object()
 
-    def __init__(self, client_id, client_credential=None, **kwargs):
+    def __init__(
+        self, client_id, client_credential=None,
+        *,
+        enable_broker_on_windows=None,
+        enable_broker_on_mac=None,
+        **kwargs):
         """Same as :func:`ClientApplication.__init__`,
         except that ``client_credential`` parameter shall remain ``None``.
 
@@ -2007,10 +2013,6 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
-        # Using kwargs notation for now. We will switch to keyword-only arguments.
-        enable_broker_on_windows = kwargs.pop("enable_broker_on_windows", False)
-        enable_broker_on_mac = kwargs.pop("enable_broker_on_mac", False)
-        enable_broker_on_linux = kwargs.pop("enable_broker_on_linux", False)
         self._enable_broker = bool(
             enable_broker_on_windows and sys.platform == "win32"
             or enable_broker_on_mac and sys.platform == "darwin"
@@ -2261,7 +2263,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 # _signin_silently() only gets tokens for default account,
                 # but this seems to have been fixed in PyMsalRuntime 0.11.2
                 "access_token" in response and login_hint
-                and response.get("id_token_claims", {}) != login_hint)
+                and login_hint != response.get(
+                    "id_token_claims", {}).get("preferred_username"))
             wrong_account_error_message = (
                 'prompt="none" will not work for login_hint="non-default-user"')
             if is_wrong_account:
