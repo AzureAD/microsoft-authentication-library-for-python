@@ -2025,7 +2025,9 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         self._enable_broker = bool(
             enable_broker_on_windows and sys.platform == "win32"
             or enable_broker_on_mac and sys.platform == "darwin"
-            or (enable_broker_on_linux or (enable_broker_on_wsl and is_wsl())) and sys.platform == "linux")
+            or enable_broker_on_linux and sys.platform == "linux"
+            or enable_broker_on_wsl and is_wsl()
+            )
 
         super(PublicClientApplication, self).__init__(
             client_id, client_credential=None, **kwargs)
