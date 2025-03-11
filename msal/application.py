@@ -2156,7 +2156,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                 # https://microsoft.sharepoint.com/:w:/t/Identity-DevEx/EatIUauX3c9Ctw1l7AQ6iM8B5CeBZxc58eoQCE0IuZ0VFw?e=tgc3jP&CID=39c853be-76ea-79d7-ee73-f1b2706ede05
             False
             ) and data.get("token_type") != "ssh-cert"  # Work around a known issue as of PyMsalRuntime 0.8
-        self._validate_ssh_cert_input_data(data) 
+        self._validate_ssh_cert_input_data(data)
         is_ssh_cert_or_pop_request = _is_ssh_cert_or_pop_request(data.get("token_type"), auth_scheme)
 
         if not on_before_launching_ui:
