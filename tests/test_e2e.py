@@ -851,11 +851,13 @@ class WorldWideTestCase(LabBasedTestCase):
         config["password"] = self.get_lab_user_secret(config["lab_name"])
         self._test_username_password(**config)
 
+    @unittest.skip("ADFSv3 is decommissioned in our test environment")
     def test_adfs3_fed_user(self):
         config = self.get_lab_user(usertype="federated", federationProvider="ADFSv3")
         config["password"] = self.get_lab_user_secret(config["lab_name"])
         self._test_username_password(**config)
 
+    @unittest.skip("ADFSv2 is decommissioned in our test environment")
     def test_adfs2_fed_user(self):
         config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2")
         config["password"] = self.get_lab_user_secret(config["lab_name"])
