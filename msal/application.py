@@ -208,6 +208,11 @@ def _msal_extension_check():
         pass  # The optional msal_extensions is not installed. Business as usual.
     except ValueError:
         logger.exception(f"msal_extensions version {v} not in major.minor.patch format")
+    except:
+        logger.exception(
+            "Unable to import msal_extensions during an optional check. "
+            "This exception can be safely ignored."
+            )
 
 
 class ClientApplication(object):
