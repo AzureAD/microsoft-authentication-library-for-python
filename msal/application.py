@@ -1968,7 +1968,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                  if your app is expected to run on Linux, especially WSL
 
             2. installed broker dependency,
-               e.g. ``pip install msal[broker]>=1.32,<2``.
+               e.g. ``pip install msal[broker]>=1.33,<2``.
 
             3. tested with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
 
@@ -2011,13 +2011,13 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             This setting is only effective if your app is running on Linux.
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
-            New in MSAL Python 1.32.0. 
+            New in MSAL Python 1.33.0. 
 
         :param boolean enable_broker_on_wsl:
             This setting is only effective if your app is running on WSL.
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
-            New in MSAL Python 1.32.0.
+            New in MSAL Python 1.33.0.
         """
         if client_credential is not None:
             raise ValueError("Public Client should not possess credentials")
