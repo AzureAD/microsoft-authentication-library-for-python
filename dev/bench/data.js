@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743237446086,
+  "lastUpdate": 1743238168722,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -27871,6 +27871,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000014826260546869858",
             "extra": "mean: 128.21210095372095 usec\nrounds: 3982"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rayluo@microsoft.com",
+            "name": "Ray Luo",
+            "username": "rayluo"
+          },
+          "committer": {
+            "email": "rayluo@microsoft.com",
+            "name": "Ray Luo",
+            "username": "rayluo"
+          },
+          "distinct": false,
+          "id": "30dce4ecc63d93ef34b89c052aab1a1231395ce6",
+          "message": "Swallow exception during optional check\n\nThis used to cause issue with MSAL 1.32 and MSAL EX <= 1.2 running\ninside read-only container",
+          "timestamp": "2025-03-29T01:31:43-07:00",
+          "tree_id": "172bb6dbb4701e199150d117247442b316b09d66",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/30dce4ecc63d93ef34b89c052aab1a1231395ce6"
+        },
+        "date": 1743238167721,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 41500.39877384289,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000025372473718841428",
+            "extra": "mean: 24.096154002025777 usec\nrounds: 11357"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40528.88393017965,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000028446724598285157",
+            "extra": "mean: 24.673761106344074 usec\nrounds: 16342"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8233.305731395805,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014603166073296817",
+            "extra": "mean: 121.45789706153282 usec\nrounds: 5479"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8099.159065516981,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015171922110794704",
+            "extra": "mean: 123.46960862364155 usec\nrounds: 4221"
           }
         ]
       }
