@@ -2008,7 +2008,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             New in MSAL Python 1.31.0.
             
         :param boolean enable_broker_on_linux:
-            This setting is only effective if your app is running on Linux.
+            This setting is only effective if your app is running on Linux, including WSL.
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
             New in MSAL Python 1.33.0. 
