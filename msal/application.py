@@ -210,6 +210,11 @@ def _msal_extension_check():
         pass  # The optional msal_extensions is not installed. Business as usual.
     except ValueError:
         logger.exception(f"msal_extensions version {v} not in major.minor.patch format")
+    except:
+        logger.exception(
+            "Unable to import msal_extensions during an optional check. "
+            "This exception can be safely ignored."
+            )
 
 
 class ClientApplication(object):
@@ -331,7 +336,7 @@ class ClientApplication(object):
                         "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
                     }
 
-            .. admonition:: Supporting reading client cerficates from PFX files
+            .. admonition:: Supporting reading client certificates from PFX files
 
                 *Added in version 1.29.0*:
                 Feed in a dictionary containing the path to a PFX file::
