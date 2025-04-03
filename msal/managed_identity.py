@@ -298,7 +298,7 @@ class ManagedIdentityClient(object):
         now = time.time()
         if True:  # Attempt cache search even if receiving claims_challenge,
                   # because we want to locate the existing token (if any) and refresh it
-            matches = self._token_cache.find(
+            matches = self._token_cache.search(
                 self._token_cache.CredentialType.ACCESS_TOKEN,
                 target=[resource],
                 query=dict(
