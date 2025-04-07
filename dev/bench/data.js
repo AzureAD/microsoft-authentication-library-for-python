@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744041316772,
+  "lastUpdate": 1744055451439,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -28287,6 +28287,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015801420099078825",
             "extra": "mean: 128.1414240153483 usec\nrounds: 3606"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dharshanb@microsoft.com",
+            "name": "Dharshan BJ",
+            "username": "DharshanBJ"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4eb7bd105b2281a253ab94d4b81f56ca1504f500",
+          "message": "Enable broker support on Linux for WSL (#766)\n\n* Enable broker support on Linux\n\n* update version number\n\n* Update sample/interactive_sample.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Update msal/application.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Update tests/broker-test.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* revert back release version bump\n\n* address comments\n\n* address comment\n\n* update approximate version hint\n\n* update\n\n* Update msal/application.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Address comments\n\n* Update\n\n* Add enable_broker_on_wsl flag\n\n* Address comments\n\n* Update msal/__main__.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Update tests/test_e2e.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Update msal/application.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Update msal/application.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Bump up msal py version to 1.33\n\n* Update msal/application.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n---------\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>",
+          "timestamp": "2025-04-07T12:48:35-07:00",
+          "tree_id": "c5a5430bdd6f9122b7b5d23a79fa6cb9d64ad33d",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/4eb7bd105b2281a253ab94d4b81f56ca1504f500"
+        },
+        "date": 1744055450310,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 42242.27983534844,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000022555921922377788",
+            "extra": "mean: 23.67296471444701 usec\nrounds: 8247"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 41741.06791622616,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000260591086365942",
+            "extra": "mean: 23.957221267241856 usec\nrounds: 15940"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8089.5756543949565,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015034081651644007",
+            "extra": "mean: 123.61587835039452 usec\nrounds: 4291"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7572.153179830928,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014591196737429207",
+            "extra": "mean: 132.06283288927446 usec\nrounds: 4129"
           }
         ]
       }
