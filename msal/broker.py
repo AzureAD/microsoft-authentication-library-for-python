@@ -27,6 +27,7 @@ except (ImportError, AttributeError):  # AttributeError happens when a prior pym
     min_ver = {
         "win32": "1.20",
         "darwin": "1.31",
+        "linux": "1.33",
     }.get(sys.platform)
     if min_ver:
         raise ImportError(

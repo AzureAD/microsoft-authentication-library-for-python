@@ -193,6 +193,8 @@ class E2eTestCase(unittest.TestCase):
                 http_client=http_client or MinimalHttpClient(),
                 enable_broker_on_windows=_PYMSALRUNTIME_INSTALLED,
                 enable_broker_on_mac=_PYMSALRUNTIME_INSTALLED,
+                enable_broker_on_linux=_PYMSALRUNTIME_INSTALLED,
+                enable_broker_on_wsl=_PYMSALRUNTIME_INSTALLED,
                 )
 
     def _test_username_password(self,
