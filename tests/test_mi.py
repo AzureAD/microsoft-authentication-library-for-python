@@ -1,7 +1,9 @@
+import hashlib
 import json
 import os
 import sys
 import time
+from typing import List, Optional
 import unittest
 try:
     from unittest.mock import patch, ANY, mock_open, Mock
@@ -52,14 +54,22 @@ class ManagedIdentityTestCase(unittest.TestCase):
 class ClientTestCase(unittest.TestCase):
     maxDiff = None
 
-    def setUp(self):
-        self.app = ManagedIdentityClient(
+    def _build_app(
+        self,
+        *,
+        client_capabilities: Optional[List[str]] = None,
+    ):
+        return ManagedIdentityClient(
             {   # Here we test it with the raw dict form, to test that
                 # the client has no hard dependency on ManagedIdentity object
                 "ManagedIdentityIdType": "SystemAssigned", "Id": None,
             },
             http_client=requests.Session(),
+            client_capabilities=client_capabilities,
             )
+
+    def setUp(self):
+        self.app = self._build_app()
 
     def test_error_out_on_invalid_input(self):
         with self.assertRaises(ManagedIdentityError):
@@ -79,7 +89,13 @@ class ClientTestCase(unittest.TestCase):
             "Should have expected client_id")
         self.assertEqual("managed_identity", at["realm"], "Should have expected realm")
 
-    def _test_happy_path(self, app, mocked_http, expires_in, resource="R"):
+    def _test_happy_path(
+        self, app, mocked_http, expires_in, *, resource="R", claims_challenge=None,
+    ):
+        """It tests a normal token request that is expected to hit IdP,
+        a subsequent same token request that is expected to hit cache,
+        and then a request with claims_challenge that shall hit IdP again.
+        """
         result = app.acquire_token_for_client(resource=resource)
         mocked_http.assert_called()
         call_count = mocked_http.call_count
@@ -115,7 +131,8 @@ class ClientTestCase(unittest.TestCase):
                 expected_refresh_on - 5 < result["refresh_on"] <= expected_refresh_on,
                 "Should have a refresh_on time around the middle of the token's life")
 
-        result = app.acquire_token_for_client(resource=resource, claims_challenge="foo")
+        result = app.acquire_token_for_client(
+            resource=resource, claims_challenge=claims_challenge or "placeholder")
         self.assertEqual("identity_provider", result["token_source"], "Should miss cache")
 
 
@@ -132,6 +149,9 @@ class VmTestCase(ClientTestCase):
 
     def test_happy_path_of_vm(self):
         self._test_happy_path().assert_called_with(
+            # The last call contained claims_challenge
+            # but since IMDS doesn't support token_sha256_to_refresh,
+            # the request shall remain the same as before
             'http://169.254.169.254/metadata/identity/oauth2/token',
             params={'api-version': '2018-02-01', 'resource': 'R'},
             headers={'Metadata': 'true'},
@@ -244,19 +264,46 @@ class MachineLearningTestCase(ClientTestCase):
     "IDENTITY_SERVER_THUMBPRINT": "bar",
 })
 class ServiceFabricTestCase(ClientTestCase):
+    access_token = "AT"
+    access_token_sha256 = hashlib.sha256(access_token.encode()).hexdigest()
 
-    def _test_happy_path(self, app):
+    def _test_happy_path(self, app, *, claims_challenge=None) -> callable:
         expires_in = 1234
         with patch.object(app._http_client, "get", return_value=MinimalResponse(
             status_code=200,
-            text='{"access_token": "AT", "expires_on": %s, "resource": "R", "token_type": "Bearer"}' % (
-                int(time.time()) + expires_in),
+            text='{"access_token": "%s", "expires_on": %s, "resource": "R", "token_type": "Bearer"}' % (
+                self.access_token, int(time.time()) + expires_in),
         )) as mocked_method:
             super(ServiceFabricTestCase, self)._test_happy_path(
-                app, mocked_method, expires_in)
+                app, mocked_method, expires_in, claims_challenge=claims_challenge)
+            return mocked_method
 
-    def test_happy_path(self):
-        self._test_happy_path(self.app)
+    def test_happy_path_with_client_capabilities_should_relay_capabilities(self):
+        self._test_happy_path(self._build_app(client_capabilities=["foo", "bar"])).assert_called_with(
+            'http://localhost',
+            params={
+                'api-version': '2019-07-01-preview',
+                'resource': 'R',
+                'token_sha256_to_refresh': self.access_token_sha256,
+                "xms_cc": "foo,bar",
+            },
+            headers={'Secret': 'foo'},
+        )
+
+    def test_happy_path_with_claim_challenge_should_send_sha256_to_provider(self):
+        self._test_happy_path(
+            self._build_app(client_capabilities=[]),  # Test empty client_capabilities
+            claims_challenge='{"access_token": {"nbf": {"essential": true, "value": "1563308371"}}}',
+        ).assert_called_with(
+            'http://localhost',
+            params={
+                'api-version': '2019-07-01-preview',
+                'resource': 'R',
+                'token_sha256_to_refresh': self.access_token_sha256,
+                # There is no xms_cc in this case
+            },
+            headers={'Secret': 'foo'},
+        )
 
     def test_unified_api_service_should_ignore_unnecessary_client_id(self):
         self._test_happy_path(ManagedIdentityClient(
