@@ -1,5 +1,10 @@
 -e .
 
+# As of Apr 2025, we use only safe_load() which is available since PyYAML's first release 3.01
+# https://github.com/yaml/pyyaml/blob/3.01/lib/yaml/__init__.py#L71
+# so, we do not need to specify a minimum version.
+pyyaml<7
+
 # python-dotenv 1.0+ no longer supports Python 3.7
 python-dotenv>=0.21,<2
 

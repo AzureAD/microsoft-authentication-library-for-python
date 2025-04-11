@@ -23,6 +23,7 @@ jobs:
       LAB_OBO_CLIENT_SECRET: ${{ secrets.LAB_OBO_CLIENT_SECRET }}
       LAB_OBO_CONFIDENTIAL_CLIENT_ID: ${{ secrets.LAB_OBO_CONFIDENTIAL_CLIENT_ID }}
       LAB_OBO_PUBLIC_CLIENT_ID: ${{ secrets.LAB_OBO_PUBLIC_CLIENT_ID }}
+      SMILE_TESTCASES_URL: ${{ vars.SMILE_TESTCASES_URL }}
 
     # Derived from https://docs.github.com/en/actions/guides/building-and-testing-python#starting-with-the-python-workflow-template
     runs-on: ubuntu-22.04
