@@ -74,7 +74,7 @@ def test_broker_username_password(scopes, expected_token_type):
     assert username and password, "You need to provide a test account and its password"
     result = pca.acquire_token_by_username_password(username, password, scopes)
     _assert(result, expected_token_type)
-    assert(result.get("token_source") == "broker")
+    assert result.get("token_source") == "broker"
     print("Username password test succeeds.")
 
 def _assert(result, expected_token_type):
