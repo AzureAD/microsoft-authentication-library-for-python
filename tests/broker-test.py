@@ -71,10 +71,10 @@ def test_broker_username_password(scopes, expected_token_type):
     print("Testing broker username password flows by using accounts in local .env")
     username = os.getenv("BROKER_TEST_ACCOUNT") or input("Input test account for broker test: ")
     password = os.getenv("BROKER_TEST_ACCOUNT_PASSWORD") or getpass.getpass("Input test account's password: ")
-    assert(username and password, "You need to provide a test account and its password")
+    assert username and password, "You need to provide a test account and its password"
     result = pca.acquire_token_by_username_password(username, password, scopes)
     _assert(result, expected_token_type)
-    assert(result.get("token_source") == "broker")
+    assert result.get("token_source") == "broker"
     print("Username password test succeeds.")
 
 def _assert(result, expected_token_type):
