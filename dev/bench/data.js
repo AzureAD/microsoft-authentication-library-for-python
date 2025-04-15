@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744433038643,
+  "lastUpdate": 1744749256764,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -28391,6 +28391,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000013822213013734932",
             "extra": "mean: 126.13537249071776 usec\nrounds: 5729"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "emmanuelferdman@gmail.com",
+            "name": "Emmanuel Ferdman",
+            "username": "emmanuel-ferdman"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1321e3793eebd35aac7b80b64e3a6aa49a32a51a",
+          "message": "Fix username/password validation in broker test (#807)\n\n* Fix username/password assert in broker test\n\nSigned-off-by: Emmanuel Ferdman <emmanuelferdman@gmail.com>\n\n* Update tests/broker-test.py\n\nCo-authored-by: Ray Luo <rayluo.mba@gmail.com>\n\n---------\n\nSigned-off-by: Emmanuel Ferdman <emmanuelferdman@gmail.com>\nCo-authored-by: Ray Luo <rayluo.mba@gmail.com>",
+          "timestamp": "2025-04-14T15:14:14-07:00",
+          "tree_id": "a4ab778e0c76b6824d8db718fc319a9736e02eea",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/1321e3793eebd35aac7b80b64e3a6aa49a32a51a"
+        },
+        "date": 1744749256120,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 42820.66857545957,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000024417791500499343",
+            "extra": "mean: 23.353208468424004 usec\nrounds: 8951"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38843.08313214561,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000010791392642969166",
+            "extra": "mean: 25.74460931944982 usec\nrounds: 15473"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7973.7942939141585,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015010133452324383",
+            "extra": "mean: 125.41080985287398 usec\nrounds: 4344"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7779.9970224188855,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014761328885995626",
+            "extra": "mean: 128.53475356332322 usec\nrounds: 4139"
           }
         ]
       }
