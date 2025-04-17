@@ -112,8 +112,8 @@ class UserAssignedManagedIdentity(ManagedIdentity):
 
 
 class _ThrottledHttpClient(ThrottledHttpClientBase):
-    def __init__(self, http_client, **kwargs):
-        super(_ThrottledHttpClient, self).__init__(http_client, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super(_ThrottledHttpClient, self).__init__(*args, **kwargs)
         self.get = IndividualCache(  # All MIs (except Cloud Shell) use GETs
             mapping=self._expiring_mapping,
             key_maker=lambda func, args, kwargs: "REQ {} hash={} 429/5xx/Retry-After".format(
@@ -124,7 +124,7 @@ class _ThrottledHttpClient(ThrottledHttpClientBase):
                     str(kwargs.get("params")) + str(kwargs.get("data"))),
                 ),
             expires_in=RetryAfterParser(5).parse,  # 5 seconds default for non-PCA
-            )(http_client.get)
+            )(self.get)  # Note: Decorate the parent get(), not the http_client.get()
 
 
 class ManagedIdentityClient(object):
@@ -233,8 +233,7 @@ class ManagedIdentityClient(object):
             #    (especially for 410 which was supposed to be a permanent failure).
             # 2. MI on Service Fabric specifically suggests to not retry on 404.
             #    ( https://learn.microsoft.com/en-us/azure/service-fabric/how-to-managed-cluster-managed-identity-service-fabric-app-code#error-handling )
-            http_client.http_client  # Patch the raw (unpatched) http client
-                if isinstance(http_client, ThrottledHttpClientBase) else http_client,
+            http_client,
             http_cache=http_cache,
         )
         self._token_cache = token_cache or TokenCache()

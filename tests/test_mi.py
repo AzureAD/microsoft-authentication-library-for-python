@@ -9,7 +9,8 @@ except:
     from mock import patch, ANY, mock_open, Mock
 import requests
 
-from tests.http_client import MinimalResponse
+from tests.test_throttled_http_client import (
+    MinimalResponse, ThrottledHttpClientBaseTestCase, DummyHttpClient)
 from msal import (
     SystemAssignedManagedIdentity, UserAssignedManagedIdentity,
     ManagedIdentityClient,
@@ -17,6 +18,7 @@ from msal import (
     ArcPlatformNotSupportedError,
 )
 from msal.managed_identity import (
+    _ThrottledHttpClient,
     _supported_arc_platforms_and_their_prefixes,
     get_managed_identity_source,
     APP_SERVICE,
@@ -47,6 +49,37 @@ class ManagedIdentityTestCase(unittest.TestCase):
         self.assertEqual(
             SystemAssignedManagedIdentity(),
             {"ManagedIdentityIdType": "SystemAssigned", "Id": None})
+
+
+class ThrottledHttpClientTestCase(ThrottledHttpClientBaseTestCase):
+    def test_throttled_http_client_should_not_alter_original_http_client(self):
+        self.assertNotAlteringOriginalHttpClient(_ThrottledHttpClient)
+
+    def test_throttled_http_client_should_not_cache_successful_http_response(self):
+        http_cache = {}
+        http_client=DummyHttpClient(
+            status_code=200,
+            response_text='{"access_token": "AT", "expires_in": "1234", "resource": "R"}',
+            )
+        app = ManagedIdentityClient(
+            SystemAssignedManagedIdentity(), http_client=http_client, http_cache=http_cache)
+        result = app.acquire_token_for_client(resource="R")
+        self.assertEqual("AT", result["access_token"])
+        self.assertEqual({}, http_cache, "Should not cache successful http response")
+
+    def test_throttled_http_client_should_cache_unsuccessful_http_response(self):
+        http_cache = {}
+        http_client=DummyHttpClient(
+            status_code=400,
+            response_headers={"Retry-After": "1"},
+            response_text='{"error": "invalid_request"}',
+            )
+        app = ManagedIdentityClient(
+            SystemAssignedManagedIdentity(), http_client=http_client, http_cache=http_cache)
+        result = app.acquire_token_for_client(resource="R")
+        self.assertEqual("invalid_request", result["error"])
+        self.assertNotEqual({}, http_cache, "Should cache unsuccessful http response")
+        self.assertCleanPickle(http_cache)
 
 
 class ClientTestCase(unittest.TestCase):

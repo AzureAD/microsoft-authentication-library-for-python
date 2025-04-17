@@ -499,6 +499,7 @@ class ClientApplication(object):
                 except (
                         FileNotFoundError,  # Or IOError in Python 2
                         pickle.UnpicklingError,  # A corrupted http cache file
+                        AttributeError,  # Cache created by a different version of MSAL
                         ):
                     persisted_http_cache = {}  # Recover by starting afresh
                 atexit.register(lambda: pickle.dump(
