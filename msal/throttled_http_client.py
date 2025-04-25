@@ -53,9 +53,12 @@ class NormalizedResponse(Response):
         super().__init__()
         self.status_code = raw_response.status_code
         self.text = raw_response.text
-        self.headers = {  # Only keep the headers which ThrottledHttpClient cares about
-            k: v for k, v in _get_headers(raw_response).items()
-            if k.lower() == RetryAfterParser.FIELD_NAME_LOWER
+        self.headers = {
+            k.lower(): v for k, v in _get_headers(raw_response).items()
+            # Attempted storing only a small set of headers (such as Retry-After),
+            # but it tends to lead to missing information (such as WWW-Authenticate).
+            # So we store all headers, which are expected to contain only public info,
+            # because we throttle only error responses and public responses.
         }
 
     ## Note: Don't use the following line,
