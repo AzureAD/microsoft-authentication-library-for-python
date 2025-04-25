@@ -11,6 +11,13 @@ from .exceptions import MsalServiceError
 DEVICE_AUTH_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
 
+def _get_headers(response):
+    # MSAL's HttpResponse did not have headers until 1.23.0
+    # https://github.com/AzureAD/microsoft-authentication-library-for-python/pull/581/files#diff-28866b706bc3830cd20485685f20fe79d45b58dce7050e68032e9d9372d68654R61
+    # This helper ensures graceful degradation to {} without exception
+    return getattr(response, "headers", {})
+
+
 class RetryAfterParser(object):
     FIELD_NAME_LOWER = "Retry-After".lower()
     def __init__(self, default_value=None):
@@ -19,9 +26,7 @@ class RetryAfterParser(object):
     def parse(self, *, result, **ignored):
         """Return seconds to throttle"""
         response = result
-        lowercase_headers = {k.lower(): v for k, v in getattr(
-            # Historically, MSAL's HttpResponse does not always have headers
-            response, "headers", {}).items()}
+        lowercase_headers = {k.lower(): v for k, v in _get_headers(response).items()}
         if not (response.status_code == 429 or response.status_code >= 500
                 or self.FIELD_NAME_LOWER in lowercase_headers):
             return 0  # Quick exit
@@ -49,7 +54,7 @@ class NormalizedResponse(Response):
         self.status_code = raw_response.status_code
         self.text = raw_response.text
         self.headers = {  # Only keep the headers which ThrottledHttpClient cares about
-            k: v for k, v in raw_response.headers.items()
+            k: v for k, v in _get_headers(raw_response).items()
             if k.lower() == RetryAfterParser.FIELD_NAME_LOWER
         }
 
@@ -153,7 +158,7 @@ class ThrottledHttpClient(ThrottledHttpClientBase):
                     and kwargs["data"].get("grant_type") == DEVICE_AUTH_GRANT
                     )
                 and RetryAfterParser.FIELD_NAME_LOWER not in set(  # Otherwise leave it to the Retry-After decorator
-                    h.lower() for h in getattr(result, "headers", {}).keys())
+                    h.lower() for h in _get_headers(result))
                 else 0,
             )(self.post)
 

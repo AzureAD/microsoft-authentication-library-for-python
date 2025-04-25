@@ -49,6 +49,18 @@ class DummyHttpClient(object):
         raise CloseMethodCalled("Not used by MSAL, but our customers may use it")
 
 
+class DummyHttpClientWithoutResponseHeaders(DummyHttpClient):
+    def post(self, url, params=None, data=None, headers=None, **kwargs):
+        response = super().post(url, params, data, headers, **kwargs)
+        del response.headers  # Early versions of MSAL did not require http client to return headers
+        return response
+
+    def get(self, url, params=None, headers=None, **kwargs):
+        response = super().get(url, params, headers, **kwargs)
+        del response.headers  # Early versions of MSAL did not require http client to return headers
+        return response
+
+
 class CloseMethodCalled(Exception):
     pass
 
@@ -68,6 +80,12 @@ class ThrottledHttpClientBaseTestCase(unittest.TestCase):
     def test_pickled_minimal_response_should_contain_signature(self):
         self.assertIn(MinimalResponse.SIGNATURE, pickle.dumps(MinimalResponse(
             status_code=200, headers={}, text="foo")))
+
+    def test_throttled_http_client_base_response_should_tolerate_headerless_response(self):
+        http_client = ThrottledHttpClientBase(DummyHttpClientWithoutResponseHeaders(
+            status_code=200, response_text="foo"))
+        response = http_client.post("https://example.com")
+        self.assertEqual(response.text, "foo", "Should return the same response text")
 
     def test_throttled_http_client_base_response_should_not_contain_signature(self):
         http_client = ThrottledHttpClientBase(DummyHttpClient(status_code=200))
