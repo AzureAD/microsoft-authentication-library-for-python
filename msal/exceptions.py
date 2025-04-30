@@ -27,12 +27,26 @@
 
 class MsalError(Exception):
     # Define the template in Unicode to accommodate possible Unicode variables
-    msg = u'An unspecified error'
+    msg = u'An unspecified error'  # Keeping for backward compatibility
 
-    def __init__(self, *args, **kwargs):
-        super(MsalError, self).__init__(self.msg.format(**kwargs), *args)
-        self.kwargs = kwargs
 
 class MsalServiceError(MsalError):
-    msg = u"{error}: {error_description}"
+    msg = u"{error}: {error_description}"  # Keeping for backward compatibility
+    def __init__(
+        self,
+        *args,
+        error: str, error_description: str,  # Historically required, keeping them for now
+            # 1. We can't simply remove them, or else it will be a breaking change
+            # 2. We may change them to optional without breaking anyone. However,
+            #    such a change will be a one-way change, because once being optional,
+            #    we will never be able to change them (back) to be required.
+            # 3. Since they were required and already exist anyway,
+            #    now we just keep them required "for now",
+            #    just in case that we would use them again.
+            # There is no plan to do #1; and we keep option #2 open; we go with #3.
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self._error = error
+        self._error_description = error_description
 

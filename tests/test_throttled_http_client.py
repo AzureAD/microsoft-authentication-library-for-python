@@ -6,6 +6,7 @@ import logging
 
 from msal.throttled_http_client import (
     ThrottledHttpClientBase, ThrottledHttpClient, NormalizedResponse)
+from msal.exceptions import MsalServiceError
 
 from tests import unittest
 from tests.http_client import MinimalResponse as _MinimalResponse
@@ -65,6 +66,26 @@ class CloseMethodCalled(Exception):
     pass
 
 
+class NormalizedResponseTestCase(unittest.TestCase):
+    def test_pickled_minimal_response_should_contain_signature(self):
+        self.assertIn(MinimalResponse.SIGNATURE, pickle.dumps(MinimalResponse(
+            status_code=200, headers={}, text="foo")))
+
+    def test_normalized_response_should_not_contain_signature(self):
+        response = NormalizedResponse(MinimalResponse(
+            status_code=200, headers={}, text="foo"))
+        self.assertNotIn(
+            MinimalResponse.SIGNATURE, pickle.dumps(response),
+            "A pickled object should not contain undesirable data")
+        self.assertEqual(response.text, "foo", "Should return the same response text")
+
+    def test_normalized_response_raise_for_status_should_raise(self):
+        response = NormalizedResponse(MinimalResponse(
+            status_code=400, headers={}, text="foo"))
+        with self.assertRaises(MsalServiceError):
+            response.raise_for_status()
+
+
 class ThrottledHttpClientBaseTestCase(unittest.TestCase):
 
     def assertCleanPickle(self, obj):
@@ -76,10 +97,6 @@ class ThrottledHttpClientBaseTestCase(unittest.TestCase):
     def assertValidResponse(self, response):
         self.assertIsInstance(response, NormalizedResponse)
         self.assertCleanPickle(response)
-
-    def test_pickled_minimal_response_should_contain_signature(self):
-        self.assertIn(MinimalResponse.SIGNATURE, pickle.dumps(MinimalResponse(
-            status_code=200, headers={}, text="foo")))
 
     def test_throttled_http_client_base_response_should_tolerate_headerless_response(self):
         http_client = ThrottledHttpClientBase(DummyHttpClientWithoutResponseHeaders(

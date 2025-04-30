@@ -66,7 +66,10 @@ class NormalizedResponse(Response):
     # self.raise_for_status = raw_response.raise_for_status
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise MsalServiceError("HTTP Error: {}".format(self.status_code))
+            raise MsalServiceError(
+                "HTTP Error: {}".format(self.status_code),
+                error=None, error_description=None,  #  Historically required, keeping them for now
+            )
 
 
 class ThrottledHttpClientBase(object):
