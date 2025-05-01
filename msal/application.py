@@ -495,10 +495,13 @@ class ClientApplication(object):
 
             If your app is a command-line app (CLI),
             you would want to persist your http_cache across different CLI runs.
+            The persisted file's format may change due to, but not limited to,
+            `unstable protocol <https://docs.python.org/3/library/pickle.html#data-stream-format>`_,
+            so your implementation shall tolerate unexpected loading errors.
             The following recipe shows a way to do so::
 
                 # Just add the following lines at the beginning of your CLI script
-                import sys, atexit, pickle
+                import sys, atexit, pickle, logging
                 http_cache_filename = sys.argv[0] + ".http_cache"
                 try:
                     with open(http_cache_filename, "rb") as f:
@@ -508,6 +511,9 @@ class ClientApplication(object):
                         pickle.UnpicklingError,  # A corrupted http cache file
                         AttributeError,  # Cache created by a different version of MSAL
                         ):
+                    persisted_http_cache = {}  # Recover by starting afresh
+                except:  # Unexpected exceptions
+                    logging.exception("You may want to debug this")
                     persisted_http_cache = {}  # Recover by starting afresh
                 atexit.register(lambda: pickle.dump(
                     # When exit, flush it back to the file.
@@ -2012,12 +2018,12 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
             New in MSAL Python 1.31.0.
-            
+
         :param boolean enable_broker_on_linux:
             This setting is only effective if your app is running on Linux, including WSL.
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
-            New in MSAL Python 1.33.0. 
+            New in MSAL Python 1.33.0.
 
         :param boolean enable_broker_on_wsl:
             This setting is only effective if your app is running on WSL.
