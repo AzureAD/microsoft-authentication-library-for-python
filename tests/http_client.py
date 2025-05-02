@@ -28,7 +28,12 @@ class MinimalResponse(object):  # Not for production use
     def __init__(self, requests_resp=None, status_code=None, text=None, headers=None):
         self.status_code = status_code or requests_resp.status_code
         self.text = text if text is not None else requests_resp.text
-        self.headers = {} if headers is None else headers
+        if headers:
+            # Early versions of MSAL did not require http response to contain headers.
+            # As of April 2025, some Azure Identity code paths still yield response without headers.
+            # Here we mimic the behavior of header-less response by default,
+            # so that test cases can cover header-less response scenarios.
+            self.headers = headers
         self._raw_resp = requests_resp
 
     def raise_for_status(self):
