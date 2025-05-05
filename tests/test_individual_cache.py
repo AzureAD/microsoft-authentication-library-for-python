@@ -8,7 +8,13 @@ from msal.individual_cache import _IndividualCache as IndividualCache
 class TestExpiringMapping(unittest.TestCase):
     def setUp(self):
         self.mapping = {}
-        self.m = ExpiringMapping(mapping=self.mapping, capacity=2, expires_in=1)
+        self.expires_in = 1
+        self.m = ExpiringMapping(
+            mapping=self.mapping, capacity=2, expires_in=self.expires_in)
+
+    def how_many(self):
+        # This helper checks how many items are in the mapping, WITHOUT triggering purge
+        return len(self.m._peek()[1])
 
     def test_should_disallow_accessing_reserved_keyword(self):
         with self.assertRaises(ValueError):
@@ -40,11 +46,21 @@ class TestExpiringMapping(unittest.TestCase):
         sleep(1)
         self.assertEqual([], list(self.m))
 
-    def test_get_should_purge(self):
+    def test_get_should_not_purge_and_should_return_only_when_the_item_is_still_valid(self):
         self.m["thing one"] = "one"
+        self.m["thing two"] = "two"
         sleep(1)
+        self.assertEqual(2, self.how_many(), "We begin with 2 items")
         with self.assertRaises(KeyError):
             self.m["thing one"]
+        self.assertEqual(1, self.how_many(), "get() should not purge the remaining items")
+
+    def test_setitem_should_purge(self):
+        self.m["thing one"] = "one"
+        sleep(1)
+        self.m["thing two"] = "two"
+        self.assertEqual(1, self.how_many(), "setitem() should purge all expired items")
+        self.assertEqual("two", self.m["thing two"], "The remaining item should be thing two")
 
     def test_various_expiring_time(self):
         self.assertEqual(0, len(self.m))
@@ -57,12 +73,13 @@ class TestExpiringMapping(unittest.TestCase):
     def test_old_item_can_be_updated_with_new_expiry_time(self):
         self.assertEqual(0, len(self.m))
         self.m["thing"] = "one"
-        self.m.set("thing", "two", 2)
+        new_lifetime = 3  # 2-second seems too short and causes flakiness
+        self.m.set("thing", "two", new_lifetime)
         self.assertEqual(1, len(self.m), "It contains 1 item")
         self.assertEqual("two", self.m["thing"], 'Already been updated to "two"')
-        sleep(1)
+        sleep(self.expires_in)
         self.assertEqual("two", self.m["thing"], "Not yet expires")
-        sleep(1)
+        sleep(new_lifetime - self.expires_in)
         self.assertEqual(0, len(self.m))
 
     def test_oversized_input_should_purge_most_aging_item(self):

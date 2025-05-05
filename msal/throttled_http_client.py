@@ -3,26 +3,34 @@ from hashlib import sha256
 
 from .individual_cache import _IndividualCache as IndividualCache
 from .individual_cache import _ExpiringMapping as ExpiringMapping
+from .oauth2cli.http import Response
+from .exceptions import MsalServiceError
 
 
 # https://datatracker.ietf.org/doc/html/rfc8628#section-3.4
 DEVICE_AUTH_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
 
+def _get_headers(response):
+    # MSAL's HttpResponse did not have headers until 1.23.0
+    # https://github.com/AzureAD/microsoft-authentication-library-for-python/pull/581/files#diff-28866b706bc3830cd20485685f20fe79d45b58dce7050e68032e9d9372d68654R61
+    # This helper ensures graceful degradation to {} without exception
+    return getattr(response, "headers", {})
+
+
 class RetryAfterParser(object):
+    FIELD_NAME_LOWER = "Retry-After".lower()
     def __init__(self, default_value=None):
         self._default_value = 5 if default_value is None else default_value
 
     def parse(self, *, result, **ignored):
         """Return seconds to throttle"""
         response = result
-        lowercase_headers = {k.lower(): v for k, v in getattr(
-            # Historically, MSAL's HttpResponse does not always have headers
-            response, "headers", {}).items()}
+        lowercase_headers = {k.lower(): v for k, v in _get_headers(response).items()}
         if not (response.status_code == 429 or response.status_code >= 500
-                or "retry-after" in lowercase_headers):
+                or self.FIELD_NAME_LOWER in lowercase_headers):
             return 0  # Quick exit
-        retry_after = lowercase_headers.get("retry-after", self._default_value)
+        retry_after = lowercase_headers.get(self.FIELD_NAME_LOWER, self._default_value)
         try:
             # AAD's retry_after uses integer format only
             # https://stackoverflow.microsoft.com/questions/264931/264932
@@ -37,16 +45,44 @@ def _extract_data(kwargs, key, default=None):
     return data.get(key) if isinstance(data, dict) else default
 
 
+class NormalizedResponse(Response):
+    """A http response with the shape defined in Response,
+    but contains only the data we will store in cache.
+    """
+    def __init__(self, raw_response):
+        super().__init__()
+        self.status_code = raw_response.status_code
+        self.text = raw_response.text
+        self.headers = {
+            k.lower(): v for k, v in _get_headers(raw_response).items()
+            # Attempted storing only a small set of headers (such as Retry-After),
+            # but it tends to lead to missing information (such as WWW-Authenticate).
+            # So we store all headers, which are expected to contain only public info,
+            # because we throttle only error responses and public responses.
+        }
+
+    ## Note: Don't use the following line,
+    ## because when being pickled, it will indirectly pickle the whole raw_response
+    # self.raise_for_status = raw_response.raise_for_status
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise MsalServiceError("HTTP Error: {}".format(self.status_code))
+
+
 class ThrottledHttpClientBase(object):
     """Throttle the given http_client by storing and retrieving data from cache.
 
-    This wrapper exists so that our patching post() and get() would prevent
-    re-patching side effect when/if same http_client being reused.
+    This base exists so that:
+    1. These base post() and get() will return a NormalizedResponse
+    2. The base __init__() will NOT re-throttle even if caller accidentally nested ThrottledHttpClient.
 
-    The subclass should implement post() and/or get()
+    Subclasses shall only need to dynamically decorate their post() and get() methods
+    in their __init__() method.
     """
     def __init__(self, http_client, *, http_cache=None):
-        self.http_client = http_client
+        self.http_client = http_client.http_client if isinstance(
+            # If it is already a ThrottledHttpClientBase, we use its raw (unthrottled) http client
+            http_client, ThrottledHttpClientBase) else http_client
         self._expiring_mapping = ExpiringMapping(  # It will automatically clean up
             mapping=http_cache if http_cache is not None else {},
             capacity=1024,  # To prevent cache blowing up especially for CCA
@@ -54,10 +90,10 @@ class ThrottledHttpClientBase(object):
             )
 
     def post(self, *args, **kwargs):
-        return self.http_client.post(*args, **kwargs)
+        return NormalizedResponse(self.http_client.post(*args, **kwargs))
 
     def get(self, *args, **kwargs):
-        return self.http_client.get(*args, **kwargs)
+        return NormalizedResponse(self.http_client.get(*args, **kwargs))
 
     def close(self):
         return self.http_client.close()
@@ -68,12 +104,11 @@ class ThrottledHttpClientBase(object):
 
 
 class ThrottledHttpClient(ThrottledHttpClientBase):
-    def __init__(self, http_client, *, default_throttle_time=None, **kwargs):
-        super(ThrottledHttpClient, self).__init__(http_client, **kwargs)
-
-        _post = http_client.post  # We'll patch _post, and keep original post() intact
-
-        _post = IndividualCache(
+    """A throttled http client that is used by MSAL's non-managed identity clients."""
+    def __init__(self, *args, default_throttle_time=None, **kwargs):
+        """Decorate self.post() and self.get() dynamically"""
+        super(ThrottledHttpClient, self).__init__(*args, **kwargs)
+        self.post = IndividualCache(
             # Internal specs requires throttling on at least token endpoint,
             # here we have a generic patch for POST on all endpoints.
             mapping=self._expiring_mapping,
@@ -91,9 +126,9 @@ class ThrottledHttpClient(ThrottledHttpClientBase):
                                 _extract_data(kwargs, "username")))),  # "account" of ROPC
                     ),
             expires_in=RetryAfterParser(default_throttle_time or 5).parse,
-            )(_post)
+            )(self.post)
 
-        _post = IndividualCache(  # It covers the "UI required cache"
+        self.post = IndividualCache(  # It covers the "UI required cache"
             mapping=self._expiring_mapping,
             key_maker=lambda func, args, kwargs: "POST {} hash={} 400".format(
                 args[0],  # It is the url, typically containing authority and tenant
@@ -125,12 +160,10 @@ class ThrottledHttpClient(ThrottledHttpClientBase):
                     isinstance(kwargs.get("data"), dict)
                     and kwargs["data"].get("grant_type") == DEVICE_AUTH_GRANT
                     )
-                and "retry-after" not in set(  # Leave it to the Retry-After decorator
-                    h.lower() for h in getattr(result, "headers", {}).keys())
+                and RetryAfterParser.FIELD_NAME_LOWER not in set(  # Otherwise leave it to the Retry-After decorator
+                    h.lower() for h in _get_headers(result))
                 else 0,
-            )(_post)
-
-        self.post = _post
+            )(self.post)
 
         self.get = IndividualCache(  # Typically those discovery GETs
             mapping=self._expiring_mapping,
@@ -140,9 +173,4 @@ class ThrottledHttpClient(ThrottledHttpClientBase):
                 ),
             expires_in=lambda result=None, **ignored:
                 3600*24 if 200 <= result.status_code < 300 else 0,
-            )(http_client.get)
-
-    # The following 2 methods have been defined dynamically by __init__()
-    #def post(self, *args, **kwargs): pass
-    #def get(self, *args, **kwargs): pass
-
+            )(self.get)
