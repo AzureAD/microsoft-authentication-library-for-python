@@ -108,16 +108,13 @@ class SmileTestRunner:
         """Create a ConfidentialClientApplication instance."""
         if not params or 'client_id' not in params or 'client_credential' not in params:
             raise ValueError("ConfidentialClientApplication requires client_id and client_credential")
-
-        client_id = params.get('client_id')
-        client_credential = params.get('client_credential')
-        authority = params.get('authority')
-        logger.debug(f"Creating ConfidentialClientApplication with client_id: {client_id}, authority: {authority}")
-
-        kwargs = {'client_id': client_id, 'client_credential': client_credential}
-        if authority:
-            kwargs['authority'] = authority
-
+        kwargs = {
+            "client_id": params.get('client_id'),
+            "client_credential": params.get('client_credential'),
+            "authority": params.get('authority'),
+            "oidc_authority": params.get('oidc_authority'),
+        }
+        logger.debug(f"Creating ConfidentialClientApplication with {kwargs}")
         return msal.ConfidentialClientApplication(**kwargs)
 
     def execute_steps(self) -> bool:
@@ -148,7 +145,8 @@ class SmileTestRunner:
 
         var_name = parts[0]
         method_name = {  # Map the method names in yml to actual method names
-            "AcquireTokenForManagedIdentity": "acquire_token_for_client",
+            "AcquireTokenForManagedIdentity": "acquire_token_for_client",  # For ManagedIdentityClient
+            "AcquireTokenForClient": "acquire_token_for_client",  # For ConfidentialClientApplication
             }.get(parts[1])
 
         if method_name is None:
