@@ -2409,6 +2409,14 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
+        if not self.authority.is_valid_issuer():
+            return {
+                "error": "invalid_issuer",
+                "error_description": (
+                    "The issuer '{}' does not match this authority. "
+                    "No token request will be sent."
+                    ).format(self.authority._issuer),
+            }
         if kwargs.get("force_refresh"):
             raise ValueError(  # We choose to disallow force_refresh
                 "Historically, this method does not support force_refresh behavior. "

@@ -67,6 +67,7 @@ class Authority(object):
             performed.
         """
         self._http_client = http_client
+        self._oidc_authority_url = oidc_authority_url
         if oidc_authority_url:
             logger.debug("Initializing with OIDC authority: %s", oidc_authority_url)
             tenant_discovery_endpoint = self._initialize_oidc_authority(
@@ -95,6 +96,7 @@ class Authority(object):
             raise ValueError(error_message)
         logger.debug(
             'openid_config("%s") = %s', tenant_discovery_endpoint, openid_config)
+        self._issuer = openid_config.get('issuer')
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
         self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
@@ -174,11 +176,24 @@ class Authority(object):
             self.__class__._domains_without_user_realm_discovery.add(self.instance)
         return {}  # This can guide the caller to fall back normal ROPC flow
 
+    def is_valid_issuer(self) -> bool:
+        if self._oidc_authority_url:
+            return self._oidc_authority_url == self._issuer
+        else:
+            # The non-OIDC cases include:
+            # those known-to-Microsoft, those known-to-developer,
+            # those already passed authority validation, or those opted out of authority validation.
+            # TODO: We plan to remove the OIDC discovery behavior in the near future.
+            #       Then we can simply return True here.
+            return True
+
 
 def canonicalize(authority_or_auth_endpoint):
     # Returns (url_parsed_result, hostname_in_lowercase, tenant)
     authority = urlparse(authority_or_auth_endpoint)
-    if authority.scheme == "https":
+    if (
+        authority.scheme == "http" and authority.hostname in ("localhost", "127.0.0.1")
+    ) or authority.scheme == "https":
         parts = authority.path.split("/")
         first_part = parts[1] if len(parts) >= 2 and parts[1] else None
         if authority.hostname.endswith(_CIAM_DOMAIN_SUFFIX):  # CIAM
