@@ -1948,8 +1948,6 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
         .. note::
 
-            You may set enable_broker_on_windows and/or enable_broker_on_mac and/or enable_broker_on_linux and/or enable_broker_on_wsl to True.
-
             **What is a broker, and why use it?**
 
             A broker is a component installed on your device.
@@ -1967,22 +1965,26 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             so that your broker-enabled apps (even a CLI)
             could automatically SSO from a previously established signed-in session.
 
-            **You shall only enable broker when your app:**
+            **How to opt in to use broker?**
 
-            1. is running on supported platforms,
-               and already registered their corresponding redirect_uri
+            1. You can set any combination of the following opt-in parameters to true:
 
-               * ``ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id``
-                 if your app is expected to run on Windows 10+
-               * ``msauth.com.msauth.unsignedapp://auth``
-                 if your app is expected to run on Mac
-               * ``ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id``
-                 if your app is expected to run on Linux, especially WSL
+               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
+               | Opt-in flag              | If app will run on                | App has registered this as a Desktop platform redirect URI in Azure Portal         |
+               +==========================+===================================+====================================================================================+
+               | enable_broker_on_windows | Windows 10+                       | ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id                            |
+               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
+               | enable_broker_on_wsl     | WSL                               | ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id                            |
+               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
+               | enable_broker_on_mac     | Mac with Company Portal installed | msauth.com.msauth.unsignedapp://auth                                               |
+               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
+               | enable_broker_on_linux   | Linux with Intune installed       | ``https://login.microsoftonline.com/common/oauth2/nativeclient`` (MUST be enabled) |
+               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
 
-            2. installed broker dependency,
+            2. Install broker dependency,
                e.g. ``pip install msal[broker]>=1.33,<2``.
 
-            3. tested with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
+            3. Test with ``acquire_token_interactive()`` and ``acquire_token_silent()``.
 
             **The fallback behaviors of MSAL Python's broker support**
 

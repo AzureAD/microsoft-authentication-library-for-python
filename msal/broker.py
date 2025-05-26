@@ -60,8 +60,10 @@ def _convert_error(error, client_id):
             or "AADSTS7000218" in context  # This "request body must contain ... client_secret" is just a symptom of current app has no WAM redirect_uri
             ):
         raise RedirectUriError(  # This would be seen by either the app developer or end user
-            "MsalRuntime needs the current app to register these redirect_uri "
-            "(1) ms-appx-web://Microsoft.AAD.BrokerPlugin/{} (2) {}".format(
+            """MsalRuntime needs the current app to register these redirect_uri
+(1) ms-appx-web://Microsoft.AAD.BrokerPlugin/{}
+(2) {}
+(3) https://login.microsoftonline.com/common/oauth2/nativeclient""".format(
             client_id, _redirect_uri_on_mac))
         # OTOH, AAD would emit other errors when other error handling branch was hit first,
         # so, the AADSTS50011/RedirectUriError is not guaranteed to happen.
