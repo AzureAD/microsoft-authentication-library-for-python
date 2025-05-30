@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748644222397,
+  "lastUpdate": 1748645352995,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -30159,6 +30159,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000014707238234274684",
             "extra": "mean: 132.40290644668258 usec\nrounds: 5088"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rayluo@microsoft.com",
+            "name": "Ray Luo",
+            "username": "rayluo"
+          },
+          "committer": {
+            "email": "rayluo@microsoft.com",
+            "name": "Ray Luo",
+            "username": "rayluo"
+          },
+          "distinct": true,
+          "id": "370207b22a6fcc6b99a466c07dc18645adcc8c38",
+          "message": "Linux broker needs a specific redirect_uri\n\nA recent customer troubleshooting case reveals that the Linux broker\nneeds a specific redirect_uri as its prerequisite",
+          "timestamp": "2025-05-30T15:45:54-07:00",
+          "tree_id": "600d591c6bf91df7f2abc72c89b1b5955da6f13f",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/370207b22a6fcc6b99a466c07dc18645adcc8c38"
+        },
+        "date": 1748645352453,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 42716.57889862041,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000024956489671544164",
+            "extra": "mean: 23.41011442824829 usec\nrounds: 15844"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 41770.32830003467,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002624277724638685",
+            "extra": "mean: 23.940439079555187 usec\nrounds: 15471"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8080.968365862942,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001546684188986326",
+            "extra": "mean: 123.74754543333904 usec\nrounds: 4292"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7919.558931940568,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014945783766770843",
+            "extra": "mean: 126.26965827186099 usec\nrounds: 4328"
           }
         ]
       }
