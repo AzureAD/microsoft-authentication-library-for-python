@@ -190,6 +190,10 @@ class VmTestCase(ClientTestCase):
             headers={'Metadata': 'true'},
             )
 
+    @patch("msal.managed_identity.socket.getfqdn", new=lambda: "MixedCaseHostName")
+    def test_happy_path_of_windows_vm(self):
+        self.test_happy_path_of_vm()
+
     @patch.dict(os.environ, {"AZURE_POD_IDENTITY_AUTHORITY_HOST": "http://localhost:1234//"})
     def test_happy_path_of_pod_identity(self):
         self._test_happy_path().assert_called_with(
