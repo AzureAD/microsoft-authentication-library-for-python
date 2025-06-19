@@ -280,6 +280,9 @@ class ClientApplication(object):
 
             .. admonition:: Support using a certificate in X.509 (.pem) format
 
+                Deprecated because it uses SHA-1 thumbprint.
+                Please use the .pfx option documented later in this page.
+
                 Feed in a dict in this form::
 
                     {
@@ -301,6 +304,9 @@ class ClientApplication(object):
                 `Subject Name/Issuer Auth
                 <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
                 is an approach to allow easier certificate rotation.
+
+                Deprecated because it uses SHA-1 thumbprint.
+                Please use the .pfx option documented later in this page.
 
                 *Added in version 0.5.0*::
 
@@ -338,6 +344,8 @@ class ClientApplication(object):
 
             .. admonition:: Supporting reading client certificates from PFX files
 
+                This usage will automatically use SHA-256 thumbprint of the certificate.
+
                 *Added in version 1.29.0*:
                 Feed in a dictionary containing the path to a PFX file::
 
@@ -351,6 +359,12 @@ class ClientApplication(object):
                     openssl pkcs12 -export -out certificate.pfx -inkey privateKey.key -in certificate.pem
 
             .. admonition:: Support Subject Name/Issuer Auth with a cert in .pfx
+
+                `Subject Name/Issuer Auth
+                <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
+                is an approach to allow easier certificate rotation.
+
+                This usage will automatically use SHA-256 thumbprint of the certificate.
 
                 *Added in version 1.30.0*:
                 If your .pfx file contains both the private key and public cert,
