@@ -93,6 +93,7 @@ class Authority(object):
                 .format(authority_url)
                 ) + " Also please double check your tenant name or GUID is correct."
             raise ValueError(error_message)
+        openid_config.pop("issuer", None)  # Not used in MSAL.py, so remove it therefore no need to validate it
         logger.debug(
             'openid_config("%s") = %s', tenant_discovery_endpoint, openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
