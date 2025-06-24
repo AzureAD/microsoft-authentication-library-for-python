@@ -66,10 +66,19 @@ def _str2bytes(raw):
     except:
         return raw
 
+def _extract_cert_and_thumbprints(private_key, cert):
+    # Cert concepts https://security.stackexchange.com/a/226758/125264
+    from cryptography.hazmat.primitives import hashes, serialization
+    cert_pem = cert.public_bytes(encoding=serialization.Encoding.PEM).decode()
+    x5c = [
+        '\n'.join(cert_pem.splitlines()[1:-1])
+    ]
+    sha256_thumbprint = cert.fingerprint(hashes.SHA256()).hex()
+    sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()
+    return private_key, sha256_thumbprint, sha1_thumbprint, x5c
 
 def _parse_pfx(pfx_path, passphrase_bytes):
     # Cert concepts https://security.stackexchange.com/a/226758/125264
-    from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.serialization import pkcs12
     with open(pfx_path, 'rb') as f:
         private_key, cert, _ = pkcs12.load_key_and_certificates(  # cryptography 2.5+
@@ -77,14 +86,7 @@ def _parse_pfx(pfx_path, passphrase_bytes):
             f.read(), passphrase_bytes)
     if not (private_key and cert):
         raise ValueError("Your PFX file shall contain both private key and cert")
-    cert_pem = cert.public_bytes(encoding=serialization.Encoding.PEM).decode()  # cryptography 1.0+
-    x5c = [
-        '\n'.join(cert_pem.splitlines()[1:-1])  # Strip the "--- header ---" and "--- footer ---"
-    ]
-    sha256_thumbprint = cert.fingerprint(hashes.SHA256()).hex()  # cryptography 0.7+
-    sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # cryptography 0.7+
-        # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object
-    return private_key, sha256_thumbprint, sha1_thumbprint, x5c
+    return _extract_cert_and_thumbprints(private_key, cert)
 
 
 def _load_private_key_from_pem_str(private_key_pem_str, passphrase_bytes):
@@ -288,7 +290,7 @@ class ClientApplication(object):
 
                     {
                         "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
-                        "thumbprint": "An SHA-1 thumbprint such as A1B2C3D4E5F6...",
+                        "thumbprint": "An SHA-1 thumbprint such as A1B2C3D4E5F6...",  # Optional since version 1.35.0
                         "passphrase": "Needed if the private_key is encrypted (Added in version 1.6.0)",
                         "public_certificate": "...-----BEGIN CERTIFICATE-----...",  # Needed if you use Subject Name/Issuer auth. Added in version 0.5.0.
                     }
@@ -803,6 +805,22 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                         passphrase_bytes)
                     if client_credential.get("public_certificate") is True and x5c:
                         headers["x5c"] = x5c
+                elif (client_credential.get("private_key") 
+                      and client_credential.get("public_certificate") 
+                      and not client_credential.get("thumbprint")): #in case user does not pass thumbprint but only certificate and private key
+                        if passphrase_bytes: # PEM with passphrase
+                            private_key = _load_private_key_from_pem_str(
+                                client_credential['private_key'], passphrase_bytes)
+                        else:  # PEM without passphrase
+                            private_key = client_credential['private_key']
+                        
+                        private_key, sha256_thumbprint, sha1_thumbprint, x5c =(
+                             _extract_cert_and_thumbprints(
+                                private_key,
+                                client_credential['public_certificate']))
+                        if x5c:
+                            headers["x5c"] = x5c
+
                 elif (
                         client_credential.get("private_key")  # PEM blob
                         and client_credential.get("thumbprint")):
@@ -1828,9 +1846,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
-        
-        [Deprecated] This API is deprecated for public client flows and will be 
-        removed in a future release. Use a more secure flow instead. 
+
+        [Deprecated] This API is deprecated for public client flows and will be
+        removed in a future release. Use a more secure flow instead.
         Migration guide: https://aka.ms/msal-ropc-migration
 
         """
