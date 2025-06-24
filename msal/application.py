@@ -280,15 +280,17 @@ class ClientApplication(object):
 
             .. admonition:: Support using a certificate in X.509 (.pem) format
 
-                Deprecated because it uses SHA-1 thumbprint.
+                Deprecated because it uses SHA-1 thumbprint,
+                unless you are still using ADFS which supports SHA-1 thumbprint only.
                 Please use the .pfx option documented later in this page.
 
                 Feed in a dict in this form::
 
                     {
                         "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
-                        "thumbprint": "A1B2C3D4E5F6...",
-                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
+                        "thumbprint": "An SHA-1 thumbprint such as A1B2C3D4E5F6...",
+                        "passphrase": "Needed if the private_key is encrypted (Added in version 1.6.0)",
+                        "public_certificate": "...-----BEGIN CERTIFICATE-----...",  # Needed if you use Subject Name/Issuer auth. Added in version 0.5.0.
                     }
 
                 MSAL Python requires a "private_key" in PEM format.
@@ -299,28 +301,11 @@ class ClientApplication(object):
                 The thumbprint is available in your app's registration in Azure Portal.
                 Alternatively, you can `calculate the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L94-L97>`_.
 
-            .. admonition:: Support Subject Name/Issuer Auth with a cert in .pem
-
-                `Subject Name/Issuer Auth
-                <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
-                is an approach to allow easier certificate rotation.
-
-                Deprecated because it uses SHA-1 thumbprint.
-                Please use the .pfx option documented later in this page.
-
-                *Added in version 0.5.0*::
-
-                    {
-                        "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
-                        "thumbprint": "A1B2C3D4E5F6...",
-                        "public_certificate": "...-----BEGIN CERTIFICATE-----...",
-                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
-                    }
-
                 ``public_certificate`` (optional) is public key certificate
-                which will be sent through 'x5c' JWT header only for
-                subject name and issuer authentication to support cert auto rolls.
-
+                which will be sent through 'x5c' JWT header.
+                This is useful when you use `Subject Name/Issuer Authentication
+                <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
+                which is an approach to allow easier certificate rotation.
                 Per `specs <https://tools.ietf.org/html/rfc7515#section-4.1.6>`_,
                 "the certificate containing
                 the public key corresponding to the key used to digitally sign the
@@ -350,7 +335,8 @@ class ClientApplication(object):
                 Feed in a dictionary containing the path to a PFX file::
 
                     {
-                        "private_key_pfx_path": "/path/to/your.pfx",
+                        "private_key_pfx_path": "/path/to/your.pfx",  # Added in version 1.29.0
+                        "public_certificate": True,  # Only needed if you use Subject Name/Issuer auth. Added in version 1.30.0
                         "passphrase": "Passphrase if the private_key is encrypted (Optional)",
                     }
 
@@ -358,23 +344,11 @@ class ClientApplication(object):
 
                     openssl pkcs12 -export -out certificate.pfx -inkey privateKey.key -in certificate.pem
 
-            .. admonition:: Support Subject Name/Issuer Auth with a cert in .pfx
-
                 `Subject Name/Issuer Auth
                 <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
                 is an approach to allow easier certificate rotation.
-
-                This usage will automatically use SHA-256 thumbprint of the certificate.
-
-                *Added in version 1.30.0*:
                 If your .pfx file contains both the private key and public cert,
-                you can opt in for Subject Name/Issuer Auth like this::
-
-                    {
-                        "private_key_pfx_path": "/path/to/your.pfx",
-                        "public_certificate": True,
-                        "passphrase": "Passphrase if the private_key is encrypted (Optional)",
-                    }
+                you can opt in for Subject Name/Issuer Auth by setting "public_certificate" to ``True``.
 
         :type client_credential: Union[dict, str, None]
 
