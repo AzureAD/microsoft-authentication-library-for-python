@@ -74,7 +74,7 @@ def _convert_error(error, client_id):
         "error_description": "{}. Status: {}, Error code: {}, Tag: {}".format(
             context,
             error.get_status(), error.get_error_code(), error.get_tag()),
-        "_broker_status": error.get_status(),
+        "broker_error_status": str(error.get_status()),
         "_broker_error_code": error.get_error_code(),
         "_broker_tag": error.get_tag(),
         }
