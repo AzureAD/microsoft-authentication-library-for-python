@@ -327,7 +327,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         if isinstance(data, dict):
             _data.update(data)
         resp = self._http_client.post(self.configuration[DAE],
-            data=data,
+            data=_data,
             headers=dict(self.default_headers, **kwargs.pop("headers", {})),
             **kwargs)
         flow = json.loads(resp.text)
