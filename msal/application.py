@@ -2341,8 +2341,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         flow = self.client.initiate_device_flow(
             scope=self._decorate_scope(scopes or []),
             headers={msal.telemetry.CLIENT_REQUEST_ID: correlation_id},
-            claims_challenge=_merge_claims_challenge_and_capabilities(
-                    self._client_capabilities, claims_challenge),
+            data={"claims": _merge_claims_challenge_and_capabilities(
+                    self._client_capabilities, claims_challenge)},
             **kwargs)
         flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
         return flow
