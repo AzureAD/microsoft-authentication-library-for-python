@@ -323,9 +323,9 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
-        data = {"client_id": self.client_id, "scope": self._stringify(scope or [])}
-        if claims_challenge:
-            data["claims"] = claims_challenge
+        _data = {"client_id": self.client_id, "scope": self._stringify(scope or [])}
+        if isinstance(data, dict):
+            _data.update(data)
         resp = self._http_client.post(self.configuration[DAE],
             data=data,
             headers=dict(self.default_headers, **kwargs.pop("headers", {})),
