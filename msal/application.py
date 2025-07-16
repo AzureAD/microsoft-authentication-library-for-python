@@ -2326,7 +2326,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             auth_scheme=auth_scheme,
             **data)
 
-    def initiate_device_flow(self, scopes=None, claims_challenge=None, **kwargs):
+    def initiate_device_flow(self, scopes=None, *, claims_challenge=None, **kwargs):
         """Initiate a Device Flow instance,
         which will be used in :func:`~acquire_token_by_device_flow`.
 
