@@ -2326,7 +2326,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             auth_scheme=auth_scheme,
             **data)
 
-    def initiate_device_flow(self, scopes=None, **kwargs):
+    def initiate_device_flow(self, scopes=None, *, claims_challenge=None, **kwargs):
         """Initiate a Device Flow instance,
         which will be used in :func:`~acquire_token_by_device_flow`.
 
@@ -2341,6 +2341,8 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
         flow = self.client.initiate_device_flow(
             scope=self._decorate_scope(scopes or []),
             headers={msal.telemetry.CLIENT_REQUEST_ID: correlation_id},
+            data={"claims": _merge_claims_challenge_and_capabilities(
+                    self._client_capabilities, claims_challenge)},
             **kwargs)
         flow[self.DEVICE_FLOW_CORRELATION_ID] = correlation_id
         return flow

@@ -305,7 +305,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
     grant_assertion_encoders = {GRANT_TYPE_SAML2: BaseClient.encode_saml_assertion}
 
 
-    def initiate_device_flow(self, scope=None, **kwargs):
+    def initiate_device_flow(self, scope=None, *, data=None, **kwargs):
         # type: (list, **dict) -> dict
         # The naming of this method is following the wording of this specs
         # https://tools.ietf.org/html/draft-ietf-oauth-device-flow-12#section-3.1
@@ -323,8 +323,11 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         DAE = "device_authorization_endpoint"
         if not self.configuration.get(DAE):
             raise ValueError("You need to provide device authorization endpoint")
+        _data = {"client_id": self.client_id, "scope": self._stringify(scope or [])}
+        if isinstance(data, dict):
+            _data.update(data)
         resp = self._http_client.post(self.configuration[DAE],
-            data={"client_id": self.client_id, "scope": self._stringify(scope or [])},
+            data=_data,
             headers=dict(self.default_headers, **kwargs.pop("headers", {})),
             **kwargs)
         flow = json.loads(resp.text)
