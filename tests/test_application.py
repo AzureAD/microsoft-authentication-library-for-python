@@ -796,6 +796,7 @@ class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
 @patch("msal.authority.tenant_discovery", new=Mock(return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/placeholder",
     }))
 @patch("msal.application._init_broker", new=Mock())  # Pretend pymsalruntime installed and working
 class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):

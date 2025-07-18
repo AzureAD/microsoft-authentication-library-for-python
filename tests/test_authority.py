@@ -6,6 +6,7 @@ except:
 
 import msal
 from msal.authority import *
+from msal.authority import _CIAM_DOMAIN_SUFFIX  # Explicitly import the private constant
 from tests import unittest
 from tests.http_client import MinimalHttpClient
 
@@ -100,12 +101,12 @@ class TestCiamAuthority(unittest.TestCase):
 
 
 @patch("msal.authority._instance_discovery")
-@patch("msal.authority.tenant_discovery", return_value={
-    "authorization_endpoint": "https://contoso.com/authorize",
-    "token_endpoint": "https://contoso.com/token",
-    })
+@patch("msal.authority.tenant_discovery")  # Moved return_value out of the decorator
 class OidcAuthorityTestCase(unittest.TestCase):
     authority = "https://contoso.com/tenant"
+    authorization_endpoint = "https://contoso.com/authorize"
+    token_endpoint = "https://contoso.com/token"
+    issuer = "https://contoso.com/tenant"  # Added as class variable for inheritance
 
     def setUp(self):
         # setUp() gives subclass a dynamic setup based on their authority
@@ -115,25 +116,37 @@ class OidcAuthorityTestCase(unittest.TestCase):
             # Here the test is to confirm the OIDC endpoint contains no "/v2.0"
             self.authority + "/.well-known/openid-configuration")
 
+    def setup_tenant_discovery(self, tenant_discovery):
+        """Configure the tenant_discovery mock with class-specific values"""
+        tenant_discovery.return_value = {
+            "authorization_endpoint": self.authorization_endpoint,
+            "token_endpoint": self.token_endpoint,
+            "issuer": self.issuer,
+        }
+
     def test_authority_obj_should_do_oidc_discovery_and_skip_instance_discovery(
             self, oidc_discovery, instance_discovery):
+        self.setup_tenant_discovery(oidc_discovery)
+
         c = MinimalHttpClient()
         a = Authority(None, c, oidc_authority_url=self.authority)
         instance_discovery.assert_not_called()
         oidc_discovery.assert_called_once_with(self.oidc_discovery_endpoint, c)
-        self.assertEqual(a.authorization_endpoint, 'https://contoso.com/authorize')
-        self.assertEqual(a.token_endpoint, 'https://contoso.com/token')
+        self.assertEqual(a.authorization_endpoint, self.authorization_endpoint)
+        self.assertEqual(a.token_endpoint, self.token_endpoint)
 
     def test_application_obj_should_do_oidc_discovery_and_skip_instance_discovery(
             self, oidc_discovery, instance_discovery):
+        self.setup_tenant_discovery(oidc_discovery)
+
         app = msal.ClientApplication(
             "id", authority=None, oidc_authority=self.authority)
         instance_discovery.assert_not_called()
         oidc_discovery.assert_called_once_with(
             self.oidc_discovery_endpoint, app.http_client)
         self.assertEqual(
-            app.authority.authorization_endpoint, 'https://contoso.com/authorize')
-        self.assertEqual(app.authority.token_endpoint, 'https://contoso.com/token')
+            app.authority.authorization_endpoint, self.authorization_endpoint)
+        self.assertEqual(app.authority.token_endpoint, self.token_endpoint)
 
 
 class DstsAuthorityTestCase(OidcAuthorityTestCase):
@@ -144,14 +157,14 @@ class DstsAuthorityTestCase(OidcAuthorityTestCase):
         "https://some.url.dsts.core.azure-test.net/dstsv2/common/oauth2/authorize")
     token_endpoint = (
         "https://some.url.dsts.core.azure-test.net/dstsv2/common/oauth2/token")
+    issuer = "https://test-instance1-dsts.dsts.core.azure-test.net/dstsv2/common"
 
     @patch("msal.authority._instance_discovery")
-    @patch("msal.authority.tenant_discovery", return_value={
-        "authorization_endpoint": authorization_endpoint,
-        "token_endpoint": token_endpoint,
-    })  # We need to create new patches (i.e. mocks) for non-inherited test cases
+    @patch("msal.authority.tenant_discovery")  # Remove the hard-coded return_value
     def test_application_obj_should_accept_dsts_url_as_an_authority(
             self, oidc_discovery, instance_discovery):
+        self.setup_tenant_discovery(oidc_discovery)
+
         app = msal.ClientApplication("id", authority=self.authority)
         instance_discovery.assert_not_called()
         oidc_discovery.assert_called_once_with(
@@ -274,3 +287,93 @@ class TestMsalBehaviorsWithoutAndWithInstanceDiscoveryBoolean(unittest.TestCase)
         app.get_accounts()  # This could make an instance metadata call for authority aliases
         instance_metadata.assert_not_called()
 
+
+class TestAuthorityIssuerValidation(unittest.TestCase):
+    """Test cases for authority.has_valid_issuer method """
+    
+    def setUp(self):
+        self.http_client = MinimalHttpClient()
+    
+    def _create_authority_with_issuer(self, oidc_authority_url, issuer, tenant_discovery_mock):
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+        authority = Authority(
+            None, 
+            self.http_client, 
+            oidc_authority_url=oidc_authority_url
+        )
+        return authority
+    
+    @patch("msal.authority.tenant_discovery")
+    def test_exact_match_issuer(self, tenant_discovery_mock):
+        """Test when issuer exactly matches the OIDC authority URL"""
+        authority_url = "https://example.com/tenant"
+        authority = self._create_authority_with_issuer(authority_url, authority_url, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(), "Issuer should be valid when it exactly matches the authority URL")
+    
+    @patch("msal.authority.tenant_discovery")
+    def test_no_issuer(self, tenant_discovery_mock):
+        """Test when no issuer is returned from OIDC discovery"""
+        authority_url = "https://example.com/tenant"
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            # No issuer key
+        }
+        # Since initialization now checks for valid issuer, we expect it to raise ValueError
+        with self.assertRaises(ValueError) as context:
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+        self.assertIn("issuer", str(context.exception).lower())
+
+    @patch("msal.authority.tenant_discovery")
+    def test_microsoft_host_issuer(self, tenant_discovery_mock):
+        """Test when issuer has a known Microsoft host"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = f"https://{WORLD_WIDE}/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(), "Issuer should be valid when it has a known Microsoft host")
+    
+    @patch("msal.authority.tenant_discovery")
+    def test_same_scheme_and_host_different_path(self, tenant_discovery_mock):
+        """Test when issuer has same scheme and host but different path"""
+        authority_url = "https://example.com/tenant"
+        issuer = "https://example.com/different/path"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(), "Issuer should be valid when it has the same scheme and host")
+    
+    @patch("msal.authority.tenant_discovery")
+    def test_ciam_authority_with_matching_tenant(self, tenant_discovery_mock):
+        """Test CIAM authority with matching tenant in path"""
+        authority_url = "https://custom-domain.com/tenant_name"
+        issuer = f"https://tenant_name{_CIAM_DOMAIN_SUFFIX}"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(), "Issuer should be valid for CIAM pattern with matching tenant")
+    
+    @patch("msal.authority.tenant_discovery")
+    def test_ciam_authority_with_host_tenant(self, tenant_discovery_mock):
+        """Test CIAM authority with tenant in hostname"""
+        tenant_name = "tenant_name"
+        authority_url = f"https://{tenant_name}{_CIAM_DOMAIN_SUFFIX}/custom/path"
+        issuer = f"https://{tenant_name}{_CIAM_DOMAIN_SUFFIX}"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(), "Issuer should be valid for CIAM pattern with tenant in hostname")
+    
+    @patch("msal.authority.tenant_discovery")
+    def test_invalid_issuer(self, tenant_discovery_mock):
+        """Test when issuer is completely different from authority"""
+        authority_url = "https://example.com/tenant"
+        issuer = "https://malicious-site.com/tenant"
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+        # Since initialization now checks for valid issuer, we expect it to raise ValueError
+        with self.assertRaises(ValueError) as context:
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+        self.assertIn("issuer", str(context.exception).lower())
+        self.assertIn(issuer, str(context.exception))
+        self.assertIn(authority_url, str(context.exception))

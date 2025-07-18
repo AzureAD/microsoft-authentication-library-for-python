@@ -67,6 +67,7 @@ class Authority(object):
             performed.
         """
         self._http_client = http_client
+        self._oidc_authority_url = oidc_authority_url
         if oidc_authority_url:
             logger.debug("Initializing with OIDC authority: %s", oidc_authority_url)
             tenant_discovery_endpoint = self._initialize_oidc_authority(
@@ -95,11 +96,19 @@ class Authority(object):
             raise ValueError(error_message)
         logger.debug(
             'openid_config("%s") = %s', tenant_discovery_endpoint, openid_config)
+        self._issuer = openid_config.get('issuer')
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
         self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
 
+        # Validate the issuer if using OIDC authority
+        if self._oidc_authority_url and not self.has_valid_issuer():
+            raise ValueError((
+                "The issuer '{iss}' does not match the authority '{auth}' or a known pattern. "
+                "When using the 'oidc_authority' parameter in ClientApplication, the authority "
+                "will be validated against the issuer from {auth}/.well-known/openid-configuration ."
+            ).format(iss=self._issuer, auth=oidc_authority_url))
     def _initialize_oidc_authority(self, oidc_authority_url):
         authority, self.instance, tenant = canonicalize(oidc_authority_url)
         self.is_adfs = tenant.lower() == 'adfs'  # As a convention
@@ -174,6 +183,53 @@ class Authority(object):
             self.__class__._domains_without_user_realm_discovery.add(self.instance)
         return {}  # This can guide the caller to fall back normal ROPC flow
 
+    def has_valid_issuer(self) -> bool:
+        """
+            Returns True if the issuer from OIDC discovery is valid for this authority.
+
+            An issuer is valid if one of the following is true:
+            - It exactly matches the authority URL
+            - It has a known Microsoft host (e.g., login.microsoftonline.com)
+            - It has the same scheme and host as the authority (path can be different)
+            - For CIAM, the issuer follows the pattern of {tenant}.ciamlogin.com (tenant comes from the authority)
+            """
+        if self._oidc_authority_url == self._issuer:
+            # The issuer matches the authority URL exactly
+            return True
+
+        issuer = urlparse(self._issuer) if self._issuer else None
+        if not issuer:
+            return False
+
+        # Check if issuer has a known Microsoft host
+        if issuer.hostname in WELL_KNOWN_AUTHORITY_HOSTS:
+            return True
+
+        # Check if issuer has the same scheme and host as the authority
+        authority = urlparse(self._oidc_authority_url)
+        if authority.scheme == issuer.scheme and authority.netloc == issuer.netloc:
+            return True
+
+        # Check CIAM scenario: issuer follows the pattern {tenant}.ciamlogin.com
+        # Extract tenant from authority URL - could be in the host or path
+        tenant = None
+        if authority.hostname.endswith(_CIAM_DOMAIN_SUFFIX):
+            # Normal CIAM host: {tenant}.ciamlogin.com
+            tenant = authority.hostname.rsplit(_CIAM_DOMAIN_SUFFIX, 1)[0]
+        else:
+            # Custom CIAM host: extract tenant from path
+            parts = authority.path.split('/')
+            if len(parts) >= 2 and parts[1]:
+                tenant = parts[1]  # First path segment after the initial '/'
+
+        if tenant and issuer.hostname.endswith(_CIAM_DOMAIN_SUFFIX):
+            # Check if issuer follows the pattern {tenant}.ciamlogin.com
+            expected_issuer_host = f"{tenant}{_CIAM_DOMAIN_SUFFIX}"
+            if issuer.hostname == expected_issuer_host:
+                return True
+
+        # None of the conditions matched
+        return False
 
 def canonicalize(authority_or_auth_endpoint):
     # Returns (url_parsed_result, hostname_in_lowercase, tenant)
@@ -222,4 +278,3 @@ def tenant_discovery(tenant_discovery_endpoint, http_client, **kwargs):
     resp.raise_for_status()
     raise RuntimeError(  # A fallback here, in case resp.raise_for_status() is no-op
         "Unable to complete OIDC Discovery: %d, %s" % (resp.status_code, resp.text))
-
