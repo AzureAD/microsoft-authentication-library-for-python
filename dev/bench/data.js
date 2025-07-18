@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752822509872,
+  "lastUpdate": 1752824853751,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -30991,6 +30991,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015098406995541078",
             "extra": "mean: 133.03144945175853 usec\nrounds: 5015"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83938949+ashok672@users.noreply.github.com",
+            "name": "Ashok Kumar Ramakrishnan",
+            "username": "ashok672"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "70fd4d1599fc15c876c8eaccd29b9f7ae73fecd6",
+          "message": "Add claims challenge parameter in initiate_device_flow (#839)\n\n* Add claims challenge parameter in initiate_device_flow\n\n* Update msal/application.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Update msal/oauth2cli/oauth2.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Update msal/application.py\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>\n\n* Update oauth2.py\n\n* Update oauth2.py\n\n---------\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>",
+          "timestamp": "2025-07-18T00:45:02-07:00",
+          "tree_id": "0a3ef81f57c4d37e6583c785c75c9c13f0071c7c",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/70fd4d1599fc15c876c8eaccd29b9f7ae73fecd6"
+        },
+        "date": 1752824853041,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40155.73608966165,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002490534716196416",
+            "extra": "mean: 24.903042438747782 usec\nrounds: 8365"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38349.35404538842,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000029659170892976227",
+            "extra": "mean: 26.076058512392386 usec\nrounds: 17962"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7640.336053972501,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015494485911808746",
+            "extra": "mean: 130.88429526343438 usec\nrounds: 4877"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7458.777795268154,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015003734766399027",
+            "extra": "mean: 134.0702226890845 usec\nrounds: 4760"
           }
         ]
       }
