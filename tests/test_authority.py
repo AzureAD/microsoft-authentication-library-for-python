@@ -329,14 +329,6 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
         self.assertIn("issuer", str(context.exception).lower())
 
     @patch("msal.authority.tenant_discovery")
-    def test_microsoft_host_issuer(self, tenant_discovery_mock):
-        """Test when issuer has a known Microsoft host"""
-        authority_url = "https://custom-domain.com/tenant"
-        issuer = f"https://{WORLD_WIDE}/tenant"
-        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
-        self.assertTrue(authority.has_valid_issuer(), "Issuer should be valid when it has a known Microsoft host")
-    
-    @patch("msal.authority.tenant_discovery")
     def test_same_scheme_and_host_different_path(self, tenant_discovery_mock):
         """Test when issuer has same scheme and host but different path"""
         authority_url = "https://example.com/tenant"
@@ -374,6 +366,49 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
         # Since initialization now checks for valid issuer, we expect it to raise ValueError
         with self.assertRaises(ValueError) as context:
             Authority(None, self.http_client, oidc_authority_url=authority_url)
+        self.assertIn("issuer", str(context.exception).lower())
+        self.assertIn(issuer, str(context.exception))
+        self.assertIn(authority_url, str(context.exception))
+
+    @patch("msal.authority.tenant_discovery")
+    def test_custom_authority_with_microsoft_issuer(self, tenant_discovery_mock):
+        """Test when custom authority is used with a known Microsoft issuer (should fail)"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = f"https://{WORLD_WIDE}/tenant"
+
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+
+        # Since initialization now checks for valid issuer and we removed the check for known hosts,
+        # we expect it to raise ValueError because the hosts don't match
+        with self.assertRaises(ValueError) as context:
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+
+        self.assertIn("issuer", str(context.exception).lower())
+        self.assertIn(issuer, str(context.exception))
+        self.assertIn(authority_url, str(context.exception))
+
+    @patch("msal.authority.tenant_discovery")
+    def test_known_authority_with_non_matching_issuer(self, tenant_discovery_mock):
+        """Test when known authority is used with an issuer that doesn't match (should fail)"""
+        # Known Microsoft authority URLs
+        authority_url = f"https://{WORLD_WIDE}/tenant"
+        issuer = "https://custom-domain.com/tenant"
+
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+
+        # We expect it to raise ValueError because the paths don't match
+        # and we're now checking for exact matches
+        with self.assertRaises(ValueError) as context:
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+
         self.assertIn("issuer", str(context.exception).lower())
         self.assertIn(issuer, str(context.exception))
         self.assertIn(authority_url, str(context.exception))

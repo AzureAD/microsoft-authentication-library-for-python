@@ -108,6 +108,9 @@ class Authority(object):
                 "The issuer '{iss}' does not match the authority '{auth}' or a known pattern. "
                 "When using the 'oidc_authority' parameter in ClientApplication, the authority "
                 "will be validated against the issuer from {auth}/.well-known/openid-configuration ."
+                "If using a known Entra authority (e.g. login.microsoftonline.com) the "
+                "'authority' parameter should be used instead of 'oidc_authority'. "
+                ""
             ).format(iss=self._issuer, auth=oidc_authority_url))
     def _initialize_oidc_authority(self, oidc_authority_url):
         authority, self.instance, tenant = canonicalize(oidc_authority_url)
@@ -189,7 +192,6 @@ class Authority(object):
 
             An issuer is valid if one of the following is true:
             - It exactly matches the authority URL
-            - It has a known Microsoft host (e.g., login.microsoftonline.com)
             - It has the same scheme and host as the authority (path can be different)
             - For CIAM, the issuer follows the pattern of {tenant}.ciamlogin.com (tenant comes from the authority)
             """
@@ -200,10 +202,6 @@ class Authority(object):
         issuer = urlparse(self._issuer) if self._issuer else None
         if not issuer:
             return False
-
-        # Check if issuer has a known Microsoft host
-        if issuer.hostname in WELL_KNOWN_AUTHORITY_HOSTS:
-            return True
 
         # Check if issuer has the same scheme and host as the authority
         authority = urlparse(self._oidc_authority_url)
