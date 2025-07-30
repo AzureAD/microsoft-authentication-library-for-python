@@ -841,12 +841,14 @@ class AtPopWithExternalKeyTestCase(PopWithExternalKeyTestCase):
 
 
 class WorldWideTestCase(LabBasedTestCase):
+    _ADFS_LABS_DECOMMISSIONED = "ADFS labs were decommissioned since July 2025 until further notice"
 
     def test_aad_managed_user(self):  # Pure cloud
         config = self.get_lab_user(usertype="cloud")
         config["password"] = self.get_lab_user_secret(config["lab_name"])
         self._test_username_password(**config)
 
+    @unittest.skip(_ADFS_LABS_DECOMMISSIONED)
     def test_adfs4_fed_user(self):
         config = self.get_lab_user(usertype="federated", federationProvider="ADFSv4")
         config["password"] = self.get_lab_user_secret(config["lab_name"])
@@ -864,6 +866,7 @@ class WorldWideTestCase(LabBasedTestCase):
         config["password"] = self.get_lab_user_secret(config["lab_name"])
         self._test_username_password(**config)
 
+    @unittest.skip(_ADFS_LABS_DECOMMISSIONED)
     def test_adfs2019_fed_user(self):
         try:
             config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2019")
@@ -892,6 +895,7 @@ class WorldWideTestCase(LabBasedTestCase):
             prompt="select_account",  # In MSAL Python, this resets login_hint
             ))
 
+    @unittest.skip(_ADFS_LABS_DECOMMISSIONED)
     def test_ropc_adfs2019_onprem(self):
         # Configuration is derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.7.0/tests/Microsoft.Identity.Test.Common/TestConstants.cs#L250-L259
         config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
@@ -900,6 +904,7 @@ class WorldWideTestCase(LabBasedTestCase):
         config["password"] = self.get_lab_user_secret(config["lab_name"])
         self._test_username_password(**config)
 
+    @unittest.skip(_ADFS_LABS_DECOMMISSIONED)
     def test_adfs2019_onprem_acquire_token_by_auth_code(self):
         """When prompted, you can manually login using this account:
 
@@ -913,6 +918,7 @@ class WorldWideTestCase(LabBasedTestCase):
         config["port"] = 8080
         self._test_acquire_token_by_auth_code(**config)
 
+    @unittest.skip(_ADFS_LABS_DECOMMISSIONED)
     def test_adfs2019_onprem_acquire_token_by_auth_code_flow(self):
         config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
         self._test_acquire_token_by_auth_code_flow(**dict(
@@ -922,6 +928,7 @@ class WorldWideTestCase(LabBasedTestCase):
             port=8080,
             ))
 
+    @unittest.skip(_ADFS_LABS_DECOMMISSIONED)
     def test_adfs2019_onprem_acquire_token_interactive(self):
         config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
         self._test_acquire_token_interactive(**dict(
