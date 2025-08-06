@@ -2,6 +2,7 @@ import functools
 import json
 import time
 import logging
+import platform
 import sys
 import warnings
 from threading import Lock
@@ -789,7 +790,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         client_assertion_type = None
         default_headers = {
             "x-client-sku": SKU, "x-client-ver": __version__,
-            "x-client-os": sys.platform,
+            "x-client-os": platform.system(),
             "x-ms-lib-capability": "retry-after, h429",
         }
         if self.app_name:
