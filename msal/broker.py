@@ -145,12 +145,20 @@ def _build_msal_runtime_auth_params(client_id, authority):
     params.set_additional_parameter("msal_client_ver", __version__)
     return params
 
+def _set_redirect_uri_for_linux(params):
+    if sys.platform == "linux":
+        # This is required by Linux Java Broker to set a non-empty valid redirect_uri
+        params.set_redirect_uri(
+            "https://login.microsoftonline.com/common/oauth2/nativeclient"
+        )
+
 def _signin_silently(
         authority, client_id, scopes, correlation_id=None, claims=None,
         enable_msa_pt=False,
         auth_scheme=None,
         **kwargs):
     params = _build_msal_runtime_auth_params(client_id, authority)
+    _set_redirect_uri_for_linux(params)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
@@ -240,6 +248,7 @@ def _acquire_token_silently(
     if account is None:
         return
     params = _build_msal_runtime_auth_params(client_id, authority)
+    _set_redirect_uri_for_linux(params)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
