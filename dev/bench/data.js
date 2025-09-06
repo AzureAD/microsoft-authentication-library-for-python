@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757000682047,
+  "lastUpdate": 1757141955991,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -31867,6 +31867,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015581669979283304",
             "extra": "mean: 134.2294792804839 usec\nrounds: 3668"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2337a69a680139cac54521cfbe4fedef137a2b06",
+          "message": "Bump pypa/gh-action-pypi-publish in /.github/workflows (#849)\n\nBumps [pypa/gh-action-pypi-publish](https://github.com/pypa/gh-action-pypi-publish) from 1.4.2 to 1.13.0.\n- [Release notes](https://github.com/pypa/gh-action-pypi-publish/releases)\n- [Commits](https://github.com/pypa/gh-action-pypi-publish/compare/v1.4.2...v1.13.0)\n\n---\nupdated-dependencies:\n- dependency-name: pypa/gh-action-pypi-publish\n  dependency-version: 1.13.0\n  dependency-type: direct:production\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2025-09-05T23:57:01-07:00",
+          "tree_id": "4c8d721435b8c69780c01f16906324a84745c2e4",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/2337a69a680139cac54521cfbe4fedef137a2b06"
+        },
+        "date": 1757141955397,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39427.790195348454,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000025057352869828076",
+            "extra": "mean: 25.362821376633388 usec\nrounds: 8252"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38187.21254056928,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004676712734660892",
+            "extra": "mean: 26.18677650110286 usec\nrounds: 15490"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7435.780232551226,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015934310473845198",
+            "extra": "mean: 134.484878348388 usec\nrounds: 4069"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7339.166744360424,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015225524188177342",
+            "extra": "mean: 136.25525006206215 usec\nrounds: 4055"
           }
         ]
       }
