@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758583040658,
+  "lastUpdate": 1758585077755,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -32179,6 +32179,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000019261309454656806",
             "extra": "mean: 135.68168975982286 usec\nrounds: 3955"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rayluo@microsoft.com",
+            "name": "Ray Luo",
+            "username": "rayluo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f803aec300d13f4a55c78941409c60befb2c8f1f",
+          "message": "Release 1.34.0 (#853)\n\n* ADFS labs were decommissioned since late July 2025\n\n* MSAL Python 1.34.0b1\n\n* Declare support for Python 3.13\n\n* Bumping cryptography which also drops Python 3.7\n\n* 1.34.0b1 + minor changes = 1.34.0",
+          "timestamp": "2025-09-22T16:49:01-07:00",
+          "tree_id": "025a4c193f9429b78f4138152270d9cf16924d01",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/f803aec300d13f4a55c78941409c60befb2c8f1f"
+        },
+        "date": 1758585076470,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38415.87703153989,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002673050675003438",
+            "extra": "mean: 26.030903815601768 usec\nrounds: 8151"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 34775.90821943208,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003193829972014067",
+            "extra": "mean: 28.75553942948412 usec\nrounds: 16447"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7486.319222309623,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015555266000591846",
+            "extra": "mean: 133.5769916169147 usec\nrounds: 4652"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 6985.705941127456,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015364467965563978",
+            "extra": "mean: 143.14945524869967 usec\nrounds: 3877"
           }
         ]
       }
