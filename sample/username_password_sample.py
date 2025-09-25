@@ -67,9 +67,9 @@ def acquire_and_use_token():
 
     if not result:
         logging.info("No suitable token exists in cache. Let's get a new one from AAD.")
+        logging.info("This flow has been deprecated")
         # See this page for constraints of Username Password Flow.
         # https://github.com/AzureAD/microsoft-authentication-library-for-python/wiki/Username-Password-Authentication
-        result = global_app.acquire_token
         result = global_app.acquire_token_by_username_password(
             os.getenv("USERNAME"), password, scopes=scopes)
 
