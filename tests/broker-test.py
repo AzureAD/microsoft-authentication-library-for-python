@@ -15,6 +15,7 @@ we can use this script to test it with a given version of MSAL Python.
 4. Run this test by `python broker-test.py` and make sure all the tests passed.
 
 """
+import unittest
 import msal
 import getpass
 import os
@@ -67,6 +68,7 @@ def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):
         )
     _assert(result, expected_token_type)
 
+@unittest.skip("ROPC API has been deprecated and thus these tests are no longer needed")
 def test_broker_username_password(scopes, expected_token_type):
     print("Testing broker username password flows by using accounts in local .env")
     username = os.getenv("BROKER_TEST_ACCOUNT") or input("Input test account for broker test: ")

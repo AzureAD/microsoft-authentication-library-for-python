@@ -10,7 +10,7 @@ Usage 1: Run it on the fly.
 Usage 2: Build an all-in-one executable file for bug bash.
     shiv -e msal.__main__._main -o msaltest-on-os-name.pyz .
 """
-import base64, getpass, json, logging, sys, os, atexit, msal
+import base64, getpass, json, logging, sys, os, atexit, msal, warnings
 
 _token_cache_filename = "msal_cache.bin"
 global_cache = msal.SerializableTokenCache()
@@ -149,7 +149,13 @@ def _acquire_token_interactive(app, scopes=None, data=None):
     return result
 
 def _acquire_token_by_username_password(app):
-    """acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc"""
+    """
+    [Deprecated] This API is deprecated and will be removed in a future release. Use a more secure flow instead. 
+    Migration guide: https://aka.ms/msal-ropc-migration
+
+    acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc
+    """
+    warnings.warn("This API has been deprecated, please use a more secure flow. See https://aka.ms/msal-ropc-migration for migration guidance", DeprecationWarning)
     print_json(app.acquire_token_by_username_password(
         _input("username: "), getpass.getpass("password: "), scopes=_input_scopes()))
 
@@ -322,7 +328,6 @@ def _main():
             _acquire_pop_token_interactive,
             ] if isinstance(app, msal.PublicClientApplication) else []
         ) + [
-            _acquire_token_by_username_password,
             _remove_account,
         ] + ([
             _acquire_token_for_client,

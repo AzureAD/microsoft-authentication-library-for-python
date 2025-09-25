@@ -575,6 +575,7 @@ class TestTelemetryOnPublicClientApplication(unittest.TestCase):
         self.assertEqual(result[self.app._TOKEN_SOURCE], self.app._TOKEN_SOURCE_IDP)
         self.assertEqual(at, result.get("access_token"))
 
+    @unittest.skip("ROPC API has been deprecated and thus these tests are no longer needed")
     def test_acquire_token_by_username_password(self):
         at = "this is an access token"
         def mock_post(url, headers=None, *args, **kwargs):
@@ -706,6 +707,7 @@ class TestClientCredentialGrant(unittest.TestCase):
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestRemoveTokensForClient(unittest.TestCase):
+    @unittest.skip("ROPC API has been deprecated and thus these tests are no longer needed")
     def test_remove_tokens_for_client_should_remove_client_tokens_only(self):
         at_for_user = "AT for user"
         cca = msal.ConfidentialClientApplication(

@@ -52,6 +52,7 @@ class TestAccountSourceBehavior(unittest.TestCase):
         mocked_broker_ats.assert_not_called()
         self.assertEqual(result["token_source"], "identity_provider")
 
+    @unittest.skip("ROPC API has been deprecated and thus these tests are no longer needed")
     def test_ropc_flow_and_its_silent_call_should_invoke_broker(self, _, mocked_broker_ats):
         with patch("msal.broker._signin_silently", return_value=dict(TOKEN_RESPONSE, _account_id="placeholder")):
             result = self.app.acquire_token_by_username_password(
