@@ -197,7 +197,6 @@ class E2eTestCase(unittest.TestCase):
                 enable_broker_on_wsl=_PYMSALRUNTIME_INSTALLED,
                 )
 
-    @unittest.skip("ROPC API has been deprecated and thus these tests are no longer needed")
     def _test_username_password(self,
             authority=None, client_id=None, username=None, password=None, scope=None,
             oidc_authority=None,
@@ -645,7 +644,6 @@ class LabBasedTestCase(E2eTestCase):
                     username, result["id_token_claims"]["preferred_username"]))
         self.assertCacheWorksForUser(result, scope, username=None)
 
-    @unittest.skip("ROPC API has been deprecated and thus these tests are no longer needed")
     def _test_acquire_token_obo(self, config_pca, config_cca,
             azure_region=None,  # Regional endpoint does not really support OBO.
                 # Here we just test regional apps won't adversely break OBO
