@@ -150,12 +150,11 @@ def _acquire_token_interactive(app, scopes=None, data=None):
 
 def _acquire_token_by_username_password(app):
     """
-    [Deprecated] This API is deprecated and will be removed in a future release. Use a more secure flow instead. 
+    [Deprecated] This API is deprecated for PublicClientApplication(PCA) flows and will be removed in a future release. Use a more secure flow instead. 
     Migration guide: https://aka.ms/msal-ropc-migration
 
     acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc
     """
-    warnings.warn("This API has been deprecated, please use a more secure flow. See https://aka.ms/msal-ropc-migration for migration guidance", DeprecationWarning)
     print_json(app.acquire_token_by_username_password(
         _input("username: "), getpass.getpass("password: "), scopes=_input_scopes()))
 
@@ -328,6 +327,7 @@ def _main():
             _acquire_pop_token_interactive,
             ] if isinstance(app, msal.PublicClientApplication) else []
         ) + [
+            _acquire_token_by_username_password,
             _remove_account,
         ] + ([
             _acquire_token_for_client,

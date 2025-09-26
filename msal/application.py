@@ -1816,7 +1816,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             auth_scheme=None,
             **kwargs):
         """
-        [Deprecated] This API is deprecated and will be removed in a future release. Use a more secure flow instead. 
+        [Deprecated] This API is deprecated for PublicClientApplication(PCA) flows and will be removed in a future release. Use a more secure flow instead. 
         Migration guide: https://aka.ms/msal-ropc-migration
 
         Gets a token for a given resource via user credentials.
@@ -1845,7 +1845,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
-        warnings.warn("This API has been deprecated, please use a more secure flow. See https://aka.ms/msal-ropc-migration for migration guidance", DeprecationWarning)
+        is_confidential_app = self.client_credential or isinstance(
+            self, ConfidentialClientApplication)
+        if not is_confidential_app:
+            warnings.warn("This API has been deprecated for PCA flows, please use a more secure flow. " \
+            "See https://aka.ms/msal-ropc-migration for migration guidance", DeprecationWarning)
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
         if self._enable_broker and sys.platform in ("win32", "darwin"):

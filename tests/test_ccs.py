@@ -60,7 +60,6 @@ class TestCcsRoutingInfoTestCase(unittest.TestCase):
                 mocked_method.call_args[1].get("headers", {}).get('X-AnchorMailbox'),
                 "CSS routing info should be derived from home_account_id")
 
-    @unittest.skip("ROPC API has been deprecated and thus these tests are no longer needed")
     def test_acquire_token_by_username_password(self):
         app = msal.ClientApplication("client_id")
         username = "johndoe@contoso.com"

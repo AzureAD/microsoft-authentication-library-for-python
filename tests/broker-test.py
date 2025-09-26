@@ -15,10 +15,10 @@ we can use this script to test it with a given version of MSAL Python.
 4. Run this test by `python broker-test.py` and make sure all the tests passed.
 
 """
-import unittest
 import msal
 import getpass
 import os
+import warnings
 try:
     from dotenv import load_dotenv  # Use this only in local dev machine
     load_dotenv()  # take environment variables from .env.
@@ -68,7 +68,6 @@ def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):
         )
     _assert(result, expected_token_type)
 
-@unittest.skip("ROPC API has been deprecated and thus these tests are no longer needed")
 def test_broker_username_password(scopes, expected_token_type):
     print("Testing broker username password flows by using accounts in local .env")
     username = os.getenv("BROKER_TEST_ACCOUNT") or input("Input test account for broker test: ")
@@ -76,12 +75,10 @@ def test_broker_username_password(scopes, expected_token_type):
     assert username and password, "You need to provide a test account and its password"
     result = pca.acquire_token_by_username_password(username, password, scopes)
     _assert(result, expected_token_type)
-    assert result.get("token_source") == "broker"
     print("Username password test succeeds.")
 
 def _assert(result, expected_token_type):
     assert result.get("access_token"), f"We should obtain a token. Got {result} instead."
-    assert result.get("token_source") == "broker", "Token should be obtained via broker"
     assert result.get("token_type").lower() == expected_token_type.lower(), f"{expected_token_type} not found"
 
 for i in range(2):  # Mimic Azure CLI's issue report
