@@ -10,7 +10,7 @@ Usage 1: Run it on the fly.
 Usage 2: Build an all-in-one executable file for bug bash.
     shiv -e msal.__main__._main -o msaltest-on-os-name.pyz .
 """
-import base64, getpass, json, logging, sys, os, atexit, msal, warnings
+import base64, getpass, json, logging, sys, os, atexit, msal
 
 _token_cache_filename = "msal_cache.bin"
 global_cache = msal.SerializableTokenCache()
