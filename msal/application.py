@@ -1848,7 +1848,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         is_confidential_app = self.client_credential or isinstance(
             self, ConfidentialClientApplication)
         if not is_confidential_app:
-            warnings.warn("This API has been deprecated for PCA flows, please use a more secure flow. " \
+            warnings.warn("This API has been deprecated for public client flows, please use a more secure flow. " \
             "See https://aka.ms/msal-ropc-migration for migration guidance", DeprecationWarning)
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
