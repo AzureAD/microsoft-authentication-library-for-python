@@ -149,12 +149,7 @@ def _acquire_token_interactive(app, scopes=None, data=None):
     return result
 
 def _acquire_token_by_username_password(app):
-    """
-    [Deprecated] This API is deprecated for PublicClientApplication(PCA) flows and will be removed in a future release. Use a more secure flow instead. 
-    Migration guide: https://aka.ms/msal-ropc-migration
-
-    acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc
-    """
+    """acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc"""
     print_json(app.acquire_token_by_username_password(
         _input("username: "), getpass.getpass("password: "), scopes=_input_scopes()))
 
