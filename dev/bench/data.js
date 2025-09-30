@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759251443828,
+  "lastUpdate": 1759254593797,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -33011,6 +33011,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000014665539747932871",
             "extra": "mean: 138.64530395866444 usec\nrounds: 5458"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "137432604+Ugonnaak1@users.noreply.github.com",
+            "name": "Ugonna Akali",
+            "username": "Ugonnaak1"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "562d72e295f807bba99d5eee9029591d9ccee60c",
+          "message": "ROPC deprecation (#855)\n\n* ROPC deprecation\n\n* sample edit\n\n* reenable e2e tests\n\n* reenable tests\n\n* edit\n\n* remove import\n\n* fix wording\n\nCo-authored-by: Bogdan Gavril <bogavril@microsoft.com>\n\n* edits\n\n* add comment\n\n* format\n\n* docstring changes\n\n---------\n\nCo-authored-by: Bogdan Gavril <bogavril@microsoft.com>",
+          "timestamp": "2025-09-30T10:47:44-07:00",
+          "tree_id": "ade39e6c4f9252b9511e6347fa589ebeef1dcafe",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/562d72e295f807bba99d5eee9029591d9ccee60c"
+        },
+        "date": 1759254593021,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39286.282352633796,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000023649943134127776",
+            "extra": "mean: 25.454177390061925 usec\nrounds: 8129"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 35602.633299244044,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000030462778864953106",
+            "extra": "mean: 28.08781001098683 usec\nrounds: 14164"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7551.047527141376,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015616618842657885",
+            "extra": "mean: 132.43195681203363 usec\nrounds: 3589"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7202.68299311983,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015161145359377048",
+            "extra": "mean: 138.83715289916594 usec\nrounds: 3656"
           }
         ]
       }
