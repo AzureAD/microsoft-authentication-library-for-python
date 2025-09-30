@@ -1841,8 +1841,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         
-        [Deprecated] This API is deprecated for public client flows and will be removed in a future release.
-        Use a more secure flow instead. 
+        [Deprecated] This API is deprecated for public client flows and will be 
+        removed in a future release. Use a more secure flow instead. 
         Migration guide: https://aka.ms/msal-ropc-migration
 
         """
