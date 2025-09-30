@@ -1850,7 +1850,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             self, ConfidentialClientApplication)
         if not is_confidential_app:
             warnings.warn("""This API has been deprecated for public client flows, please use a more secure flow.
-            See https://aka.ms/msal-ropc-migration for migration guidance""", DeprecationWarning)
+        See https://aka.ms/msal-ropc-migration for migration guidance""", DeprecationWarning)
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
         if self._enable_broker and sys.platform in ("win32", "darwin"):
