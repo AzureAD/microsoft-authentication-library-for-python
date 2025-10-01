@@ -190,8 +190,12 @@ class VmTestCase(ClientTestCase):
             headers={'Metadata': 'true'},
             )
 
-    @patch("msal.managed_identity.socket.getfqdn", new=lambda: "MixedCaseHostName")
-    def test_happy_path_of_windows_vm(self):
+    @patch.object(ManagedIdentityClient, "_ManagedIdentityClient__instance", "MixedCaseHostName")
+    def test_happy_path_of_theoretical_mixed_case_hostname(self):
+        """Historically, we used to get the host name from socket.getfqdn(),
+        which could return a mixed-case host name on Windows.
+        Although we no longer use getfqdn(), we still keep this test case to ensure we tolerate it.
+        """
         self.test_happy_path_of_vm()
 
     @patch.dict(os.environ, {"AZURE_POD_IDENTITY_AUTHORITY_HOST": "http://localhost:1234//"})
