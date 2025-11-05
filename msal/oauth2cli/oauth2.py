@@ -184,14 +184,23 @@ class BaseClient(object):
 
     def _obtain_token(  # The verb "obtain" is influenced by OAUTH2 RFC 6749
             self, grant_type,
-            params=None,  # a dict to be sent as query string to the endpoint
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
             post=None,  # A callable to replace requests.post(), for testing.
-                        # Such as: lambda url, **kwargs:
-                        #   Mock(status_code=200, text='{}')
             **kwargs  # Relay all extra parameters to underlying requests
-            ):  # Returns the json object came from the OAUTH2 response
+            ):
+
+        # Handle deprecated params parameter
+        params = kwargs.pop('params', None)
+        if params is not None:
+            import warnings
+            warnings.warn(
+                "Setting 'params' is recommended for production scenarios. "
+                "It will be removed in a future release, and the behavior may be replaced by a new API.",
+                FutureWarning,
+                stacklevel=2
+            )
+
         _data = {'client_id': self.client_id, 'grant_type': grant_type}
 
         if self.default_body.get("client_assertion_type") and self.client_assertion:
