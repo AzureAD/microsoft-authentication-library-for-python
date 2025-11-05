@@ -187,8 +187,10 @@ class BaseClient(object):
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
             post=None,  # A callable to replace requests.post(), for testing.
+                        # Such as: lambda url, **kwargs:
+                        #   Mock(status_code=200, text='{}')
             **kwargs  # Relay all extra parameters to underlying requests
-            ):
+            ):  # Returns the json object came from the OAUTH2 response
 
         # Handle deprecated params parameter
         params = kwargs.pop('params', None)
