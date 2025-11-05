@@ -187,8 +187,10 @@ class BaseClient(object):
             data=None,  # All relevant data, which will go into the http body
             headers=None,  # a dict to be sent as request headers
             post=None,  # A callable to replace requests.post(), for testing.
+                        # Such as: lambda url, **kwargs:
+                        #   Mock(status_code=200, text='{}')
             **kwargs  # Relay all extra parameters to underlying requests
-            ):
+            ):  # Returns the json object came from the OAUTH2 response
 
         # Handle deprecated params parameter
         params = kwargs.pop('params', None)
@@ -784,14 +786,14 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             also_save_rt=False,
             on_obtaining_tokens=None,
             *args, **kwargs):
-        _data = data.copy() if data else {}  # to prevent side effect
+        _data = data.copy()  # to prevent side effect
         
         # Handle deprecated params parameter. It was removed as an argument here and in BaseClient._obtain_token(),
         # and BaseClient._obtain_token() provides the deprecation warning if params is used.
         params = kwargs.pop('params', None)
         
         resp = super(Client, self)._obtain_token(
-            grant_type, data=_data, *args, **kwargs)
+            grant_type, _data, *args, **kwargs)
         if "error" not in resp:
             _resp = resp.copy()
             RT = "refresh_token"
