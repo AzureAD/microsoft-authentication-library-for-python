@@ -30,6 +30,20 @@ WELL_KNOWN_B2C_HOSTS = [
     ]
 _CIAM_DOMAIN_SUFFIX = ".ciamlogin.com"
 
+# Trusted issuer hosts for OIDC issuer validation.
+# These are Microsoft's well-known identity provider hosts.
+TRUSTED_ISSUER_HOSTS = frozenset([
+    AZURE_PUBLIC,                       # Microsoft Azure Worldwide
+    "login.microsoft.com",              # Microsoft Azure Worldwide
+    "login.windows.net",                # Microsoft Azure Worldwide (validation scenarios)
+    "sts.windows.net",                  # Microsoft STS
+    "login.partner.microsoftonline.cn", # Microsoft Azure China
+    AZURE_CHINA,                        # Microsoft Azure China (legacy)
+    "login.microsoftonline.de",         # Microsoft Azure Germany
+    "login-us.microsoftonline.com",     # Microsoft Azure US Government (legacy)
+    AZURE_US_GOVERNMENT,                # Microsoft Azure US Government
+    "login.usgovcloudapi.net",          # Microsoft Azure US Government
+])
 
 class AuthorityBuilder(object):
     def __init__(self, instance, tenant):
@@ -93,7 +107,8 @@ class Authority(object):
                 .format(authority_url)
                 ) + " Also please double check your tenant name or GUID is correct."
             raise ValueError(error_message)
-        openid_config.pop("issuer", None)  # Not used in MSAL.py, so remove it therefore no need to validate it
+        if oidc_authority_url:
+            _validate_issuer(openid_config.get("issuer"), oidc_authority_url)
         logger.debug(
             'openid_config("%s") = %s', tenant_discovery_endpoint, openid_config)
         self.authorization_endpoint = openid_config['authorization_endpoint']
@@ -224,3 +239,49 @@ def tenant_discovery(tenant_discovery_endpoint, http_client, **kwargs):
     raise RuntimeError(  # A fallback here, in case resp.raise_for_status() is no-op
         "Unable to complete OIDC Discovery: %d, %s" % (resp.status_code, resp.text))
 
+def _validate_issuer(issuer, authority_url):
+    """Validate that the OIDC issuer matches the authority or is from a trusted source.
+
+    Per OIDC Discovery spec, the issuer returned MUST match the authority.
+    We also allow issuers from well-known trusted Microsoft sources, including
+    regional variants (e.g., westus2.login.microsoft.com).
+
+    :param issuer: The issuer claim from the OIDC discovery response.
+    :param authority_url: The OIDC authority URL provided by the caller.
+    :raises ValueError: If issuer is missing or not from authority/trusted sources.
+    """
+    if not issuer:
+        raise ValueError(
+            "The OIDC discovery response from {} is missing the required 'issuer' claim."
+            .format(authority_url))
+
+    # Normalize URLs for comparison (remove trailing slashes)
+    normalized_issuer = issuer.rstrip("/")
+    normalized_authority = authority_url.rstrip("/")
+
+    # Case 1: Exact match (most common case)
+    if normalized_issuer == normalized_authority:
+        return
+
+    # Case 2: Check if issuer is from a trusted source
+    issuer_parsed = urlparse(issuer)
+    issuer_host = issuer_parsed.hostname.lower() if issuer_parsed.hostname else None
+    if issuer_host:
+        # Direct lookup - O(1)
+        if issuer_host in TRUSTED_ISSUER_HOSTS:
+            return
+        # Check for regional pattern: {region}.{trusted_base}
+        # e.g., westus2.login.microsoft.com -> extract "login.microsoft.com"
+        # Find the first dot and check if the remainder is a trusted host
+        dot_index = issuer_host.find(".")
+        if dot_index > 0:
+            potential_base = issuer_host[dot_index + 1:]  # e.g., "login.microsoft.com"
+            region = issuer_host[:dot_index]  # e.g., "westus2"
+            # O(1) lookup instead of O(n) iteration
+            if potential_base in TRUSTED_ISSUER_HOSTS and "." not in region:
+                return
+
+    raise ValueError(
+        "The issuer '{}' from the OIDC discovery response does not match "
+        "the authority '{}' and is not from a trusted source."
+        .format(issuer, authority_url))

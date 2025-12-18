@@ -22,6 +22,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 _OIDC_DISCOVERY = "msal.authority.tenant_discovery"
 _OIDC_DISCOVERY_MOCK = Mock(return_value={
+    "issuer": "https://contoso.com/placeholder",
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
 })
@@ -794,6 +795,7 @@ class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
 
 @patch("sys.platform", new="darwin")  # Pretend running on Mac.
 @patch("msal.authority.tenant_discovery", new=Mock(return_value={
+    "issuer": "https://contoso.com/placeholder",
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
     }))
@@ -846,7 +848,7 @@ class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
     def test_should_fallback_to_non_broker_when_using_oidc_authority(self):
         app = msal.PublicClientApplication(
             "client_id",
-            oidc_authority="https://contoso.com/path",
+            oidc_authority="https://contoso.com/placeholder",
             enable_broker_on_mac=True,
             )
         self.assertFalse(app._enable_broker)
