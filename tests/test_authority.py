@@ -149,22 +149,51 @@ class OidcAuthorityTestCase(unittest.TestCase):
         self.assertEqual(app.authority.token_endpoint, self.token_endpoint)
 
 
-class DstsAuthorityTestCase(OidcAuthorityTestCase):
-    # Inherits OidcAuthority's test cases and run them with a dSTS authority
-    authority = (  # dSTS is single tenanted with a tenant placeholder
-        'https://test-instance1-dsts.dsts.core.azure-test.net/dstsv2/common')
-    authorization_endpoint = (
-        "https://some.url.dsts.core.azure-test.net/dstsv2/common/oauth2/authorize")
-    token_endpoint = (
-        "https://some.url.dsts.core.azure-test.net/dstsv2/common/oauth2/token")
+@patch("msal.authority._instance_discovery")
+@patch("msal.authority.tenant_discovery")
+class DstsAuthorityTestCase(unittest.TestCase):
+    # Standalone test class for dSTS authority (not inheriting to avoid decorator stacking)
+    authority = 'https://test-instance1-dsts.dsts.core.azure-test.net/dstsv2/common'
+    authorization_endpoint = "https://some.url.dsts.core.azure-test.net/dstsv2/common/oauth2/authorize"
+    token_endpoint = "https://some.url.dsts.core.azure-test.net/dstsv2/common/oauth2/token"
     issuer = "https://test-instance1-dsts.dsts.core.azure-test.net/dstsv2/common"
 
-    @patch("msal.authority._instance_discovery")
-    @patch("msal.authority.tenant_discovery")  # Remove the hard-coded return_value
+    def setUp(self):
+        self.oidc_discovery_endpoint = self.authority + "/.well-known/openid-configuration"
+
+    def setup_tenant_discovery(self, tenant_discovery):
+        """Configure the tenant_discovery mock with class-specific values"""
+        tenant_discovery.return_value = {
+            "authorization_endpoint": self.authorization_endpoint,
+            "token_endpoint": self.token_endpoint,
+            "issuer": self.issuer,
+        }
+
+    def test_authority_obj_should_do_oidc_discovery_and_skip_instance_discovery(
+            self, oidc_discovery, instance_discovery):
+        self.setup_tenant_discovery(oidc_discovery)
+        c = MinimalHttpClient()
+        a = Authority(None, c, oidc_authority_url=self.authority)
+        instance_discovery.assert_not_called()
+        oidc_discovery.assert_called_once_with(self.oidc_discovery_endpoint, c)
+        self.assertEqual(a.authorization_endpoint, self.authorization_endpoint)
+        self.assertEqual(a.token_endpoint, self.token_endpoint)
+
+    def test_application_obj_should_do_oidc_discovery_and_skip_instance_discovery(
+            self, oidc_discovery, instance_discovery):
+        self.setup_tenant_discovery(oidc_discovery)
+        app = msal.ClientApplication(
+            "id", authority=None, oidc_authority=self.authority)
+        instance_discovery.assert_not_called()
+        oidc_discovery.assert_called_once_with(
+            self.oidc_discovery_endpoint, app.http_client)
+        self.assertEqual(
+            app.authority.authorization_endpoint, self.authorization_endpoint)
+        self.assertEqual(app.authority.token_endpoint, self.token_endpoint)
+
     def test_application_obj_should_accept_dsts_url_as_an_authority(
             self, oidc_discovery, instance_discovery):
         self.setup_tenant_discovery(oidc_discovery)
-
         app = msal.ClientApplication("id", authority=self.authority)
         instance_discovery.assert_not_called()
         oidc_discovery.assert_called_once_with(
