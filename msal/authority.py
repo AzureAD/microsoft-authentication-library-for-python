@@ -21,6 +21,26 @@ WELL_KNOWN_AUTHORITY_HOSTS = set([
     'login-us.microsoftonline.com',
     AZURE_US_GOVERNMENT,
     ])
+
+# Trusted issuer hosts for OIDC issuer validation
+# Includes all well-known Microsoft identity provider hosts and national clouds
+TRUSTED_ISSUER_HOSTS = frozenset([
+    # Global/Public cloud
+    "login.microsoftonline.com",
+    "login.microsoft.com",
+    "login.windows.net",
+    "sts.windows.net",
+    # China cloud
+    "login.chinacloudapi.cn",
+    "login.partner.microsoftonline.cn",
+    # Germany cloud (legacy)
+    "login.microsoftonline.de",
+    # US Government clouds
+    "login.microsoftonline.us",
+    "login.usgovcloudapi.net",
+    "login-us.microsoftonline.com",
+])
+
 WELL_KNOWN_B2C_HOSTS = [
     "b2clogin.com",
     "b2clogin.cn",
@@ -186,47 +206,59 @@ class Authority(object):
             self.__class__._domains_without_user_realm_discovery.add(self.instance)
         return {}  # This can guide the caller to fall back normal ROPC flow
 
-    def has_valid_issuer(self) -> bool:
+    def has_valid_issuer(self):
         """
-            Returns True if the issuer from OIDC discovery is valid for this authority.
+        Returns True if the issuer from OIDC discovery is valid for this authority.
 
-            An issuer is valid if one of the following is true:
-            - It exactly matches the authority URL
-            - It has the same scheme and host as the authority (path can be different)
-            - For CIAM, the issuer follows the pattern of {tenant}.ciamlogin.com (tenant comes from the authority)
-            """
-        if self._oidc_authority_url == self._issuer:
-            # The issuer matches the authority URL exactly
-            return True
-
-        issuer = urlparse(self._issuer) if self._issuer else None
-        if not issuer:
+        An issuer is valid if one of the following is true:
+        - It exactly matches the authority URL (with/without trailing slash)
+        - It has the same scheme and host as the authority (path can be different)
+        - The issuer host is a well-known Microsoft authority host
+        - The issuer host is a regional variant of a well-known host (e.g., westus2.login.microsoft.com)
+        - For CIAM, the issuer follows the pattern of {tenant}.ciamlogin.com
+        """
+        if not self._issuer or not self._oidc_authority_url:
             return False
 
-        # Check if issuer has the same scheme and host as the authority
-        authority = urlparse(self._oidc_authority_url)
-        if authority.scheme == issuer.scheme and authority.netloc == issuer.netloc:
+        # Case 1: Exact match (most common case, normalized for trailing slashes)
+        if self._issuer.rstrip("/") == self._oidc_authority_url.rstrip("/"):
             return True
 
-        # Check CIAM scenario: issuer follows the pattern {tenant}.ciamlogin.com
-        # Extract tenant from authority URL - could be in the host or path
-        tenant = None
-        if authority.hostname.endswith(_CIAM_DOMAIN_SUFFIX):
-            # Normal CIAM host: {tenant}.ciamlogin.com
-            tenant = authority.hostname.rsplit(_CIAM_DOMAIN_SUFFIX, 1)[0]
-        else:
-            # Custom CIAM host: extract tenant from path
-            parts = authority.path.split('/')
-            if len(parts) >= 2 and parts[1]:
-                tenant = parts[1]  # First path segment after the initial '/'
+        issuer_parsed = urlparse(self._issuer)
+        authority_parsed = urlparse(self._oidc_authority_url)
+        issuer_host = issuer_parsed.hostname.lower() if issuer_parsed.hostname else None
 
-        if tenant and issuer.hostname.endswith(_CIAM_DOMAIN_SUFFIX):
-            # Check if issuer follows the pattern {tenant}.ciamlogin.com
-            expected_issuer_host = f"{tenant}{_CIAM_DOMAIN_SUFFIX}"
-            if issuer.hostname == expected_issuer_host:
+        if not issuer_host:
+            return False
+        
+        # Case 2: Issuer is from a trusted Microsoft host - O(1) lookup
+        if issuer_host in TRUSTED_ISSUER_HOSTS:
+            return True
+
+        # Case 3: Regional variant check - O(1) lookup
+        # e.g., westus2.login.microsoft.com -> extract "login.microsoft.com"
+        dot_index = issuer_host.find(".")
+        if dot_index > 0:
+            potential_base = issuer_host[dot_index + 1:]
+            if potential_base in TRUSTED_ISSUER_HOSTS and "." not in issuer_host[:dot_index]:
                 return True
 
-        # None of the conditions matched
+        # Case 4: Same scheme and host (path can differ)
+        if (authority_parsed.scheme == issuer_parsed.scheme and 
+            authority_parsed.netloc == issuer_parsed.netloc):
+            return True
+
+        # Case 5: CIAM scenario - issuer follows pattern {tenant}.ciamlogin.com
+        if issuer_host.endswith(_CIAM_DOMAIN_SUFFIX):
+            authority_host = authority_parsed.hostname.lower() if authority_parsed.hostname else ""
+            if authority_host.endswith(_CIAM_DOMAIN_SUFFIX):
+                tenant = authority_host[:-len(_CIAM_DOMAIN_SUFFIX)]
+            else:
+                parts = authority_parsed.path.split('/')
+                tenant = parts[1] if len(parts) >= 2 and parts[1] else None
+            
+            if tenant and issuer_host == tenant + _CIAM_DOMAIN_SUFFIX:
+                return True
         return False
 
 def canonicalize(authority_or_auth_endpoint):

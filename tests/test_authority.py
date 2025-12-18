@@ -6,7 +6,7 @@ except:
 
 import msal
 from msal.authority import *
-from msal.authority import _CIAM_DOMAIN_SUFFIX  # Explicitly import the private constant
+from msal.authority import _CIAM_DOMAIN_SUFFIX, TRUSTED_ISSUER_HOSTS  # Explicitly import private/new constants
 from tests import unittest
 from tests.http_client import MinimalHttpClient
 
@@ -372,24 +372,12 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
 
     @patch("msal.authority.tenant_discovery")
     def test_custom_authority_with_microsoft_issuer(self, tenant_discovery_mock):
-        """Test when custom authority is used with a known Microsoft issuer (should fail)"""
+        """Test when custom authority is used with a known Microsoft issuer (should succeed)"""
         authority_url = "https://custom-domain.com/tenant"
         issuer = f"https://{WORLD_WIDE}/tenant"
-
-        tenant_discovery_mock.return_value = {
-            "authorization_endpoint": "https://example.com/oauth2/authorize",
-            "token_endpoint": "https://example.com/oauth2/token",
-            "issuer": issuer,
-        }
-
-        # Since initialization now checks for valid issuer and we removed the check for known hosts,
-        # we expect it to raise ValueError because the hosts don't match
-        with self.assertRaises(ValueError) as context:
-            Authority(None, self.http_client, oidc_authority_url=authority_url)
-
-        self.assertIn("issuer", str(context.exception).lower())
-        self.assertIn(issuer, str(context.exception))
-        self.assertIn(authority_url, str(context.exception))
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Issuer from trusted Microsoft host should be valid even with custom authority")
 
     @patch("msal.authority.tenant_discovery")
     def test_known_authority_with_non_matching_issuer(self, tenant_discovery_mock):
@@ -412,3 +400,94 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
         self.assertIn("issuer", str(context.exception).lower())
         self.assertIn(issuer, str(context.exception))
         self.assertIn(authority_url, str(context.exception))
+
+    # Regional pattern tests
+    @patch("msal.authority.tenant_discovery")
+    def test_regional_issuer_westus2_login_microsoft(self, tenant_discovery_mock):
+        """Test regional variant: westus2.login.microsoft.com"""
+        authority_url = "https://custom-authority.com/tenant"
+        issuer = "https://westus2.login.microsoftonline.com/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(), 
+            "Regional issuer westus2.login.microsoftonline.com should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_regional_issuer_eastus_login_microsoftonline(self, tenant_discovery_mock):
+        """Test regional variant: eastus.login.microsoftonline.com"""
+        authority_url = "https://custom-authority.com/tenant"
+        issuer = "https://eastus.login.microsoftonline.com/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Regional issuer eastus.login.microsoftonline.com should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_regional_issuer_for_china_cloud(self, tenant_discovery_mock):
+        """Test regional variant for China cloud: region.login.chinacloudapi.cn"""
+        authority_url = "https://custom-authority.com/tenant"
+        issuer = "https://chinanorth.login.chinacloudapi.cn/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Regional issuer for China cloud should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_regional_issuer_for_us_government(self, tenant_discovery_mock):
+        """Test regional variant for US Government: region.login.microsoftonline.us"""
+        authority_url = "https://custom-authority.com/tenant"
+        issuer = "https://usgovvirginia.login.microsoftonline.us/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Regional issuer for US Government should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_invalid_regional_pattern_with_dots_in_region(self, tenant_discovery_mock):
+        """Test that region with dots is rejected: west.us.2.login.microsoftonline.com"""
+        authority_url = "https://custom-authority.com/tenant"
+        issuer = "https://west.us.2.login.microsoftonline.com/tenant"
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+        with self.assertRaises(ValueError):
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_invalid_regional_pattern_untrusted_base(self, tenant_discovery_mock):
+        """Test that regional pattern with untrusted base is rejected"""
+        authority_url = "https://custom-authority.com/tenant"
+        issuer = "https://westus2.login.evil.com/tenant"  # evil.com is not trusted
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+        with self.assertRaises(ValueError):
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_well_known_host_issuer_directly(self, tenant_discovery_mock):
+        """Test issuer from well-known Microsoft host directly (not regional)"""
+        authority_url = "https://custom-authority.com/tenant"
+        issuer = f"https://{WORLD_WIDE}/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Issuer from well-known Microsoft host should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_issuer_with_trailing_slash_match(self, tenant_discovery_mock):
+        """Test issuer validation handles trailing slashes"""
+        authority_url = "https://example.com/tenant/"
+        issuer = "https://example.com/tenant"  # No trailing slash
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Trailing slash difference should not affect exact match")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_issuer_case_sensitivity_host(self, tenant_discovery_mock):
+        """Test that host comparison is case-insensitive for regional check"""
+        authority_url = "https://custom-authority.com/tenant"
+        issuer = "https://WESTUS2.LOGIN.MICROSOFTONLINE.COM/tenant"  # Uppercase
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Host comparison should be case-insensitive")
+
