@@ -112,25 +112,55 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         # For flexibility, we choose to not check self.path matching redirect_uri
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
         qs = parse_qs(urlparse(self.path).query)
-        if qs.get('code') or qs.get("error"):  # So, it is an auth response
-            auth_response = _qs2kv(qs)
-            logger.debug("Got auth response: %s", auth_response)
-            if self.server.auth_state and self.server.auth_state != auth_response.get("state"):
-                # OAuth2 successful and error responses contain state when it was used
-                # https://www.rfc-editor.org/rfc/rfc6749#section-4.2.2.1
-                self._send_full_response("State mismatch")  # Possibly an attack
-            else:
-                template = (self.server.success_template
-                    if "code" in qs else self.server.error_template)
-                if _is_html(template.template):
-                    safe_data = _escape(auth_response)  # Foiling an XSS attack
-                else:
-                    safe_data = auth_response
-                self._send_full_response(template.safe_substitute(**safe_data))
-                self.server.auth_response = auth_response  # Set it now, after the response is likely sent
+        if qs.get('code') or qs.get("error"):  # Auth response via query string is not allowed
+            logger.error("Received auth response via query string (GET request). "
+                        "This is a security risk. Only form_post (POST) is supported.")
+            self._send_full_response(
+                "Authentication method not supported. "
+                "The application requires response_mode=form_post for security. "
+                "Please ensure your application registration uses form_post response mode.",
+                is_ok=False)
         else:
             self._send_full_response(self.server.welcome_page)
         # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
+
+    def do_POST(self):
+        # Handle form_post response mode where auth code is sent via POST body
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length).decode('utf-8')
+        try:
+            from urllib.parse import parse_qs as parse_qs_post
+        except ImportError:
+            from urlparse import parse_qs as parse_qs_post
+        
+        qs = parse_qs_post(post_data)
+        if qs.get('code') or qs.get('error'):  # So, it is an auth response
+            auth_response = _qs2kv(qs)
+            logger.debug("Got auth response via POST: %s", auth_response)
+            self._process_auth_response(auth_response)
+        else:
+            self._send_full_response("Invalid POST request", is_ok=False)
+
+    def _process_auth_response(self, auth_response):
+        """Process the auth response from either GET or POST request."""
+        if self.server.auth_state and self.server.auth_state != auth_response.get("state"):
+            # OAuth2 successful and error responses contain state when it was used
+            # https://www.rfc-editor.org/rfc/rfc6749#section-4.2.2.1
+            self._send_full_response("State mismatch")  # Possibly an attack
+        else:
+            template = (self.server.success_template
+                if "code" in auth_response else self.server.error_template)
+            if _is_html(template.template):
+                safe_data = _escape(auth_response)  # Foiling an XSS attack
+            else:
+                safe_data = dict(auth_response)  # Make a copy to avoid mutating original
+            # Provide default values for common OAuth2 response fields
+            # to avoid showing literal placeholder text like "$error_description"
+            safe_data.setdefault("error", "")
+            safe_data.setdefault("error_description", "")
+            safe_data.setdefault("error_uri", "")
+            self._send_full_response(template.safe_substitute(**safe_data))
+            self.server.auth_response = auth_response  # Set it now, after the response is likely sent
 
     def _send_full_response(self, body, is_ok=True):
         self.send_response(200 if is_ok else 400)

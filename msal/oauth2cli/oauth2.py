@@ -176,7 +176,16 @@ class BaseClient(object):
         response_type = self._stringify(response_type)
 
         params = {'client_id': self.client_id, 'response_type': response_type}
-        params.update(kwargs)  # Note: None values will override params
+        # Strictly enforce form_post for security - query string is not allowed
+        params['response_mode'] = 'form_post'
+        if 'response_mode' in kwargs and kwargs['response_mode'] != 'form_post':
+            import warnings
+            warnings.warn(
+                "response_mode='{}' is not supported for security reasons. "
+                "Using form_post instead. Query string transmission of authorization "
+                "codes is insecure and has been disabled.".format(kwargs['response_mode']),
+                UserWarning)
+        params.update({k: v for k, v in kwargs.items() if k != 'response_mode'})  # Exclude response_mode from kwargs
         params = {k: v for k, v in params.items() if v is not None}  # clean up
         if params.get('scope'):
             params['scope'] = self._stringify(params['scope'])
