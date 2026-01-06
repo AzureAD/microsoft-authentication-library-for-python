@@ -77,9 +77,9 @@ def _extract_cert_and_thumbprints(cert):
             [1:-1]  # Strip the "--- header ---" and "--- footer ---"
         )
     ]
-    # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object
-    sha256_thumbprint = cert.fingerprint(hashes.SHA256()).hex()  # Requires cryptography 0.7+
-    sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # Requires cryptography 0.7+
+    # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object - Requires cryptography 0.7+
+    sha256_thumbprint = cert.fingerprint(hashes.SHA256()).hex() 
+    sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # CodeQL [SM02167] for legacy support such as ADFS
     return sha256_thumbprint, sha1_thumbprint, x5c
 
 def _parse_pfx(pfx_path, passphrase_bytes):
