@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767685751473,
+  "lastUpdate": 1767696102432,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -33791,6 +33791,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000014809871018114795",
             "extra": "mean: 107.38309419659826 usec\nrounds: 4618"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bogavril@microsoft.com",
+            "name": "Bogdan Gavril",
+            "username": "bgavrilMS"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3ac0b3c8925183232aa902eadfd09e2ee71c20f0",
+          "message": "Suppress CodeQL warning\n\nSHA1 thumbprint in client assertion remains the only recognized way for some IDPs that MSAL supports, like ADFS.",
+          "timestamp": "2026-01-06T10:39:40Z",
+          "tree_id": "0ce1fcffe62ea00b76fb1cabc41485b9db36984f",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/3ac0b3c8925183232aa902eadfd09e2ee71c20f0"
+        },
+        "date": 1767696101137,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 41181.55420845621,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002665793214610617",
+            "extra": "mean: 24.282716357379737 usec\nrounds: 7379"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37727.923188439156,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003915530023612124",
+            "extra": "mean: 26.505567110209416 usec\nrounds: 14655"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7553.000016987307,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017730536744289275",
+            "extra": "mean: 132.39772246139538 usec\nrounds: 3949"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7124.63785624747,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015738258690579667",
+            "extra": "mean: 140.358011196754 usec\nrounds: 3751"
           }
         ]
       }
