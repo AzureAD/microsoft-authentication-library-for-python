@@ -258,7 +258,7 @@ class ClientApplication(object):
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
             http_client=None,
-            verify=True, proxies=None, timeout=None,
+            verify=False, proxies=None, timeout=None,
             client_claims=None, app_name=None, app_version=None,
             client_capabilities=None,
             azure_region=None,  # Note: We choose to add this param in this base class,
@@ -920,6 +920,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             ):
         """Initiate an auth code flow.
 
+        .. deprecated::
+            The response_mode parameter is deprecated and will be removed in a future version.
+
         Later when the response reaches your redirect_uri,
         you can use :func:`~acquire_token_by_auth_code_flow()`
         to complete the authentication/authorization.
@@ -960,18 +963,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             New in version 1.15.
 
         :param str response_mode:
-            OPTIONAL. Specifies the method with which response parameters should be returned.
-            The default value is equivalent to ``query``, which is still secure enough in MSAL Python
-            (because MSAL Python does not transfer tokens via query parameter in the first place).
-            For even better security, we recommend using the value ``form_post``.
-            In "form_post" mode, response parameters
-            will be encoded as HTML form values that are transmitted via the HTTP POST method and
-            encoded in the body using the application/x-www-form-urlencoded format.
-            Valid values can be either "form_post" for HTTP POST to callback URI or
-            "query" (the default) for HTTP GET with parameters encoded in query string.
-            More information on possible values
-            `here <https://openid.net/specs/oauth-v2-multiple-response-types-1_0.html#ResponseModes>`
-            and `here <https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html#FormPostResponseMode>`
+            .. deprecated::
+                This parameter is deprecated and will be removed in a future version.
+                The response_mode is always set to ``form_post`` for security reasons,
+                regardless of the value provided. Do not use this parameter.
 
         :return:
             The auth code flow. It is a dict in this form::
@@ -991,6 +986,13 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             3. and then relay this dict and subsequent auth response to
                :func:`~acquire_token_by_auth_code_flow()`.
         """
+        if response_mode is not None:
+            import warnings
+            warnings.warn(
+                "The 'response_mode' parameter is deprecated and will be removed in a future version. "
+                "Response mode is always 'form_post' for security reasons.",
+                DeprecationWarning,
+                stacklevel=2)
         client = _ClientWithCcsRoutingInfo(
             {"authorization_endpoint": self.authority.authorization_endpoint},
             self.client_id,

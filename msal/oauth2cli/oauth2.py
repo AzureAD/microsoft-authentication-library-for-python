@@ -181,9 +181,7 @@ class BaseClient(object):
         if 'response_mode' in kwargs and kwargs['response_mode'] != 'form_post':
             import warnings
             warnings.warn(
-                "response_mode='{}' is not supported for security reasons. "
-                "Using form_post instead. Query string transmission of authorization "
-                "codes is insecure and has been disabled.".format(kwargs['response_mode']),
+                "The 'response_mode' parameter will be overridden to 'form_post' for better security.",
                 UserWarning)
         params.update({k: v for k, v in kwargs.items() if k != 'response_mode'})  # Exclude response_mode from kwargs
         params = {k: v for k, v in params.items() if v is not None}  # clean up
@@ -476,6 +474,13 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             3. and then relay this dict and subsequent auth response to
                :func:`~obtain_token_by_auth_code_flow()`.
         """
+        if "response_mode" in kwargs:
+            import warnings
+            warnings.warn(
+                "The 'response_mode' parameter is deprecated and will be removed in a future version. "
+                "Response mode is always 'form_post' for security reasons.",
+                DeprecationWarning,
+                stacklevel=2)
         response_type = kwargs.pop("response_type", "code")  # Auth Code flow
             # Must be "code" when you are using Authorization Code Grant.
             # The "token" for Implicit Grant is not applicable thus not allowed.

@@ -347,9 +347,11 @@ class AuthCodeReceiver(object):
                     auth_uri_callback(_uri)
 
         self._server.success_template = Template(success_template or
-            "Authentication completed. You can close this window now.")
+            "Authentication complete. You can return to the application. Please close this browser tab. "
+            "For your security: Do not share the contents of this page, the address bar, or take screenshots.")
         self._server.error_template = Template(error_template or
-            "Authentication failed. $error: $error_description. ($error_uri)")
+            "Authentication failed. $error: $error_description. ($error_uri) "
+            "For your security: Do not share the contents of this page, the address bar, or take screenshots.")
 
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
         self._server.auth_response = {}  # Shared with _AuthCodeHandler
