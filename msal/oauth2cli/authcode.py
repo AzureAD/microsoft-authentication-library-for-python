@@ -164,8 +164,8 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
             # OAuth2 successful and error responses contain state when it was used
             # https://www.rfc-editor.org/rfc/rfc6749#section-4.2.2.1
             self._send_full_response("State mismatch")  # Possibly an attack
-            # Still set auth_response so the server doesn't hang forever
-            self.server.auth_response = auth_response
+            # Don't set auth_response for security, but mark as done to avoid hanging
+            self.server.done = True
         else:
             template = (self.server.success_template
                 if "code" in auth_response else self.server.error_template)
@@ -375,12 +375,13 @@ class AuthCodeReceiver(object):
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
         self._server.auth_response = {}  # Shared with _AuthCodeHandler
         self._server.auth_state = state  # So handler will check it before sending response
+        self._server.done = False  # Flag to indicate completion without setting auth_response
         while not self._closing:  # Otherwise, the handle_request() attempt
                                   # would yield noisy ValueError trace
             # Derived from
             # https://docs.python.org/2/library/basehttpserver.html#more-examples
             self._server.handle_request()
-            if self._server.auth_response:
+            if self._server.auth_response or self._server.done:
                 break
         result.update(self._server.auth_response)  # Return via writable result param
 
