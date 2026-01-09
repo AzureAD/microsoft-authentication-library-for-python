@@ -258,7 +258,7 @@ class ClientApplication(object):
             client_credential=None, authority=None, validate_authority=True,
             token_cache=None,
             http_client=None,
-            verify=False, proxies=None, timeout=None,
+            verify=True, proxies=None, timeout=None,
             client_claims=None, app_name=None, app_version=None,
             client_capabilities=None,
             azure_region=None,  # Note: We choose to add this param in this base class,
