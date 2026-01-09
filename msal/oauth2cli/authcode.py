@@ -111,15 +111,32 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # For flexibility, we choose to not check self.path matching redirect_uri
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
-        qs = parse_qs(urlparse(self.path).query)
-        if qs.get('code') or qs.get("error"):  # Auth response via query string is not allowed
-            logger.error("Received auth response via query string (GET request). "
+        parsed_url = urlparse(self.path)
+        qs = parse_qs(parsed_url.query)
+        
+        if qs.get('code'):  # Auth code via GET is a security risk - reject it
+            logger.error("Received auth code via query string (GET request). "
                         "This is a security risk. Only form_post (POST) is supported.")
             self._send_full_response(
                 "Authentication method not supported. "
                 "The application requires response_mode=form_post for security. "
                 "Please ensure your application registration uses form_post response mode.",
                 is_ok=False)
+        elif qs.get("error"):  # Errors can come via GET - process them
+            auth_response = _qs2kv(qs)
+            self._process_auth_response(auth_response)
+        elif not qs and parsed_url.path == '/':
+            # GET request to root with no query params - this is likely from clicking OK on eSTS error
+            # Treat it as an error since success would come via POST
+            logger.warning("Received GET request to root path with no query parameters - treating as authentication error")
+            auth_response = {
+                "error": "authentication_failed", 
+                "error_description": "Please close this window and try again."
+            }
+            # Include the original state so state validation doesn't fail
+            if self.server.auth_state:
+                auth_response["state"] = self.server.auth_state
+            self._process_auth_response(auth_response)
         else:
             self._send_full_response(self.server.welcome_page)
         # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
@@ -147,6 +164,8 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
             # OAuth2 successful and error responses contain state when it was used
             # https://www.rfc-editor.org/rfc/rfc6749#section-4.2.2.1
             self._send_full_response("State mismatch")  # Possibly an attack
+            # Still set auth_response so the server doesn't hang forever
+            self.server.auth_response = auth_response
         else:
             template = (self.server.success_template
                 if "code" in auth_response else self.server.error_template)
@@ -347,10 +366,10 @@ class AuthCodeReceiver(object):
                     auth_uri_callback(_uri)
 
         self._server.success_template = Template(success_template or
-            "Authentication complete. You can return to the application. Please close this browser tab. "
+            "Authentication complete. You can return to the application. Please close this browser tab.\n\n"
             "For your security: Do not share the contents of this page, the address bar, or take screenshots.")
         self._server.error_template = Template(error_template or
-            "Authentication failed. $error: $error_description. ($error_uri) "
+            "Authentication failed. $error: $error_description.\n\n"
             "For your security: Do not share the contents of this page, the address bar, or take screenshots.")
 
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
