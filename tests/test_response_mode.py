@@ -102,23 +102,32 @@ class TestResponseModeIntegration(unittest.TestCase):
         with AuthCodeReceiver() as receiver:
             test_code = "test_auth_code_via_get"
             
-            # Try to send auth code via GET (query string)
-            try:
-                from urllib.parse import urlencode
-            except ImportError:
-                from urllib import urlencode
-            
-            response = requests.get(
-                "http://localhost:{}?{}".format(
-                    receiver.get_port(),
-                    urlencode({"code": test_code, "state": "test"})
+            # Schedule the GET request to be sent after server starts
+            def send_get_request():
+                try:
+                    from urllib.parse import urlencode
+                except ImportError:
+                    from urllib import urlencode
+                
+                response = requests.get(
+                    "http://localhost:{}?{}".format(
+                        receiver.get_port(),
+                        urlencode({"code": test_code, "state": "test"})
+                    )
                 )
-            )
+                
+                # Verify the GET request is rejected
+                self.assertEqual(response.status_code, 400, "GET with auth code should be rejected")
+                self.assertIn("not supported", response.text.lower(),
+                             "Error message should indicate method not supported")
             
-            # Verify the GET request is rejected
-            self.assertEqual(response.status_code, 400, "GET with auth code should be rejected")
-            self.assertIn("not supported", response.text.lower(),
-                         "Error message should indicate method not supported")
+            receiver._scheduled_actions = [(1, send_get_request)]
+            
+            # Start the server (it will timeout after rejecting the GET)
+            result = receiver.get_auth_response(timeout=3)
+            
+            # Result should be None because GET was rejected (no auth_response set)
+            self.assertIsNone(result, "GET request should not produce auth response")
 
 
 if __name__ == '__main__':
