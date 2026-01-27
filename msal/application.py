@@ -965,8 +965,14 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         :param str response_mode:
             .. deprecated::
                 This parameter is deprecated and will be removed in a future version.
-                The response_mode is always set to ``form_post`` for security reasons,
-                regardless of the value provided. Do not use this parameter.
+                
+                **For PublicClientApplication**: response_mode is automatically set to
+                ``form_post`` for security reasons. This parameter is ignored.
+                
+                **For ConfidentialClientApplication**: You should configure your web
+                framework to accept form_post responses instead of query responses.
+                While this parameter still works, it will be removed in a future version.
+                Using query-based response modes is less secure and should be avoided.
 
         :return:
             The auth code flow. It is a dict in this form::
@@ -990,7 +996,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             import warnings
             warnings.warn(
                 "The 'response_mode' parameter is deprecated and will be removed in a future version. "
-                "Response mode is always 'form_post' for security reasons.",
+                "For public clients, response_mode is automatically set to 'form_post'. "
+                "For confidential clients, configure your web framework to use 'form_post'. "
+                "Query-based response modes are less secure.",
                 DeprecationWarning,
                 stacklevel=2)
         client = _ClientWithCcsRoutingInfo(

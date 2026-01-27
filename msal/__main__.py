@@ -339,6 +339,8 @@ def _main():
             logging.error("Invalid input: %s", e)
         except KeyboardInterrupt:  # Useful for bailing out a stuck interactive flow
             print("Aborted")
+        except Exception as e:
+            logging.error("Error: %s", e)
 
 if __name__ == "__main__":
     _main()

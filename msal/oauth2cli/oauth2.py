@@ -176,14 +176,22 @@ class BaseClient(object):
         response_type = self._stringify(response_type)
 
         params = {'client_id': self.client_id, 'response_type': response_type}
-        # Strictly enforce form_post for security - query string is not allowed
-        params['response_mode'] = 'form_post'
-        if 'response_mode' in kwargs and kwargs['response_mode'] != 'form_post':
+        params.update(kwargs)
+        if 'response_mode' in params:
             import warnings
             warnings.warn(
-                "The 'response_mode' parameter will be overridden to 'form_post' for better security.",
-                UserWarning)
-        params.update({k: v for k, v in kwargs.items() if k != 'response_mode'})  # Exclude response_mode from kwargs
+                "The 'response_mode' parameter is deprecated and will be removed in a future version. "
+                "For public clients, response_mode is automatically set to 'form_post'. "
+                "For confidential clients, configure your web framework to use 'form_post'. "
+                "Query-based response modes are less secure.",
+                DeprecationWarning,
+                stacklevel=3)
+            if params['response_mode'] != 'form_post':
+                warnings.warn(
+                    "response_mode='form_post' is recommended for better security. "
+                    "See https://tools.ietf.org/html/rfc6749#section-4.1.2",
+                    UserWarning,
+                    stacklevel=3)
         params = {k: v for k, v in params.items() if v is not None}  # clean up
         if params.get('scope'):
             params['scope'] = self._stringify(params['scope'])
@@ -474,13 +482,6 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             3. and then relay this dict and subsequent auth response to
                :func:`~obtain_token_by_auth_code_flow()`.
         """
-        if "response_mode" in kwargs:
-            import warnings
-            warnings.warn(
-                "The 'response_mode' parameter is deprecated and will be removed in a future version. "
-                "Response mode is always 'form_post' for security reasons.",
-                DeprecationWarning,
-                stacklevel=2)
         response_type = kwargs.pop("response_type", "code")  # Auth Code flow
             # Must be "code" when you are using Authorization Code Grant.
             # The "token" for Implicit Grant is not applicable thus not allowed.

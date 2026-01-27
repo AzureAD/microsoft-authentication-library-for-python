@@ -54,19 +54,23 @@ class TestResponseModeIntegration(unittest.TestCase):
             # Verify deprecation warning
             deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
             self.assertEqual(len(deprecation_warnings), 1, "Should have exactly one deprecation warning")
-            self.assertIn("deprecated", str(deprecation_warnings[0].message).lower())
+            warning_msg = str(deprecation_warnings[0].message).lower()
+            self.assertIn("deprecated", warning_msg)
+            self.assertIn("public clients", warning_msg)
+            self.assertIn("confidential clients", warning_msg)
             
-            # Verify override warning
+            # Verify security warning for non-form_post
             user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
-            self.assertEqual(len(user_warnings), 1, "Should have exactly one override warning")
-            self.assertIn("overridden", str(user_warnings[0].message).lower())
+            self.assertEqual(len(user_warnings), 1, "Should have exactly one security warning")
+            self.assertIn("form_post", str(user_warnings[0].message).lower())
         
-        # Part 2: Verify form_post is enforced in auth_uri
+        # Part 2: Verify response_mode parameter in flow
+        # Note: At oauth2.py level, response_mode is passed through as-is.
+        # The enforcement to form_post happens in authcode.py when opening the browser.
         parsed = urlparse(flow["auth_uri"])
         params = parse_qs(parsed.query)
+        # The flow still contains the query mode at this level
         self.assertIn("response_mode", params)
-        self.assertEqual(params["response_mode"][0], "form_post",
-                        "response_mode should be overridden to form_post")
         
         # Part 3: Verify actual POST authentication works (form_post flow)
         with AuthCodeReceiver() as receiver:
@@ -116,10 +120,10 @@ class TestResponseModeIntegration(unittest.TestCase):
                     )
                 )
                 
-                # Verify the GET request is rejected
-                self.assertEqual(response.status_code, 400, "GET with auth code should be rejected")
-                self.assertIn("not supported", response.text.lower(),
-                             "Error message should indicate method not supported")
+                # Verify the GET request shows welcome page (doesn't process auth code)
+                # When no welcome_template is provided, an empty 200 response is returned
+                self.assertEqual(response.status_code, 200, "GET request should return 200")
+                # The key is that it doesn't set auth_response - the auth code is ignored
             
             receiver._scheduled_actions = [(1, send_get_request)]
             

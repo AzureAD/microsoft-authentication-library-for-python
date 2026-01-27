@@ -111,33 +111,17 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # For flexibility, we choose to not check self.path matching redirect_uri
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
-        parsed_url = urlparse(self.path)
-        qs = parse_qs(parsed_url.query)
         
-        if qs.get('code'):  # Auth code via GET is a security risk - reject it
-            logger.error("Received auth code via query string (GET request). "
-                        "This is a security risk. Only form_post (POST) is supported.")
+        # Check if this is a blank redirect (eSTS error flow where user clicked OK)
+        qs = parse_qs(urlparse(self.path).query)
+        if not qs or (not qs.get('code') and not qs.get('error')):
+            # Blank redirect from eSTS error - show generic error and mark done
             self._send_full_response(
-                "Authentication method not supported. "
-                "The application requires response_mode=form_post for security. "
-                "Please ensure your application registration uses form_post response mode.",
-                is_ok=False)
-        elif qs.get("error"):  # Errors can come via GET - process them
-            auth_response = _qs2kv(qs)
-            self._process_auth_response(auth_response)
-        elif not qs and parsed_url.path == '/':
-            # GET request to root with no query params - this is likely from clicking OK on eSTS error
-            # Treat it as an error since success would come via POST
-            logger.warning("Received GET request to root path with no query parameters - treating as authentication error")
-            auth_response = {
-                "error": "authentication_failed", 
-                "error_description": "Please close this window and try again."
-            }
-            # Include the original state so state validation doesn't fail
-            if self.server.auth_state:
-                auth_response["state"] = self.server.auth_state
-            self._process_auth_response(auth_response)
+                "Authentication could not be completed. "
+                "You can close this window and return to the application.")
+            self.server.done = True
         else:
+            # GET request with parameters (shouldn't happen with form_post, but handle gracefully)
             self._send_full_response(self.server.welcome_page)
         # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
 
@@ -145,18 +129,15 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         # Handle form_post response mode where auth code is sent via POST body
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length).decode('utf-8')
-        try:
-            from urllib.parse import parse_qs as parse_qs_post
-        except ImportError:
-            from urlparse import parse_qs as parse_qs_post
         
-        qs = parse_qs_post(post_data)
+        qs = parse_qs(post_data)
         if qs.get('code') or qs.get('error'):  # So, it is an auth response
             auth_response = _qs2kv(qs)
             logger.debug("Got auth response via POST: %s", auth_response)
             self._process_auth_response(auth_response)
         else:
             self._send_full_response("Invalid POST request", is_ok=False)
+        # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
 
     def _process_auth_response(self, auth_response):
         """Process the auth response from either GET or POST request."""
@@ -177,7 +158,15 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
             # to avoid showing literal placeholder text like "$error_description"
             safe_data.setdefault("error", "")
             safe_data.setdefault("error_description", "")
-            safe_data.setdefault("error_uri", "")
+            # Format error message nicely: include ": description." only if description exists
+            if "code" not in auth_response:  # This is an error response
+                error_desc = auth_response.get("error_description", "").strip()
+                if error_desc:
+                    safe_data["error_message"] = f"{safe_data['error']}: {error_desc}."
+                else:
+                    safe_data["error_message"] = safe_data["error"]
+            else:
+                safe_data["error_message"] = ""
             self._send_full_response(template.safe_substitute(**safe_data))
             self.server.auth_response = auth_response  # Set it now, after the response is likely sent
 
@@ -336,6 +325,15 @@ class AuthCodeReceiver(object):
         welcome_uri = "http://localhost:{p}".format(p=self.get_port())
         abort_uri = "{loc}?error=abort".format(loc=welcome_uri)
         logger.debug("Abort by visit %s", abort_uri)
+        
+        # Enforce response_mode=form_post for security
+        if auth_uri:
+            parsed = urlparse(auth_uri)
+            params = parse_qs(parsed.query)
+            params['response_mode'] = ['form_post']  # Enforce form_post
+            new_query = urlencode(params, doseq=True)
+            auth_uri = parsed._replace(query=new_query).geturl()
+        
         self._server.welcome_page = Template(welcome_template or "").safe_substitute(
             auth_uri=auth_uri, abort_uri=abort_uri)
         if auth_uri:  # Now attempt to open a local browser to visit it
@@ -369,7 +367,7 @@ class AuthCodeReceiver(object):
             "Authentication complete. You can return to the application. Please close this browser tab.\n\n"
             "For your security: Do not share the contents of this page, the address bar, or take screenshots.")
         self._server.error_template = Template(error_template or
-            "Authentication failed. $error: $error_description.\n\n"
+            "Authentication failed. $error_message\n\n"
             "For your security: Do not share the contents of this page, the address bar, or take screenshots.")
 
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
