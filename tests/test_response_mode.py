@@ -120,10 +120,10 @@ class TestResponseModeIntegration(unittest.TestCase):
                     )
                 )
                 
-                # Verify the GET request shows welcome page (doesn't process auth code)
-                # When no welcome_template is provided, an empty 200 response is returned
-                self.assertEqual(response.status_code, 200, "GET request should return 200")
-                # The key is that it doesn't set auth_response - the auth code is ignored
+                # Verify the GET request with auth code is rejected with 400
+                self.assertEqual(response.status_code, 400, "GET with auth code should be rejected")
+                self.assertIn("not supported", response.text.lower(),
+                             "Error message should indicate GET is not supported")
             
             receiver._scheduled_actions = [(1, send_get_request)]
             
