@@ -112,16 +112,21 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         # For flexibility, we choose to not check self.path matching redirect_uri
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
         
-        # Check if this is a blank redirect (eSTS error flow where user clicked OK)
         qs = parse_qs(urlparse(self.path).query)
-        if not qs or (not qs.get('code') and not qs.get('error')):
+        if qs.get('code') or qs.get('error'):
+            # GET request with auth code or error - reject for security (form_post only)
+            self._send_full_response(
+                "GET method is not supported for authentication responses. "
+                "This application requires form_post response mode.",
+                is_ok=False)
+        elif not qs:
             # Blank redirect from eSTS error - show generic error and mark done
             self._send_full_response(
                 "Authentication could not be completed. "
                 "You can close this window and return to the application.")
             self.server.done = True
         else:
-            # GET request with parameters (shouldn't happen with form_post, but handle gracefully)
+            # Other GET requests - show welcome page
             self._send_full_response(self.server.welcome_page)
         # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
 
