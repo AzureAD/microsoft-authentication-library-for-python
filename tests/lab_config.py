@@ -342,7 +342,7 @@ def get_app_config(secret_name: str) -> AppConfig:
     if secret_name in _app_config_cache:
         return _app_config_cache[secret_name]
     
-    logger.info("Retrieving app config from secret '%s'", secret_name)
+    logger.info("Retrieving app config from Key Vault app configuration secret")
     
     raw = get_secret(secret_name, vault="msal_team")
     data = _lowercase_keys(json.loads(raw))
