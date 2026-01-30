@@ -5,6 +5,7 @@ It starts a web server to listen redirect_uri, waiting for auth code.
 It optionally opens a browser window to guide a human user to manually login.
 After obtaining an auth code, the web server will automatically shut down.
 """
+from collections import defaultdict
 import logging
 import os
 import socket
@@ -109,70 +110,47 @@ def _printify(text):
 
 class _AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # For flexibility, we choose to not check self.path matching redirect_uri
-        #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
-        
         qs = parse_qs(urlparse(self.path).query)
-        if qs.get('code') or qs.get('error'):
+        if qs:
             # GET request with auth code or error - reject for security (form_post only)
             self._send_full_response(
-                "GET method is not supported for authentication responses. "
-                "This application requires form_post response mode.",
+                "response_mode=query is not supported for authentication responses. "
+                "This application operates in response_mode=form_post mode only.",
                 is_ok=False)
-        elif not qs:
-            # Blank redirect from eSTS error - show generic error and mark done
-            self._send_full_response(
-                "Authentication could not be completed. "
-                "You can close this window and return to the application.")
-            self.server.done = True
         else:
             # Other GET requests - show welcome page
             self._send_full_response(self.server.welcome_page)
         # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
 
-    def do_POST(self):
-        # Handle form_post response mode where auth code is sent via POST body
+    def do_POST(self):  # Handle form_post response where auth code is in body
+        # For flexibility, we choose to not check self.path matching redirect_uri
+        #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length).decode('utf-8')
-        
         qs = parse_qs(post_data)
         if qs.get('code') or qs.get('error'):  # So, it is an auth response
-            auth_response = _qs2kv(qs)
-            logger.debug("Got auth response via POST: %s", auth_response)
-            self._process_auth_response(auth_response)
+            self._process_auth_response(_qs2kv(qs))
         else:
             self._send_full_response("Invalid POST request", is_ok=False)
         # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
 
     def _process_auth_response(self, auth_response):
         """Process the auth response from either GET or POST request."""
+        logger.debug("Got auth response: %s", auth_response)
         if self.server.auth_state and self.server.auth_state != auth_response.get("state"):
             # OAuth2 successful and error responses contain state when it was used
             # https://www.rfc-editor.org/rfc/rfc6749#section-4.2.2.1
-            self._send_full_response("State mismatch")  # Possibly an attack
-            # Don't set auth_response for security, but mark as done to avoid hanging
-            self.server.done = True
+            self._send_full_response(  # Possibly an attack
+                "State mismatch. Waiting for next response... or you may abort.", is_ok=False)
         else:
             template = (self.server.success_template
                 if "code" in auth_response else self.server.error_template)
             if _is_html(template.template):
                 safe_data = _escape(auth_response)  # Foiling an XSS attack
             else:
-                safe_data = dict(auth_response)  # Make a copy to avoid mutating original
-            # Provide default values for common OAuth2 response fields
-            # to avoid showing literal placeholder text like "$error_description"
-            safe_data.setdefault("error", "")
-            safe_data.setdefault("error_description", "")
-            # Format error message nicely: include ": description." only if description exists
-            if "code" not in auth_response:  # This is an error response
-                error_desc = auth_response.get("error_description", "").strip()
-                if error_desc:
-                    safe_data["error_message"] = f"{safe_data['error']}: {error_desc}."
-                else:
-                    safe_data["error_message"] = safe_data["error"]
-            else:
-                safe_data["error_message"] = ""
-            self._send_full_response(template.safe_substitute(**safe_data))
+                safe_data = auth_response
+            filled_data = defaultdict(str, safe_data)  # So that missing keys will be empty string
+            self._send_full_response(template.safe_substitute(**filled_data))
             self.server.auth_response = auth_response  # Set it now, after the response is likely sent
 
     def _send_full_response(self, body, is_ok=True):
@@ -258,6 +236,7 @@ class AuthCodeReceiver(object):
 
         :param str auth_uri:
             If provided, this function will try to open a local browser.
+            Starting from 2026, the built-in http server will require response_mode=form_post.
         :param int timeout: In seconds. None means wait indefinitely.
         :param str state:
             You may provide the state you used in auth_uri,
@@ -330,17 +309,20 @@ class AuthCodeReceiver(object):
         welcome_uri = "http://localhost:{p}".format(p=self.get_port())
         abort_uri = "{loc}?error=abort".format(loc=welcome_uri)
         logger.debug("Abort by visit %s", abort_uri)
-        
-        # Enforce response_mode=form_post for security
+
         if auth_uri:
-            parsed = urlparse(auth_uri)
-            params = parse_qs(parsed.query)
-            params['response_mode'] = ['form_post']  # Enforce form_post
-            new_query = urlencode(params, doseq=True)
-            auth_uri = parsed._replace(query=new_query).geturl()
-        
-        self._server.welcome_page = Template(welcome_template or "").safe_substitute(
-            auth_uri=auth_uri, abort_uri=abort_uri)
+            # Note to maintainers:
+            # Do not enforce response_mode=form_post by secretly hardcoding it here.
+            # Just validate it here, so we won't surprise caller by changing their auth_uri behind the scene.
+            params = parse_qs(urlparse(auth_uri).query)
+            assert params.get('response_mode', [None])[0] == 'form_post', (
+                "The built-in http server supports HTTP POST only. "
+                "The auth_uri must be built with response_mode=form_post")
+
+        self._server.welcome_page = Template(
+            welcome_template or
+            "<a href='$auth_uri'>Sign In</a>, or <a href='$abort_uri'>Abort</a>"
+            ).safe_substitute(auth_uri=auth_uri, abort_uri=abort_uri)
         if auth_uri:  # Now attempt to open a local browser to visit it
             _uri = welcome_uri if welcome_template else auth_uri
             logger.info("Open a browser on this device to visit: %s" % _uri)
@@ -369,22 +351,22 @@ class AuthCodeReceiver(object):
                     auth_uri_callback(_uri)
 
         self._server.success_template = Template(success_template or
-            "Authentication complete. You can return to the application. Please close this browser tab.\n\n"
-            "For your security: Do not share the contents of this page, the address bar, or take screenshots.")
+            "Authentication complete. You can return to the application. Please close this browser tab.")
         self._server.error_template = Template(error_template or
-            "Authentication failed. $error_message\n\n"
-            "For your security: Do not share the contents of this page, the address bar, or take screenshots.")
+            # Do NOT invent new placeholders in this template. Just use standard keys defined in OAuth2 RFC.
+            # Otherwise there is no obvious canonical way for caller to know what placeholders are supported.
+            # Besides, we have been using these standard keys for years. Changing now would break backward compatibility.
+            "Authentication failed. $error: $error_description. ($error_uri)")
 
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
         self._server.auth_response = {}  # Shared with _AuthCodeHandler
         self._server.auth_state = state  # So handler will check it before sending response
-        self._server.done = False  # Flag to indicate completion without setting auth_response
         while not self._closing:  # Otherwise, the handle_request() attempt
                                   # would yield noisy ValueError trace
             # Derived from
             # https://docs.python.org/2/library/basehttpserver.html#more-examples
             self._server.handle_request()
-            if self._server.auth_response or self._server.done:
+            if self._server.auth_response:
                 break
         result.update(self._server.auth_response)  # Return via writable result param
 
@@ -425,8 +407,6 @@ if __name__ == '__main__':
             )
         print(json.dumps(receiver.get_auth_response(
             auth_uri=flow["auth_uri"],
-            welcome_template=
-                "<a href='$auth_uri'>Sign In</a>, or <a href='$abort_uri'>Abort</a",
             error_template="<html>Oh no. $error</html>",
             success_template="Oh yeah. Got $code",
             timeout=args.timeout,

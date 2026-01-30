@@ -176,22 +176,7 @@ class BaseClient(object):
         response_type = self._stringify(response_type)
 
         params = {'client_id': self.client_id, 'response_type': response_type}
-        params.update(kwargs)
-        if 'response_mode' in params:
-            import warnings
-            warnings.warn(
-                "The 'response_mode' parameter is deprecated and will be removed in a future version. "
-                "For public clients, response_mode is automatically set to 'form_post'. "
-                "For confidential clients, configure your web framework to use 'form_post'. "
-                "Query-based response modes are less secure.",
-                DeprecationWarning,
-                stacklevel=3)
-            if params['response_mode'] != 'form_post':
-                warnings.warn(
-                    "response_mode='form_post' is recommended for better security. "
-                    "See https://tools.ietf.org/html/rfc6749#section-4.1.2",
-                    UserWarning,
-                    stacklevel=3)
+        params.update(kwargs)  # Note: None values will override params
         params = {k: v for k, v in params.items() if v is not None}  # clean up
         if params.get('scope'):
             params['scope'] = self._stringify(params['scope'])
@@ -411,12 +396,21 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
 
     def _build_auth_request_uri(
             self,
-            response_type, redirect_uri=None, scope=None, state=None, **kwargs):
+            response_type,
+            *,
+            redirect_uri=None, scope=None, state=None, response_mode=None,
+            **kwargs):
         if "authorization_endpoint" not in self.configuration:
             raise ValueError("authorization_endpoint not found in configuration")
         authorization_endpoint = self.configuration["authorization_endpoint"]
+        if response_mode != 'form_post':
+            warnings.warn(
+                "response_mode='form_post' is recommended for better security. "
+                "See https://www.rfc-editor.org/rfc/rfc9700.html#section-4.3.1"
+                )
         params = self._build_auth_request_params(
             response_type, redirect_uri=redirect_uri, scope=scope, state=state,
+            response_mode=response_mode,
             **kwargs)
         sep = '&' if '?' in authorization_endpoint else '?'
         return "%s%s%s" % (authorization_endpoint, sep, urlencode(params))
@@ -684,6 +678,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         flow = self.initiate_auth_code_flow(
             redirect_uri=redirect_uri,
             scope=_scope_set(scope) | _scope_set(extra_scope_to_consent),
+            response_mode='form_post',  # The auth_code_receiver has been changed to require it
             **(auth_params or {}))
         auth_response = auth_code_receiver.get_auth_response(
             auth_uri=flow["auth_uri"],
