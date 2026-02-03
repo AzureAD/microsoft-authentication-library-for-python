@@ -111,15 +111,23 @@ def _printify(text):
 class _AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         qs = parse_qs(urlparse(self.path).query)
-        if qs:
+        welcome_param = qs.get('welcome', [None])[0]
+        error_param = qs.get('error', [None])[0]
+        if welcome_param == 'true':  # Useful in manual e2e tests
+            self._send_full_response(self.server.welcome_page)
+        elif error_param == 'abort':  # Useful in manual e2e tests
+            self._send_full_response("Authentication aborted", is_ok=False)
+        elif qs:
             # GET request with auth code or error - reject for security (form_post only)
             self._send_full_response(
                 "response_mode=query is not supported for authentication responses. "
                 "This application operates in response_mode=form_post mode only.",
                 is_ok=False)
         else:
-            # Other GET requests - show welcome page
-            self._send_full_response(self.server.welcome_page)
+            # IdP may have error scenarios that result in a parameter-less GET request
+            self._send_full_response(
+                "Authentication could not be completed. You can close this window and return to the application.",
+                is_ok=False)
         # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
 
     def do_POST(self):  # Handle form_post response where auth code is in body
@@ -306,8 +314,8 @@ class AuthCodeReceiver(object):
             auth_uri_callback=None,
             browser_name=None,
             ):
-        welcome_uri = "http://localhost:{p}".format(p=self.get_port())
-        abort_uri = "{loc}?error=abort".format(loc=welcome_uri)
+        netloc = "http://localhost:{p}".format(p=self.get_port())
+        abort_uri = "{loc}?error=abort".format(loc=netloc)
         logger.debug("Abort by visit %s", abort_uri)
 
         if auth_uri:
@@ -319,12 +327,10 @@ class AuthCodeReceiver(object):
                 "The built-in http server supports HTTP POST only. "
                 "The auth_uri must be built with response_mode=form_post")
 
-        self._server.welcome_page = Template(
-            welcome_template or
-            "<a href='$auth_uri'>Sign In</a>, or <a href='$abort_uri'>Abort</a>"
-            ).safe_substitute(auth_uri=auth_uri, abort_uri=abort_uri)
+        self._server.welcome_page = Template(welcome_template or "").safe_substitute(
+            auth_uri=auth_uri, abort_uri=abort_uri)
         if auth_uri:  # Now attempt to open a local browser to visit it
-            _uri = welcome_uri if welcome_template else auth_uri
+            _uri = (netloc + "?welcome=true") if welcome_template else auth_uri
             logger.info("Open a browser on this device to visit: %s" % _uri)
             browser_opened = False
             try:
@@ -350,13 +356,14 @@ class AuthCodeReceiver(object):
                 else:  # Then it is the auth_uri_callback()'s job to inform the user
                     auth_uri_callback(_uri)
 
+        recommendation = "For your security: Do not share the contents of this page, the address bar, or take screenshots."  # From MSRC
         self._server.success_template = Template(success_template or
-            "Authentication complete. You can return to the application. Please close this browser tab.")
+            "Authentication complete. You can return to the application. Please close this browser tab.\n\n" + recommendation)
         self._server.error_template = Template(error_template or
             # Do NOT invent new placeholders in this template. Just use standard keys defined in OAuth2 RFC.
             # Otherwise there is no obvious canonical way for caller to know what placeholders are supported.
             # Besides, we have been using these standard keys for years. Changing now would break backward compatibility.
-            "Authentication failed. $error: $error_description. ($error_uri)")
+            "Authentication failed. $error: $error_description. ($error_uri).\n\n" + recommendation)
 
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
         self._server.auth_response = {}  # Shared with _AuthCodeHandler
@@ -407,6 +414,8 @@ if __name__ == '__main__':
             )
         print(json.dumps(receiver.get_auth_response(
             auth_uri=flow["auth_uri"],
+            welcome_template=
+                "<a href='$auth_uri'>Sign In</a>, or <a href='$abort_uri'>Abort</a>",
             error_template="<html>Oh no. $error</html>",
             success_template="Oh yeah. Got $code",
             timeout=args.timeout,
