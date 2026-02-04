@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770163081935,
+  "lastUpdate": 1770166071974,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -34415,6 +34415,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000012626696785604302",
             "extra": "mean: 117.55634990913434 usec\nrounds: 3841"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83938949+ashok672@users.noreply.github.com",
+            "name": "Ashok Kumar Ramakrishnan",
+            "username": "ashok672"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "60d340147af1996c899053a9150b25b4635d04aa",
+          "message": "Add form_post response mode support for system browser authentication (#868)\n\n* Initial changes\n\n* Deprecate response_mode parameter, better messages and more robust test\n\n* Update test_response_mode.py\n\n* Update authcode.py\n\n* Update application.py\n\n* Fix test failure in  state_mismatch test\n\n* Fix for review comments\n\n* Update authcode.py\n\n* Update test_response_mode.py\n\n* Refactor to specify response_mode=form_post in a better spot\n\n* Treat parameter-less HTTP GET as error, while still keeping the welcome page and abort feature\n\n---------\n\nCo-authored-by: Ray Luo <rayluo@microsoft.com>",
+          "timestamp": "2026-02-03T16:45:22-08:00",
+          "tree_id": "1edfff58b2df1058a807a105369abbe6c18f98ba",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/60d340147af1996c899053a9150b25b4635d04aa"
+        },
+        "date": 1770166071145,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 48706.06153478802,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000017603898257305225",
+            "extra": "mean: 20.531325434427824 usec\nrounds: 7596"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 44427.6159567388,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002145900145835751",
+            "extra": "mean: 22.508522648925066 usec\nrounds: 16822"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9763.580548790045,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015708582766348317",
+            "extra": "mean: 102.42144211366447 usec\nrounds: 3766"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9283.088314534034,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001527570035381569",
+            "extra": "mean: 107.72277135771223 usec\nrounds: 5244"
           }
         ]
       }
