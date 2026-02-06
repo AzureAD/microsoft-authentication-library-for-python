@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770166071974,
+  "lastUpdate": 1770406155905,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -34467,6 +34467,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001527570035381569",
             "extra": "mean: 107.72277135771223 usec\nrounds: 5244"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "62066438+Avery-Dunn@users.noreply.github.com",
+            "name": "Avery-Dunn",
+            "username": "Avery-Dunn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c0963357b113cad6455ae5b3cd22c049f358ade7",
+          "message": "Remove usage of Lab API for integration test config (#870)\n\n* Remove usage of Lab API for integration test config\n\n* Add missing dependencies\n\n* Potential fix for code scanning alert no. 79: Clear-text logging of sensitive information\n\nCo-authored-by: Copilot Autofix powered by AI <62310815+github-advanced-security[bot]@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Copilot Autofix powered by AI <62310815+github-advanced-security[bot]@users.noreply.github.com>",
+          "timestamp": "2026-02-06T11:26:46-08:00",
+          "tree_id": "48cebb5f93c4a0f10e3874086689f44018f09822",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/c0963357b113cad6455ae5b3cd22c049f358ade7"
+        },
+        "date": 1770406154900,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38984.347374369885,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002977976667252213",
+            "extra": "mean: 25.65132078259302 usec\nrounds: 8127"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37192.136290816845,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000034227444760436136",
+            "extra": "mean: 26.88740415932793 usec\nrounds: 10867"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7525.147842030651,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015552215150990315",
+            "extra": "mean: 132.88775463182813 usec\nrounds: 3994"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 6972.147886478254,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001907623379590228",
+            "extra": "mean: 143.42782400519567 usec\nrounds: 4574"
           }
         ]
       }
