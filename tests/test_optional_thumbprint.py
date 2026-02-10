@@ -76,6 +76,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         if expected_thumbprint_type == 'sha256':
             self.assertIn('sha256_thumbprint', call_args[1])
             self.assertNotIn('sha1_thumbprint', call_args[1])
+            if expected_thumbprint_value:
+                self.assertEqual(call_args[1]['sha256_thumbprint'], expected_thumbprint_value)
         elif expected_thumbprint_type == 'sha1':
             self.assertIn('sha1_thumbprint', call_args[1])
             self.assertNotIn('sha256_thumbprint', call_args[1])
@@ -233,7 +235,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._verify_assertion_params(
             mock_jwt_creator_class,
             expected_algorithm='PS256',
-            expected_thumbprint_type='sha256'
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
         )
 
     def test_pem_with_both_thumbprints_aad_uses_sha256(
@@ -257,7 +260,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._verify_assertion_params(
             mock_jwt_creator_class,
             expected_algorithm='PS256',
-            expected_thumbprint_type='sha256'
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
         )
 
     def test_pem_with_both_thumbprints_adfs_uses_sha1(
@@ -309,7 +313,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._verify_assertion_params(
             mock_jwt_creator_class,
             expected_algorithm='PS256',
-            expected_thumbprint_type='sha256'
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
         )
 
     def test_pem_with_both_thumbprints_ciam_uses_sha256(
@@ -333,7 +338,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._verify_assertion_params(
             mock_jwt_creator_class,
             expected_algorithm='PS256',
-            expected_thumbprint_type='sha256'
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
         )
 
     def test_pem_with_both_thumbprints_generic_uses_sha1(
