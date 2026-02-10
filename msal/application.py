@@ -851,9 +851,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 ):  # Then we treat the public_certificate value as PEM content
                     headers["x5c"] = extract_certs(client_credential['public_certificate'])
                 # Determine which thumbprint to use based on what's available and authority type
-                # Spec: If both thumbprints are provided:
-                #   - Use SHA256 for AAD authorities (including B2C, CIAM)
-                #   - Use SHA1 for ADFS and generic authorities
+                # Based on the feature requirement:
+                #   - If both thumbprints are provided, use SHA256 for AAD authorities
+                #     (including B2C, CIAM), and SHA1 for ADFS and generic authorities
                 use_sha256 = False
                 if sha256_thumbprint and sha1_thumbprint:
                     # Both thumbprints provided - choose based on authority type
@@ -869,11 +869,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 elif sha256_thumbprint:
                     # Only SHA256 provided
                     use_sha256 = True
-                elif sha1_thumbprint:
-                    # Only SHA1 provided
-                    use_sha256 = False
                 else:
-                    raise ValueError("You must provide either 'thumbprint' (SHA-1) or 'thumbprint_sha256' (SHA-256).")
+                    # Only SHA1 provided or fallback
+                    use_sha256 = False
                 
                 if use_sha256:
                     assertion_params = {
