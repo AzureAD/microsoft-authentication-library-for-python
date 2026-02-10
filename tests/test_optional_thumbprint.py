@@ -21,6 +21,11 @@ MIIC5jCCAc6gAwIBAgIJALdYQVsVsNZHMA0GCSqGSIb3DQEBCwUAMBYxFDASBgNV
 BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
 -----END CERTIFICATE-----"""
 
+    # Test thumbprint values
+    test_sha1_thumbprint = "A1B2C3D4E5F6"
+    test_sha256_thumbprint = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"
+
+
     def _setup_mocks(self, mock_authority_class, authority="https://login.microsoftonline.com/common"):
         """Helper to setup Authority mock"""
         # Setup Authority mock
@@ -119,12 +124,11 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._setup_mocks(mock_authority_class, authority)
 
         # Create app with manual thumbprint (legacy approach)
-        manual_thumbprint = "A1B2C3D4E5F6"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint": manual_thumbprint,
+                "thumbprint": self.test_sha1_thumbprint,
                 # Note: NO public_certificate provided
             },
             authority=authority
@@ -135,7 +139,7 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             mock_jwt_creator_class,
             expected_algorithm='RS256',
             expected_thumbprint_type='sha1',
-            expected_thumbprint_value=manual_thumbprint
+            expected_thumbprint_value=self.test_sha1_thumbprint
         )
 
     def test_pem_with_both_uses_manual_thumbprint_as_sha1(
@@ -145,12 +149,11 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._setup_mocks(mock_authority_class, authority)
 
         # Create app with BOTH thumbprint and certificate
-        manual_thumbprint = "A1B2C3D4E5F6"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint": manual_thumbprint,
+                "thumbprint": self.test_sha1_thumbprint,
                 "public_certificate": self.test_certificate,
             },
             authority=authority
@@ -161,7 +164,7 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             mock_jwt_creator_class,
             expected_algorithm='RS256',
             expected_thumbprint_type='sha1',
-            expected_thumbprint_value=manual_thumbprint,
+            expected_thumbprint_value=self.test_sha1_thumbprint,
             has_x5c=True  # x5c should still be present
         )
 
@@ -217,12 +220,11 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._setup_mocks(mock_authority_class, authority)
 
         # Create app with only SHA256 thumbprint
-        sha256_thumbprint = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint_sha256": sha256_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
             },
             authority=authority
         )
@@ -241,14 +243,12 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._setup_mocks(mock_authority_class, authority)
 
         # Create app with BOTH thumbprints for AAD
-        sha1_thumbprint = "A1B2C3D4E5F6"
-        sha256_thumbprint = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint": sha1_thumbprint,
-                "thumbprint_sha256": sha256_thumbprint,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
             },
             authority=authority
         )
@@ -267,14 +267,12 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._setup_mocks(mock_authority_class, authority)
 
         # Create app with BOTH thumbprints for ADFS
-        sha1_thumbprint = "A1B2C3D4E5F6"
-        sha256_thumbprint = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint": sha1_thumbprint,
-                "thumbprint_sha256": sha256_thumbprint,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
             },
             authority=authority
         )
@@ -284,7 +282,7 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             mock_jwt_creator_class,
             expected_algorithm='RS256',
             expected_thumbprint_type='sha1',
-            expected_thumbprint_value=sha1_thumbprint
+            expected_thumbprint_value=self.test_sha1_thumbprint
         )
 
     def test_pem_with_both_thumbprints_b2c_uses_sha256(
@@ -297,14 +295,12 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         mock_authority._is_b2c = True
 
         # Create app with BOTH thumbprints for B2C
-        sha1_thumbprint = "A1B2C3D4E5F6"
-        sha256_thumbprint = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint": sha1_thumbprint,
-                "thumbprint_sha256": sha256_thumbprint,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
             },
             authority=authority
         )
@@ -323,14 +319,12 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         mock_authority = self._setup_mocks(mock_authority_class, authority)
 
         # Create app with BOTH thumbprints for CIAM
-        sha1_thumbprint = "A1B2C3D4E5F6"
-        sha256_thumbprint = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint": sha1_thumbprint,
-                "thumbprint_sha256": sha256_thumbprint,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
             },
             authority=authority
         )
@@ -353,14 +347,12 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         mock_authority._is_b2c = False
 
         # Create app with BOTH thumbprints for generic authority
-        sha1_thumbprint = "A1B2C3D4E5F6"
-        sha256_thumbprint = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint": sha1_thumbprint,
-                "thumbprint_sha256": sha256_thumbprint,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
             },
             authority=authority
         )
@@ -370,7 +362,7 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             mock_jwt_creator_class,
             expected_algorithm='RS256',
             expected_thumbprint_type='sha1',
-            expected_thumbprint_value=sha1_thumbprint
+            expected_thumbprint_value=self.test_sha1_thumbprint
         )
 
 

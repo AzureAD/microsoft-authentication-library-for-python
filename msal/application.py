@@ -858,12 +858,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 if sha256_thumbprint and sha1_thumbprint:
                     # Both thumbprints provided - choose based on authority type
                     # Use SHA256 for AAD (including B2C, CIAM), SHA1 for ADFS and generic
-                    from .authority import WELL_KNOWN_AUTHORITY_HOSTS, WELL_KNOWN_B2C_HOSTS, _CIAM_DOMAIN_SUFFIX
+                    from .authority import WELL_KNOWN_AUTHORITY_HOSTS
                     is_known_aad = authority.instance in WELL_KNOWN_AUTHORITY_HOSTS
-                    is_b2c_or_ciam = (
-                        authority.instance.endswith(_CIAM_DOMAIN_SUFFIX) or
-                        any(authority.instance.endswith("." + d) for d in WELL_KNOWN_B2C_HOSTS)
-                    )
+                    is_b2c_or_ciam = getattr(authority, '_is_b2c', False)
                     # Use SHA256 for known AAD, B2C, or CIAM; SHA1 for ADFS and generic
                     use_sha256 = (is_known_aad or is_b2c_or_ciam) and not authority.is_adfs
                 elif sha256_thumbprint:
