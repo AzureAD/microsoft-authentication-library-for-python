@@ -294,9 +294,7 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         """Test that with both thumbprints, B2C authority uses SHA-256"""
         authority = "https://contoso.b2clogin.com/contoso.onmicrosoft.com/B2C_1_susi"
         mock_authority = self._setup_mocks(mock_authority_class, authority)
-        
-        # Manually set _is_b2c to True for this B2C authority
-        mock_authority._is_b2c = True
+        mock_authority._is_b2c = True  # Manually set _is_b2c to True for this B2C authority
 
         # Create app with BOTH thumbprints for B2C
         app = ConfidentialClientApplication(

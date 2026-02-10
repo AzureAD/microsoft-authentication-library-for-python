@@ -840,8 +840,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                             _extract_cert_and_thumbprints(cert))
                     else:
                         raise ValueError(
-                            "You must provide either 'thumbprint', 'thumbprint_sha256', or 'public_certificate' "
-                            "from which the thumbprint can be calculated.")
+                            "You must provide 'thumbprint' (SHA-1), 'thumbprint_sha256' (SHA-256), "
+                            "or 'public_certificate' from which the thumbprint can be calculated.")
                 else:
                     raise ValueError(
                         "client_credential needs to follow this format "
