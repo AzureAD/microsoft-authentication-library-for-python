@@ -375,6 +375,36 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             expected_thumbprint_value=self.test_sha1_thumbprint
         )
 
+    def test_pem_with_both_thumbprints_dsts_uses_sha1(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that with both thumbprints, dSTS authority uses SHA-1"""
+        authority = "https://test-instance1-dsts.dsts.core.azure-test.net/dstsv2/common"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        
+        # Set up as a dSTS authority (dSTS is treated as OIDC)
+        mock_authority.is_adfs = False
+        mock_authority._is_b2c = True  # OIDC sets this but it's not truly B2C
+        mock_authority._is_oidc = True  # dSTS is treated as OIDC generic
+
+        # Create app with BOTH thumbprints for dSTS authority
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # For dSTS authorities, should use SHA-1 when both are provided
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='RS256',
+            expected_thumbprint_type='sha1',
+            expected_thumbprint_value=self.test_sha1_thumbprint
+        )
+
     def test_pem_with_both_thumbprints_unknown_aad_uses_sha256(
             self, mock_jwt_creator_class, mock_authority_class):
         """Test that with both thumbprints, unknown AAD authority (e.g., sovereign cloud) uses SHA-256"""

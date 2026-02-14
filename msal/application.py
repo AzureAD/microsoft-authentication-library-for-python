@@ -855,14 +855,14 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 #   - ADFS: authority.is_adfs
                 #   - B2C: authority._is_b2c (and not OIDC)
                 #   - CIAM: authority._is_b2c (and not OIDC)
-                #   - OIDC generic: authority._is_oidc
+                #   - OIDC generic: authority._is_oidc (includes dSTS)
                 #   - AAD: everything else
-                # Use SHA256 for AAD, B2C, CIAM; use SHA1 for ADFS and OIDC generic
+                # Use SHA256 for AAD, B2C, CIAM; use SHA1 for ADFS, OIDC generic, and dSTS
                 use_sha256 = False
                 if sha256_thumbprint and sha1_thumbprint:
                     # Both thumbprints provided - choose based on authority type
                     is_oidc = getattr(authority, '_is_oidc', False)
-                    # Use SHA1 for ADFS and OIDC generic; SHA256 for everything else (AAD, B2C, CIAM)
+                    # Use SHA1 for ADFS, OIDC generic (including dSTS); SHA256 for everything else (AAD, B2C, CIAM)
                     use_sha256 = not authority.is_adfs and not is_oidc
                 elif sha256_thumbprint:
                     # Only SHA256 provided
