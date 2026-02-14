@@ -851,18 +851,19 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 ):  # Then we treat the public_certificate value as PEM content
                     headers["x5c"] = extract_certs(client_credential['public_certificate'])
                 # Determine which thumbprint to use based on what's available and authority type
-                # Based on the feature requirement:
-                #   - If both thumbprints are provided, use SHA256 for AAD authorities
-                #     (including B2C, CIAM), and SHA1 for ADFS and generic authorities
+                # Authority classification:
+                #   - ADFS: authority.is_adfs
+                #   - B2C: authority._is_b2c (and not OIDC)
+                #   - CIAM: authority._is_b2c (and not OIDC)
+                #   - OIDC generic: authority._is_oidc
+                #   - AAD: everything else
+                # Use SHA256 for AAD, B2C, CIAM; use SHA1 for ADFS and OIDC generic
                 use_sha256 = False
                 if sha256_thumbprint and sha1_thumbprint:
                     # Both thumbprints provided - choose based on authority type
-                    # Use SHA256 for AAD (including B2C, CIAM), SHA1 for ADFS and generic
-                    from .authority import WELL_KNOWN_AUTHORITY_HOSTS
-                    is_known_aad = authority.instance in WELL_KNOWN_AUTHORITY_HOSTS
-                    is_b2c_or_ciam = getattr(authority, '_is_b2c', False)
-                    # Use SHA256 for known AAD, B2C, or CIAM; SHA1 for ADFS and generic
-                    use_sha256 = (is_known_aad or is_b2c_or_ciam) and not authority.is_adfs
+                    is_oidc = getattr(authority, '_is_oidc', False)
+                    # Use SHA1 for ADFS and OIDC generic; SHA256 for everything else (AAD, B2C, CIAM)
+                    use_sha256 = not authority.is_adfs and not is_oidc
                 elif sha256_thumbprint:
                     # Only SHA256 provided
                     use_sha256 = True

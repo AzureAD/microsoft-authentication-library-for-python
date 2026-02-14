@@ -97,7 +97,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             self, mock_extract, mock_load_cert, mock_jwt_creator_class, mock_authority_class):
         """Test that providing only public_certificate (no thumbprint) uses SHA-256"""
         authority = "https://login.microsoftonline.com/common"
-        self._setup_mocks(mock_authority_class, authority)
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_oidc = False  # AAD is not OIDC generic
         self._setup_certificate_mocks(mock_extract, mock_load_cert)
 
         # Create app with certificate credential WITHOUT thumbprint
@@ -243,7 +244,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             self, mock_jwt_creator_class, mock_authority_class):
         """Test that with both thumbprints, AAD authority uses SHA-256"""
         authority = "https://login.microsoftonline.com/common"
-        self._setup_mocks(mock_authority_class, authority)
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_oidc = False  # AAD is not OIDC generic
 
         # Create app with BOTH thumbprints for AAD
         app = ConfidentialClientApplication(
@@ -295,6 +297,7 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         authority = "https://contoso.b2clogin.com/contoso.onmicrosoft.com/B2C_1_susi"
         mock_authority = self._setup_mocks(mock_authority_class, authority)
         mock_authority._is_b2c = True  # Manually set _is_b2c to True for this B2C authority
+        mock_authority._is_oidc = False  # B2C is not OIDC generic
 
         # Create app with BOTH thumbprints for B2C
         app = ConfidentialClientApplication(
@@ -320,6 +323,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         """Test that with both thumbprints, CIAM authority uses SHA-256"""
         authority = "https://contoso.ciamlogin.com/contoso.onmicrosoft.com"
         mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_b2c = True  # CIAM sets _is_b2c to True
+        mock_authority._is_oidc = False  # CIAM is not OIDC generic
 
         # Create app with BOTH thumbprints for CIAM
         app = ConfidentialClientApplication(
@@ -342,15 +347,16 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
 
     def test_pem_with_both_thumbprints_generic_uses_sha1(
             self, mock_jwt_creator_class, mock_authority_class):
-        """Test that with both thumbprints, generic authority uses SHA-1"""
-        authority = "https://custom.authority.com/tenant"
+        """Test that with both thumbprints, OIDC generic authority uses SHA-1"""
+        authority = "https://custom.oidc.authority.com/tenant"
         mock_authority = self._setup_mocks(mock_authority_class, authority)
         
-        # Set up as a generic authority (not ADFS, not B2C, not in known hosts)
+        # Set up as an OIDC generic authority
         mock_authority.is_adfs = False
-        mock_authority._is_b2c = False
+        mock_authority._is_b2c = True  # OIDC sets this but it's not truly B2C
+        mock_authority._is_oidc = True  # This distinguishes OIDC from B2C/CIAM
 
-        # Create app with BOTH thumbprints for generic authority
+        # Create app with BOTH thumbprints for OIDC generic authority
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
@@ -361,12 +367,42 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             authority=authority
         )
 
-        # For generic authorities, should use SHA-1 when both are provided
+        # For OIDC generic authorities, should use SHA-1 when both are provided
         self._verify_assertion_params(
             mock_jwt_creator_class,
             expected_algorithm='RS256',
             expected_thumbprint_type='sha1',
             expected_thumbprint_value=self.test_sha1_thumbprint
+        )
+
+    def test_pem_with_both_thumbprints_unknown_aad_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that with both thumbprints, unknown AAD authority (e.g., sovereign cloud) uses SHA-256"""
+        authority = "https://login.microsoftonline.de/tenant"  # Example of sovereign cloud not in known list
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        
+        # Set up as an AAD authority (not ADFS, not B2C, not OIDC)
+        mock_authority.is_adfs = False
+        mock_authority._is_b2c = False
+        mock_authority._is_oidc = False
+
+        # Create app with BOTH thumbprints for unknown AAD authority
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # For AAD authorities (even unknown ones), should use SHA-256 when both are provided
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
         )
 
 
