@@ -21,8 +21,7 @@ Usage::
 
 Environment Variables:
     LAB_APP_CLIENT_ID: Client ID for Key Vault authentication (required)
-    LAB_APP_CLIENT_CERT_PFX_PATH: Path to .pfx certificate file (preferred)
-    LAB_APP_CLIENT_SECRET: Client secret (alternative to certificate)
+    LAB_APP_CLIENT_CERT_PFX_PATH: Path to .pfx certificate file (required)
 """
 
 import json
@@ -31,7 +30,7 @@ import os
 from dataclasses import dataclass
 from typing import Dict, Optional
 
-from azure.identity import CertificateCredential, ClientSecretCredential
+from azure.identity import CertificateCredential
 from azure.keyvault.secrets import SecretClient
 
 logger = logging.getLogger(__name__)
@@ -169,9 +168,8 @@ def _get_credential():
     """
     Create an Azure credential for Key Vault access.
     
-    Reads authentication details from environment variables. Prefers
-    certificate-based authentication if LAB_APP_CLIENT_CERT_PFX_PATH is set,
-    otherwise falls back to client secret.
+    Reads authentication details from environment variables and uses
+    certificate-based authentication via LAB_APP_CLIENT_CERT_PFX_PATH.
     
     Returns:
         A credential object suitable for Azure SDK clients.
@@ -180,7 +178,6 @@ def _get_credential():
         EnvironmentError: If required environment variables are not set.
     """
     client_id = os.getenv("LAB_APP_CLIENT_ID")
-    client_secret = os.getenv("LAB_APP_CLIENT_SECRET")
     cert_path = os.getenv("LAB_APP_CLIENT_CERT_PFX_PATH")
     tenant_id = "72f988bf-86f1-41af-91ab-2d7cd011db47"  # Microsoft tenant
     
@@ -196,16 +193,9 @@ def _get_credential():
             certificate_path=cert_path,
             send_certificate_chain=True,
         )
-    elif client_secret:
-        logger.debug("Using client secret credential for Key Vault access")
-        return ClientSecretCredential(
-            tenant_id=tenant_id,
-            client_id=client_id,
-            client_secret=client_secret,
-        )
     else:
         raise EnvironmentError(
-            "Either LAB_APP_CLIENT_SECRET or LAB_APP_CLIENT_CERT_PFX_PATH is required")
+            "LAB_APP_CLIENT_CERT_PFX_PATH is required")
 
 
 def _get_msid_lab_client() -> SecretClient:
