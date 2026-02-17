@@ -430,9 +430,6 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
-    def test_client_assertion(self):
-        self.skipTest("No automated lab source for client_assertion yet")
-
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
     @classmethod
     def setUpClass(cls):
