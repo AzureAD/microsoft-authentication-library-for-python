@@ -237,12 +237,9 @@ class Authority(object):
 
         # Case 3: Regional variant check - O(1) lookup
         # e.g., westus2.login.microsoft.com -> extract "login.microsoft.com"
-        dot_index = issuer_host.find(".")
-        if dot_index > 0:
-            potential_base = issuer_host[dot_index + 1:]
-            if potential_base in TRUSTED_ISSUER_HOSTS and "." not in issuer_host[:dot_index]:
-                return True
-
+        if any(issuer_host.endswith("." + trusted) for trusted in TRUSTED_ISSUER_HOSTS):
+            return True
+        
         # Case 4: Same scheme and host (path can differ)
         if (authority_parsed.scheme == issuer_parsed.scheme and 
             authority_parsed.netloc == issuer_parsed.netloc):

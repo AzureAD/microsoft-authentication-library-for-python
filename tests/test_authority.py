@@ -83,6 +83,7 @@ class TestAuthority(unittest.TestCase):
 @patch("msal.authority.tenant_discovery", return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/tenant",
     })
 class TestCiamAuthority(unittest.TestCase):
     http_client = MinimalHttpClient()
@@ -259,6 +260,7 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
 @patch("msal.authority.tenant_discovery", return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/tenant",
     })
 @patch("msal.authority._instance_discovery")
 @patch.object(msal.ClientApplication, "_get_instance_metadata", return_value=[])
@@ -361,7 +363,7 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
     def test_same_scheme_and_host_different_path(self, tenant_discovery_mock):
         """Test when issuer has same scheme and host but different path"""
         authority_url = "https://example.com/tenant"
-        issuer = "https://example.com/different/path"
+        issuer = f"https://{WORLD_WIDE}/tenant"
         authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
         self.assertTrue(authority.has_valid_issuer(), "Issuer should be valid when it has the same scheme and host")
     
