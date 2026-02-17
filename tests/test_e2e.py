@@ -329,6 +329,7 @@ class CloudShellTestCase(E2eTestCase):
         self.assertIsNotNone(result.get("access_token"))
 
 
+@unittest.skipIf(os.getenv("TF_BUILD"), "Skip PublicCloud scenarios on Azure DevOps")
 class PublicCloudScenariosTestCase(E2eTestCase):
     # Historically this class was driven by tests/config.json for semi-automated runs.
     # It now uses lab config + env vars so it can run automatically without local files.
