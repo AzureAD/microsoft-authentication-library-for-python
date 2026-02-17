@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770406155905,
+  "lastUpdate": 1771325865842,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -34519,6 +34519,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001907623379590228",
             "extra": "mean: 143.42782400519567 usec\nrounds: 4574"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "copilot-swe-agent[bot]",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "copilot-swe-agent[bot]",
+            "username": "Copilot"
+          },
+          "distinct": true,
+          "id": "a9fb14e918167f6fa79825bceb9e1ce7c217eb58",
+          "message": "Add dSTS support - use SHA1 for dSTS authorities\n\n- Update comments to explicitly mention dSTS as part of OIDC generic\n- Add test for dSTS authority to verify SHA1 is used\n- dSTS is already handled correctly as it's treated as OIDC authority\n- All 13 tests passing\n\nCo-authored-by: bgavrilMS <12273384+bgavrilMS@users.noreply.github.com>",
+          "timestamp": "2026-02-14T16:16:36Z",
+          "tree_id": "a544006f0b8bc186d546bfc2f2a4374989cdbb7b",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/a9fb14e918167f6fa79825bceb9e1ce7c217eb58"
+        },
+        "date": 1771325864430,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39417.54832876062,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000026624678602248294",
+            "extra": "mean: 25.369411401732464 usec\nrounds: 8104"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37006.499793102084,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003078693608590877",
+            "extra": "mean: 27.022280020830216 usec\nrounds: 13449"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7519.592318620823,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001586576698740143",
+            "extra": "mean: 132.9859329639045 usec\nrounds: 3968"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7044.284106796558,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015270003223569345",
+            "extra": "mean: 141.95906707328385 usec\nrounds: 4100"
           }
         ]
       }
