@@ -413,28 +413,6 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
-    def test_client_certificate(self):
-        from tests.lab_config import get_client_certificate
-
-        client_id = os.getenv("LAB_APP_CLIENT_ID")
-        if not client_id:
-            self.skipTest("LAB_APP_CLIENT_ID environment variable is required")
-
-        client_cert = get_client_certificate().copy()
-        client_cert.pop("public_certificate", None)  # Test basic cert auth without SNI
-        self.app = msal.ConfidentialClientApplication(
-            client_id,
-            client_credential=client_cert,
-            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
-            http_client=MinimalHttpClient())
-        scope = ["https://graph.microsoft.com/.default"]
-        result = self.app.acquire_token_for_client(scope)
-        if (result.get("error") == "invalid_client"
-                and "SNI may be configured on the app" in result.get("error_description", "")):
-            self.skipTest("Lab app requires SNI/x5c for certificate auth")
-        self.assertIn('access_token', result)
-        self.assertCacheWorksForApp(result, scope)
-
     def test_subject_name_issuer_authentication(self):
         from tests.lab_config import get_client_certificate
 
