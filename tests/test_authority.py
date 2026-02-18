@@ -233,6 +233,10 @@ class TestAuthorityInternalHelperCanonicalize(unittest.TestCase):
         with self.assertRaises(ValueError):
             canonicalize("https://no.tenant.example.com/")
 
+    def test_canonicalize_rejects_empty_host(self):
+        with self.assertRaises(ValueError):
+            canonicalize("https:///tenant")
+
 
 @unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip network io during tagged release")
 class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):

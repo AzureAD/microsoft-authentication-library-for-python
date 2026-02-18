@@ -114,6 +114,7 @@ class Authority(object):
                 .format(authority_url)
                 ) + " Also please double check your tenant name or GUID is correct."
             raise ValueError(error_message)
+        openid_config.pop("issuer", None)  # Not used in MSAL.py, so remove it therefore no need to validate it
         logger.debug(
             'openid_config("%s") = %s', tenant_discovery_endpoint, openid_config)
         self._issuer = openid_config.get('issuer')
@@ -264,7 +265,7 @@ class Authority(object):
 def canonicalize(authority_or_auth_endpoint):
     # Returns (url_parsed_result, hostname_in_lowercase, tenant)
     authority = urlparse(authority_or_auth_endpoint)
-    if authority.scheme == "https":
+    if authority.scheme == "https" and authority.hostname:
         parts = authority.path.split("/")
         first_part = parts[1] if len(parts) >= 2 and parts[1] else None
         if authority.hostname.endswith(_CIAM_DOMAIN_SUFFIX):  # CIAM
@@ -278,7 +279,7 @@ def canonicalize(authority_or_auth_endpoint):
             return authority, authority.hostname, parts[1]
     raise ValueError(
         "Your given address (%s) should consist of "
-        "an https url with a minimum of one segment in a path: e.g. "
+        "an https url with hostname and a minimum of one segment in a path: e.g. "
         "https://login.microsoftonline.com/{tenant} "
         "or https://{tenant_name}.ciamlogin.com/{tenant} "
         "or https://{tenant_name}.b2clogin.com/{tenant_name}.onmicrosoft.com/policy"

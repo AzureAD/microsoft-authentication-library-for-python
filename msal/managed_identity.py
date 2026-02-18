@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import os
-import socket
 import sys
 import time
 from urllib.parse import urlparse  # Python 3+
@@ -146,7 +145,10 @@ class ManagedIdentityClient(object):
         (like what a ``PublicClientApplication`` does),
         not a token with application permissions for an app.
     """
-    __instance, _tenant = None, "managed_identity"  # Placeholders
+    __instance = "localhost"  # We used to get this value from socket.getfqdn()
+        # but it is unreliable because getfqdn() either hangs or returns empty value
+        # on some misconfigured machines
+    _tenant = "managed_identity"
     _TOKEN_SOURCE = "token_source"
     _TOKEN_SOURCE_IDP = "identity_provider"
     _TOKEN_SOURCE_CACHE = "cache"
@@ -252,11 +254,6 @@ class ManagedIdentityClient(object):
         self._token_cache = token_cache or TokenCache()
         self._client_capabilities = client_capabilities
 
-    def _get_instance(self):
-        if self.__instance is None:
-            self.__instance = socket.getfqdn()  # Moved from class definition to here
-        return self.__instance
-
     def acquire_token_for_client(
         self,
         *,
@@ -302,7 +299,7 @@ class ManagedIdentityClient(object):
                 target=[resource],
                 query=dict(
                     client_id=client_id_in_cache,
-                    environment=self._get_instance(),
+                    environment=self.__instance,
                     realm=self._tenant,
                     home_account_id=None,
                 ),
@@ -344,7 +341,7 @@ class ManagedIdentityClient(object):
                     client_id=client_id_in_cache,
                     scope=[resource],
                     token_endpoint="https://{}/{}".format(
-                        self._get_instance(), self._tenant),
+                        self.__instance, self._tenant),
                     response=result,
                     params={},
                     data={},

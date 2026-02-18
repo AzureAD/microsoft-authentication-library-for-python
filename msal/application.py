@@ -66,10 +66,24 @@ def _str2bytes(raw):
     except:
         return raw
 
+def _extract_cert_and_thumbprints(cert):
+    # Cert concepts https://security.stackexchange.com/a/226758/125264
+    from cryptography.hazmat.primitives import hashes, serialization
+    cert_pem = cert.public_bytes(  # Requires cryptography 1.0+
+        encoding=serialization.Encoding.PEM).decode()
+    x5c = [
+        '\n'.join(
+            cert_pem.splitlines()
+            [1:-1]  # Strip the "--- header ---" and "--- footer ---"
+        )
+    ]
+    # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object - Requires cryptography 0.7+
+    sha256_thumbprint = cert.fingerprint(hashes.SHA256()).hex() 
+    sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # CodeQL [SM02167] for legacy support such as ADFS
+    return sha256_thumbprint, sha1_thumbprint, x5c
 
 def _parse_pfx(pfx_path, passphrase_bytes):
     # Cert concepts https://security.stackexchange.com/a/226758/125264
-    from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.serialization import pkcs12
     with open(pfx_path, 'rb') as f:
         private_key, cert, _ = pkcs12.load_key_and_certificates(  # cryptography 2.5+
@@ -77,13 +91,7 @@ def _parse_pfx(pfx_path, passphrase_bytes):
             f.read(), passphrase_bytes)
     if not (private_key and cert):
         raise ValueError("Your PFX file shall contain both private key and cert")
-    cert_pem = cert.public_bytes(encoding=serialization.Encoding.PEM).decode()  # cryptography 1.0+
-    x5c = [
-        '\n'.join(cert_pem.splitlines()[1:-1])  # Strip the "--- header ---" and "--- footer ---"
-    ]
-    sha256_thumbprint = cert.fingerprint(hashes.SHA256()).hex()  # cryptography 0.7+
-    sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # cryptography 0.7+
-        # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object
+    sha256_thumbprint, sha1_thumbprint, x5c = _extract_cert_and_thumbprints(cert)
     return private_key, sha256_thumbprint, sha1_thumbprint, x5c
 
 
@@ -280,12 +288,20 @@ class ClientApplication(object):
 
             .. admonition:: Support using a certificate in X.509 (.pem) format
 
+                Deprecated because it uses SHA-1 thumbprint,
+                unless you are still using ADFS which supports SHA-1 thumbprint only.
+                Please use the .pfx option documented later in this page.
+
                 Feed in a dict in this form::
 
                     {
                         "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
-                        "thumbprint": "A1B2C3D4E5F6...",
-                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
+                        "thumbprint": "An SHA-1 thumbprint such as A1B2C3D4E5F6..."
+                            "Changed in version 1.35.0, if thumbprint is absent"
+                            "and a public_certificate is present, MSAL will"
+                            "automatically calculate an SHA-256 thumbprint instead.",
+                        "passphrase": "Needed if the private_key is encrypted (Added in version 1.6.0)",
+                        "public_certificate": "...-----BEGIN CERTIFICATE-----...",  # Needed if you use Subject Name/Issuer auth. Added in version 0.5.0.
                     }
 
                 MSAL Python requires a "private_key" in PEM format.
@@ -296,25 +312,11 @@ class ClientApplication(object):
                 The thumbprint is available in your app's registration in Azure Portal.
                 Alternatively, you can `calculate the thumbprint <https://github.com/Azure/azure-sdk-for-python/blob/07d10639d7e47f4852eaeb74aef5d569db499d6e/sdk/identity/azure-identity/azure/identity/_credentials/certificate.py#L94-L97>`_.
 
-            .. admonition:: Support Subject Name/Issuer Auth with a cert in .pem
-
-                `Subject Name/Issuer Auth
-                <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
-                is an approach to allow easier certificate rotation.
-
-                *Added in version 0.5.0*::
-
-                    {
-                        "private_key": "...-----BEGIN PRIVATE KEY-----... in PEM format",
-                        "thumbprint": "A1B2C3D4E5F6...",
-                        "public_certificate": "...-----BEGIN CERTIFICATE-----...",
-                        "passphrase": "Passphrase if the private_key is encrypted (Optional. Added in version 1.6.0)",
-                    }
-
                 ``public_certificate`` (optional) is public key certificate
-                which will be sent through 'x5c' JWT header only for
-                subject name and issuer authentication to support cert auto rolls.
-
+                which will be sent through 'x5c' JWT header.
+                This is useful when you use `Subject Name/Issuer Authentication
+                <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
+                which is an approach to allow easier certificate rotation.
                 Per `specs <https://tools.ietf.org/html/rfc7515#section-4.1.6>`_,
                 "the certificate containing
                 the public key corresponding to the key used to digitally sign the
@@ -338,11 +340,14 @@ class ClientApplication(object):
 
             .. admonition:: Supporting reading client certificates from PFX files
 
+                This usage will automatically use SHA-256 thumbprint of the certificate.
+
                 *Added in version 1.29.0*:
                 Feed in a dictionary containing the path to a PFX file::
 
                     {
-                        "private_key_pfx_path": "/path/to/your.pfx",
+                        "private_key_pfx_path": "/path/to/your.pfx",  # Added in version 1.29.0
+                        "public_certificate": True,  # Only needed if you use Subject Name/Issuer auth. Added in version 1.30.0
                         "passphrase": "Passphrase if the private_key is encrypted (Optional)",
                     }
 
@@ -350,17 +355,11 @@ class ClientApplication(object):
 
                     openssl pkcs12 -export -out certificate.pfx -inkey privateKey.key -in certificate.pem
 
-            .. admonition:: Support Subject Name/Issuer Auth with a cert in .pfx
-
-                *Added in version 1.30.0*:
+                `Subject Name/Issuer Auth
+                <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
+                is an approach to allow easier certificate rotation.
                 If your .pfx file contains both the private key and public cert,
-                you can opt in for Subject Name/Issuer Auth like this::
-
-                    {
-                        "private_key_pfx_path": "/path/to/your.pfx",
-                        "public_certificate": True,
-                        "passphrase": "Passphrase if the private_key is encrypted (Optional)",
-                    }
+                you can opt in for Subject Name/Issuer Auth by setting "public_certificate" to ``True``.
 
         :type client_credential: Union[dict, str, None]
 
@@ -815,15 +814,30 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                         passphrase_bytes)
                     if client_credential.get("public_certificate") is True and x5c:
                         headers["x5c"] = x5c
-                elif (
-                        client_credential.get("private_key")  # PEM blob
-                        and client_credential.get("thumbprint")):
-                    sha1_thumbprint = client_credential["thumbprint"]
-                    if passphrase_bytes:
-                        private_key = _load_private_key_from_pem_str(
+                elif client_credential.get("private_key"):  # PEM blob
+                    private_key = (  # handles both encrypted and unencrypted
+                        _load_private_key_from_pem_str(
                             client_credential['private_key'], passphrase_bytes)
-                    else:  # PEM without passphrase
-                        private_key = client_credential['private_key']
+                        if passphrase_bytes
+                        else client_credential['private_key']
+                    )
+
+                    # Determine thumbprints based on what's provided
+                    if client_credential.get("thumbprint"):
+                        # User provided a thumbprint - use it as SHA-1 (legacy/manual approach)
+                        sha1_thumbprint = client_credential["thumbprint"]
+                        sha256_thumbprint = None
+                    elif isinstance(client_credential.get('public_certificate'), str):
+                        # No thumbprint provided, but we have a certificate to calculate thumbprints
+                        from cryptography import x509
+                        cert = x509.load_pem_x509_certificate(
+                            _str2bytes(client_credential['public_certificate']))
+                        sha256_thumbprint, sha1_thumbprint, headers["x5c"] = (
+                            _extract_cert_and_thumbprints(cert))
+                    else:
+                        raise ValueError(
+                            "You must provide either 'thumbprint' or 'public_certificate' "
+                            "from which the thumbprint can be calculated.")
                 else:
                     raise ValueError(
                         "client_credential needs to follow this format "
@@ -947,7 +961,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
 
         :param str response_mode:
             OPTIONAL. Specifies the method with which response parameters should be returned.
-            The default value is equivalent to ``query``, which is still secure enough in MSAL Python
+            The default value is equivalent to ``query``, which was still secure enough in MSAL Python
             (because MSAL Python does not transfer tokens via query parameter in the first place).
             For even better security, we recommend using the value ``form_post``.
             In "form_post" mode, response parameters
@@ -958,6 +972,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             More information on possible values
             `here <https://openid.net/specs/oauth-v2-multiple-response-types-1_0.html#ResponseModes>`
             and `here <https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html#FormPostResponseMode>`
+
+            .. note::
+                You should configure your web framework to accept form_post responses instead of query responses.
+                While this parameter still works, it will be removed in a future version.
+                Using query-based response modes is less secure and should be avoided.
 
         :return:
             The auth code flow. It is a dict in this form::
@@ -977,6 +996,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             3. and then relay this dict and subsequent auth response to
                :func:`~acquire_token_by_auth_code_flow()`.
         """
+        # Note to maintainers: Do not emit warning for the use of response_mode here,
+        # because response_mode=form_post is still the recommended usage for MSAL Python 1.x.
+        # App developers making the right call shall not be disturbed by unactionable warnings.
         client = _ClientWithCcsRoutingInfo(
             {"authorization_endpoint": self.authority.authorization_endpoint},
             self.client_id,
@@ -1840,7 +1862,17 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
 
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
+
+        [Deprecated] This API is deprecated for public client flows and will be
+        removed in a future release. Use a more secure flow instead.
+        Migration guide: https://aka.ms/msal-ropc-migration
+
         """
+        is_confidential_app = self.client_credential or isinstance(
+            self, ConfidentialClientApplication)
+        if not is_confidential_app:
+            warnings.warn("""This API has been deprecated for public client flows, please use a more secure flow.
+        See https://aka.ms/msal-ropc-migration for migration guidance""", DeprecationWarning)
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
         if self._enable_broker and sys.platform in ("win32", "darwin"):

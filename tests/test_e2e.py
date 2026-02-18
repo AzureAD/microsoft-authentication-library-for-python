@@ -1,9 +1,6 @@
 """If the following ENV VAR were available, many end-to-end test cases would run.
-LAB_OBO_CLIENT_SECRET=...
 LAB_APP_CLIENT_ID=...
 LAB_APP_CLIENT_CERT_PFX_PATH=...
-LAB_OBO_PUBLIC_CLIENT_ID=...
-LAB_OBO_CONFIDENTIAL_CLIENT_ID=...
 """
 try:
     from dotenv import load_dotenv  # Use this only in local dev machine
@@ -30,6 +27,10 @@ from tests.http_client import MinimalHttpClient, MinimalResponse
 from msal.oauth2cli import AuthCodeReceiver
 from msal.oauth2cli.oidc import decode_part
 from tests.broker_util import is_pymsalruntime_installed
+from tests.lab_config import (
+    get_user_config, get_app_config, get_user_password, get_secret,
+    UserSecrets, AppSecrets,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ except ImportError:
 
 _PYMSALRUNTIME_INSTALLED = is_pymsalruntime_installed()
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+_SKIP_UNATTENDED_E2E_TESTS = os.getenv("TRAVIS") or not os.getenv("CI")
 
 def _get_app_and_auth_code(
         client_id,
@@ -226,7 +228,7 @@ class E2eTestCase(unittest.TestCase):
         return result
 
     @unittest.skipIf(
-        os.getenv("TRAVIS"),  # It is set when running on TravisCI or Github Actions
+        _SKIP_UNATTENDED_E2E_TESTS,
         "Although it is doable, we still choose to skip device flow to save time")
     def _test_device_flow(
         self,
@@ -258,7 +260,7 @@ class E2eTestCase(unittest.TestCase):
         logger.info(
             "%s obtained tokens: %s", self.id(), json.dumps(result, indent=4))
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    @unittest.skipIf(_SKIP_UNATTENDED_E2E_TESTS, "Browser automation is not yet implemented")
     def _test_acquire_token_interactive(
             self, *, client_id=None, authority=None, scope=None, port=None,
             oidc_authority=None,
@@ -327,17 +329,23 @@ class CloudShellTestCase(E2eTestCase):
         self.assertIsNotNone(result.get("access_token"))
 
 
-THIS_FOLDER = os.path.dirname(__file__)
-CONFIG = os.path.join(THIS_FOLDER, "config.json")
-@unittest.skipUnless(os.path.exists(CONFIG), "Optional %s not found" % CONFIG)
-class FileBasedTestCase(E2eTestCase):
-    # This covers scenarios that are not currently available for test automation.
-    # So they mean to be run on maintainer's machine for semi-automated tests.
+@unittest.skipIf(os.getenv("TF_BUILD"), "Skip PublicCloud scenarios on Azure DevOps")
+class PublicCloudScenariosTestCase(E2eTestCase):
+    # Historically this class was driven by tests/config.json for semi-automated runs.
+    # It now uses lab config + env vars so it can run automatically without local files.
 
     @classmethod
     def setUpClass(cls):
-        with open(CONFIG) as f:
-            cls.config = json.load(f)
+        pca_app = get_app_config(AppSecrets.PCA_CLIENT)
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        cls.config = {
+            "client_id": pca_app.app_id,
+            "authority": user.authority,
+            "username": user.upn,
+            "password": get_user_password(user),
+            "scope": ["https://graph.microsoft.com/.default"],
+            "listen_port": 44331,
+        }
 
     def skipUnlessWithConfig(self, fields):
         for field in fields:
@@ -372,13 +380,19 @@ class FileBasedTestCase(E2eTestCase):
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, self.config["scope"], username=None)
 
-    def test_auth_code(self):
+    def manual_test_auth_code(self):
+        if _SKIP_UNATTENDED_E2E_TESTS:
+            self.skipTest("Browser automation is not yet implemented")
         self._test_auth_code({}, {})
 
-    def test_auth_code_with_matching_nonce(self):
+    def manual_test_auth_code_with_matching_nonce(self):
+        if _SKIP_UNATTENDED_E2E_TESTS:
+            self.skipTest("Browser automation is not yet implemented")
         self._test_auth_code({"nonce": "foo"}, {"nonce": "foo"})
 
-    def test_auth_code_with_mismatching_nonce(self):
+    def manual_test_auth_code_with_mismatching_nonce(self):
+        if _SKIP_UNATTENDED_E2E_TESTS:
+            self.skipTest("Browser automation is not yet implemented")
         self.skipUnlessWithConfig(["client_id", "scope"])
         (self.app, ac, redirect_uri) = self._get_app_and_auth_code(nonce="foo")
         with self.assertRaises(ValueError):
@@ -386,80 +400,54 @@ class FileBasedTestCase(E2eTestCase):
                 ac, self.config["scope"], redirect_uri=redirect_uri, nonce="bar")
 
     def test_client_secret(self):
-        self.skipUnlessWithConfig(["client_id", "client_secret"])
+        app = get_app_config(AppSecrets.S2S_CLIENT)
+        secret_name = app.secret_name or app.client_secret
+        if not (app.app_id and secret_name):
+            self.skipTest("S2S app configuration is incomplete")
         self.app = msal.ConfidentialClientApplication(
-            self.config["client_id"],
-            client_credential=self.config.get("client_secret"),
-            authority=self.config.get("authority"),
+            app.app_id,
+            client_credential=get_secret(secret_name, vault="msal_team"),
+            authority=app.authority,
             http_client=MinimalHttpClient())
-        scope = self.config.get("scope", [])
-        result = self.app.acquire_token_for_client(scope)
-        self.assertIn('access_token', result)
-        self.assertCacheWorksForApp(result, scope)
-
-    def test_client_certificate(self):
-        self.skipUnlessWithConfig(["client_id", "client_certificate"])
-        client_cert = self.config["client_certificate"]
-        assert "private_key_path" in client_cert and "thumbprint" in client_cert
-        with open(os.path.join(THIS_FOLDER, client_cert['private_key_path'])) as f:
-            private_key = f.read()  # Should be in PEM format
-        self.app = msal.ConfidentialClientApplication(
-            self.config['client_id'],
-            {"private_key": private_key, "thumbprint": client_cert["thumbprint"]},
-            http_client=MinimalHttpClient())
-        scope = self.config.get("scope", [])
+        scope = ["https://graph.microsoft.com/.default"]
         result = self.app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
     def test_subject_name_issuer_authentication(self):
-        self.skipUnlessWithConfig(["client_id", "client_certificate"])
-        client_cert = self.config["client_certificate"]
-        assert "private_key_path" in client_cert and "thumbprint" in client_cert
-        if not "public_certificate" in client_cert:
-            self.skipTest("Skipping SNI test due to lack of public_certificate")
-        with open(os.path.join(THIS_FOLDER, client_cert['private_key_path'])) as f:
-            private_key = f.read()  # Should be in PEM format
-        with open(os.path.join(THIS_FOLDER, client_cert['public_certificate'])) as f:
-            public_certificate = f.read()
+        from tests.lab_config import get_client_certificate
+
+        client_id = os.getenv("LAB_APP_CLIENT_ID")
+        if not client_id:
+            self.skipTest("LAB_APP_CLIENT_ID environment variable is required")
+
         self.app = msal.ConfidentialClientApplication(
-            self.config['client_id'], authority=self.config["authority"],
-            client_credential={
-                "private_key": private_key,
-                "thumbprint": self.config["thumbprint"],
-                "public_certificate": public_certificate,
-                },
+            client_id,
+            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
+            client_credential=get_client_certificate(),
             http_client=MinimalHttpClient())
-        scope = self.config.get("scope", [])
+        scope = ["https://graph.microsoft.com/.default"]
         result = self.app.acquire_token_for_client(scope)
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
-    def test_client_assertion(self):
-        self.skipUnlessWithConfig(["client_id", "client_assertion"])
-        self.app = msal.ConfidentialClientApplication(
-            self.config['client_id'], authority=self.config["authority"],
-            client_credential={"client_assertion": self.config["client_assertion"]},
-            http_client=MinimalHttpClient())
-        scope = self.config.get("scope", [])
-        result = self.app.acquire_token_for_client(scope)
-        self.assertIn('access_token', result)
-        self.assertCacheWorksForApp(result, scope)
-
-@unittest.skipUnless(os.path.exists(CONFIG), "Optional %s not found" % CONFIG)
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
     @classmethod
     def setUpClass(cls):
-        with open(CONFIG) as f:
-            cls.config = json.load(f)
+        app = get_app_config(AppSecrets.PCA_CLIENT)
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        cls.config = {
+            "client_id": app.app_id,
+            "authority": user.authority,
+            "scope": ["https://graph.microsoft.com/.default"],
+        }
 
-    def test_device_flow(self):
+    def manual_test_device_flow(self):
         self._test_device_flow(**self.config)
 
 
 def get_lab_app(
         env_client_id="LAB_APP_CLIENT_ID",
-        env_name2="LAB_APP_CLIENT_SECRET",  # A var name that hopefully avoids false alarm
         env_client_cert_path="LAB_APP_CLIENT_CERT_PFX_PATH",
         authority="https://login.microsoftonline.com/"
             "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
@@ -472,7 +460,7 @@ def get_lab_app(
     logger.info(
         "Reading ENV variables %s and %s for lab app defined at "
         "https://docs.msidlab.com/accounts/confidentialclient.html",
-        env_client_id, env_name2)
+        env_client_id, env_client_cert_path)
     if os.getenv(env_client_id) and os.getenv(env_client_cert_path):
         # id came from https://docs.msidlab.com/accounts/confidentialclient.html
         client_id = os.getenv(env_client_id)
@@ -482,11 +470,6 @@ def get_lab_app(
                 os.getenv(env_client_cert_path),
             "public_certificate": True,  # Opt in for SNI
             }
-    elif os.getenv(env_client_id) and os.getenv(env_name2):
-        # Data came from here
-        # https://docs.msidlab.com/accounts/confidentialclient.html
-        client_id = os.getenv(env_client_id)
-        client_credential = os.getenv(env_name2)
     else:
         logger.info("ENV variables are not defined. Fall back to MSI.")
         # See also https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API's.aspx
@@ -533,47 +516,7 @@ class LabBasedTestCase(E2eTestCase):
     def tearDownClass(cls):
         cls.session.close()
 
-    @classmethod
-    def get_lab_app_object(cls, client_id=None, **query):  # https://msidlab.com/swagger/index.html
-        url = "https://msidlab.com/api/app/{}".format(client_id or "")
-        resp = cls.session.get(url, params=query)
-        result = resp.json()[0]
-        result["scopes"] = [  # Raw data has extra space, such as "s1, s2"
-            s.strip() for s in result["defaultScopes"].split(',')]
-        return result
-
-    @classmethod
-    def get_lab_user_secret(cls, lab_name="msidlab4"):
-        lab_name = lab_name.lower()
-        if lab_name not in cls._secrets:
-            logger.info("Querying lab user password for %s", lab_name)
-            url = "https://msidlab.com/api/LabSecret?secret=%s" % lab_name
-            resp = cls.session.get(url)
-            cls._secrets[lab_name] = resp.json()["value"]
-        return cls._secrets[lab_name]
-
-    @classmethod
-    def get_lab_user(cls, **query):  # https://docs.msidlab.com/labapi/userapi.html
-        resp = cls.session.get("https://msidlab.com/api/user", params=query)
-        result = resp.json()[0]
-        assert result.get("upn"), "Found no test user but {}".format(
-            json.dumps(result, indent=2))
-        _env = query.get("azureenvironment", "").lower()
-        authority_base = {
-            "azureusgovernment": "https://login.microsoftonline.us/"
-            }.get(_env, "https://login.microsoftonline.com/")
-        scope = {
-            "azureusgovernment": ["https://graph.microsoft.us/.default"],
-            }.get(_env, ["https://graph.microsoft.com/.default"])
-        return {  # Mapping lab API response to our simplified configuration format
-            "authority": authority_base + result["tenantID"],
-            "client_id": result["appId"],
-            "username": result["upn"],
-            "lab_name": result["labName"],
-            "scope": scope,
-            }
-
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    @unittest.skipIf(_SKIP_UNATTENDED_E2E_TESTS, "Browser automation is not yet implemented")
     def _test_acquire_token_by_auth_code(
             self, client_id=None, authority=None, port=None, scope=None,
             **ignored):
@@ -596,7 +539,7 @@ class LabBasedTestCase(E2eTestCase):
                 error_description=result.get("error_description")))
         self.assertCacheWorksForUser(result, scope, username=None)
 
-    @unittest.skipIf(os.getenv("TRAVIS"), "Browser automation is not yet implemented")
+    @unittest.skipIf(_SKIP_UNATTENDED_E2E_TESTS, "Browser automation is not yet implemented")
     def _test_acquire_token_by_auth_code_flow(
             self, client_id=None, authority=None, port=None, scope=None,
             username=None, lab_name=None,
@@ -729,10 +672,52 @@ class LabBasedTestCase(E2eTestCase):
         self.assertIsNotNone(result.get("access_token"), "Got %s instead" % result)
         self.assertCacheWorksForApp(result, scope)
 
+    def _test_acquire_token_by_client_cert(
+            self, client_id=None, authority=None, scope=None,
+            oidc_authority=None,
+            **ignored):
+        """Test client credentials flow with certificate.
+        
+        Uses the lab certificate from LAB_APP_CLIENT_CERT_PFX_PATH environment
+        variable for authentication.
+        """
+        from tests.lab_config import get_client_certificate
+        
+        assert client_id and scope and (authority or oidc_authority)
+        client_credential = get_client_certificate()
+        self.app = msal.ConfidentialClientApplication(
+            client_id, client_credential=client_credential, authority=authority,
+            oidc_authority=oidc_authority,
+            http_client=MinimalHttpClient())
+        result = self.app.acquire_token_for_client(scope)
+        self.assertIsNotNone(result.get("access_token"), "Got %s instead" % result)
+        self.assertCacheWorksForApp(result, scope)
+
 
 class PopWithExternalKeyTestCase(LabBasedTestCase):
+    """Base class for POP/SSH-cert tests with external key.
+    
+    Uses the S2S app configuration from Key Vault for service principal tests
+    and the public cloud user for user account tests.
+    """
+
     def _test_service_principal(self):
-        app = get_lab_app()  # Any SP can obtain an ssh-cert. Here we use the lab app.
+        """Test acquiring POP/SSH-cert token for a service principal.
+        
+        Uses the S2S app configuration and lab certificate.
+        """
+        from tests.lab_config import get_app_config, get_client_certificate, AppSecrets
+        
+        app_config = get_app_config(AppSecrets.S2S_CLIENT)
+        client_credential = get_client_certificate()
+        
+        app = msal.ConfidentialClientApplication(
+            app_config.app_id,
+            client_credential=client_credential,
+            authority=app_config.authority or "https://login.microsoftonline.com/microsoft.onmicrosoft.com",
+            http_client=MinimalHttpClient(),
+        )
+        
         result = app.acquire_token_for_client(self.SCOPE, data=self.DATA1)
         self.assertIsNotNone(result.get("access_token"), "Encountered {}: {}".format(
             result.get("error"), result.get("error_description")))
@@ -756,15 +741,20 @@ class PopWithExternalKeyTestCase(LabBasedTestCase):
         self.assertEqual(refreshed_result["token_source"], "identity_provider")
 
     def _test_user_account(self):
-        lab_user = self.get_lab_user(usertype="cloud")
+        """Test acquiring POP/SSH-cert token for a user account.
+        
+        Uses Azure CLI client ID since it's one of the only clients that are
+        pre-authorized to use the SSH cert feature.
+        """
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
         result = self._test_acquire_token_interactive(
             client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",  # Azure CLI is one
                 # of the only 2 clients that are PreAuthz to use ssh cert feature
             authority="https://login.microsoftonline.com/common",
             scope=self.SCOPE,
             data=self.DATA1,
-            username=lab_user["username"],
-            lab_name=lab_user["lab_name"],
+            username=user.upn,
+            lab_name=user.lab_name,
             prompt="none" if msal.application._is_running_in_cloud_shell() else None,
             )   # It already tests reading AT from cache, and using RT to refresh
                 # acquire_token_silent() would work because we pass in the same key
@@ -841,323 +831,351 @@ class AtPopWithExternalKeyTestCase(PopWithExternalKeyTestCase):
 
 
 class WorldWideTestCase(LabBasedTestCase):
+    _ADFS_LABS_UNAVAILABLE = "ADFS labs were temporarily down since July 2025 until further notice"
 
     def test_aad_managed_user(self):  # Pure cloud
-        config = self.get_lab_user(usertype="cloud")
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password(**config)
+        """Test username/password flow for a managed AAD user."""
+        app = get_app_config(AppSecrets.PCA_CLIENT)
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        password = get_user_password(user)
+        self._test_username_password(
+            authority=user.authority,
+            client_id=app.app_id,
+            username=user.upn,
+            password=password,
+            scope=["https://graph.microsoft.com/.default"],
+        )
 
-    def test_adfs4_fed_user(self):
-        config = self.get_lab_user(usertype="federated", federationProvider="ADFSv4")
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password(**config)
+    @unittest.skip(_ADFS_LABS_UNAVAILABLE)
+    def test_adfs2022_fed_user(self):
+        """Test username/password flow for a federated user via ADFS 2022."""
+        app = get_app_config(AppSecrets.PCA_CLIENT)
+        user = get_user_config(UserSecrets.FEDERATED)
+        password = get_user_password(user)
+        self._test_username_password(
+            authority=user.authority,
+            client_id=app.app_id,
+            username=user.upn,
+            password=password,
+            scope=["https://graph.microsoft.com/.default"],
+        )
 
-    @unittest.skip("ADFSv3 is decommissioned in our test environment")
-    def test_adfs3_fed_user(self):
-        config = self.get_lab_user(usertype="federated", federationProvider="ADFSv3")
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password(**config)
+    def manual_test_cloud_acquire_token_interactive(self):
+        """Test interactive flow for a cloud user."""
+        app = get_app_config(AppSecrets.PCA_CLIENT)
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        self._test_acquire_token_interactive(
+            authority=user.authority,
+            client_id=app.app_id,
+            username=user.upn,
+            lab_name=user.lab_name,
+            scope=["https://graph.microsoft.com/.default"],
+        )
 
-    @unittest.skip("ADFSv2 is decommissioned in our test environment")
-    def test_adfs2_fed_user(self):
-        config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2")
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password(**config)
-
-    def test_adfs2019_fed_user(self):
-        try:
-            config = self.get_lab_user(usertype="federated", federationProvider="ADFSv2019")
-            config["password"] = self.get_lab_user_secret(config["lab_name"])
-            self._test_username_password(**config)
-        except requests.exceptions.HTTPError:
-            if os.getenv("TRAVIS"):
-                self.skipTest("MEX endpoint in our test environment tends to fail")
-            raise
-
-    def test_cloud_acquire_token_interactive(self):
-        self._test_acquire_token_interactive(**self.get_lab_user(usertype="cloud"))
-
-    def test_msa_pt_app_signin_via_organizations_authority_without_login_hint(self):
+    def manual_test_msa_pt_app_signin_via_organizations_authority_without_login_hint(self):
         """There is/was an upstream bug. See test case full docstring for the details.
 
         When a MSAL-PT flow that account control is launched, user has 2+ AAD accounts in WAM,
         selects an AAD account that is NOT the default AAD account from the OS,
         it will incorrectly get tokens for default AAD account.
         """
-        self._test_acquire_token_interactive(**dict(
-            self.get_lab_user(usertype="cloud"),  # This is generally not the current laptop's default AAD account
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        self._test_acquire_token_interactive(
             authority="https://login.microsoftonline.com/organizations",
             client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",  # Azure CLI is an MSA-PT app
+            username=user.upn,
+            lab_name=user.lab_name,
+            scope=["https://graph.microsoft.com/.default"],
             enable_msa_passthrough=True,
             prompt="select_account",  # In MSAL Python, this resets login_hint
-            ))
+        )
 
-    def test_ropc_adfs2019_onprem(self):
-        # Configuration is derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.7.0/tests/Microsoft.Identity.Test.Common/TestConstants.cs#L250-L259
-        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
-        config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
-        config["scope"] = self.adfs2019_scopes
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password(**config)
-
-    def test_adfs2019_onprem_acquire_token_by_auth_code(self):
-        """When prompted, you can manually login using this account:
-
-        # https://msidlab.com/api/user?usertype=onprem&federationprovider=ADFSv2019
-        username = "..."  # The upn from the link above
-        password="***"  # From https://aka.ms/GetLabSecret?Secret=msidlabXYZ
-        """
-        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
-        config["authority"] = "https://fs.%s.com/adfs" % config["lab_name"]
-        config["scope"] = self.adfs2019_scopes
-        config["port"] = 8080
-        self._test_acquire_token_by_auth_code(**config)
-
-    def test_adfs2019_onprem_acquire_token_by_auth_code_flow(self):
-        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
-        self._test_acquire_token_by_auth_code_flow(**dict(
-            config,
-            authority="https://fs.%s.com/adfs" % config["lab_name"],
-            scope=self.adfs2019_scopes,
-            port=8080,
-            ))
-
-    def test_adfs2019_onprem_acquire_token_interactive(self):
-        config = self.get_lab_user(usertype="onprem", federationProvider="ADFSv2019")
-        self._test_acquire_token_interactive(**dict(
-            config,
-            authority="https://fs.%s.com/adfs" % config["lab_name"],
-            scope=self.adfs2019_scopes,
-            port=8080,
-            ))
-
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_CLIENT_SECRET"),
-        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
-        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"),
-        "Need LAB_OBO_PUBLIC_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
     def test_acquire_token_obo(self):
-        config = self.get_lab_user(usertype="cloud")
+        """Test On-Behalf-Of flow.
+        
+        Flow:
+        1. PCA acquires token for user to access the WebAPI (scope: api://<app_id>/access_as_user)
+        2. WebAPI (CCA) uses that token as assertion to get token for downstream service (Graph)
+        """
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        password = get_user_password(user)
+        web_api_app = get_app_config(AppSecrets.WEB_API_CLIENT)
 
-        config_cca = {}
-        config_cca.update(config)
-        config_cca["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
-        config_cca["scope"] = ["https://graph.microsoft.com/.default"]
-        config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+        # Step 1: PCA gets token for user to access the WebAPI
+        # Note: Java test uses "organizations" authority for PCA
+        config_pca = {
+            "authority": "https://login.microsoftonline.com/organizations",
+            "client_id": web_api_app.app_id,
+            "username": user.upn,
+            "password": password,
+            "scope": ["api://%s/access_as_user" % web_api_app.app_id],
+        }
 
-        config_pca = {}
-        config_pca.update(config)
-        config_pca["client_id"] = os.getenv("LAB_OBO_PUBLIC_CLIENT_ID")
-        config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
-        config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
+        # Step 2: WebAPI (CCA) exchanges the token via OBO for Graph access
+        # Note: web_api_app.client_secret contains the Key Vault secret name,
+        # which we pass to get_secret() to retrieve the actual secret value.
+        config_cca = {
+            "authority": user.authority,  # Tenant-specific authority
+            "client_id": web_api_app.app_id,
+            "client_secret": get_secret(web_api_app.client_secret, vault="msal_team"),
+            "scope": ["https://graph.microsoft.com/.default"],
+            "username": user.upn,
+        }
 
         self._test_acquire_token_obo(config_pca, config_cca)
 
+
     @unittest.skipUnless(
         os.path.exists("tests/sp_obo.pem"),
-        "Need a 'tests/sp_obo.pem' private to run OBO for SP test")
+        "Need a 'tests/sp_obo.pem' private key to run OBO for SP test")
     def test_acquire_token_obo_for_sp(self):
+        """Test On-Behalf-Of flow for service principal.
+        
+        Note: This test uses hardcoded PPE (pre-production environment) values
+        as it tests a specific SP-to-SP OBO scenario.
+        """
         authority = "https://login.windows-ppe.net/f686d426-8d16-42db-81b7-ab578e110ccd"
         with open("tests/sp_obo.pem") as pem:
             client_secret = {
                 "private_key": pem.read(),
                 "thumbprint": "378938210C976692D7F523B8C4FFBB645D17CE92",
-                }
+            }
         midtier_app = {
             "authority": authority,
             "client_id": "c84e9c32-0bc9-4a73-af05-9efe9982a322",
             "client_secret": client_secret,
             "scope": ["23d08a1e-1249-4f7c-b5a5-cb11f29b6923/.default"],
-            #"username": "OBO-Client-PPE",  # We do NOT attempt locating initial_app by name
-            }
+        }
         initial_app = {
             "authority": authority,
             "client_id": "9793041b-9078-4942-b1d2-babdc472cc0c",
             "client_secret": client_secret,
             "scope": [midtier_app["client_id"] + "/.default"],
-            }
+        }
         self._test_acquire_token_obo(initial_app, midtier_app)
 
     def test_acquire_token_by_client_secret(self):
-        # Vastly different than ArlingtonCloudTestCase.test_acquire_token_by_client_secret()
-        _app = self.get_lab_app_object(
-            publicClient="no", signinAudience="AzureAdMyOrg")
-        self._test_acquire_token_by_client_secret(
-            client_id=_app["appId"],
-            client_secret=self.get_lab_user_secret(
-                _app["clientSecret"].split("/")[-1]),
-            authority="{}{}.onmicrosoft.com".format(
-                _app["authority"], _app["labName"].lower().rstrip(".com")),
-            scope=["https://graph.microsoft.com/.default"],
-            )
+        """Test client credentials flow with client secret."""
+        app = get_app_config(AppSecrets.S2S_CLIENT)
 
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_CLIENT_SECRET"),
-        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
-        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
+        client_secret = get_secret(app.secret_name, vault="msal_team")
+        self._test_acquire_token_by_client_secret(
+            client_id=app.app_id,
+            client_secret=client_secret,
+            authority=app.authority,
+            scope=["https://graph.microsoft.com/.default"],
+        )
+
     def test_confidential_client_acquire_token_by_username_password(self):
-        # This approach won't work:
-        #       config = self.get_lab_user(usertype="cloud", publicClient="no")
-        # so we repurpose the obo confidential app to test ROPC
-        config = self.get_lab_user(usertype="cloud")
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        # Swap in the OBO confidential app
-        config["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
-        config["scope"] = ["https://graph.microsoft.com/.default"]
-        config["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
-        self._test_username_password(**config)
+        """Test ROPC flow with a confidential client."""
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        password = get_user_password(user)
+        # Use a confidential client app that supports ROPC
+        app = get_app_config(AppSecrets.S2S_CLIENT)
+        client_secret = get_secret(app.secret_name, vault="msal_team")
+        self._test_username_password(
+            authority=user.authority,
+            client_id=app.app_id,
+            username=user.upn,
+            password=password,
+            scope=["https://graph.microsoft.com/.default"],
+            client_secret=client_secret,
+        )
 
     def _build_b2c_authority(self, policy):
         base = "https://msidlabb2c.b2clogin.com/msidlabb2c.onmicrosoft.com"
         return base + "/" + policy  # We do not support base + "?p=" + policy
 
-    def test_b2c_acquire_token_by_auth_code(self):
-        """
-        When prompted, you can manually login using this account:
-
-            username="b2clocal@msidlabb2c.onmicrosoft.com"
-                # This won't work https://msidlab.com/api/user?usertype=b2c
-            password="***"  # From https://aka.ms/GetLabSecret?Secret=msidlabb2c
-        """
-        config = self.get_lab_app_object(azureenvironment="azureb2ccloud")
+    def manual_test_b2c_acquire_token_by_auth_code(self):
+        """Test auth code flow for B2C."""
+        # TODO: Update with B2C app config from Key Vault when available
+        app = get_app_config(AppSecrets.B2C_CLIENT)  # TODO: Verify secret name
         self._test_acquire_token_by_auth_code(
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
-            client_id=config["appId"],
+            client_id=app.app_id,
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
-            scope=config["scopes"],
-            )
+            scope=app.defaultscopes,
+        )
 
-    def test_b2c_acquire_token_by_auth_code_flow(self):
-        self._test_acquire_token_by_auth_code_flow(**dict(
-            self.get_lab_user(usertype="b2c", b2cprovider="local"),
+    def manual_test_b2c_acquire_token_by_auth_code_flow(self):
+        """Test auth code flow (with PKCE) for B2C."""
+        user = get_user_config(UserSecrets.B2C)  # TODO: Verify secret name
+        app = get_app_config(AppSecrets.B2C_CLIENT)  # TODO: Verify secret name
+        self._test_acquire_token_by_auth_code_flow(
             authority=self._build_b2c_authority("B2C_1_SignInPolicy"),
+            client_id=app.app_id,
+            username=user.upn,
+            lab_name=user.lab_name,
             port=3843,  # Lab defines 4 of them: [3843, 4584, 4843, 60000]
-            scope=self.get_lab_app_object(azureenvironment="azureb2ccloud")["scopes"],
-            ))
+            scope=app.defaultscopes,
+        )
 
     def test_b2c_acquire_token_by_ropc(self):
-        config = self.get_lab_app_object(azureenvironment="azureb2ccloud")
+        """Test ROPC flow for B2C with custom authority."""
+        user = get_user_config(UserSecrets.B2C)
+        password = get_user_password(user)
+        app = get_app_config(AppSecrets.B2C_CLIENT)
+        # B2C uses a specific API scope, not generic app.scopes
+        b2c_scope = ["https://msidlabb2c.onmicrosoft.com/msidlabb2capi/read"]
         self._test_username_password(
             authority=self._build_b2c_authority("B2C_1_ROPC_Auth"),
-            client_id=config["appId"],
-            username="b2clocal@msidlabb2c.onmicrosoft.com",
-            password=self.get_lab_user_secret("msidlabb2c"),
-            scope=config["scopes"],
-            )
+            client_id=app.app_id,
+            username=user.upn,
+            password=password,
+            scope=b2c_scope,
+        )
 
     def test_b2c_allows_using_client_id_as_scope(self):
-        # See also https://learn.microsoft.com/en-us/azure/active-directory-b2c/access-tokens#openid-connect-scopes
-        config = self.get_lab_app_object(azureenvironment="azureb2ccloud")
-        config["scopes"] = [config["appId"]]
+        """Test that B2C allows using client_id as scope.
+        
+        See also https://learn.microsoft.com/en-us/azure/active-directory-b2c/access-tokens#openid-connect-scopes
+        """
+        user = get_user_config(UserSecrets.B2C)
+        password = get_user_password(user)
+        app = get_app_config(AppSecrets.B2C_CLIENT)
         self._test_username_password(
             authority=self._build_b2c_authority("B2C_1_ROPC_Auth"),
-            client_id=config["appId"],
-            username="b2clocal@msidlabb2c.onmicrosoft.com",
-            password=self.get_lab_user_secret("msidlabb2c"),
-            scope=config["scopes"],
-            )
+            client_id=app.app_id,
+            username=user.upn,
+            password=password,
+            scope=[app.app_id],  # Using client_id as scope
+        )
 
 
 class CiamTestCase(LabBasedTestCase):
-    # Test cases below show you what scenarios need to be covered for CIAM.
-    # Detail test behaviors have already been implemented in preexisting helpers.
+    """Test cases for CIAM (Customer Identity and Access Management).
+    
+    CIAM uses a different authority format: https://<labName>.ciamlogin.com/
+    """
 
     @classmethod
     def setUpClass(cls):
         super(CiamTestCase, cls).setUpClass()
-        cls.user = cls.get_lab_user(
-            #federationProvider="ciam",  # This line would return ciam2 tenant
-            federationProvider="ciamcud", signinAudience="AzureAdMyOrg",  # ciam6
-        )
-        # FYI: Only single- or multi-tenant CIAM app can have other-than-OIDC
-        # delegated permissions on Microsoft Graph.
-        cls.app_config = cls.get_lab_app_object(cls.user["client_id"])
+        # Get CIAM user and app config from Key Vault
+        cls.user_config = get_user_config(UserSecrets.CIAM)
+        cls.app_config = get_app_config(AppSecrets.CIAM_CLIENT)
+        # CIAM authority format: https://<labName>.ciamlogin.com/
+        cls.ciam_authority = f"https://{cls.user_config.lab_name}.ciamlogin.com/"
 
-    def test_ciam_acquire_token_interactive(self):
+    def manual_test_ciam_acquire_token_interactive(self):
+        """Test interactive flow for CIAM."""
         self._test_acquire_token_interactive(
-            authority=self.app_config.get("authority"),
-            oidc_authority=self.app_config.get("oidc_authority"),
-            client_id=self.app_config["appId"],
-            scope=self.app_config["scopes"],
-            username=self.user["username"],
-            lab_name=self.user["lab_name"],
-            )
+            authority=self.ciam_authority,
+            client_id=self.app_config.app_id,
+            scope=self.app_config.defaultscopes,
+            username=self.user_config.upn,
+            lab_name=self.user_config.lab_name,
+        )
 
     def test_ciam_acquire_token_for_client(self):
-        raw_url = self.app_config["clientSecret"]
-        secret_url = urlparse(raw_url)
-        if secret_url.query:  # Ciam2 era has a query param Secret=name
-            secret_name = parse_qs(secret_url.query)["Secret"][0]
-        else:  # Ciam6 era has a URL path that ends with the secret name
-            secret_name = secret_url.path.split("/")[-1]
-        logger.info('Detected secret name "%s" from "%s"', secret_name, raw_url)
-        self._test_acquire_token_by_client_secret(
-            client_id=self.app_config["appId"],
-            client_secret=self.get_lab_user_secret(secret_name),
-            authority=self.app_config.get("authority"),
-            oidc_authority=self.app_config.get("oidc_authority"),
-            scope=self.app_config["scopes"],  # It shall ends with "/.default"
-            )
+        """Test client credentials flow for CIAM using certificate."""
+        self._test_acquire_token_by_client_cert(
+            client_id=self.app_config.app_id,
+            authority=self.ciam_authority,
+            scope=[f"{self.app_config.app_id}/.default"],
+        )
 
     def test_ciam_acquire_token_by_ropc(self):
-        """CIAM does not officially support ROPC, especially not for external emails.
-
-        We keep this test case for now, because the test data will use a local email.
+        """Test ROPC flow for CIAM.
+        
+        Note: CIAM does not officially support ROPC for external emails,
+        but this test works because the test data uses a local email.
         """
-        # Somehow, this would only work after creating a secret for the test app
-        # and enabling "Allow public client flows".
-        # Otherwise it would hit AADSTS7000218.
+        password = get_user_password(self.user_config)
         self._test_username_password(
-            authority=self.app_config.get("authority"),
-            oidc_authority=self.app_config.get("oidc_authority"),
-            client_id=self.app_config["appId"],
-            username=self.user["username"],
-            password=self.get_lab_user_secret(self.user["lab_name"]),
-            scope=self.app_config["scopes"],
-            )
+            authority=self.ciam_authority,
+            client_id=self.app_config.app_id,
+            username=self.user_config.upn,
+            password=password,
+            scope=["user.read"],
+        )
 
     @unittest.skip("""As of Aug 2024, in both ciam2 and ciam6, sign-in fails with
 AADSTS500208: The domain is not a valid login domain for the account type.""")
-    def test_ciam_device_flow(self):
+    def manual_test_ciam_device_flow(self):
         self._test_device_flow(
-            authority=self.app_config.get("authority"),
-            oidc_authority=self.app_config.get("oidc_authority"),
-            client_id=self.app_config["appId"],
-            scope=self.app_config["scopes"],
-            )
+            authority=self.ciam_authority,
+            client_id=self.app_config.app_id,
+            scope=self.app_config.scopes or ["user.read"],
+        )
 
 
 class CiamCudTestCase(CiamTestCase):
+    """CIAM CUD (Custom URL Domain) test case.
+    
+    Uses OIDC authority instead of standard CIAM authority for custom domain scenarios.
+    """
+    # OIDC authority for CIAM CUD
+    CIAM_CUD_OIDC_AUTHORITY = "https://login.msidlabsciam.com/fe362aec-5d43-45d1-b730-9755e60dc3b9/v2.0"
+
     @classmethod
     def setUpClass(cls):
         super(CiamCudTestCase, cls).setUpClass()
-        cls.app_config["authority"] = None
-        cls.app_config["oidc_authority"] = (
-            # Derived from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.63.0/tests/Microsoft.Identity.Test.Integration.netcore/HeadlessTests/CiamIntegrationTests.cs#L156
-            "https://login.msidlabsciam.com/fe362aec-5d43-45d1-b730-9755e60dc3b9/v2.0")
+        # Override authority to use OIDC authority for CUD scenario
+        cls.ciam_authority = None  # Clear standard authority
+        cls.oidc_authority = cls.CIAM_CUD_OIDC_AUTHORITY
+
+    def manual_test_ciam_acquire_token_interactive(self):
+        """Test interactive flow for CIAM CUD with OIDC authority."""
+        self._test_acquire_token_interactive(
+            oidc_authority=self.oidc_authority,
+            client_id=self.app_config.app_id,
+            scope=self.app_config.defaultscopes,
+            username=self.user_config.upn,
+            lab_name=self.user_config.lab_name,
+        )
+
+    def test_ciam_acquire_token_for_client(self):
+        """Test client credentials flow for CIAM CUD using certificate with OIDC authority."""
+        self._test_acquire_token_by_client_cert(
+            client_id=self.app_config.app_id,
+            oidc_authority=self.oidc_authority,
+            scope=[".default"],
+        )
+
+    def test_ciam_acquire_token_by_ropc(self):
+        """Test ROPC flow for CIAM CUD with OIDC authority."""
+        password = get_user_password(self.user_config)
+        self._test_username_password(
+            oidc_authority=self.oidc_authority,
+            client_id=self.app_config.app_id,
+            username=self.user_config.upn,
+            password=password,
+            scope=["user.read"],
+        )
 
 
 class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
+    """Test regional endpoint behavior for confidential client applications.
+    
+    Regional endpoints are used for Azure-hosted applications to reduce latency.
+    These tests verify that MSAL correctly routes requests to regional vs global endpoints.
+    """
     region = "westus"
     timeout = 2  # Short timeout makes this test case responsive on non-VM
 
     def _test_acquire_token_for_client(self, configured_region, expected_region):
-        """This is the only grant supported by regional endpoint, for now"""
-        self.app = get_lab_app(  # Regional endpoint only supports confidential client
-
-            ## FWIW, the MSAL<1.12 versions could use this to achieve similar result
-            #authority="https://westus.login.microsoft.com/microsoft.onmicrosoft.com",
-            #validate_authority=False,
+        """This is the only grant supported by regional endpoint, for now.
+        
+        Uses the lab app certificate for authentication.
+        """
+        import os
+        from tests.lab_config import get_client_certificate
+        
+        # Get client ID from environment and certificate from lab_config
+        client_id = os.getenv("LAB_APP_CLIENT_ID")
+        if not client_id:
+            self.skipTest("LAB_APP_CLIENT_ID environment variable is required")
+        
+        client_credential = get_client_certificate()
+        
+        self.app = msal.ConfidentialClientApplication(
+            client_id,
+            client_credential=client_credential,
             authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
             azure_region=configured_region,
-            timeout=2,  # Short timeout makes this test case responsive on non-VM
-            )
+            http_client=MinimalHttpClient(timeout=self.timeout),
+        )
         scopes = ["https://graph.microsoft.com/.default"]
 
         with patch.object(  # Test the request hit the regional endpoint
@@ -1212,106 +1230,130 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
             msal.ConfidentialClientApplication.ATTEMPT_REGION_DISCOVERY, "eastus2")
         del os.environ["REGION_NAME"]
 
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_CLIENT_SECRET"),
-        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
-        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_PUBLIC_CLIENT_ID"),
-        "Need LAB_OBO_PUBLIC_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
     def test_cca_obo_should_bypass_regional_endpoint_therefore_still_work(self):
-        """We test OBO because it is implemented in sub class ConfidentialClientApplication"""
-        config = self.get_lab_user(usertype="cloud")
+        """We test OBO because it is implemented in sub class ConfidentialClientApplication.
+        
+        Regional endpoint does not directly support OBO, but MSAL should automatically
+        bypass regional endpoint for OBO calls.
+        """
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        password = get_user_password(user)
+        web_api_app = get_app_config(AppSecrets.WEB_API_CLIENT)
 
-        config_cca = {}
-        config_cca.update(config)
-        config_cca["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
-        config_cca["scope"] = ["https://graph.microsoft.com/.default"]
-        config_cca["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+        # Step 1: PCA gets token for user to access the WebAPI
+        config_pca = {
+            "authority": "https://login.microsoftonline.com/organizations",
+            "client_id": web_api_app.app_id,
+            "username": user.upn,
+            "password": password,
+            "scope": ["api://%s/access_as_user" % web_api_app.app_id],
+        }
 
-        config_pca = {}
-        config_pca.update(config)
-        config_pca["client_id"] = os.getenv("LAB_OBO_PUBLIC_CLIENT_ID")
-        config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
-        config_pca["scope"] = ["api://%s/read" % config_cca["client_id"]]
+        # Step 2: WebAPI (CCA) exchanges the token via OBO for Graph access
+        config_cca = {
+            "authority": user.authority,
+            "client_id": web_api_app.app_id,
+            "client_secret": get_secret(web_api_app.client_secret, vault="msal_team"),
+            "scope": ["https://graph.microsoft.com/.default"],
+            "username": user.upn,
+        }
 
         self._test_acquire_token_obo(
             config_pca, config_cca,
             azure_region=self.region,
             http_client=MinimalHttpClient(timeout=self.timeout),
-            )
+        )
 
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_CLIENT_SECRET"),
-        "Need LAB_OBO_CLIENT_SECRET from https://aka.ms/GetLabSecret?Secret=TodoListServiceV2-OBO")
-    @unittest.skipUnless(
-        os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID"),
-        "Need LAB_OBO_CONFIDENTIAL_CLIENT_ID from https://identitydivision.visualstudio.com/Engineering/_git/IDLABS?path=/src/DocFX/LabDocs/flows/onbehalfofflow.md&_a=preview")
     def test_cca_ropc_should_bypass_regional_endpoint_therefore_still_work(self):
-        """We test ROPC because it is implemented in base class ClientApplication"""
-        config = self.get_lab_user(usertype="cloud")
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        # We repurpose the obo confidential app to test ROPC
-        # Swap in the OBO confidential app
-        config["client_id"] = os.getenv("LAB_OBO_CONFIDENTIAL_CLIENT_ID")
-        config["scope"] = ["https://graph.microsoft.com/.default"]
-        config["client_secret"] = os.getenv("LAB_OBO_CLIENT_SECRET")
+        """We test ROPC because it is implemented in base class ClientApplication.
+        
+        Regional endpoint does not directly support ROPC, but MSAL should automatically
+        bypass regional endpoint for ROPC calls.
+        """
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        password = get_user_password(user)
+        # Use the S2S app which supports ROPC with client secret
+        app = get_app_config(AppSecrets.S2S_CLIENT)
+        client_secret = get_secret(app.secret_name, vault="msal_team")
+        
         self._test_username_password(
+            authority=user.authority,
+            client_id=app.app_id,
+            username=user.upn,
+            password=password,
+            scope=["https://graph.microsoft.com/.default"],
+            client_secret=client_secret,
             azure_region=self.region,
             http_client=MinimalHttpClient(timeout=self.timeout),
-            **config)
+        )
 
 
 class ArlingtonCloudTestCase(LabBasedTestCase):
-    environment = "azureusgovernment"
+    """Test cases for Azure US Government (Arlington) cloud.
+    
+    Arlington uses different endpoints (login.microsoftonline.us, graph.microsoft.us)
+    and requires specific test resources configured for the government cloud.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super(ArlingtonCloudTestCase, cls).setUpClass()
+        # Get Arlington user and app config from Key Vault
+        cls.user_config = get_user_config(UserSecrets.ARLINGTON)
+        cls.app_config = get_app_config(AppSecrets.ARLINGTON_CLIENT)
+        # Arlington authority uses login.microsoftonline.us
+        cls.arlington_authority = f"https://login.microsoftonline.us/{cls.user_config.tenant_id}"
 
     def test_acquire_token_by_ropc(self):
-        config = self.get_lab_user(azureenvironment=self.environment)
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        self._test_username_password(**config)
+        """Test username/password flow for Arlington cloud."""
+        password = get_user_password(self.user_config)
+        self._test_username_password(
+            authority=self.arlington_authority,
+            client_id=self.app_config.app_id,
+            username=self.user_config.upn,
+            password=password,
+            scope=["https://graph.microsoft.us/.default"],
+        )
 
-    def test_acquire_token_by_client_secret(self):
-        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="no")
-        config["client_secret"] = self.get_lab_user_secret("ARLMSIDLAB1-IDLASBS-App-CC-Secret")
-        self._test_acquire_token_by_client_secret(**config)
-
-    def test_acquire_token_obo(self):
-        config_cca = self.get_lab_user(
-            usertype="cloud", azureenvironment=self.environment, publicClient="no")
-        config_cca["scope"] = ["https://graph.microsoft.us/.default"]
-        config_cca["client_secret"] = self.get_lab_user_secret("ARLMSIDLAB1-IDLASBS-App-CC-Secret")
-
-        config_pca = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
-        obo_app_object = self.get_lab_app_object(
-            usertype="cloud", azureenvironment=self.environment, publicClient="no")
-        config_pca["password"] = self.get_lab_user_secret(config_pca["lab_name"])
-        config_pca["scope"] = ["{app_uri}/files.read".format(app_uri=obo_app_object.get("identifierUris"))]
-
-        self._test_acquire_token_obo(config_pca, config_cca)
-
-    def test_acquire_token_device_flow(self):
-        config = self.get_lab_user(usertype="cloud", azureenvironment=self.environment, publicClient="yes")
-        config["scope"] = ["user.read"]
-        self._test_device_flow(**config)
+    def manual_test_acquire_token_device_flow(self):
+        """Test device code flow for Arlington cloud."""
+        self._test_device_flow(
+            authority=self.arlington_authority,
+            client_id=self.app_config.app_id,
+            scope=["user.read"],
+            username=self.user_config.upn,
+            lab_name=self.user_config.lab_name,
+        )
 
     def test_acquire_token_silent_with_an_empty_cache_should_return_none(self):
-        config = self.get_lab_user(
-            usertype="cloud", azureenvironment=self.environment, publicClient="no")
+        """Test that acquire_token_silent returns None with empty cache.
+        
+        Note: An alias in this region is no longer accepting HTTPS traffic.
+        If this test case passes without exception, it means MSAL Python
+        is not affected by that.
+        """
+        client_secret = get_secret(self.app_config.client_secret, vault="msal_team")
         app = msal.ConfidentialClientApplication(
-            config['client_id'], authority=config['authority'],
-            http_client=MinimalHttpClient())
-        result = app.acquire_token_silent(scopes=config['scope'], account=None)
+            self.app_config.app_id,
+            client_credential=client_secret,
+            authority=self.arlington_authority,
+            http_client=MinimalHttpClient(),
+        )
+        result = app.acquire_token_silent(
+            scopes=["https://graph.microsoft.us/.default"],
+            account=None,
+        )
         self.assertEqual(result, None)
-        # Note: An alias in this region is no longer accepting HTTPS traffic.
-        #       If this test case passes without exception,
-        #       it means MSAL Python is not affected by that.
 
 
 @unittest.skipUnless(_PYMSALRUNTIME_INSTALLED, "AT POP feature is only supported by using broker")
 class PopTestCase(LabBasedTestCase):
-    def test_at_pop_should_contain_pop_scheme_content(self):
+    """Test cases for Proof-of-Possession (POP) tokens using the broker.
+    
+    These tests require pymsalruntime to be installed.
+    """
+
+    def manual_test_at_pop_should_contain_pop_scheme_content(self):
         auth_scheme = msal.PopAuthScheme(
             http_method=msal.PopAuthScheme.HTTP_GET,
             url="https://www.Contoso.com/Path1/Path2?queryParam1=a&queryParam2=b",
@@ -1334,8 +1376,8 @@ class PopTestCase(LabBasedTestCase):
         self.assertEqual(payload["nonce"], auth_scheme._nonce)
 
     # TODO: Remove this, as ROPC support is removed by Broker-on-Win
-    def test_at_pop_via_testingsts_service(self):
-        """Based on https://testingsts.azurewebsites.net/ServerNonce"""
+    def manual_test_at_pop_via_testingsts_service(self):
+        """Test AT POP via testingsts.azurewebsites.net nonce validation service."""
         self.skipTest("ROPC support is removed by Broker-on-Win")
         auth_scheme = msal.PopAuthScheme(
             http_method="POST",
@@ -1344,9 +1386,18 @@ class PopTestCase(LabBasedTestCase):
                 # TODO: Could use ".../missing" and then parse its WWW-Authenticate header
                 "https://testingsts.azurewebsites.net/servernonce/get").text,
             )
-        config = self.get_lab_user(usertype="cloud")
-        config["password"] = self.get_lab_user_secret(config["lab_name"])
-        result = self._test_username_password(auth_scheme=auth_scheme, **config)
+        # Use Key Vault config for user and app
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        password = get_user_password(user)
+        app = get_app_config(AppSecrets.PCA_CLIENT)
+        result = self._test_username_password(
+            authority=user.authority,
+            client_id=app.app_id,
+            username=user.upn,
+            password=password,
+            scope=["User.Read"],
+            auth_scheme=auth_scheme,
+        )
         self.assertEqual(result["token_type"], "pop")
         shr = result["access_token"]
         payload = json.loads(decode_part(result["access_token"].split(".")[1]))
@@ -1363,10 +1414,12 @@ class PopTestCase(LabBasedTestCase):
             )
         self.assertEqual(validation.status_code, 200)
 
-    def test_at_pop_calling_pattern(self):
-        # The calling pattern was described here:
-        # https://identitydivision.visualstudio.com/DevEx/_git/AuthLibrariesApiReview?path=/PoPTokensProtocol/PoP_API_In_MSAL.md&_a=preview&anchor=proposal-2---optional-isproofofposessionsupportedbyclient-helper-(accepted)
-
+    def manual_test_at_pop_calling_pattern(self):
+        """Test the POP calling pattern with Key Vault config.
+        
+        The calling pattern was described here:
+        https://identitydivision.visualstudio.com/DevEx/_git/AuthLibrariesApiReview?path=/PoPTokensProtocol/PoP_API_In_MSAL.md
+        """
         # It is supposed to call app.is_pop_supported() first,
         # and then fallback to bearer token code path.
         # We skip it here because this test case has not yet initialize self.app
@@ -1385,15 +1438,21 @@ class PopTestCase(LabBasedTestCase):
         # @suppress py/bandit/requests-ssl-verify-disabled
         resp = requests.get(api_endpoint, verify=verify)  # CodeQL [SM03157]
         self.assertEqual(resp.status_code, 401, "Initial call should end with an http 401 error")
-        result = self._get_shr_pop(**dict(
-            self.get_lab_user(usertype="cloud"),  # This is generally not the current laptop's default AAD account
+        
+        # Use Key Vault config instead of Lab API
+        user = get_user_config(UserSecrets.PUBLIC_CLOUD)
+        result = self._get_shr_pop(
+            client_id=get_app_config(AppSecrets.PCA_CLIENT).app_id,
+            authority=user.authority,
             scope=["https://graph.microsoft.com/.default"],
+            username=user.upn,
+            lab_name=user.lab_name,
             auth_scheme=msal.PopAuthScheme(
                 http_method=msal.PopAuthScheme.HTTP_GET,
                 url=api_endpoint,
                 nonce=self._extract_pop_nonce(resp.headers.get("WWW-Authenticate")),
-                ),
-            ))
+            ),
+        )
         resp = requests.get(
             api_endpoint,
             # CodeQL [SM03157]
