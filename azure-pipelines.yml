@@ -37,5 +37,23 @@ steps:
 
 - script: |
     pip install pytest pytest-azurepipelines
-    pytest
-  displayName: 'pytest'
+    mkdir -p test-results
+    set -o pipefail
+    pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
+  displayName: 'pytest (verbose + junit + log)'
+
+- task: PublishTestResults@2
+  displayName: 'Publish test results'
+  condition: succeededOrFailed()
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: 'test-results/junit.xml'
+    failTaskOnFailedTests: true
+    testRunTitle: 'Python $(python.version) pytest'
+
+- task: PublishPipelineArtifact@1
+  displayName: 'Publish pytest log artifact'
+  condition: succeededOrFailed()
+  inputs:
+    targetPath: 'test-results'
+    artifact: 'pytest-logs-$(python.version)'
