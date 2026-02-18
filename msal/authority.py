@@ -39,6 +39,9 @@ TRUSTED_ISSUER_HOSTS = frozenset([
     "login.microsoftonline.us",
     "login.usgovcloudapi.net",
     "login-us.microsoftonline.com",
+    "https://login.sovcloud-identity.fr", # AzureBleu
+    "https://login.sovcloud-identity.de", # AzureDelos
+    "https://login.sovcloud-identity.sg", # AzureGovSG
 ])
 
 WELL_KNOWN_B2C_HOSTS = [
@@ -215,7 +218,7 @@ class Authority(object):
         - It has the same scheme and host as the authority (path can be different)
         - The issuer host is a well-known Microsoft authority host
         - The issuer host is a regional variant of a well-known host (e.g., westus2.login.microsoft.com)
-        - For CIAM, the issuer follows the pattern of {tenant}.ciamlogin.com
+        - For CIAM, hosts that end with well-known B2C hosts (e.g., tenant.b2clogin.com) are accepted as valid issuers
         """
         if not self._issuer or not self._oidc_authority_url:
             return False
@@ -240,25 +243,25 @@ class Authority(object):
         dot_index = issuer_host.find(".")
         if dot_index > 0:
             potential_base = issuer_host[dot_index + 1:]
-            if potential_base in TRUSTED_ISSUER_HOSTS and "." not in issuer_host[:dot_index]:
-                return True
+            if "." not in issuer_host[:dot_index]:
+                # 3a: Base host is a trusted Microsoft host
+                if potential_base in TRUSTED_ISSUER_HOSTS:
+                    return True
+                # 3b: Issuer has a region prefix on the authority host
+                #     e.g. issuer=us.someweb.com, authority=someweb.com
+                authority_host = authority_parsed.hostname.lower() if authority_parsed.hostname else ""
+                if potential_base == authority_host:
+                    return True
 
         # Case 4: Same scheme and host (path can differ)
         if (authority_parsed.scheme == issuer_parsed.scheme and 
             authority_parsed.netloc == issuer_parsed.netloc):
             return True
+        
+        # Case 5: Check if issuer host ends with any well-known B2C host (e.g., tenant.b2clogin.com)
+        if any(issuer_host.endswith(h) for h in WELL_KNOWN_B2C_HOSTS):
+            return True
 
-        # Case 5: CIAM scenario - issuer follows pattern {tenant}.ciamlogin.com
-        if issuer_host.endswith(_CIAM_DOMAIN_SUFFIX):
-            authority_host = authority_parsed.hostname.lower() if authority_parsed.hostname else ""
-            if authority_host.endswith(_CIAM_DOMAIN_SUFFIX):
-                tenant = authority_host[:-len(_CIAM_DOMAIN_SUFFIX)]
-            else:
-                parts = authority_parsed.path.split('/')
-                tenant = parts[1] if len(parts) >= 2 and parts[1] else None
-            
-            if tenant and issuer_host == tenant + _CIAM_DOMAIN_SUFFIX:
-                return True
         return False
 
 def canonicalize(authority_or_auth_endpoint):

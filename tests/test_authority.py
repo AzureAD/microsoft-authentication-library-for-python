@@ -526,3 +526,81 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
         self.assertTrue(authority.has_valid_issuer(),
             "Host comparison should be case-insensitive")
 
+    # Case 3b: Regional prefix on authority host tests
+    @patch("msal.authority.tenant_discovery")
+    def test_regional_issuer_matching_authority_host(self, tenant_discovery_mock):
+        """Test issuer with region prefix on the authority host: us.someweb.com -> someweb.com"""
+        authority_url = "https://someweb.com/tenant"
+        issuer = "https://us.someweb.com/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Issuer with region prefix on authority host should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_regional_issuer_westus2_on_custom_authority(self, tenant_discovery_mock):
+        """Test issuer westus2.myidp.example.com with authority myidp.example.com"""
+        authority_url = "https://myidp.example.com/tenant"
+        issuer = "https://westus2.myidp.example.com/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Regional prefix westus2 on custom authority host should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_regional_issuer_does_not_match_different_authority(self, tenant_discovery_mock):
+        """Test issuer us.someweb.com should NOT match authority otherdomain.com"""
+        authority_url = "https://otherdomain.com/tenant"
+        issuer = "https://us.someweb.com/tenant"
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+        with self.assertRaises(ValueError):
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_regional_issuer_on_authority_with_different_path(self, tenant_discovery_mock):
+        """Test issuer eastus.someweb.com/v2 with authority someweb.com/tenant"""
+        authority_url = "https://someweb.com/tenant"
+        issuer = "https://eastus.someweb.com/v2"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Regional issuer with different path should still match by host")
+
+    # Case 5: B2C host suffix tests
+    @patch("msal.authority.tenant_discovery")
+    def test_b2c_issuer_host(self, tenant_discovery_mock):
+        """Test issuer from a well-known B2C host: tenant.b2clogin.com"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = "https://tenant.b2clogin.com/tenant/v2.0"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Issuer ending with b2clogin.com should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_b2c_china_issuer_host(self, tenant_discovery_mock):
+        """Test issuer from B2C China host: tenant.b2clogin.cn"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = "https://tenant.b2clogin.cn/tenant/v2.0"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Issuer ending with b2clogin.cn should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_b2c_us_gov_issuer_host(self, tenant_discovery_mock):
+        """Test issuer from B2C US Government host: tenant.b2clogin.us"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = "https://tenant.b2clogin.us/tenant/v2.0"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Issuer ending with b2clogin.us should be valid")
+
+    @patch("msal.authority.tenant_discovery")
+    def test_ciam_issuer_host_via_b2c_check(self, tenant_discovery_mock):
+        """Test issuer from ciamlogin.com host is accepted via B2C check"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = "https://mytenant.ciamlogin.com/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Issuer ending with ciamlogin.com should be valid")
+
