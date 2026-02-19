@@ -31,6 +31,7 @@ class ClientCredentialGrantSimulator(object):
         with patch.object(msal.authority, "tenant_discovery", return_value={
             "authorization_endpoint": "https://contoso.com/placeholder",
             "token_endpoint": "https://contoso.com/placeholder",
+            "issuer": "https://contoso.com/placeholder",
         }) as _:  # Otherwise it would fail on OIDC discovery
             self.apps = [  # In MSAL Python, each CCA binds to one tenant only
                 msal.ConfidentialClientApplication(
