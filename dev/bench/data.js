@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771418092711,
+  "lastUpdate": 1771507935866,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -34987,6 +34987,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000014721195309976817",
             "extra": "mean: 106.17737412449651 usec\nrounds: 5426"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "62066438+Avery-Dunn@users.noreply.github.com",
+            "name": "Avery-Dunn",
+            "username": "Avery-Dunn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d7e0e11368457ee6ef6c44df75e5218ac984eef9",
+          "message": "Add OIDC issuer validation (#840)\n\n* Add OIDC issuer validation and related tests\n\n* Remove check on known hosts and adjust error message towards regular authority API\n\n* Updated the trusted  host list and added region check logic\n\n* Update test_authority.py\n\n* Updated the version for crypto, as 48 is deperecated\n\n* Updated one conditions and added issuer to all tests\n\n* Update authority.py\n\nupdated the checking on host checking\n\n* adding issuer for some missing tests\n\n* Update authority.py\n\n* updated with new regional cloud URL's\n\n---------\n\nCo-authored-by: Nilesh Choudhary <nichoudhary@microsoft.com>",
+          "timestamp": "2026-02-19T13:29:35Z",
+          "tree_id": "d183dfe36bd8b3372c419bbc3d8bad71d2720a8c",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/d7e0e11368457ee6ef6c44df75e5218ac984eef9"
+        },
+        "date": 1771507934884,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39976.24141950811,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000028059159543906043",
+            "extra": "mean: 25.01485793789527 usec\nrounds: 8806"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 35811.37438611509,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004524010663504819",
+            "extra": "mean: 27.924088844457295 usec\nrounds: 15015"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7571.262889245972,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015679709907450794",
+            "extra": "mean: 132.07836190979108 usec\nrounds: 3896"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7177.885094709574,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015953793296390995",
+            "extra": "mean: 139.31680248504466 usec\nrounds: 3782"
           }
         ]
       }
