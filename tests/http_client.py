@@ -40,3 +40,44 @@ class MinimalResponse(object):  # Not for production use
         if self._raw_resp is not None:  # Turns out `if requests.response` won't work
                                         # cause it would be True when 200<=status<400
             self._raw_resp.raise_for_status()
+
+
+class RecordingHttpClient(object):
+    def __init__(self):
+        self.get_calls = []
+        self.post_calls = []
+        self._get_routes = []
+        self._post_routes = []
+
+    def add_get_route(self, matcher, responder):
+        self._get_routes.append((matcher, responder))
+
+    def add_post_route(self, matcher, responder):
+        self._post_routes.append((matcher, responder))
+
+    def get(self, url, params=None, headers=None, **kwargs):
+        call = {
+            "url": url,
+            "params": params,
+            "headers": headers,
+            "kwargs": kwargs,
+        }
+        self.get_calls.append(call)
+        for matcher, responder in self._get_routes:
+            if matcher(call):
+                return responder(call)
+        return MinimalResponse(status_code=404, text="")
+
+    def post(self, url, params=None, data=None, headers=None, **kwargs):
+        call = {
+            "url": url,
+            "params": params,
+            "data": data,
+            "headers": headers,
+            "kwargs": kwargs,
+        }
+        self.post_calls.append(call)
+        for matcher, responder in self._post_routes:
+            if matcher(call):
+                return responder(call)
+        return MinimalResponse(status_code=404, text="")

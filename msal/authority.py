@@ -44,6 +44,15 @@ WELL_KNOWN_B2C_HOSTS = [
 _CIAM_DOMAIN_SUFFIX = ".ciamlogin.com"
 
 
+def _get_instance_discovery_host(instance):
+    return instance if instance in WELL_KNOWN_AUTHORITY_HOSTS else WORLD_WIDE
+
+
+def _get_instance_discovery_endpoint(instance):
+    return 'https://{}/common/discovery/instance'.format(
+        _get_instance_discovery_host(instance))
+
+
 class AuthorityBuilder(object):
     def __init__(self, instance, tenant):
         """A helper to save caller from doing string concatenation.
@@ -152,10 +161,8 @@ class Authority(object):
             ) or (len(parts) == 3 and parts[2].lower().startswith("b2c_"))
         self._is_known_to_developer = self.is_adfs or self._is_b2c or not validate_authority
         is_known_to_microsoft = self.instance in WELL_KNOWN_AUTHORITY_HOSTS
-        instance_discovery_host = (
-            self.instance if self.instance in WELL_KNOWN_AUTHORITY_HOSTS else WORLD_WIDE)
-        instance_discovery_endpoint = 'https://{}/common/discovery/instance'.format(  # Note: This URL seemingly returns V1 endpoint only
-            instance_discovery_host
+        instance_discovery_endpoint = _get_instance_discovery_endpoint(  # Note: This URL seemingly returns V1 endpoint only
+            self.instance
             ) if instance_discovery in (None, True) else instance_discovery
         if instance_discovery_endpoint and not (
                 is_known_to_microsoft or self._is_known_to_developer):

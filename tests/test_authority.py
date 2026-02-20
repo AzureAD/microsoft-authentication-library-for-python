@@ -56,16 +56,11 @@ class TestAuthority(unittest.TestCase):
                 continue
             self._test_given_host_and_tenant(host, "common")
 
-    def test_new_sovereign_hosts_should_be_known_authorities(self):
-        self.assertIn(AZURE_GOV_FR, WELL_KNOWN_AUTHORITY_HOSTS)
-        self.assertIn(AZURE_GOV_DE, WELL_KNOWN_AUTHORITY_HOSTS)
-        self.assertIn(AZURE_GOV_SG, WELL_KNOWN_AUTHORITY_HOSTS)
-
     @patch("msal.authority._instance_discovery")
     @patch("msal.authority.tenant_discovery")
     def test_new_sovereign_hosts_should_build_authority_endpoints(
             self, tenant_discovery_mock, instance_discovery_mock):
-        for host in (AZURE_GOV_FR, AZURE_GOV_DE, AZURE_GOV_SG):
+        for host in WELL_KNOWN_AUTHORITY_HOSTS:
             tenant_discovery_mock.return_value = {
                 "authorization_endpoint": "https://{}/common/oauth2/v2.0/authorize".format(host),
                 "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(host),
@@ -90,21 +85,21 @@ class TestAuthority(unittest.TestCase):
     @patch("msal.authority.tenant_discovery")
     def test_known_authority_should_use_same_host_and_skip_instance_discovery(
             self, tenant_discovery_mock, instance_discovery_mock):
-        host = AZURE_US_GOVERNMENT
-        tenant_discovery_mock.return_value = {
-            "authorization_endpoint": "https://{}/common/oauth2/v2.0/authorize".format(host),
-            "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(host),
-            "issuer": "https://{}/common/v2.0".format(host),
-        }
-        c = MinimalHttpClient()
-        Authority("https://{}/common".format(host), c)
-        c.close()
+        for host in WELL_KNOWN_AUTHORITY_HOSTS:
+            tenant_discovery_mock.return_value = {
+                "authorization_endpoint": "https://{}/common/oauth2/v2.0/authorize".format(host),
+                "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(host),
+                "issuer": "https://{}/common/v2.0".format(host),
+            }
+            c = MinimalHttpClient()
+            Authority("https://{}/common".format(host), c)
+            c.close()
 
-        instance_discovery_mock.assert_not_called()
-        tenant_discovery_endpoint = tenant_discovery_mock.call_args[0][0]
-        self.assertTrue(
-            tenant_discovery_endpoint.startswith(
-                "https://{}/common/v2.0/.well-known/openid-configuration".format(host)))
+            instance_discovery_mock.assert_not_called()
+            tenant_discovery_endpoint = tenant_discovery_mock.call_args[0][0]
+            self.assertTrue(
+                tenant_discovery_endpoint.startswith(
+                    "https://{}/common/v2.0/.well-known/openid-configuration".format(host)))
 
     @patch("msal.authority._instance_discovery")
     @patch("msal.authority.tenant_discovery")
@@ -361,7 +356,24 @@ class TestMsalBehaviorsWithoutAndWithInstanceDiscoveryBoolean(unittest.TestCase)
         app = msal.ClientApplication("id", authority="https://login.microsoftonline.com/common")
         known_to_microsoft_validation.assert_not_called()
         app.get_accounts()  # This could make an instance metadata call for authority aliases
-        instance_metadata.assert_called_once_with()
+        instance_metadata.assert_called_once_with("login.microsoftonline.com")
+
+    def test_by_default_a_sovereign_known_authority_should_use_cloud_local_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        app = msal.ClientApplication("id", authority="https://login.microsoftonline.us/common")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_called_once_with("login.microsoftonline.us")
+
+    def test_fr_known_authority_should_still_work_when_instance_metadata_has_no_alias_entry(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        app = msal.ClientApplication("id", authority="https://{}/common".format(AZURE_GOV_FR))
+        known_to_microsoft_validation.assert_not_called()
+
+        accounts = app.get_accounts()
+
+        self.assertEqual([], accounts)
+        instance_metadata.assert_called_once_with(AZURE_GOV_FR)
 
     def test_validate_authority_boolean_should_skip_validation_and_instance_metadata(
             self, instance_metadata, known_to_microsoft_validation, _):
