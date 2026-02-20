@@ -119,11 +119,9 @@ def _is_html(text):
 def _escape(key_value_pairs):
     return {k: escape(v) for k, v in key_value_pairs.items()}
 
-
 def _printify(text):
     # If an https request is sent to an http server, the text needs to be repr-ed
     return repr(text) if isinstance(text, str) and not text.isprintable() else text
-
 
 class _AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
