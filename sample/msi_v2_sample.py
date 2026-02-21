@@ -68,7 +68,7 @@ def acquire_and_use_token():
             ).json()
             print("API call result:", json.dumps(api_result, indent=2))
     else:
-        print("Token acquisition failed", result)  # Examine result["error_description"] etc. to diagnose error
+        print("Token acquisition failed")  # Examine result["error_description"] etc. to diagnose error
 
 
 if __name__ == "__main__":
