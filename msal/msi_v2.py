@@ -282,12 +282,16 @@ def obtain_token(
     http_client,
     managed_identity,
     resource: str,
+    attestation_enabled: bool = False,
 ) -> Dict[str, Any]:
     """Acquire a token using the MSI v2 (mTLS PoP) flow.
 
     :param http_client: HTTP client for IMDS requests.
     :param managed_identity: ManagedIdentity configuration dict.
     :param resource: Resource URL for token acquisition.
+    :param attestation_enabled: When True, attempt KeyGuard / platform attestation
+        before issuing credentials (Windows only; silently skipped on other platforms).
+        Defaults to False.
     :returns: OAuth2 token response dict with access_token on success,
               or error dict on failure.
     :raises MsiV2Error: If the flow fails at a non-recoverable step.
@@ -311,9 +315,9 @@ def obtain_token(
     # 3. Build PKCS#10 CSR with cuId OID extension
     csr_der = _build_csr(private_key, client_id, cu_id)
 
-    # 4. Attempt attestation (Windows only; falls back to None on other platforms)
+    # 4. Attempt attestation only when explicitly requested by the caller
     attestation_jwt = None
-    if attestation_endpoint:
+    if attestation_enabled and attestation_endpoint:
         try:
             from .msi_v2_attestation import get_attestation_jwt
             attestation_jwt = get_attestation_jwt(

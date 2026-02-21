@@ -435,7 +435,7 @@ class TestManagedIdentityClientMsiV2(unittest.TestCase):
 class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
     """Integration tests for MSI v2 token acquisition flow with mocked IMDS."""
 
-    def _make_client(self, msi_v2_enabled=True):
+    def _make_client(self, msi_v2_enabled=False):
         import requests
         return msal.ManagedIdentityClient(
             msal.SystemAssignedManagedIdentity(),
@@ -466,7 +466,48 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
 
     @patch("msal.msi_v2._acquire_token_via_mtls")
     def test_msi_v2_happy_path(self, mock_mtls):
-        """MSI v2 succeeds end-to-end (mTLS call is mocked)."""
+        """MSI v2 succeeds end-to-end via mtls_proof_of_possession=True."""
+        import requests
+
+        key = _generate_rsa_key()
+        cert_pem = _make_self_signed_cert(key, "test-client-id")
+        access_token = "MSI_V2_ACCESS_TOKEN"
+        expires_in = 3600
+        token_endpoint = "https://login.microsoftonline.com/tenant/oauth2/token"
+
+        platform_metadata, credential, token_response = self._make_mock_responses(
+            "test-client-id", "test-cu-id", cert_pem, token_endpoint,
+            access_token, expires_in)
+
+        mock_mtls.return_value = token_response
+
+        client = self._make_client()
+
+        def _mock_get(url, **kwargs):
+            if "getplatformmetadata" in url:
+                return MinimalResponse(
+                    status_code=200, text=json.dumps(platform_metadata))
+            raise ValueError("Unexpected GET: {}".format(url))
+
+        def _mock_post(url, **kwargs):
+            if "issuecredential" in url:
+                return MinimalResponse(
+                    status_code=200, text=json.dumps(credential))
+            raise ValueError("Unexpected POST: {}".format(url))
+
+        with patch.object(client._http_client, "get", side_effect=_mock_get), \
+             patch.object(client._http_client, "post", side_effect=_mock_post):
+            result = client.acquire_token_for_client(
+                resource="https://management.azure.com/",
+                mtls_proof_of_possession=True)
+
+        self.assertEqual(result["access_token"], access_token)
+        self.assertEqual(result["token_type"], "mtls_pop")
+        self.assertEqual(result["token_source"], "identity_provider")
+
+    @patch("msal.msi_v2._acquire_token_via_mtls")
+    def test_msi_v2_happy_path_via_constructor_flag(self, mock_mtls):
+        """MSI v2 also works when enabled via the msi_v2_enabled constructor param."""
         import requests
 
         key = _generate_rsa_key()
@@ -497,18 +538,18 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
 
         with patch.object(client._http_client, "get", side_effect=_mock_get), \
              patch.object(client._http_client, "post", side_effect=_mock_post):
+            # No mtls_proof_of_possession kwarg; relies on constructor flag
             result = client.acquire_token_for_client(
                 resource="https://management.azure.com/")
 
         self.assertEqual(result["access_token"], access_token)
         self.assertEqual(result["token_type"], "mtls_pop")
-        self.assertEqual(result["token_source"], "identity_provider")
 
     @patch("msal.msi_v2._acquire_token_via_mtls")
     def test_msi_v2_fallback_to_v1_on_metadata_failure(self, mock_mtls):
         """MSI v2 falls back to MSI v1 if IMDS metadata call fails."""
         import requests
-        client = self._make_client(msi_v2_enabled=True)
+        client = self._make_client()
 
         def _mock_get(url, **kwargs):
             if "getplatformmetadata" in url:
@@ -523,18 +564,19 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
             raise ValueError("Unexpected GET: {}".format(url))
 
         with patch.object(client._http_client, "get", side_effect=_mock_get):
-            result = client.acquire_token_for_client(resource="R")
+            result = client.acquire_token_for_client(
+                resource="R", mtls_proof_of_possession=True)
 
         # Should have fallen back to MSI v1
         self.assertEqual(result["access_token"], "V1_TOKEN")
         mock_mtls.assert_not_called()
 
     @patch("msal.msi_v2._acquire_token_via_mtls")
-    def test_msi_v2_not_attempted_when_disabled(self, mock_mtls):
-        """MSI v2 is not attempted when msi_v2_enabled=False."""
+    def test_msi_v2_not_attempted_when_not_requested(self, mock_mtls):
+        """MSI v2 is not attempted when mtls_proof_of_possession=False (default)."""
         import requests
 
-        client = self._make_client(msi_v2_enabled=False)
+        client = self._make_client()
 
         def _mock_get(url, **kwargs):
             return MinimalResponse(status_code=200, text=json.dumps({
@@ -544,6 +586,7 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
             }))
 
         with patch.object(client._http_client, "get", side_effect=_mock_get):
+            # No mtls_proof_of_possession — uses v1 by default
             result = client.acquire_token_for_client(resource="R")
 
         mock_mtls.assert_not_called()
@@ -553,7 +596,7 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
     def test_msi_v2_fallback_on_unexpected_error(self, mock_mtls):
         """MSI v2 falls back to MSI v1 on unexpected errors."""
         import requests
-        client = self._make_client(msi_v2_enabled=True)
+        client = self._make_client()
 
         platform_metadata = {
             "clientId": "client-id",
@@ -583,11 +626,84 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
 
         with patch.object(client._http_client, "get", side_effect=_mock_get), \
              patch.object(client._http_client, "post", side_effect=_mock_post):
-            result = client.acquire_token_for_client(resource="R")
+            result = client.acquire_token_for_client(
+                resource="R", mtls_proof_of_possession=True)
 
         # Should fall back to MSI v1
         self.assertEqual(result["access_token"], "V1_FALLBACK")
         mock_mtls.assert_not_called()
+
+    @patch("msal.msi_v2_attestation.get_attestation_jwt")
+    @patch("msal.msi_v2._acquire_token_via_mtls")
+    def test_with_attestation_support_triggers_attestation(
+        self, mock_mtls, mock_attest
+    ):
+        """with_attestation_support=True calls attestation; False skips it."""
+        import requests
+
+        key = _generate_rsa_key()
+        cert_pem = _make_self_signed_cert(key, "test-client-id")
+        token_endpoint = "https://login.microsoftonline.com/tenant/oauth2/token"
+        access_token = "MSI_V2_ATTEST_TOKEN"
+        expires_in = 3600
+
+        platform_metadata = {
+            "clientId": "test-client-id",
+            "tenantId": "tenant-id",
+            "cuId": "test-cu-id",
+            "attestationEndpoint": "https://attest.example.com",
+        }
+        credential = {
+            "certificate": cert_pem,
+            "tokenEndpoint": token_endpoint,
+        }
+        token_response = {
+            "access_token": access_token,
+            "expires_in": str(expires_in),
+            "token_type": "mtls_pop",
+        }
+
+        mock_attest.return_value = "fake.attestation.jwt"
+        mock_mtls.return_value = token_response
+
+        client = self._make_client()
+
+        def _mock_get(url, **kwargs):
+            if "getplatformmetadata" in url:
+                return MinimalResponse(
+                    status_code=200, text=json.dumps(platform_metadata))
+            raise ValueError("Unexpected GET: {}".format(url))
+
+        def _mock_post(url, **kwargs):
+            if "issuecredential" in url:
+                return MinimalResponse(
+                    status_code=200, text=json.dumps(credential))
+            raise ValueError("Unexpected POST: {}".format(url))
+
+        # --- with_attestation_support=True: attestation should be called ---
+        with patch.object(client._http_client, "get", side_effect=_mock_get), \
+             patch.object(client._http_client, "post", side_effect=_mock_post):
+            result = client.acquire_token_for_client(
+                resource="https://management.azure.com/",
+                mtls_proof_of_possession=True,
+                with_attestation_support=True,
+            )
+        mock_attest.assert_called_once()
+        self.assertEqual(result["access_token"], access_token)
+
+        mock_attest.reset_mock()
+        mock_mtls.reset_mock()
+
+        # --- with_attestation_support=False (default): attestation NOT called ---
+        with patch.object(client._http_client, "get", side_effect=_mock_get), \
+             patch.object(client._http_client, "post", side_effect=_mock_post):
+            result = client.acquire_token_for_client(
+                resource="https://management.azure.com/",
+                mtls_proof_of_possession=True,
+                with_attestation_support=False,
+            )
+        mock_attest.assert_not_called()
+        self.assertEqual(result["access_token"], access_token)
 
 
 # ---------------------------------------------------------------------------

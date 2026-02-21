@@ -13,10 +13,6 @@ Prerequisites:
 - Set RESOURCE environment variable to the target resource URL, e.g.
     export RESOURCE=https://management.azure.com/
 
-To enable MSI v2 (required):
-    export MSAL_ENABLE_MSI_V2=true
-  or pass msi_v2_enabled=True to ManagedIdentityClient.
-
 Usage:
     python msi_v2_sample.py
 """
@@ -42,13 +38,16 @@ client = msal.ManagedIdentityClient(
     msal.SystemAssignedManagedIdentity(),
     http_client=requests.Session(),
     token_cache=global_token_cache,
-    msi_v2_enabled=True,  # Enable MSI v2 (mTLS PoP) flow
 )
 
 
 def acquire_and_use_token():
     """Acquire an mtls_pop token via MSI v2 and optionally call an API."""
-    result = client.acquire_token_for_client(resource=RESOURCE)
+    result = client.acquire_token_for_client(
+        resource=RESOURCE,
+        mtls_proof_of_possession=True,  # Use MSI v2 (mTLS PoP) flow
+        with_attestation_support=True,  # Enable KeyGuard attestation (Windows)
+    )
 
     if "access_token" in result:
         print("Token acquired successfully")

@@ -281,6 +281,8 @@ class ManagedIdentityClient(object):
         *,
         resource: str,  # If/when we support scope, resource will become optional
         claims_challenge: Optional[str] = None,
+        mtls_proof_of_possession: bool = False,
+        with_attestation_support: bool = False,
     ):
         """Acquire token for the managed identity.
 
@@ -299,6 +301,22 @@ class ManagedIdentityClient(object):
             as a `claims_challenge` directive in the `www-authenticate` header,
             even if the app developer did not opt in for the "CP1" client capability.
             Upon receiving a `claims_challenge`, MSAL will attempt to acquire a new token.
+
+        :param bool mtls_proof_of_possession: (optional)
+            When True, use the MSI v2 (mTLS Proof-of-Possession) flow to acquire an
+            ``mtls_pop`` token bound to a short-lived mTLS certificate issued by the
+            IMDS ``/issuecredential`` endpoint.
+            Without this flag the legacy IMDS v1 flow is used.
+            Defaults to False.
+
+            This takes precedence over the ``msi_v2_enabled`` constructor parameter.
+
+        :param bool with_attestation_support: (optional)
+            When True (and ``mtls_proof_of_possession`` is also True), attempt
+            KeyGuard / platform attestation before credential issuance.
+            On Windows this leverages ``AttestationClientLib.dll`` when available;
+            on other platforms the parameter is silently ignored.
+            Defaults to False.
 
         .. note::
 
@@ -349,11 +367,15 @@ class ManagedIdentityClient(object):
                 return access_token_from_cache  # It is still good as new
         try:
             result = None
-            if self._msi_v2_enabled:
+            # Per-call mtls_proof_of_possession takes precedence over the constructor
+            # default (msi_v2_enabled / MSAL_ENABLE_MSI_V2 env var).
+            use_msi_v2 = mtls_proof_of_possession or self._msi_v2_enabled
+            if use_msi_v2:
                 try:
                     from .msi_v2 import obtain_token as _obtain_token_v2
                     result = _obtain_token_v2(
-                        self._http_client, self._managed_identity, resource)
+                        self._http_client, self._managed_identity, resource,
+                        attestation_enabled=with_attestation_support)
                     logger.debug("MSI v2 token acquisition succeeded")
                 except MsiV2Error as exc:
                     logger.warning(
