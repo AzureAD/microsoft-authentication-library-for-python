@@ -51,13 +51,8 @@ def acquire_and_use_token():
     result = client.acquire_token_for_client(resource=RESOURCE)
 
     if "access_token" in result:
-        token_type = result.get("token_type", "Bearer")
         print("Token acquired successfully")
-        print("  token_type :", token_type)
-        print("  token_source:", result.get("token_source"))
-        print("  expires_in  :", result.get("expires_in"), "seconds")
-
-        if token_type == "mtls_pop":
+        if result.get("token_type") == "mtls_pop":
             print("  MSI v2 (mTLS PoP) token acquired")
         else:
             print("  MSI v1 (Bearer) token acquired (MSI v2 unavailable or fell back)")
@@ -69,13 +64,11 @@ def acquire_and_use_token():
             api_result = requests.get(
                 endpoint,
                 headers={"Authorization": "{} {}".format(
-                    token_type, result["access_token"])},
+                    result.get("token_type", "Bearer"), result["access_token"])},
             ).json()
             print("API call result:", json.dumps(api_result, indent=2))
     else:
-        print("Token acquisition failed:")
-        print("  error            :", result.get("error"))
-        print("  error_description:", result.get("error_description"))
+        print("Token acquisition failed", result)  # Examine result["error_description"] etc. to diagnose error
 
 
 if __name__ == "__main__":
