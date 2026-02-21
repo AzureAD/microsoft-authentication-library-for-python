@@ -371,19 +371,28 @@ class ManagedIdentityClient(object):
             # default (msi_v2_enabled / MSAL_ENABLE_MSI_V2 env var).
             use_msi_v2 = mtls_proof_of_possession or self._msi_v2_enabled
             if use_msi_v2:
-                try:
+                if mtls_proof_of_possession:
+                    # Explicit per-call request: errors are raised, no fallback to v1
                     from .msi_v2 import obtain_token as _obtain_token_v2
                     result = _obtain_token_v2(
                         self._http_client, self._managed_identity, resource,
                         attestation_enabled=with_attestation_support)
                     logger.debug("MSI v2 token acquisition succeeded")
-                except MsiV2Error as exc:
-                    logger.warning(
-                        "MSI v2 flow failed, falling back to MSI v1: %s", exc)
-                except Exception as exc:  # pylint: disable=broad-except
-                    logger.warning(
-                        "MSI v2 encountered unexpected error, "
-                        "falling back to MSI v1: %s", exc)
+                else:
+                    # Legacy constructor flag: swallow errors and fall back to v1
+                    try:
+                        from .msi_v2 import obtain_token as _obtain_token_v2
+                        result = _obtain_token_v2(
+                            self._http_client, self._managed_identity, resource,
+                            attestation_enabled=with_attestation_support)
+                        logger.debug("MSI v2 token acquisition succeeded")
+                    except MsiV2Error as exc:
+                        logger.warning(
+                            "MSI v2 flow failed, falling back to MSI v1: %s", exc)
+                    except Exception as exc:  # pylint: disable=broad-except
+                        logger.warning(
+                            "MSI v2 encountered unexpected error, "
+                            "falling back to MSI v1: %s", exc)
             if result is None:
                 result = _obtain_token(
                     self._http_client, self._managed_identity, resource,

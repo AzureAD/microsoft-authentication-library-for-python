@@ -546,29 +546,21 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
         self.assertEqual(result["token_type"], "mtls_pop")
 
     @patch("msal.msi_v2._acquire_token_via_mtls")
-    def test_msi_v2_fallback_to_v1_on_metadata_failure(self, mock_mtls):
-        """MSI v2 falls back to MSI v1 if IMDS metadata call fails."""
+    def test_msi_v2_raises_on_metadata_failure_when_pop_requested(self, mock_mtls):
+        """When mtls_proof_of_possession=True, errors are raised (no v1 fallback)."""
         import requests
         client = self._make_client()
 
         def _mock_get(url, **kwargs):
             if "getplatformmetadata" in url:
                 return MinimalResponse(status_code=404, text="Not Found")
-            # MSI v1 fallback (VM endpoint)
-            if "oauth2/token" in url:
-                return MinimalResponse(status_code=200, text=json.dumps({
-                    "access_token": "V1_TOKEN",
-                    "expires_in": "3600",
-                    "resource": "R",
-                }))
             raise ValueError("Unexpected GET: {}".format(url))
 
         with patch.object(client._http_client, "get", side_effect=_mock_get):
-            result = client.acquire_token_for_client(
-                resource="R", mtls_proof_of_possession=True)
+            with self.assertRaises(MsiV2Error):
+                client.acquire_token_for_client(
+                    resource="R", mtls_proof_of_possession=True)
 
-        # Should have fallen back to MSI v1
-        self.assertEqual(result["access_token"], "V1_TOKEN")
         mock_mtls.assert_not_called()
 
     @patch("msal.msi_v2._acquire_token_via_mtls")
@@ -593,8 +585,8 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
         self.assertEqual(result["access_token"], "V1_TOKEN")
 
     @patch("msal.msi_v2._acquire_token_via_mtls")
-    def test_msi_v2_fallback_on_unexpected_error(self, mock_mtls):
-        """MSI v2 falls back to MSI v1 on unexpected errors."""
+    def test_msi_v2_raises_on_unexpected_error_when_pop_requested(self, mock_mtls):
+        """When mtls_proof_of_possession=True, unexpected errors are raised (no v1 fallback)."""
         import requests
         client = self._make_client()
 
@@ -605,18 +597,10 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
             "attestationEndpoint": None,
         }
 
-        call_count = [0]
-
         def _mock_get(url, **kwargs):
-            call_count[0] += 1
             if "getplatformmetadata" in url:
                 return MinimalResponse(status_code=200, text=json.dumps(platform_metadata))
-            # MSI v1 fallback
-            return MinimalResponse(status_code=200, text=json.dumps({
-                "access_token": "V1_FALLBACK",
-                "expires_in": "3600",
-                "resource": "R",
-            }))
+            raise ValueError("Unexpected GET: {}".format(url))
 
         def _mock_post(url, **kwargs):
             if "issuecredential" in url:
@@ -626,11 +610,35 @@ class TestMsiV2TokenAcquisitionIntegration(unittest.TestCase):
 
         with patch.object(client._http_client, "get", side_effect=_mock_get), \
              patch.object(client._http_client, "post", side_effect=_mock_post):
-            result = client.acquire_token_for_client(
-                resource="R", mtls_proof_of_possession=True)
+            with self.assertRaises(MsiV2Error):
+                client.acquire_token_for_client(
+                    resource="R", mtls_proof_of_possession=True)
 
-        # Should fall back to MSI v1
-        self.assertEqual(result["access_token"], "V1_FALLBACK")
+        mock_mtls.assert_not_called()
+
+    @patch("msal.msi_v2._acquire_token_via_mtls")
+    def test_msi_v2_fallback_to_v1_via_constructor_flag_on_failure(self, mock_mtls):
+        """Legacy msi_v2_enabled constructor path still falls back to MSI v1 on error."""
+        import requests
+        client = self._make_client(msi_v2_enabled=True)
+
+        def _mock_get(url, **kwargs):
+            if "getplatformmetadata" in url:
+                return MinimalResponse(status_code=404, text="Not Found")
+            # MSI v1 fallback (VM endpoint)
+            if "oauth2/token" in url:
+                return MinimalResponse(status_code=200, text=json.dumps({
+                    "access_token": "V1_TOKEN",
+                    "expires_in": "3600",
+                    "resource": "R",
+                }))
+            raise ValueError("Unexpected GET: {}".format(url))
+
+        with patch.object(client._http_client, "get", side_effect=_mock_get):
+            result = client.acquire_token_for_client(resource="R")
+
+        # Legacy path: falls back to v1
+        self.assertEqual(result["access_token"], "V1_TOKEN")
         mock_mtls.assert_not_called()
 
     @patch("msal.msi_v2_attestation.get_attestation_jwt")
