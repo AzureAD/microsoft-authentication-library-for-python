@@ -3,10 +3,6 @@ try:
     from urllib.parse import urlparse
 except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
-import logging
-
-
-logger = logging.getLogger(__name__)
 
 # Endpoints were copied from here
 # https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud#azure-ad-authentication-endpoints
@@ -92,11 +88,9 @@ class Authority(object):
         self._http_client = http_client
         self._oidc_authority_url = oidc_authority_url
         if oidc_authority_url:
-            logger.debug("Initializing with OIDC authority: %s", oidc_authority_url)
             tenant_discovery_endpoint = self._initialize_oidc_authority(
                 oidc_authority_url)
         else:
-            logger.debug("Initializing with Entra authority: %s", authority_url)
             tenant_discovery_endpoint = self._initialize_entra_authority(
                 authority_url, validate_authority, instance_discovery)
         try:
@@ -117,8 +111,6 @@ class Authority(object):
                 .format(authority_url)
                 ) + " Also please double check your tenant name or GUID is correct."
             raise ValueError(error_message)
-        logger.debug(
-            'openid_config("%s") = %s', tenant_discovery_endpoint, openid_config)
         self._issuer = openid_config.get('issuer')
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
