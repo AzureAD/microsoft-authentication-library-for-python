@@ -462,7 +462,7 @@ class GetManagedIdentitySourceTestCase(unittest.TestCase):
 
     @patch("msal.managed_identity.os.path.exists", return_value=True)
     @patch("msal.managed_identity.sys.platform", new="win32")
-    @patch.dict(os.environ, {"ProgramFiles": "C:\Program Files"})
+    @patch.dict(os.environ, {"ProgramFiles": r"C:\Program Files"})
     def test_arc_by_file_existence_on_windows(self, mocked_exists):
         self.assertEqual(get_managed_identity_source(), AZURE_ARC)
         mocked_exists.assert_called_with(
