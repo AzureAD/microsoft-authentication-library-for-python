@@ -138,7 +138,6 @@ def main_once():
 
     print("SUCCESS: token acquired")
     print("  resource   =", RESOURCE)
-    print("  token_type =", result.get("token_type"))
     print("  token_len  =", len(result["access_token"]))
 
     if ENDPOINT:

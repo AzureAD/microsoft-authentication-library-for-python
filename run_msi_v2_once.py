@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import msal
 import requests
 
@@ -23,18 +22,16 @@ def main():
 
     if "access_token" not in result:
         print("FAIL: token acquisition failed")
-        print(json.dumps(result, indent=2))
         return 2
 
     token_type = result.get("token_type", "mtls_pop")
     print("SUCCESS: token acquired")
     print("  resource   =", resource)
-    print("  token_type =", token_type)
+    print("  is_mtls_pop =", token_type == "mtls_pop")
 
     # Minimal proof we got a real JWT-ish token (don’t print it)
     at = result["access_token"]
     print("  token_len  =", len(at))
-    print("  token_head =", at.split('.')[0][:25] + "...")
 
     # Exit codes:
     # 0 = MSI v2 worked (mtls_pop)
