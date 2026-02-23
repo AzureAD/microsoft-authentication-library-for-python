@@ -68,6 +68,18 @@ def is_wsl():
 
 def _browse(auth_uri, browser_name=None):  # throws ImportError, webbrowser.Error
     """Browse uri with named browser. Default browser is customizable by $BROWSER"""
+    try:
+        parsed_uri = urlparse(auth_uri)
+        if parsed_uri.scheme not in ("http", "https"):
+            logger.warning("Invalid URI scheme for browser: %s", parsed_uri.scheme)
+            return False
+    except ValueError:
+        logger.warning("Invalid URI: %s", auth_uri)
+        return False
+    if any(c in auth_uri for c in "\n\r\t"):
+        logger.warning("Invalid characters in URI")
+        return False
+
     import webbrowser  # Lazy import. Some distro may not have this.
     if browser_name:
         browser_opened = webbrowser.get(browser_name).open(auth_uri)
@@ -75,17 +87,23 @@ def _browse(auth_uri, browser_name=None):  # throws ImportError, webbrowser.Erro
         # This one can survive BROWSER=nonexist, while get(None).open(...) can not
         browser_opened = webbrowser.open(auth_uri)
 
-    # In WSL which doesn't have www-browser, try launching browser with PowerShell
+    # In WSL which doesn't have www-browser, try launching browser with explorer.exe
     if not browser_opened and is_wsl():
-        try:
-            import subprocess
-            # https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe
-            # Ampersand (&) should be quoted
-            exit_code = subprocess.call(
-                ['powershell.exe', '-NoProfile', '-Command', 'Start-Process "{}"'.format(auth_uri)])
+        import subprocess
+        try:  # Try wslview first, which is the recommended way on WSL
+            # https://github.com/wslutilities/wslu
+            exit_code = subprocess.call(['wslview', auth_uri])
             browser_opened = exit_code == 0
-        except FileNotFoundError:  # WSL might be too old
+        except FileNotFoundError:  # wslview might not be installed
             pass
+        if not browser_opened:
+            try:
+                # Fallback to explorer.exe as recommended for WSL
+                # Note: explorer.exe returns 1 on success in some WSL environments
+                exit_code = subprocess.call(['explorer.exe', auth_uri])
+                browser_opened = exit_code in (0, 1)
+            except FileNotFoundError:
+                pass
     return browser_opened
 
 
@@ -102,11 +120,9 @@ def _is_html(text):
 def _escape(key_value_pairs):
     return {k: escape(v) for k, v in key_value_pairs.items()}
 
-
 def _printify(text):
     # If an https request is sent to an http server, the text needs to be repr-ed
     return repr(text) if isinstance(text, str) and not text.isprintable() else text
-
 
 class _AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
