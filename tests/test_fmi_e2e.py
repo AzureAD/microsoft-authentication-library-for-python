@@ -149,5 +149,135 @@ class TestFMIIntegration(LabBasedTestCase):
             "cache might not be working correctly")
 
 
+class TestFMICacheIsolation(LabBasedTestCase):
+    """Test that tokens acquired with different FMI paths are cached separately.
+
+    This verifies the cache key extensibility: two calls with different fmi_path
+    values should NOT return each other's cached tokens.
+    """
+
+    def test_different_fmi_paths_are_cached_separately(self):
+        app = msal.ConfidentialClientApplication(
+            _FMI_CLIENT_ID,
+            client_credential=get_client_certificate(),
+            authority=_AUTHORITY_URL,
+            http_client=MinimalHttpClient(),
+        )
+        scopes = [_FMI_SCOPE]
+
+        # Acquire token with path A
+        result_a = app.acquire_token_for_client_with_fmi_path(
+            scopes, "PathA/credential")
+        self.assertIn("access_token", result_a,
+            "Path A acquisition failed: {}: {}".format(
+                result_a.get("error"), result_a.get("error_description")))
+
+        # Acquire token with path B — should NOT get path A's cached token
+        result_b = app.acquire_token_for_client_with_fmi_path(
+            scopes, "PathB/credential")
+        self.assertIn("access_token", result_b,
+            "Path B acquisition failed: {}: {}".format(
+                result_b.get("error"), result_b.get("error_description")))
+        self.assertNotEqual(
+            result_b.get("token_source"), "cache",
+            "Different FMI path should NOT return cached token from another path")
+
+        # Verify path A still returns its own cached token
+        result_a2 = app.acquire_token_for_client_with_fmi_path(
+            scopes, "PathA/credential")
+        self.assertIn("access_token", result_a2)
+        self.assertEqual(
+            result_a2.get("token_source"), "cache",
+            "Same FMI path should return cached token")
+        self.assertEqual(result_a["access_token"], result_a2["access_token"])
+
+    def test_fmi_token_does_not_interfere_with_non_fmi_token(self):
+        app = msal.ConfidentialClientApplication(
+            _FMI_CLIENT_ID,
+            client_credential=get_client_certificate(),
+            authority=_AUTHORITY_URL,
+            http_client=MinimalHttpClient(),
+        )
+        scopes = [_FMI_SCOPE]
+
+        # Cache a token via FMI path
+        fmi_result = app.acquire_token_for_client_with_fmi_path(scopes, _FMI_PATH)
+        self.assertIn("access_token", fmi_result)
+
+        # Regular acquire_token_for_client should NOT get the FMI token
+        regular_result = app.acquire_token_for_client(scopes)
+        self.assertIn("access_token", regular_result,
+            "Regular call failed: {}: {}".format(
+                regular_result.get("error"), regular_result.get("error_description")))
+        self.assertNotEqual(
+            regular_result.get("token_source"), "cache",
+            "Non-FMI call should not return FMI-cached token")
+
+
+class TestFMICacheInspection(LabBasedTestCase):
+    """Acquire tokens with two different FMI paths and inspect the underlying
+    cache to verify the entries are correctly isolated."""
+
+    def test_two_fmi_paths_produce_separate_cache_entries(self):
+        app = msal.ConfidentialClientApplication(
+            _FMI_CLIENT_ID,
+            client_credential=get_client_certificate(),
+            authority=_AUTHORITY_URL,
+            http_client=MinimalHttpClient(),
+        )
+        scopes = [_FMI_SCOPE]
+        path_a = "PathAlpha/Credential"
+        path_b = "PathBeta/Credential"
+
+        # 1. Acquire token with path A
+        result_a = app.acquire_token_for_client_with_fmi_path(scopes, path_a)
+        self.assertIn("access_token", result_a,
+            "Path A acquisition failed: {}: {}".format(
+                result_a.get("error"), result_a.get("error_description")))
+        token_a = result_a["access_token"]
+
+        # 2. Acquire token with path B
+        result_b = app.acquire_token_for_client_with_fmi_path(scopes, path_b)
+        self.assertIn("access_token", result_b,
+            "Path B acquisition failed: {}: {}".format(
+                result_b.get("error"), result_b.get("error_description")))
+        token_b = result_b["access_token"]
+
+        # Tokens should be different (different paths go to different resources)
+        self.assertNotEqual(token_a, token_b,
+            "Tokens for different FMI paths should differ")
+
+        # 3. Inspect cache: there should be exactly 2 AccessToken entries
+        cache = app.token_cache._cache
+        at_entries = cache.get("AccessToken", {})
+        # Filter to our client_id + scope to avoid noise
+        our_entries = {
+            k: v for k, v in at_entries.items()
+            if v.get("client_id") == _FMI_CLIENT_ID
+            and _FMI_SCOPE.split("/")[0] in v.get("target", "")
+        }
+        self.assertEqual(2, len(our_entries),
+            "Cache should contain exactly 2 AT entries for our client, "
+            "got {}: {}".format(len(our_entries), list(our_entries.keys())))
+
+        # 4. Each entry must have a non-empty ext_cache_key, and they must differ
+        ext_keys = [v.get("ext_cache_key") for v in our_entries.values()]
+        for ek in ext_keys:
+            self.assertTrue(ek, "Each FMI cache entry must have a non-empty ext_cache_key")
+        self.assertNotEqual(ext_keys[0], ext_keys[1],
+            "ext_cache_key values for different FMI paths must differ")
+
+        # 5. Verify each path still returns its own cached token
+        cached_a = app.acquire_token_for_client_with_fmi_path(scopes, path_a)
+        self.assertEqual("cache", cached_a.get("token_source"))
+        self.assertEqual(token_a, cached_a["access_token"],
+            "Path A should return its own cached token")
+
+        cached_b = app.acquire_token_for_client_with_fmi_path(scopes, path_b)
+        self.assertEqual("cache", cached_b.get("token_source"))
+        self.assertEqual(token_b, cached_b["access_token"],
+            "Path B should return its own cached token")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -15,7 +15,7 @@ from .authority import Authority, WORLD_WIDE
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
-from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER
+from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER, _compute_ext_cache_key
 import msal.telemetry
 from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
@@ -1571,6 +1571,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             key_id = kwargs.get("data", {}).get("key_id")
             if key_id:  # Some token types (SSH-certs, POP) are bound to a key
                 query["key_id"] = key_id
+            ext_cache_key = _compute_ext_cache_key(kwargs.get("data", {}))
+            if ext_cache_key:  # FMI tokens need cache isolation by path
+                query["ext_cache_key"] = ext_cache_key
             now = time.time()
             refresh_reason = msal.telemetry.AT_ABSENT
             for entry in self.token_cache.search(  # A generator allows us to

@@ -4,7 +4,7 @@ import json
 import time
 import warnings
 
-from msal.token_cache import TokenCache, SerializableTokenCache
+from msal.token_cache import TokenCache, SerializableTokenCache, _compute_ext_cache_key
 from tests import unittest
 
 
@@ -320,4 +320,125 @@ class SerializableTokenCacheTestCase(unittest.TestCase):
         self.assertEqual(
             output.get("AccessToken", {}).get("an-entry"), {"foo": "bar"},
             "Undefined token keys and their values should be intact")
+
+
+class TestComputeExtCacheKey(unittest.TestCase):
+    """Tests for the _compute_ext_cache_key hash function."""
+
+    def test_empty_data_returns_empty_string(self):
+        self.assertEqual("", _compute_ext_cache_key(None))
+        self.assertEqual("", _compute_ext_cache_key({}))
+
+    def test_excluded_fields_are_ignored(self):
+        self.assertEqual("", _compute_ext_cache_key({"key_id": "k1", "token_type": "ssh-cert", "req_cnf": "nonce", "claims": "{}"}),
+            "Fields in _EXT_CACHE_KEY_EXCLUDED_FIELDS should produce an empty hash")
+
+    def test_fmi_path_produces_non_empty_hash(self):
+        result = _compute_ext_cache_key({"fmi_path": "SomePath/Credential"})
+        self.assertNotEqual("", result)
+        self.assertIsInstance(result, str)
+
+    def test_same_input_produces_same_hash(self):
+        h1 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        h2 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        self.assertEqual(h1, h2)
+
+    def test_different_fmi_paths_produce_different_hashes(self):
+        h1 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        h2 = _compute_ext_cache_key({"fmi_path": "path/b"})
+        self.assertNotEqual(h1, h2)
+
+    def test_empty_fmi_path_value_is_ignored(self):
+        self.assertEqual("", _compute_ext_cache_key({"fmi_path": ""}))
+
+    def test_excluded_fields_dont_affect_hash(self):
+        h1 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        h2 = _compute_ext_cache_key({"fmi_path": "path/a", "key_id": "k1", "req_cnf": "nonce"})
+        self.assertEqual(h1, h2, "Excluded fields should not affect the hash")
+
+    def test_non_excluded_fields_are_included_in_hash(self):
+        h1 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        h2 = _compute_ext_cache_key({"fmi_path": "path/a", "custom_param": "val"})
+        self.assertNotEqual(h1, h2, "Non-excluded fields should change the hash")
+
+
+class TestExtCacheKeyIsolation(unittest.TestCase):
+    """Tests that ext_cache_key provides proper cache isolation in TokenCache."""
+
+    def _build_event(self, client_id, scope, token_endpoint, access_token, data=None, **kwargs):
+        return {
+            "client_id": client_id,
+            "scope": scope,
+            "token_endpoint": token_endpoint,
+            "response": build_response(access_token=access_token, expires_in=3600),
+            "data": data or {},
+            **kwargs,
+        }
+
+    def test_at_key_includes_ext_cache_key_when_present(self):
+        cache = TokenCache()
+        key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
+        key_without = key_maker(
+            home_account_id="", environment="env", client_id="cid",
+            realm="realm", target="scope")
+        key_with = key_maker(
+            home_account_id="", environment="env", client_id="cid",
+            realm="realm", target="scope", ext_cache_key="somehash")
+        self.assertNotEqual(key_without, key_with,
+            "Keys with and without ext_cache_key should differ")
+        self.assertIn("somehash", key_with)
+
+    def test_different_ext_cache_keys_produce_different_at_keys(self):
+        cache = TokenCache()
+        key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
+        key_a = key_maker(
+            home_account_id="", environment="env", client_id="cid",
+            realm="realm", target="scope", ext_cache_key="hash_a")
+        key_b = key_maker(
+            home_account_id="", environment="env", client_id="cid",
+            realm="realm", target="scope", ext_cache_key="hash_b")
+        self.assertNotEqual(key_a, key_b)
+
+    def test_fmi_tokens_are_stored_with_ext_cache_key(self):
+        cache = TokenCache()
+        event = self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "fmi_token", data={"fmi_path": "some/path"})
+        cache.add(event)
+        at_entries = list(cache.search(TokenCache.CredentialType.ACCESS_TOKEN, target=["s1"]))
+        self.assertEqual(0, len(at_entries),
+            "FMI tokens should NOT be found by a query without ext_cache_key")
+
+    def test_fmi_tokens_found_with_matching_ext_cache_key_query(self):
+        cache = TokenCache()
+        ext_key = _compute_ext_cache_key({"fmi_path": "some/path"})
+        event = self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "fmi_token", data={"fmi_path": "some/path"})
+        cache.add(event)
+        at_entries = list(cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, target=["s1"],
+            query={"client_id": "cid", "environment": "login.example.com",
+                   "realm": "tenant", "home_account_id": None,
+                   "ext_cache_key": ext_key}))
+        self.assertEqual(1, len(at_entries))
+        self.assertEqual("fmi_token", at_entries[0]["secret"])
+
+    def test_non_fmi_tokens_not_affected_by_fmi_cache(self):
+        cache = TokenCache()
+        # Add FMI token
+        cache.add(self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "fmi_token", data={"fmi_path": "some/path"}))
+        # Add regular token
+        cache.add(self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "regular_token"))
+        # Search without ext_cache_key should find only regular token
+        at_entries = list(cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, target=["s1"],
+            query={"client_id": "cid", "environment": "login.example.com",
+                   "realm": "tenant", "home_account_id": None}))
+        self.assertEqual(1, len(at_entries))
+        self.assertEqual("regular_token", at_entries[0]["secret"])
 

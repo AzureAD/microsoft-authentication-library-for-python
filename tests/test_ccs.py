@@ -61,11 +61,14 @@ class TestCcsRoutingInfoTestCase(unittest.TestCase):
                 "CSS routing info should be derived from home_account_id")
 
     def test_acquire_token_by_username_password(self):
+        import warnings
         app = msal.ClientApplication("client_id")
         username = "johndoe@contoso.com"
         with patch.object(app.http_client, "post", return_value=MinimalResponse(
                 status_code=400, text='{"error": "mock"}')) as mocked_method:
-            app.acquire_token_by_username_password(username, "password", ["scope"])
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                app.acquire_token_by_username_password(username, "password", ["scope"])
             self.assertEqual(
                 "upn:" + username,
                 mocked_method.call_args[1].get("headers", {}).get('X-AnchorMailbox'),
