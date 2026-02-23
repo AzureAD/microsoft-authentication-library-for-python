@@ -3,71 +3,180 @@
 #
 # This code is licensed under the MIT License.
 """
-Attestation handler for MSI v2 (mTLS PoP) flow.
+Windows attestation for MSI v2 KeyGuard keys using AttestationClientLib.dll.
 
-Provides attestation JWT acquisition for use in the IMDS issuecredential
-request. On Windows, attempts to use AttestationClientLib.dll via ctypes.
-On all other platforms (or when the DLL is unavailable), returns None,
-allowing the caller to proceed with CSR-only credential issuance.
+Equivalent to your PowerShell / C# P/Invoke signatures:
+
+  int InitAttestationLib(ref AttestationLogInfo info);
+  int AttestKeyGuardImportKey(string endpoint, string authToken, string clientPayload,
+                              IntPtr keyHandle, out IntPtr token, string clientId);
+  void FreeAttestationToken(IntPtr token);
+  void UninitAttestationLib();
 """
+
+from __future__ import annotations
+
+import ctypes
 import logging
+import os
 import sys
-from typing import Optional
+from ctypes import POINTER, Structure, c_char_p, c_int, c_void_p
 
 logger = logging.getLogger(__name__)
 
+# keep callback alive
+_NATIVE_LOG_CB = None
 
-def _try_windows_attestation(
-    csr_der: bytes,
-    attestation_endpoint: str,
-) -> Optional[str]:
-    """Attempt to get an attestation JWT using Windows AttestationClientLib.dll.
 
-    :param csr_der: DER-encoded CSR bytes to include in the attestation.
-    :param attestation_endpoint: MAA attestation endpoint URL.
-    :returns: Attestation JWT string, or None if unavailable.
+# void LogFunc(void* ctx, const char* tag, int lvl, const char* func, int line, const char* msg);
+_LogFunc = ctypes.CFUNCTYPE(None, c_void_p, c_char_p, c_int, c_char_p, c_int, c_char_p)
+
+
+class AttestationLogInfo(Structure):
+    _fields_ = [("Log", c_void_p), ("Ctx", c_void_p)]
+
+
+def _default_logger(ctx, tag, lvl, func, line, msg):
+    try:
+        tag_s = tag.decode("utf-8", errors="replace") if tag else ""
+        func_s = func.decode("utf-8", errors="replace") if func else ""
+        msg_s = msg.decode("utf-8", errors="replace") if msg else ""
+        logger.debug("[Native:%s:%s] %s:%s - %s", tag_s, lvl, func_s, line, msg_s)
+    except Exception:
+        pass
+
+
+def _maybe_add_dll_dirs():
+    """
+    Make DLL resolution more reliable (especially for packaged apps).
     """
     if sys.platform != "win32":
-        return None
+        return
+
+    add_dir = getattr(os, "add_dll_directory", None)
+    if not add_dir:
+        return
+
+    # exe dir
     try:
-        import ctypes
-        lib = ctypes.CDLL("AttestationClientLib.dll")
-        logger.debug("Loaded AttestationClientLib.dll for Windows attestation")
-        # The exact DLL interface is platform/version-specific.
-        # Without access to the DLL ABI, we log and return None.
-        # Production implementations should call the appropriate exported
-        # function with the CSR and attestation endpoint.
-        logger.debug(
-            "Windows AttestationClientLib.dll loaded but DLL ABI not "
-            "configured; skipping attestation")
-        return None
+        exe_dir = os.path.dirname(sys.executable)
+        if exe_dir and os.path.isdir(exe_dir):
+            add_dir(exe_dir)
+    except Exception:
+        pass
+
+    # cwd
+    try:
+        cwd = os.getcwd()
+        if cwd and os.path.isdir(cwd):
+            add_dir(cwd)
+    except Exception:
+        pass
+
+    # module dir
+    try:
+        mod_dir = os.path.dirname(__file__)
+        if mod_dir and os.path.isdir(mod_dir):
+            add_dir(mod_dir)
+    except Exception:
+        pass
+
+
+def _load_lib():
+    from .managed_identity import MsiV2Error
+
+    if sys.platform != "win32":
+        raise MsiV2Error("[msi_v2_attestation] AttestationClientLib is Windows-only.")
+
+    _maybe_add_dll_dirs()
+
+    explicit = os.getenv("ATTESTATION_CLIENTLIB_PATH")
+    try:
+        if explicit:
+            return ctypes.CDLL(explicit)
+        return ctypes.CDLL("AttestationClientLib.dll")
     except OSError as exc:
-        logger.debug("AttestationClientLib.dll not available: %s", exc)
-        return None
+        raise MsiV2Error(
+            "[msi_v2_attestation] Unable to load AttestationClientLib.dll. "
+            "Place it next to the app/exe or set ATTESTATION_CLIENTLIB_PATH."
+        ) from exc
 
 
 def get_attestation_jwt(
-    http_client,
-    csr_der: bytes,
+    *,
     attestation_endpoint: str,
-    private_key,
-) -> Optional[str]:
-    """Obtain an attestation JWT for the MSI v2 credential issuance.
-
-    Tries platform-specific attestation first (Windows AttestationClientLib.dll),
-    then falls back to returning None, which causes the caller to proceed
-    with a CSR-only issuecredential request.
-
-    :param http_client: HTTP client (reserved for future cross-platform MAA calls).
-    :param csr_der: DER-encoded CSR bytes.
-    :param attestation_endpoint: MAA endpoint URL from IMDS platform metadata.
-    :param private_key: RSA private key (reserved for future signing needs).
-    :returns: Attestation JWT string, or None if attestation is unavailable.
+    client_id: str,
+    key_handle: int,
+    auth_token: str = "",
+    client_payload: str = "{}",
+) -> str:
     """
-    attestation_jwt = _try_windows_attestation(csr_der, attestation_endpoint)
-    if attestation_jwt:
-        logger.debug("Obtained Windows attestation JWT")
-        return attestation_jwt
-    logger.debug(
-        "No platform attestation available; proceeding with CSR-only flow")
-    return None
+    Returns attestation JWT string. Raises MsiV2Error on failure.
+    """
+    from .managed_identity import MsiV2Error
+
+    if not attestation_endpoint:
+        raise MsiV2Error("[msi_v2_attestation] attestation_endpoint must be non-empty")
+    if not client_id:
+        raise MsiV2Error("[msi_v2_attestation] client_id must be non-empty")
+    if not key_handle:
+        raise MsiV2Error("[msi_v2_attestation] key_handle must be non-zero")
+
+    lib = _load_lib()
+
+    lib.InitAttestationLib.argtypes = [POINTER(AttestationLogInfo)]
+    lib.InitAttestationLib.restype = c_int
+
+    lib.AttestKeyGuardImportKey.argtypes = [
+        c_char_p,           # endpoint
+        c_char_p,           # authToken
+        c_char_p,           # clientPayload
+        c_void_p,           # keyHandle
+        POINTER(c_void_p),  # out token (char*)
+        c_char_p,           # clientId
+    ]
+    lib.AttestKeyGuardImportKey.restype = c_int
+
+    lib.FreeAttestationToken.argtypes = [c_void_p]
+    lib.FreeAttestationToken.restype = None
+
+    lib.UninitAttestationLib.argtypes = []
+    lib.UninitAttestationLib.restype = None
+
+    global _NATIVE_LOG_CB  # pylint: disable=global-statement
+    _NATIVE_LOG_CB = _LogFunc(_default_logger)
+
+    info = AttestationLogInfo()
+    info.Log = ctypes.cast(_NATIVE_LOG_CB, c_void_p).value
+    info.Ctx = c_void_p(0)
+
+    rc = lib.InitAttestationLib(ctypes.byref(info))
+    if rc != 0:
+        raise MsiV2Error(f"[msi_v2_attestation] InitAttestationLib failed: {rc}")
+
+    token_ptr = c_void_p()
+    try:
+        rc = lib.AttestKeyGuardImportKey(
+            attestation_endpoint.encode("utf-8"),
+            auth_token.encode("utf-8"),
+            client_payload.encode("utf-8"),
+            c_void_p(int(key_handle)),
+            ctypes.byref(token_ptr),
+            client_id.encode("utf-8"),
+        )
+        if rc != 0:
+            raise MsiV2Error(f"[msi_v2_attestation] AttestKeyGuardImportKey failed: {rc}")
+        if not token_ptr.value:
+            raise MsiV2Error("[msi_v2_attestation] Attestation token pointer is NULL")
+
+        token = ctypes.string_at(token_ptr.value).decode("utf-8", errors="replace")
+        return token
+    finally:
+        try:
+            if token_ptr.value:
+                lib.FreeAttestationToken(token_ptr)
+        finally:
+            try:
+                lib.UninitAttestationLib()
+            except Exception:
+                pass
