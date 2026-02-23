@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771812961918,
+  "lastUpdate": 1771852036367,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -35247,6 +35247,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015104685892559427",
             "extra": "mean: 134.09900979907133 usec\nrounds: 4082"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dangnhatrin90@gmail.com",
+            "name": "Rin",
+            "username": "RinZ27"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "733a83cc09a85192607cc012b51638d4bcce76f7",
+          "message": "Security: Remove unsafe PowerShell fallback in WSL (#866)\n\n* Security: Remove unsafe PowerShell fallback in WSL\n\n* Remove unnecessary blank lines in authcode.py\n\n---------\n\nCo-authored-by: Ashok Kumar Ramakrishnan <83938949+ashok672@users.noreply.github.com>",
+          "timestamp": "2026-02-23T13:04:14Z",
+          "tree_id": "c1c8b426efaf827866c9dfd920710267316aef1e",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/733a83cc09a85192607cc012b51638d4bcce76f7"
+        },
+        "date": 1771852035303,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 45011.65145099015,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000016968191907316382",
+            "extra": "mean: 22.216469908659665 usec\nrounds: 9521"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 41019.26731714026,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000021383527905323837",
+            "extra": "mean: 24.378787467569936 usec\nrounds: 11570"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8867.712156718779,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012370142360702669",
+            "extra": "mean: 112.76865806276 usec\nrounds: 3603"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7982.472585731698,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000024994041520255694",
+            "extra": "mean: 125.27446718545002 usec\nrounds: 3215"
           }
         ]
       }
