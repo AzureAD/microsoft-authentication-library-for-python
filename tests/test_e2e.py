@@ -227,6 +227,29 @@ class E2eTestCase(unittest.TestCase):
             )
         return result
 
+    def _test_iwa(self,
+                  authority=None, client_id=None, username=None, scope=None,
+                  client_secret=None,
+                  azure_region=None,
+                  http_client=None,
+                  **ignored):
+        assert authority and client_id and username and scope
+        self.app = self._build_app(
+            client_id, authority=authority,
+            http_client=requests,
+            azure_region=azure_region, client_credential=client_secret)
+        self.assertEqual(
+            self.app.get_accounts(username=username), [], "Cache starts empty")
+        result = self.app.acquire_token_integrated_windows_auth(
+            username, scopes=scope)
+        self.assertLoosely(result)
+        self.assertCacheWorksForUser(
+            result, scope,
+            username=username
+        )
+        return result
+
+
     @unittest.skipIf(
         _SKIP_UNATTENDED_E2E_TESTS,
         "Although it is doable, we still choose to skip device flow to save time")
@@ -355,6 +378,10 @@ class PublicCloudScenariosTestCase(E2eTestCase):
     def test_username_password(self):
         self.skipUnlessWithConfig(["client_id", "username", "password", "scope"])
         self._test_username_password(**self.config)
+
+    def test_iwa(self):
+        self.skipUnlessWithConfig(["client_id","username","scope"])
+        return self._test_iwa(**self.config)
 
     def _get_app_and_auth_code(self, scopes=None, **kwargs):
         return _get_app_and_auth_code(

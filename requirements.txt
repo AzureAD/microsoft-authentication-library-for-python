@@ -5,6 +5,7 @@ python-dotenv>=0.21,<2
 
 pytest-benchmark>=4,<5
 perf_baseline>=0.1,<0.2
+requests-kerberos==0.14.0
 
 # For lab_config.py to fetch test secrets from Key Vault
 azure-identity>=1.12,<2
