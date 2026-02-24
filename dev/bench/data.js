@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771928590717,
+  "lastUpdate": 1771928935246,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -35611,6 +35611,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000018944403273995652",
             "extra": "mean: 141.9017468697867 usec\nrounds: 2955"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107404295+4gust@users.noreply.github.com",
+            "name": "Nilesh Choudhary",
+            "username": "4gust"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1310faca65e452b09e347fdee52da1fe400ce48f",
+          "message": "Removed logs that were causing Alerts (#878)\n\n* removed some log that were alerted\n\n* Added back logging of the oidc url",
+          "timestamp": "2026-02-24T10:26:00Z",
+          "tree_id": "5ed0f4cce653188f62096eb83f3ee9982fb287f4",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/1310faca65e452b09e347fdee52da1fe400ce48f"
+        },
+        "date": 1771928933554,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39433.33778344891,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000033142727604254575",
+            "extra": "mean: 25.359253266654072 usec\nrounds: 7194"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 33860.84282492273,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003511328788914393",
+            "extra": "mean: 29.532637600620088 usec\nrounds: 14037"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7439.164940070562,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001776284376559079",
+            "extra": "mean: 134.42368976302262 usec\nrounds: 2237"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 6833.702618247756,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001680177662775064",
+            "extra": "mean: 146.3335553013005 usec\nrounds: 2622"
           }
         ]
       }
