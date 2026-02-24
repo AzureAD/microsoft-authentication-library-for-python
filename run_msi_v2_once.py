@@ -1,45 +1,56 @@
+"""
+MSI v2 (mTLS PoP + KeyGuard Attestation) minimal sample for MSAL Python.
+
+Behavior:
+- Requests mtls_pop + attestation
+- STRICT: succeeds only if token_type == mtls_pop
+- Prints ONLY: "token received"
+- No resource call
+"""
+
+import json
 import os
 import sys
-import json
+
 import msal
 import requests
 
-def main():
-    resource = os.getenv("RESOURCE", "https://management.azure.com/")
-    timeout = int(os.getenv("HTTP_TIMEOUT_SEC", "10"))
 
-    # IMPORTANT: long-lived session, but this tool runs once
-    session = requests.Session()
-    session.headers.update({"User-Agent": "msal-python-msi-v2-sample-exe"})
-    session.timeout = timeout  # harmless if unused
+DEFAULT_RESOURCE = "https://graph.microsoft.com"
+RESOURCE = os.getenv("RESOURCE", DEFAULT_RESOURCE).strip().rstrip("/")
 
-    client = msal.ManagedIdentityClient(
-        msal.SystemAssignedManagedIdentity(),
-        http_client=session,
-        msi_v2_enabled=True,   # force MSI v2 attempt (will still fall back if code does)
+client = msal.ManagedIdentityClient(
+    msal.SystemAssignedManagedIdentity(),
+    http_client=requests.Session(),
+    token_cache=msal.TokenCache(),
+)
+
+
+def acquire_mtls_pop_token_strict():
+    result = client.acquire_token_for_client(
+        resource=RESOURCE,
+        mtls_proof_of_possession=True,
+        with_attestation_support=True,
     )
 
-    result = client.acquire_token_for_client(resource=resource)
-
     if "access_token" not in result:
-        print("FAIL: token acquisition failed")
-        print(json.dumps(result, indent=2))
-        return 2
+        raise RuntimeError(f"Token acquisition failed: {json.dumps(result, indent=2)}")
 
-    token_type = result.get("token_type", "mtls_pop")
-    print("SUCCESS: token acquired")
-    print("  resource   =", resource)
-    print("  token_type =", token_type)
+    token_type = (result.get("token_type") or "Bearer").lower()
+    if token_type != "mtls_pop":
+        raise RuntimeError(
+            f"Strict MSI v2 requested, but got token_type={result.get('token_type')}. "
+            f"Full result: {json.dumps(result, indent=2)}"
+        )
 
-    # Minimal proof we got a real JWT-ish token (don’t print it)
-    at = result["access_token"]
-    print("  token_len  =", len(at))
-    print("  token_head =", at.split('.')[0][:25] + "...")
+    return result
 
-    # Exit codes:
-    # 0 = MSI v2 worked (mtls_pop)
-    # 1 = fell back to bearer (still a success, but not v2)
-    return 0 if token_type == "mtls_pop" else 1
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        acquire_mtls_pop_token_strict()
+        print("token received")
+        sys.exit(0)
+    except Exception as ex:
+        print("FAIL:", ex)
+        sys.exit(2)
