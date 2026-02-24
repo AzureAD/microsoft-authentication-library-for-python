@@ -26,6 +26,7 @@ def _mock_post(url, headers=None, *args, **kwargs):
 @patch.object(msal.authority, "tenant_discovery", return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/placeholder",
 })  # Otherwise it would fail on OIDC discovery
 class TestAccountSourceBehavior(unittest.TestCase):
 

@@ -5,9 +5,7 @@ except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
 import logging
 
-
 logger = logging.getLogger(__name__)
-
 # Endpoints were copied from here
 # https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud#azure-ad-authentication-endpoints
 AZURE_US_GOVERNMENT = "login.microsoftonline.us"
@@ -21,6 +19,29 @@ WELL_KNOWN_AUTHORITY_HOSTS = set([
     'login-us.microsoftonline.com',
     AZURE_US_GOVERNMENT,
     ])
+
+# Trusted issuer hosts for OIDC issuer validation
+# Includes all well-known Microsoft identity provider hosts and national clouds
+TRUSTED_ISSUER_HOSTS = frozenset([
+    # Global/Public cloud
+    "login.microsoftonline.com",
+    "login.microsoft.com",
+    "login.windows.net",
+    "sts.windows.net",
+    # China cloud
+    "login.chinacloudapi.cn",
+    "login.partner.microsoftonline.cn",
+    # Germany cloud (legacy)
+    "login.microsoftonline.de",
+    # US Government clouds
+    "login.microsoftonline.us",
+    "login.usgovcloudapi.net",
+    "login-us.microsoftonline.com",
+    "https://login.sovcloud-identity.fr", # AzureBleu
+    "https://login.sovcloud-identity.de", # AzureDelos
+    "https://login.sovcloud-identity.sg", # AzureGovSG
+])
+
 WELL_KNOWN_B2C_HOSTS = [
     "b2clogin.com",
     "b2clogin.cn",
@@ -67,12 +88,12 @@ class Authority(object):
             performed.
         """
         self._http_client = http_client
+        self._oidc_authority_url = oidc_authority_url
         if oidc_authority_url:
             logger.debug("Initializing with OIDC authority: %s", oidc_authority_url)
             tenant_discovery_endpoint = self._initialize_oidc_authority(
                 oidc_authority_url)
         else:
-            logger.debug("Initializing with Entra authority: %s", authority_url)
             tenant_discovery_endpoint = self._initialize_entra_authority(
                 authority_url, validate_authority, instance_discovery)
         try:
@@ -93,14 +114,22 @@ class Authority(object):
                 .format(authority_url)
                 ) + " Also please double check your tenant name or GUID is correct."
             raise ValueError(error_message)
-        openid_config.pop("issuer", None)  # Not used in MSAL.py, so remove it therefore no need to validate it
-        logger.debug(
-            'openid_config("%s") = %s', tenant_discovery_endpoint, openid_config)
+        self._issuer = openid_config.get('issuer')
         self.authorization_endpoint = openid_config['authorization_endpoint']
         self.token_endpoint = openid_config['token_endpoint']
         self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
         _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
 
+        # Validate the issuer if using OIDC authority
+        if self._oidc_authority_url and not self.has_valid_issuer():
+            raise ValueError((
+                "The issuer '{iss}' does not match the authority '{auth}' or a known pattern. "
+                "When using the 'oidc_authority' parameter in ClientApplication, the authority "
+                "will be validated against the issuer from {auth}/.well-known/openid-configuration ."
+                "If using a known Entra authority (e.g. login.microsoftonline.com) the "
+                "'authority' parameter should be used instead of 'oidc_authority'. "
+                ""
+            ).format(iss=self._issuer, auth=oidc_authority_url))
     def _initialize_oidc_authority(self, oidc_authority_url):
         authority, self.instance, tenant = canonicalize(oidc_authority_url)
         self.is_adfs = tenant.lower() == 'adfs'  # As a convention
@@ -175,6 +204,60 @@ class Authority(object):
             self.__class__._domains_without_user_realm_discovery.add(self.instance)
         return {}  # This can guide the caller to fall back normal ROPC flow
 
+    def has_valid_issuer(self):
+        """
+        Returns True if the issuer from OIDC discovery is valid for this authority.
+
+        An issuer is valid if one of the following is true:
+        - It exactly matches the authority URL (with/without trailing slash)
+        - It has the same scheme and host as the authority (path can be different)
+        - The issuer host is a well-known Microsoft authority host
+        - The issuer host is a regional variant of a well-known host (e.g., westus2.login.microsoft.com)
+        - For CIAM, hosts that end with well-known B2C hosts (e.g., tenant.b2clogin.com) are accepted as valid issuers
+        """
+        if not self._issuer or not self._oidc_authority_url:
+            return False
+
+        # Case 1: Exact match (most common case, normalized for trailing slashes)
+        if self._issuer.rstrip("/") == self._oidc_authority_url.rstrip("/"):
+            return True
+
+        issuer_parsed = urlparse(self._issuer)
+        authority_parsed = urlparse(self._oidc_authority_url)
+        issuer_host = issuer_parsed.hostname.lower() if issuer_parsed.hostname else None
+
+        if not issuer_host:
+            return False
+        
+        # Case 2: Issuer is from a trusted Microsoft host - O(1) lookup
+        if issuer_host in TRUSTED_ISSUER_HOSTS:
+            return True
+
+        # Case 3: Regional variant check - O(1) lookup
+        # e.g., westus2.login.microsoft.com -> extract "login.microsoft.com"
+        dot_index = issuer_host.find(".")
+        if dot_index > 0:
+            potential_base = issuer_host[dot_index + 1:]
+            if "." not in issuer_host[:dot_index]:
+                # 3a: Base host is a trusted Microsoft host
+                if potential_base in TRUSTED_ISSUER_HOSTS:
+                    return True
+                # 3b: Issuer has a region prefix on the authority host
+                #     e.g. issuer=us.someweb.com, authority=someweb.com
+                authority_host = authority_parsed.hostname.lower() if authority_parsed.hostname else ""
+                if potential_base == authority_host:
+                    return True
+
+        # Case 4: Same scheme and host (path can differ)
+        if (authority_parsed.scheme == issuer_parsed.scheme and 
+            authority_parsed.netloc == issuer_parsed.netloc):
+            return True
+        
+        # Case 5: Check if issuer host ends with any well-known B2C host (e.g., tenant.b2clogin.com)
+        if any(issuer_host.endswith(h) for h in WELL_KNOWN_B2C_HOSTS):
+            return True
+
+        return False
 
 def canonicalize(authority_or_auth_endpoint):
     # Returns (url_parsed_result, hostname_in_lowercase, tenant)
@@ -223,4 +306,3 @@ def tenant_discovery(tenant_discovery_endpoint, http_client, **kwargs):
     resp.raise_for_status()
     raise RuntimeError(  # A fallback here, in case resp.raise_for_status() is no-op
         "Unable to complete OIDC Discovery: %d, %s" % (resp.status_code, resp.text))
-

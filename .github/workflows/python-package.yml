@@ -17,12 +17,8 @@ jobs:
       # Fake a TRAVIS env so that the pre-existing test cases would behave like before
       TRAVIS: true
       LAB_APP_CLIENT_ID: ${{ secrets.LAB_APP_CLIENT_ID }}
-      LAB_APP_CLIENT_SECRET: ${{ secrets.LAB_APP_CLIENT_SECRET }}
       LAB_APP_CLIENT_CERT_BASE64: ${{ secrets.LAB_APP_CLIENT_CERT_BASE64 }}
       LAB_APP_CLIENT_CERT_PFX_PATH: lab_cert.pfx
-      LAB_OBO_CLIENT_SECRET: ${{ secrets.LAB_OBO_CLIENT_SECRET }}
-      LAB_OBO_CONFIDENTIAL_CLIENT_ID: ${{ secrets.LAB_OBO_CONFIDENTIAL_CLIENT_ID }}
-      LAB_OBO_PUBLIC_CLIENT_ID: ${{ secrets.LAB_OBO_PUBLIC_CLIENT_ID }}
 
     # Derived from https://docs.github.com/en/actions/guides/building-and-testing-python#starting-with-the-python-workflow-template
     runs-on: ubuntu-22.04

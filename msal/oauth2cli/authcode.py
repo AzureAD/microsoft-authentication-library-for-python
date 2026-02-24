@@ -5,6 +5,7 @@ It starts a web server to listen redirect_uri, waiting for auth code.
 It optionally opens a browser window to guide a human user to manually login.
 After obtaining an auth code, the web server will automatically shut down.
 """
+from collections import defaultdict
 import logging
 import os
 import socket
@@ -67,6 +68,18 @@ def is_wsl():
 
 def _browse(auth_uri, browser_name=None):  # throws ImportError, webbrowser.Error
     """Browse uri with named browser. Default browser is customizable by $BROWSER"""
+    try:
+        parsed_uri = urlparse(auth_uri)
+        if parsed_uri.scheme not in ("http", "https"):
+            logger.warning("Invalid URI scheme for browser: %s", parsed_uri.scheme)
+            return False
+    except ValueError:
+        logger.warning("Invalid URI: %s", auth_uri)
+        return False
+    if any(c in auth_uri for c in "\n\r\t"):
+        logger.warning("Invalid characters in URI")
+        return False
+
     import webbrowser  # Lazy import. Some distro may not have this.
     if browser_name:
         browser_opened = webbrowser.get(browser_name).open(auth_uri)
@@ -74,17 +87,23 @@ def _browse(auth_uri, browser_name=None):  # throws ImportError, webbrowser.Erro
         # This one can survive BROWSER=nonexist, while get(None).open(...) can not
         browser_opened = webbrowser.open(auth_uri)
 
-    # In WSL which doesn't have www-browser, try launching browser with PowerShell
+    # In WSL which doesn't have www-browser, try launching browser with explorer.exe
     if not browser_opened and is_wsl():
-        try:
-            import subprocess
-            # https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe
-            # Ampersand (&) should be quoted
-            exit_code = subprocess.call(
-                ['powershell.exe', '-NoProfile', '-Command', 'Start-Process "{}"'.format(auth_uri)])
+        import subprocess
+        try:  # Try wslview first, which is the recommended way on WSL
+            # https://github.com/wslutilities/wslu
+            exit_code = subprocess.call(['wslview', auth_uri])
             browser_opened = exit_code == 0
-        except FileNotFoundError:  # WSL might be too old
+        except FileNotFoundError:  # wslview might not be installed
             pass
+        if not browser_opened:
+            try:
+                # Fallback to explorer.exe as recommended for WSL
+                # Note: explorer.exe returns 1 on success in some WSL environments
+                exit_code = subprocess.call(['explorer.exe', auth_uri])
+                browser_opened = exit_code in (0, 1)
+            except FileNotFoundError:
+                pass
     return browser_opened
 
 
@@ -101,36 +120,62 @@ def _is_html(text):
 def _escape(key_value_pairs):
     return {k: escape(v) for k, v in key_value_pairs.items()}
 
-
 def _printify(text):
     # If an https request is sent to an http server, the text needs to be repr-ed
     return repr(text) if isinstance(text, str) and not text.isprintable() else text
 
-
 class _AuthCodeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        qs = parse_qs(urlparse(self.path).query)
+        welcome_param = qs.get('welcome', [None])[0]
+        error_param = qs.get('error', [None])[0]
+        if welcome_param == 'true':  # Useful in manual e2e tests
+            self._send_full_response(self.server.welcome_page)
+        elif error_param == 'abort':  # Useful in manual e2e tests
+            self._send_full_response("Authentication aborted", is_ok=False)
+        elif qs:
+            # GET request with auth code or error - reject for security (form_post only)
+            self._send_full_response(
+                "response_mode=query is not supported for authentication responses. "
+                "This application operates in response_mode=form_post mode only.",
+                is_ok=False)
+        else:
+            # IdP may have error scenarios that result in a parameter-less GET request
+            self._send_full_response(
+                "Authentication could not be completed. You can close this window and return to the application.",
+                is_ok=False)
+        # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
+
+    def do_POST(self):  # Handle form_post response where auth code is in body
         # For flexibility, we choose to not check self.path matching redirect_uri
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
-        qs = parse_qs(urlparse(self.path).query)
-        if qs.get('code') or qs.get("error"):  # So, it is an auth response
-            auth_response = _qs2kv(qs)
-            logger.debug("Got auth response: %s", auth_response)
-            if self.server.auth_state and self.server.auth_state != auth_response.get("state"):
-                # OAuth2 successful and error responses contain state when it was used
-                # https://www.rfc-editor.org/rfc/rfc6749#section-4.2.2.1
-                self._send_full_response("State mismatch")  # Possibly an attack
-            else:
-                template = (self.server.success_template
-                    if "code" in qs else self.server.error_template)
-                if _is_html(template.template):
-                    safe_data = _escape(auth_response)  # Foiling an XSS attack
-                else:
-                    safe_data = auth_response
-                self._send_full_response(template.safe_substitute(**safe_data))
-                self.server.auth_response = auth_response  # Set it now, after the response is likely sent
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length).decode('utf-8')
+        qs = parse_qs(post_data)
+        if qs.get('code') or qs.get('error'):  # So, it is an auth response
+            self._process_auth_response(_qs2kv(qs))
         else:
-            self._send_full_response(self.server.welcome_page)
+            self._send_full_response("Invalid POST request", is_ok=False)
         # NOTE: Don't do self.server.shutdown() here. It'll halt the server.
+
+    def _process_auth_response(self, auth_response):
+        """Process the auth response from either GET or POST request."""
+        logger.debug("Got auth response: %s", auth_response)
+        if self.server.auth_state and self.server.auth_state != auth_response.get("state"):
+            # OAuth2 successful and error responses contain state when it was used
+            # https://www.rfc-editor.org/rfc/rfc6749#section-4.2.2.1
+            self._send_full_response(  # Possibly an attack
+                "State mismatch. Waiting for next response... or you may abort.", is_ok=False)
+        else:
+            template = (self.server.success_template
+                if "code" in auth_response else self.server.error_template)
+            if _is_html(template.template):
+                safe_data = _escape(auth_response)  # Foiling an XSS attack
+            else:
+                safe_data = auth_response
+            filled_data = defaultdict(str, safe_data)  # So that missing keys will be empty string
+            self._send_full_response(template.safe_substitute(**filled_data))
+            self.server.auth_response = auth_response  # Set it now, after the response is likely sent
 
     def _send_full_response(self, body, is_ok=True):
         self.send_response(200 if is_ok else 400)
@@ -215,6 +260,7 @@ class AuthCodeReceiver(object):
 
         :param str auth_uri:
             If provided, this function will try to open a local browser.
+            Starting from 2026, the built-in http server will require response_mode=form_post.
         :param int timeout: In seconds. None means wait indefinitely.
         :param str state:
             You may provide the state you used in auth_uri,
@@ -284,13 +330,23 @@ class AuthCodeReceiver(object):
             auth_uri_callback=None,
             browser_name=None,
             ):
-        welcome_uri = "http://localhost:{p}".format(p=self.get_port())
-        abort_uri = "{loc}?error=abort".format(loc=welcome_uri)
+        netloc = "http://localhost:{p}".format(p=self.get_port())
+        abort_uri = "{loc}?error=abort".format(loc=netloc)
         logger.debug("Abort by visit %s", abort_uri)
+
+        if auth_uri:
+            # Note to maintainers:
+            # Do not enforce response_mode=form_post by secretly hardcoding it here.
+            # Just validate it here, so we won't surprise caller by changing their auth_uri behind the scene.
+            params = parse_qs(urlparse(auth_uri).query)
+            assert params.get('response_mode', [None])[0] == 'form_post', (
+                "The built-in http server supports HTTP POST only. "
+                "The auth_uri must be built with response_mode=form_post")
+
         self._server.welcome_page = Template(welcome_template or "").safe_substitute(
             auth_uri=auth_uri, abort_uri=abort_uri)
         if auth_uri:  # Now attempt to open a local browser to visit it
-            _uri = welcome_uri if welcome_template else auth_uri
+            _uri = (netloc + "?welcome=true") if welcome_template else auth_uri
             logger.info("Open a browser on this device to visit: %s" % _uri)
             browser_opened = False
             try:
@@ -316,10 +372,14 @@ class AuthCodeReceiver(object):
                 else:  # Then it is the auth_uri_callback()'s job to inform the user
                     auth_uri_callback(_uri)
 
+        recommendation = "For your security: Do not share the contents of this page, the address bar, or take screenshots."  # From MSRC
         self._server.success_template = Template(success_template or
-            "Authentication completed. You can close this window now.")
+            "Authentication complete. You can return to the application. Please close this browser tab.\n\n" + recommendation)
         self._server.error_template = Template(error_template or
-            "Authentication failed. $error: $error_description. ($error_uri)")
+            # Do NOT invent new placeholders in this template. Just use standard keys defined in OAuth2 RFC.
+            # Otherwise there is no obvious canonical way for caller to know what placeholders are supported.
+            # Besides, we have been using these standard keys for years. Changing now would break backward compatibility.
+            "Authentication failed. $error: $error_description. ($error_uri).\n\n" + recommendation)
 
         self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
         self._server.auth_response = {}  # Shared with _AuthCodeHandler
@@ -371,7 +431,7 @@ if __name__ == '__main__':
         print(json.dumps(receiver.get_auth_response(
             auth_uri=flow["auth_uri"],
             welcome_template=
-                "<a href='$auth_uri'>Sign In</a>, or <a href='$abort_uri'>Abort</a",
+                "<a href='$auth_uri'>Sign In</a>, or <a href='$abort_uri'>Abort</a>",
             error_template="<html>Oh no. $error</html>",
             success_template="Oh yeah. Got $code",
             timeout=args.timeout,

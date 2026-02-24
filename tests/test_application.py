@@ -24,6 +24,7 @@ _OIDC_DISCOVERY = "msal.authority.tenant_discovery"
 _OIDC_DISCOVERY_MOCK = Mock(return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/tenant",
 })
 
 
@@ -690,6 +691,7 @@ class TestClientCredentialGrant(unittest.TestCase):
     @patch(_OIDC_DISCOVERY, new=Mock(return_value={
         "authorization_endpoint": "https://contoso.com/common",
         "token_endpoint": "https://contoso.com/common",
+        "issuer": "https://contoso.com/common",
         }))
     def test_common_authority_should_emit_warning(self):
         self._test_certain_authority_should_emit_warning(
@@ -698,6 +700,7 @@ class TestClientCredentialGrant(unittest.TestCase):
     @patch(_OIDC_DISCOVERY, new=Mock(return_value={
         "authorization_endpoint": "https://contoso.com/organizations",
         "token_endpoint": "https://contoso.com/organizations",
+        "issuer": "https://contoso.com/organizations",
         }))
     def test_organizations_authority_should_emit_warning(self):
         self._test_certain_authority_should_emit_warning(
@@ -755,6 +758,7 @@ class TestScopeDecoration(unittest.TestCase):
 @patch("msal.authority.tenant_discovery", new=Mock(return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/placeholder",
     }))
 class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
 
@@ -796,6 +800,7 @@ class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
 @patch("msal.authority.tenant_discovery", new=Mock(return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/placeholder",
     }))
 @patch("msal.application._init_broker", new=Mock())  # Pretend pymsalruntime installed and working
 class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
