@@ -24,6 +24,11 @@ class ManagedIdentityError(ValueError):
     pass
 
 
+class MsiV2Error(ManagedIdentityError):
+    """Raised when the MSI v2 (mTLS PoP) flow fails."""
+    pass
+
+
 class ManagedIdentity(UserDict):
     """Feed an instance of this class to :class:`msal.ManagedIdentityClient`
     to acquire token for the specified managed identity.
@@ -259,6 +264,8 @@ class ManagedIdentityClient(object):
         *,
         resource: str,  # If/when we support scope, resource will become optional
         claims_challenge: Optional[str] = None,
+        mtls_proof_of_possession: bool = False,
+        with_attestation_support: bool = False,
     ):
         """Acquire token for the managed identity.
 
@@ -278,6 +285,23 @@ class ManagedIdentityClient(object):
             even if the app developer did not opt in for the "CP1" client capability.
             Upon receiving a `claims_challenge`, MSAL will attempt to acquire a new token.
 
+        :param bool mtls_proof_of_possession: (optional)
+            When True, use the MSI v2 (mTLS Proof-of-Possession) flow to acquire an
+            ``mtls_pop`` token bound to a short-lived mTLS certificate issued by the
+            IMDS ``/issuecredential`` endpoint.
+            Without this flag the legacy IMDS v1 flow is used.
+            Defaults to False.
+
+            MSI v2 is used only when both ``mtls_proof_of_possession`` and
+            ``with_attestation_support`` are True.
+
+        :param bool with_attestation_support: (optional)
+            When True (and ``mtls_proof_of_possession`` is also True), attempt
+            KeyGuard / platform attestation before credential issuance.
+            On Windows this leverages ``AttestationClientLib.dll`` when available;
+            on other platforms the parameter is silently ignored.
+            Defaults to False.
+
         .. note::
 
             Known issue: When an Azure VM has only one user-assigned managed identity,
@@ -292,6 +316,27 @@ class ManagedIdentityClient(object):
         client_id_in_cache = self._managed_identity.get(
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
         now = time.time()
+        # MSI v2 is opt-in: use it only when BOTH mtls_proof_of_possession and
+        # with_attestation_support are explicitly requested by the caller.
+        # No auto-fallback: if MSI v2 is requested and fails, the error is raised.
+        use_msi_v2 = bool(mtls_proof_of_possession and with_attestation_support)
+
+        if with_attestation_support and not mtls_proof_of_possession:
+            raise ManagedIdentityError(
+                "attestation_requires_pop",
+                "with_attestation_support=True requires mtls_proof_of_possession=True (mTLS PoP)."
+            )
+
+        if use_msi_v2:
+            from .msi_v2 import obtain_token as _obtain_token_v2
+            result = _obtain_token_v2(
+                self._http_client, self._managed_identity, resource,
+                attestation_enabled=True,
+            )
+            if "access_token" in result and "error" not in result:
+                result[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
+            return result
+
         if True:  # Attempt cache search even if receiving claims_challenge,
                   # because we want to locate the existing token (if any) and refresh it
             matches = self._token_cache.search(
