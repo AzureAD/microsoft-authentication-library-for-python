@@ -3,7 +3,9 @@ try:
     from urllib.parse import urlparse
 except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
+import logging
 
+logger = logging.getLogger(__name__)
 # Endpoints were copied from here
 # https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud#azure-ad-authentication-endpoints
 AZURE_US_GOVERNMENT = "login.microsoftonline.us"
@@ -88,6 +90,7 @@ class Authority(object):
         self._http_client = http_client
         self._oidc_authority_url = oidc_authority_url
         if oidc_authority_url:
+            logger.debug("Initializing with OIDC authority: %s", oidc_authority_url)
             tenant_discovery_endpoint = self._initialize_oidc_authority(
                 oidc_authority_url)
         else:
