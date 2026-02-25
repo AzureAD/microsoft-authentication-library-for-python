@@ -39,6 +39,9 @@ _EXT_CACHE_KEY_EXCLUDED_FIELDS = frozenset({
     "scope",
     "username",
     "password",
+    "client_assertion",
+    "client_assertion_type",
+    "assertion",
 })
 
 
@@ -89,6 +92,7 @@ class TokenCache(object):
 
     class CredentialType:
         ACCESS_TOKEN = "AccessToken"
+        ACCESS_TOKEN_EXTENDED = "atext"  # Used when ext_cache_key is present (matches Go/dotnet)
         REFRESH_TOKEN = "RefreshToken"
         ACCOUNT = "Account"  # Not exactly a credential type, but we put it here
         ID_TOKEN = "IdToken"
@@ -125,7 +129,9 @@ class TokenCache(object):
                     "-".join([  # Note: Could use a hash here to shorten key length
                         home_account_id or "",
                         environment or "",
-                        self.CredentialType.ACCESS_TOKEN,
+                        # Use "atext" credential type when ext_cache_key is
+                        # present, matching MSAL Go and MSAL .NET behaviour.
+                        "atext" if ext_cache_key else "AccessToken",
                         client_id or "",
                         realm or "",
                         target or "",
