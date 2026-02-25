@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772045475998,
+  "lastUpdate": 1772047303087,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -36183,6 +36183,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000014148720367287516",
             "extra": "mean: 119.93412379426947 usec\nrounds: 3732"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90415114+gladjohn@users.noreply.github.com",
+            "name": "Gladwin Johnson",
+            "username": "gladjohn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "78f20aa923dd75788945616e230ee06539977e2a",
+          "message": "Return certificate with token for mTLS\n\nEnhance mTLS token acquisition by returning the certificate alongside the access token.",
+          "timestamp": "2026-02-25T11:18:06-08:00",
+          "tree_id": "7dd41a28ac56548cb8fa7a12530b830cdd0fe7df",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/78f20aa923dd75788945616e230ee06539977e2a"
+        },
+        "date": 1772047301725,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38705.41217872237,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002770840826767388",
+            "extra": "mean: 25.836180102733355 usec\nrounds: 8373"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 35632.612626369344,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000034316280351397423",
+            "extra": "mean: 28.06417846722713 usec\nrounds: 17824"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7447.37017606553,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016046421449847608",
+            "extra": "mean: 134.27558673178552 usec\nrounds: 3482"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7104.10006842686,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015615213807041647",
+            "extra": "mean: 140.76378293773683 usec\nrounds: 3833"
           }
         ]
       }
