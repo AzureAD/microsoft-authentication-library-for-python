@@ -45,8 +45,8 @@ def _get_fmi_credential_from_rma():
         authority=_AUTHORITY_URL,
         http_client=MinimalHttpClient(),
     )
-    result = app.acquire_token_for_client_with_fmi_path(
-        [_FMI_SCOPE_FOR_RMA], _FMI_PATH)
+    result = app.acquire_token_for_client(
+        [_FMI_SCOPE_FOR_RMA], fmi_path=_FMI_PATH)
     if "access_token" not in result:
         raise RuntimeError(
             "Failed to acquire FMI token from RMA: {}: {}".format(
@@ -73,17 +73,17 @@ class TestFMIBasicFunctionality(LabBasedTestCase):
         scopes = [_FMI_SCOPE]
 
         # 1. Acquire token by credential with FMI path
-        result = app.acquire_token_for_client_with_fmi_path(scopes, _FMI_PATH)
+        result = app.acquire_token_for_client(scopes, fmi_path=_FMI_PATH)
         self.assertIn("access_token", result,
-            "acquire_token_for_client_with_fmi_path() failed: {}: {}".format(
+            "acquire_token_for_client(fmi_path=...) failed: {}: {}".format(
                 result.get("error"), result.get("error_description")))
         self.assertNotEqual("", result["access_token"],
-            "acquire_token_for_client_with_fmi_path() returned empty access token")
+            "acquire_token_for_client(fmi_path=...) returned empty access token")
 
         first_token = result["access_token"]
 
         # 2. Verify silent token acquisition works (should retrieve from cache)
-        cache_result = app.acquire_token_for_client_with_fmi_path(scopes, _FMI_PATH)
+        cache_result = app.acquire_token_for_client(scopes, fmi_path=_FMI_PATH)
         self.assertIn("access_token", cache_result,
             "Second call failed: {}: {}".format(
                 cache_result.get("error"), cache_result.get("error_description")))
@@ -124,16 +124,16 @@ class TestFMIIntegration(LabBasedTestCase):
         fmi_path = "SomeFmiPath/Path"
 
         # 1. Acquire token by credential with FMI path
-        result = app.acquire_token_for_client_with_fmi_path(scopes, fmi_path)
+        result = app.acquire_token_for_client(scopes, fmi_path=fmi_path)
         self.assertIn("access_token", result,
-            "acquire_token_for_client_with_fmi_path() failed: {}: {}".format(
+            "acquire_token_for_client(fmi_path=...) failed: {}: {}".format(
                 result.get("error"), result.get("error_description")))
         self.assertNotEqual("", result["access_token"],
-            "acquire_token_for_client_with_fmi_path() returned empty access token")
+            "acquire_token_for_client(fmi_path=...) returned empty access token")
         first_token = result["access_token"]
         
         # 2. Verify cached token acquisition works
-        cache_result = app.acquire_token_for_client_with_fmi_path(scopes, fmi_path)
+        cache_result = app.acquire_token_for_client(scopes, fmi_path=fmi_path)
         self.assertIn("access_token", cache_result,
             "Second call failed: {}: {}".format(
                 cache_result.get("error"), cache_result.get("error_description")))
@@ -166,15 +166,15 @@ class TestFMICacheIsolation(LabBasedTestCase):
         scopes = [_FMI_SCOPE]
 
         # Acquire token with path A
-        result_a = app.acquire_token_for_client_with_fmi_path(
-            scopes, "PathA/credential")
+        result_a = app.acquire_token_for_client(
+            scopes, fmi_path="PathA/credential")
         self.assertIn("access_token", result_a,
             "Path A acquisition failed: {}: {}".format(
                 result_a.get("error"), result_a.get("error_description")))
 
         # Acquire token with path B — should NOT get path A's cached token
-        result_b = app.acquire_token_for_client_with_fmi_path(
-            scopes, "PathB/credential")
+        result_b = app.acquire_token_for_client(
+            scopes, fmi_path="PathB/credential")
         self.assertIn("access_token", result_b,
             "Path B acquisition failed: {}: {}".format(
                 result_b.get("error"), result_b.get("error_description")))
@@ -183,8 +183,8 @@ class TestFMICacheIsolation(LabBasedTestCase):
             "Different FMI path should NOT return cached token from another path")
 
         # Verify path A still returns its own cached token
-        result_a2 = app.acquire_token_for_client_with_fmi_path(
-            scopes, "PathA/credential")
+        result_a2 = app.acquire_token_for_client(
+            scopes, fmi_path="PathA/credential")
         self.assertIn("access_token", result_a2)
         self.assertEqual(
             result_a2.get("token_source"), "cache",
@@ -201,7 +201,7 @@ class TestFMICacheIsolation(LabBasedTestCase):
         scopes = [_FMI_SCOPE]
 
         # Cache a token via FMI path
-        fmi_result = app.acquire_token_for_client_with_fmi_path(scopes, _FMI_PATH)
+        fmi_result = app.acquire_token_for_client(scopes, fmi_path=_FMI_PATH)
         self.assertIn("access_token", fmi_result)
 
         # Regular acquire_token_for_client should NOT get the FMI token
@@ -230,14 +230,14 @@ class TestFMICacheInspection(LabBasedTestCase):
         path_b = "PathBeta/Credential"
 
         # 1. Acquire token with path A
-        result_a = app.acquire_token_for_client_with_fmi_path(scopes, path_a)
+        result_a = app.acquire_token_for_client(scopes, fmi_path=path_a)
         self.assertIn("access_token", result_a,
             "Path A acquisition failed: {}: {}".format(
                 result_a.get("error"), result_a.get("error_description")))
         token_a = result_a["access_token"]
 
         # 2. Acquire token with path B
-        result_b = app.acquire_token_for_client_with_fmi_path(scopes, path_b)
+        result_b = app.acquire_token_for_client(scopes, fmi_path=path_b)
         self.assertIn("access_token", result_b,
             "Path B acquisition failed: {}: {}".format(
                 result_b.get("error"), result_b.get("error_description")))
@@ -268,12 +268,12 @@ class TestFMICacheInspection(LabBasedTestCase):
             "ext_cache_key values for different FMI paths must differ")
 
         # 5. Verify each path still returns its own cached token
-        cached_a = app.acquire_token_for_client_with_fmi_path(scopes, path_a)
+        cached_a = app.acquire_token_for_client(scopes, fmi_path=path_a)
         self.assertEqual("cache", cached_a.get("token_source"))
         self.assertEqual(token_a, cached_a["access_token"],
             "Path A should return its own cached token")
 
-        cached_b = app.acquire_token_for_client_with_fmi_path(scopes, path_b)
+        cached_b = app.acquire_token_for_client(scopes, fmi_path=path_b)
         self.assertEqual("cache", cached_b.get("token_source"))
         self.assertEqual(token_b, cached_b["access_token"],
             "Path B should return its own cached token")

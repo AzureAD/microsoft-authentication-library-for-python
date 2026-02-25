@@ -20,11 +20,11 @@ _GRANT_TYPE_BROKER = "broker"
 #
 # Excluded fields and reasons:
 #   - "client_id"              : Standard OAuth2 client identifier, same for every request
-#   - "grant_type"             : Standard OAuth2 grant type (e.g. jwt-bearer, refresh_token)
+#   - "grant_type"             : It is possible to combine grants to get tokens, e.g. obo + refresh_token, auth_code + refresh_token etc.
 #   - "scope"                  : Already represented as "target" in the AT cache key
 #   - "claims"                 : Handled separately; its presence forces a token refresh
-#   - "username"               : Standard ROPC grant parameter
-#   - "password"               : Standard ROPC grant parameter
+#   - "username"               : Standard ROPC grant parameter. Tokens are cached by user ID (subject or oid+tid) instead
+#   - "password"               : Standard ROPC grant parameter. Tokens are tied to credentials.
 #   - "refresh_token"          : Standard refresh grant parameter
 #   - "code"                   : Standard authorization code grant parameter
 #   - "redirect_uri"           : Standard authorization code grant parameter

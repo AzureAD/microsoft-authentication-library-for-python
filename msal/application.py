@@ -2427,7 +2427,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
     except that ``allow_broker`` parameter shall remain ``None``.
     """
 
-    def acquire_token_for_client(self, scopes, claims_challenge=None, **kwargs):
+    def acquire_token_for_client(self, scopes, claims_challenge=None, fmi_path=None, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
 
         Since MSAL Python 1.23, it will automatically look for token from cache,
@@ -2440,7 +2440,17 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             in the form of a claims_challenge directive in the www-authenticate header to be
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
+        :param str fmi_path:
+            Optional. The Federated Managed Identity (FMI) credential path.
+            When provided, it is sent as the ``fmi_path`` parameter in the
+            token request body, and the resulting token is cached separately
+            so that different FMI paths do not share cached tokens.
+            Example usage::
 
+                result = cca.acquire_token_for_client(
+                    scopes=["api://resource/.default"],
+                    fmi_path="SomeFmiPath/FmiCredentialPath",
+                )
         :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
@@ -2450,6 +2460,12 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             raise ValueError(  # We choose to disallow force_refresh
                 "Historically, this method does not support force_refresh behavior. "
             )
+        if fmi_path is not None:
+            if not isinstance(fmi_path, str):
+                raise ValueError(
+                    "fmi_path must be a string, got {}".format(type(fmi_path).__name__))
+            kwargs["data"] = kwargs.get("data", {})
+            kwargs["data"]["fmi_path"] = fmi_path
         return _clean_up(self._acquire_token_silent_with_error(
             scopes, None, claims_challenge=claims_challenge, **kwargs))
 
@@ -2493,32 +2509,6 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             })):
                 self.token_cache.remove_at(at)
         # acquire_token_for_client() obtains no RTs, so we have no RT to remove
-
-    def acquire_token_for_client_with_fmi_path(self, scopes, fmi_path, claims_challenge=None, **kwargs):
-        """Acquires token for the current confidential client with a Federated Managed Identity (FMI) path.
-
-        This is a convenience wrapper around :func:`~acquire_token_for_client`
-        that attaches the ``fmi_path`` parameter to the token request body.
-
-        :param list[str] scopes: (Required)
-            Scopes requested to access a protected API (a resource).
-        :param str fmi_path: (Required)
-            The Federated Managed Identity path to attach to the request.
-        :param claims_challenge:
-            The claims_challenge parameter requests specific claims requested by the resource provider
-            in the form of a claims_challenge directive in the www-authenticate header to be
-            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
-            It is a string of a JSON object which contains lists of claims being requested from these locations.
-
-        :return: A dict representing the json response from Microsoft Entra:
-
-            - A successful response would contain "access_token" key,
-            - an error response would contain "error" and usually "error_description".
-        """
-        data = kwargs.pop("data", {})
-        data["fmi_path"] = fmi_path
-        return self.acquire_token_for_client(
-            scopes, claims_challenge=claims_challenge, data=data, **kwargs)
 
     def acquire_token_on_behalf_of(self, user_assertion, scopes, claims_challenge=None, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
