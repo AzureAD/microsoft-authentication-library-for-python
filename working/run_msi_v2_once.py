@@ -44,11 +44,11 @@ if __name__ == "__main__":
         r2 = acquire_mtls_pop_token_strict()
         print("token received (2)")
 
-        # If MSAL exposes a cache indicator, print it (optional)
+        # If MSAL exposes a cache indicator, avoid printing its concrete value to logs
         ts1 = r1.get("token_source") or r1.get("source") or ""
         ts2 = r2.get("token_source") or r2.get("source") or ""
         if ts1 or ts2:
-            print(f"source1={ts1} source2={ts2}")
+            print("token sources are available (not logged for security)")
 
         sys.exit(0)
     except Exception as ex:
