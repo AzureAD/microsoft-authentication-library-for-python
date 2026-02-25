@@ -19,29 +19,52 @@ _GRANT_TYPE_BROKER = "broker"
 # body parameters going on the wire and must differentiate cached tokens.
 #
 # Excluded fields and reasons:
-#   - "key_id"      : Already handled as a separate cache lookup field
-#   - "token_type"  : Used for SSH-cert/POP detection; AT entry stores it separately
-#   - "req_cnf"     : Ephemeral proof-of-possession nonce, changes per request
-#   - "claims"      : Handled separately; its presence forces a token refresh
-#   - "scope"       : Already represented as "target" in the AT cache key;
-#                     also added to data only at wire-time, not at cache-lookup time
-#   - "username"    : Standard ROPC grant parameter, not an extra body parameter
-#   - "password"    : Standard ROPC grant parameter, not an extra body parameter
+#   - "client_id"              : Standard OAuth2 client identifier, same for every request
+#   - "grant_type"             : Standard OAuth2 grant type (e.g. jwt-bearer, refresh_token)
+#   - "scope"                  : Already represented as "target" in the AT cache key
+#   - "claims"                 : Handled separately; its presence forces a token refresh
+#   - "username"               : Standard ROPC grant parameter
+#   - "password"               : Standard ROPC grant parameter
+#   - "refresh_token"          : Standard refresh grant parameter
+#   - "code"                   : Standard authorization code grant parameter
+#   - "redirect_uri"           : Standard authorization code grant parameter
+#   - "code_verifier"          : Standard PKCE parameter
+#   - "device_code"            : Standard device flow parameter
+#   - "assertion"              : Standard OBO/SAML assertion (RFC 7521)
+#   - "requested_token_use"    : OBO indicator ("on_behalf_of"), not an extra param
+#   - "client_assertion"       : Client authentication credential (RFC 7521 §4.2)
+#   - "client_assertion_type"  : Client authentication type (RFC 7521 §4.2)
+#   - "client_secret"          : Client authentication secret
+#   - "token_type"             : Used for SSH-cert/POP detection; AT entry stores separately
+#   - "req_cnf"                : Ephemeral proof-of-possession nonce, changes per request
+#   - "key_id"                 : Already handled as a separate cache lookup field
 #
 # Included fields (examples — anything NOT in this set is included):
-#   - "fmi_path"    : Federated Managed Identity credential path
-#   - any future extra body parameter that should isolate cache entries
+#   - "fmi_path"               : Federated Managed Identity credential path
+#   - any future non-standard body parameter that should isolate cache entries
 _EXT_CACHE_KEY_EXCLUDED_FIELDS = frozenset({
-    "key_id",
-    "token_type",
-    "req_cnf",
-    "claims",
+    # Standard OAuth2 body parameters — these appear in every token request
+    # and must NOT influence the extended cache key.
+    # Only non-standard fields (e.g. fmi_path) should contribute to the hash.
+    "client_id",
+    "grant_type",
     "scope",
+    "claims",
     "username",
     "password",
+    "refresh_token",
+    "code",
+    "redirect_uri",
+    "code_verifier",
+    "device_code",
+    "assertion",
+    "requested_token_use",
     "client_assertion",
     "client_assertion_type",
-    "assertion",
+    "client_secret",
+    "token_type",
+    "req_cnf",
+    "key_id",
 })
 
 
