@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771987049453,
+  "lastUpdate": 1771987192465,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -35923,6 +35923,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001501300108025245",
             "extra": "mean: 139.64705683791732 usec\nrounds: 4768"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90415114+gladjohn@users.noreply.github.com",
+            "name": "Gladwin Johnson",
+            "username": "gladjohn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6237b8bef9007743ee5b1b56f16abb133e2db509",
+          "message": "Potential fix for code scanning alert no. 92: Clear-text logging of sensitive information\n\nCo-authored-by: Copilot Autofix powered by AI <62310815+github-advanced-security[bot]@users.noreply.github.com>",
+          "timestamp": "2026-02-24T18:37:12-08:00",
+          "tree_id": "758e41ba7dd708f0aceea1b1752629f8d51fa8a2",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/6237b8bef9007743ee5b1b56f16abb133e2db509"
+        },
+        "date": 1771987191631,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40714.46266961887,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000027875764323355447",
+            "extra": "mean: 24.561296758711737 usec\nrounds: 8330"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37428.42138224776,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000033582268614204513",
+            "extra": "mean: 26.717664359584727 usec\nrounds: 14593"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7449.459006016081,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001621721868400363",
+            "extra": "mean: 134.23793582761024 usec\nrounds: 4036"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 6965.451495714999,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001767405831648507",
+            "extra": "mean: 143.565711514204 usec\nrounds: 4742"
           }
         ]
       }
