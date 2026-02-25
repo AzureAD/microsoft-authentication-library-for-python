@@ -19,7 +19,7 @@ _GRANT_TYPE_BROKER = "broker"
 # body parameters going on the wire and must differentiate cached tokens.
 #
 # Excluded fields and reasons:
-#   - "client_id"              : Standard OAuth2 client identifier, same for every request
+#   - "client_id"              : Standard OAuth2 client identifier, already included in cache key
 #   - "grant_type"             : Standard OAuth2 grant type (e.g. jwt-bearer, refresh_token)
 #   - "scope"                  : Already represented as "target" in the AT cache key
 #   - "claims"                 : Handled separately; its presence forces a token refresh
