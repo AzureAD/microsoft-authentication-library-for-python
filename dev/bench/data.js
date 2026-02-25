@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772023681485,
+  "lastUpdate": 1772027150982,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -36079,6 +36079,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000022759016104008552",
             "extra": "mean: 138.51903662157653 usec\nrounds: 5079"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "nichoudhary@microsoft.com",
+            "name": "Nilesh Choudhary",
+            "username": "4gust"
+          },
+          "committer": {
+            "email": "nichoudhary@microsoft.com",
+            "name": "Nilesh Choudhary",
+            "username": "4gust"
+          },
+          "distinct": true,
+          "id": "b98296939d48d9f2aefb714d4a19246d819390dd",
+          "message": "Merge branch '4gust/with-fmi' of https://github.com/AzureAD/microsoft-authentication-library-for-python into 4gust/with-fmi",
+          "timestamp": "2026-02-25T13:42:46Z",
+          "tree_id": "19961f4ae4655d655b4c999def25cb65b72212cf",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/b98296939d48d9f2aefb714d4a19246d819390dd"
+        },
+        "date": 1772027148990,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 42980.49136649473,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000012779142633134075",
+            "extra": "mean: 23.266369652989727 usec\nrounds: 8930"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38792.4986962485,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002226192806951813",
+            "extra": "mean: 25.778179638031588 usec\nrounds: 13761"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8688.231587220842,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012912323139473378",
+            "extra": "mean: 115.09822107767688 usec\nrounds: 2913"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8226.967539855488,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012479537432082097",
+            "extra": "mean: 121.55147022952345 usec\nrounds: 3611"
           }
         ]
       }
