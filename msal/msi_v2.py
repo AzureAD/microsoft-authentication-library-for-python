@@ -16,6 +16,7 @@ Key behavior:
   - Uses a *named per-boot key*: opens the key if it already exists for this boot; otherwise creates it.
   - No MSI v1 fallback: any MSI v2 failure raises MsiV2Error.
   - Production-ready handle management: all WinHTTP / Crypt32 / NCrypt handles are released.
+  - Returns certificate with token for mTLS with resource.
 
 Environment variables (optional):
   - AZURE_POD_IDENTITY_AUTHORITY_HOST: override IMDS base URL (default http://169.254.169.254)
@@ -36,6 +37,10 @@ from typing import Any, Dict, Optional, Tuple, List
 
 logger = logging.getLogger(__name__)
 
+# ----------------------------
+# IMDS constants
+# ----------------------------
+
 _IMDS_DEFAULT_BASE = "http://169.254.169.254"
 _IMDS_BASE_ENVVAR = "AZURE_POD_IDENTITY_AUTHORITY_HOST"
 
@@ -48,9 +53,13 @@ _ACQUIRE_ENTRA_TOKEN_PATH = "/oauth2/v2.0/token"
 
 _CU_ID_OID_STR = "1.3.6.1.4.1.311.90.2.10"
 
-# ncrypt.h flags
+# ----------------------------
+# NCrypt/CNG flags
+# ----------------------------
+
+# ncrypt.h flags for KeyGuard protection
 _NCRYPT_USE_VIRTUAL_ISOLATION_FLAG = 0x00020000
-_NCRYPT_USE_PER_BOOT_KEY_FLAG      = 0x00040000
+_NCRYPT_USE_PER_BOOT_KEY_FLAG = 0x00040000
 
 _RSA_KEY_SIZE = 2048
 
@@ -64,6 +73,19 @@ _NCRYPT_SILENT_FLAG = 0x40
 
 _KEY_NAME_ENVVAR = "MSAL_MSI_V2_KEY_NAME"
 
+# ----------------------------
+# Error codes
+# ----------------------------
+
+# Common NCRYPT "not found" style statuses (NTE_*).
+_NTE_BAD_KEYSET = 0x80090016
+_NTE_NO_KEY = 0x8009000D
+_NTE_NOT_FOUND = 0x80090011
+_NTE_EXISTS = 0x8009000F
+
+# Lazy-loaded Win32 API cache
+_WIN32: Optional[Dict[str, Any]] = None
+
 
 # ----------------------------
 # Compatibility helpers (tests + cross-language parity)
@@ -73,6 +95,12 @@ def get_cert_thumbprint_sha256(cert_pem: str) -> str:
     """
     Return base64url(SHA256(der(cert))) without padding, for cnf.x5t#S256 comparisons.
     Accepts a PEM certificate string.
+    
+    Args:
+        cert_pem: PEM-formatted certificate string
+        
+    Returns:
+        Base64url-encoded SHA256 thumbprint without padding, or empty string on error
     """
     try:
         from cryptography import x509
@@ -91,6 +119,13 @@ def get_cert_thumbprint_sha256(cert_pem: str) -> str:
 def verify_cnf_binding(token: str, cert_pem: str) -> bool:
     """
     Verify that JWT payload contains cnf.x5t#S256 matching the cert thumbprint.
+    
+    Args:
+        token: Access token (JWT format)
+        cert_pem: PEM-formatted certificate
+        
+    Returns:
+        True if token's cnf.x5t#S256 claim matches certificate thumbprint
     """
     try:
         parts = token.split(".")
@@ -115,23 +150,51 @@ def verify_cnf_binding(token: str, cert_pem: str) -> bool:
         return False
 
 
+def _der_to_pem(der_bytes: bytes) -> str:
+    """
+    Convert DER certificate bytes to PEM string format.
+    
+    Args:
+        der_bytes: DER-encoded certificate bytes
+        
+    Returns:
+        PEM-formatted certificate string
+    """
+    b64 = base64.b64encode(der_bytes).decode("ascii")
+    # PEM line wrapping at 64 characters
+    lines = [b64[i:i+64] for i in range(0, len(b64), 64)]
+    return "-----BEGIN CERTIFICATE-----\n" + "\n".join(lines) + "\n-----END CERTIFICATE-----"
+
+
 # ----------------------------
 # IMDS helpers
 # ----------------------------
 
 def _imds_base() -> str:
+    """Get IMDS base URL from environment or use default."""
     return os.getenv(_IMDS_BASE_ENVVAR, _IMDS_DEFAULT_BASE).strip().rstrip("/")
 
 
 def _new_correlation_id() -> str:
+    """Generate a new correlation ID for request tracing."""
     return str(uuid.uuid4())
 
 
 def _imds_headers(correlation_id: Optional[str] = None) -> Dict[str, str]:
+    """Build IMDS request headers with Metadata: true and correlation ID."""
     return {"Metadata": "true", "x-ms-client-request-id": correlation_id or _new_correlation_id()}
 
 
 def _resource_to_scope(resource_or_scope: str) -> str:
+    """
+    Normalize resource to scope format (append /.default if needed).
+    
+    Args:
+        resource_or_scope: Resource URI or scope string
+        
+    Returns:
+        Normalized scope string ending with /.default
+    """
     s = (resource_or_scope or "").strip()
     if not s:
         raise ValueError("resource must be non-empty")
@@ -157,17 +220,21 @@ def _der_utf8string(value: str) -> bytes:
 
 
 def _json_loads(text: str, what: str) -> Dict[str, Any]:
+    """Parse JSON with error context."""
     from .managed_identity import MsiV2Error
     try:
         obj = json.loads(text)
         if not isinstance(obj, dict):
             raise TypeError("expected JSON object")
         return obj
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception as exc:
         raise MsiV2Error(f"[msi_v2] Invalid JSON from {what}: {text!r}") from exc
 
 
 def _get_first(obj: Dict[str, Any], *names: str) -> Optional[str]:
+    """
+    Get first non-empty value from object by multiple name variants (case-insensitive).
+    """
     for n in names:
         if n in obj and obj[n] is not None and str(obj[n]).strip() != "":
             return str(obj[n])
@@ -199,6 +266,7 @@ def _mi_query_params(managed_identity: Optional[Dict[str, Any]]) -> Dict[str, st
 
 
 def _imds_get_json(http_client, url: str, params: Dict[str, str], headers: Dict[str, str]) -> Dict[str, Any]:
+    """GET request to IMDS with server verification."""
     from .managed_identity import MsiV2Error
     resp = http_client.get(url, params=params, headers=headers)
     server = (resp.headers or {}).get("server", "")
@@ -210,6 +278,7 @@ def _imds_get_json(http_client, url: str, params: Dict[str, str], headers: Dict[
 
 
 def _imds_post_json(http_client, url: str, params: Dict[str, str], headers: Dict[str, str], body: Dict[str, Any]) -> Dict[str, Any]:
+    """POST request to IMDS with server verification."""
     from .managed_identity import MsiV2Error
     resp = http_client.post(url, params=params, headers=headers, data=json.dumps(body, separators=(",", ":")))
     server = (resp.headers or {}).get("server", "")
@@ -221,6 +290,10 @@ def _imds_post_json(http_client, url: str, params: Dict[str, str], headers: Dict
 
 
 def _token_endpoint_from_credential(cred: Dict[str, Any]) -> str:
+    """
+    Extract token endpoint from issuecredential response.
+    Prefers explicit token_endpoint, falls back to mtls_authentication_endpoint + tenant_id.
+    """
     token_endpoint = _get_first(cred, "token_endpoint", "tokenEndpoint")
     if token_endpoint:
         return token_endpoint
@@ -239,11 +312,18 @@ def _token_endpoint_from_credential(cred: Dict[str, Any]) -> str:
 # Win32 primitives (ctypes)
 # ----------------------------
 
-_WIN32: Optional[Dict[str, Any]] = None
-
-
 def _load_win32() -> Dict[str, Any]:
-    """Lazy-load Win32 APIs via ctypes (safe to import on non-Windows)."""
+    """
+    Lazy-load Win32 APIs via ctypes (safe to import on non-Windows).
+    
+    Initializes:
+      - ncrypt.dll: CNG/NCrypt key management
+      - crypt32.dll: X.509 certificate handling
+      - winhttp.dll: HTTP client with SChannel support
+    
+    Returns:
+        Dictionary mapping API names to ctypes objects
+    """
     global _WIN32
 
     from .managed_identity import MsiV2Error
@@ -320,19 +400,19 @@ def _load_win32() -> Dict[str, Any]:
     ncrypt.NCryptOpenKey.argtypes = [
         NCRYPT_PROV_HANDLE,
         ctypes.POINTER(NCRYPT_KEY_HANDLE),
-        ctypes.c_wchar_p,  # key name
-        wintypes.DWORD,    # legacy keyspec (AT_SIGNATURE/AT_KEYEXCHANGE)
-        wintypes.DWORD,    # flags
+        ctypes.c_wchar_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
     ]
     ncrypt.NCryptOpenKey.restype = SECURITY_STATUS
 
     ncrypt.NCryptCreatePersistedKey.argtypes = [
         NCRYPT_PROV_HANDLE,
         ctypes.POINTER(NCRYPT_KEY_HANDLE),
-        ctypes.c_wchar_p,  # alg id
-        ctypes.c_wchar_p,  # key name
-        wintypes.DWORD,    # legacy keyspec
-        wintypes.DWORD,    # flags
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
     ]
     ncrypt.NCryptCreatePersistedKey.restype = SECURITY_STATUS
 
@@ -458,17 +538,12 @@ def _check_security_status(status: int, what: str) -> None:
 
 
 def _status_u32(status: int) -> int:
+    """Convert signed status to unsigned 32-bit value."""
     return int(status) & 0xFFFFFFFF
 
 
-# Common NCRYPT "not found" style statuses (NTE_*).
-_NTE_BAD_KEYSET = 0x80090016
-_NTE_NO_KEY     = 0x8009000D
-_NTE_NOT_FOUND  = 0x80090011
-_NTE_EXISTS     = 0x8009000F
-
-
 def _is_key_not_found(status: int) -> bool:
+    """Check if status indicates key not found (NTE_*)."""
     return _status_u32(status) in (_NTE_BAD_KEYSET, _NTE_NO_KEY, _NTE_NOT_FOUND)
 
 
@@ -477,6 +552,7 @@ def _is_key_not_found(status: int) -> bool:
 # ----------------------------
 
 def _der_len(n: int) -> bytes:
+    """Encode DER length field."""
     if n < 0:
         raise ValueError("DER length cannot be negative")
     if n < 0x80:
@@ -490,14 +566,17 @@ def _der_len(n: int) -> bytes:
 
 
 def _der(tag: int, content: bytes) -> bytes:
+    """Encode DER TLV (tag-length-value)."""
     return bytes([tag]) + _der_len(len(content)) + content
 
 
 def _der_null() -> bytes:
+    """Encode DER NULL."""
     return b"\x05\x00"
 
 
 def _der_integer(value: int) -> bytes:
+    """Encode DER INTEGER."""
     if value < 0:
         raise ValueError("Only non-negative INTEGER supported")
     if value == 0:
@@ -510,6 +589,7 @@ def _der_integer(value: int) -> bytes:
 
 
 def _der_oid(oid: str) -> bytes:
+    """Encode DER OID (e.g., "2.5.4.3")."""
     parts = [int(x) for x in oid.split(".")]
     if len(parts) < 2:
         raise ValueError(f"Invalid OID: {oid}")
@@ -535,24 +615,29 @@ def _der_oid(oid: str) -> bytes:
 
 
 def _der_sequence(*items: bytes) -> bytes:
+    """Encode DER SEQUENCE."""
     return _der(0x30, b"".join(items))
 
 
 def _der_set(*items: bytes) -> bytes:
+    """Encode DER SET (sorted for canonical encoding)."""
     enc = sorted(items)  # DER SET requires sorting by full encoding
     return _der(0x31, b"".join(enc))
 
 
 def _der_bitstring(data: bytes) -> bytes:
+    """Encode DER BITSTRING (no unused bits)."""
     return _der(0x03, b"\x00" + data)  # 0 unused bits
 
 
 def _der_ia5string(value: str) -> bytes:
+    """Encode DER IA5String (ASCII-only)."""
     raw = value.encode("ascii")
     return _der(0x16, raw)
 
 
 def _der_context_explicit(tagnum: int, inner: bytes) -> bytes:
+    """Encode context-specific EXPLICIT tag [tagnum]."""
     return _der(0xA0 + tagnum, inner)
 
 
@@ -577,6 +662,7 @@ def _der_name_cn_dc(cn: str, dc: str) -> bytes:
 
 
 def _der_subject_public_key_info_rsa(modulus: int, exponent: int) -> bytes:
+    """Encode SubjectPublicKeyInfo for RSA public key."""
     rsa_pub = _der_sequence(_der_integer(modulus), _der_integer(exponent))
     alg = _der_sequence(_der_oid("1.2.840.113549.1.1.1"), _der_null())  # rsaEncryption + NULL
     return _der_sequence(alg, _der_bitstring(rsa_pub))
@@ -602,6 +688,7 @@ def _der_algid_rsapss_sha256() -> bytes:
 # ----------------------------
 
 def _ncrypt_get_property(win32: Dict[str, Any], h: Any, name: str) -> bytes:
+    """Get NCrypt property (two-pass: query size, then read)."""
     ctypes_mod = win32["ctypes"]
     wintypes = win32["wintypes"]
     ncrypt = win32["ncrypt"]
@@ -619,7 +706,7 @@ def _ncrypt_get_property(win32: Dict[str, Any], h: Any, name: str) -> bytes:
 
 
 def _stable_key_name(client_id: str) -> str:
-    # Keep the name deterministic and safe for CNG key naming.
+    """Generate a stable, CNG-safe key name from client ID."""
     base = (client_id or "").strip()
     safe = []
     for ch in base:
@@ -936,6 +1023,7 @@ def _create_cert_context_with_key(
 
 
 def _winhttp_close(win32: Dict[str, Any], h: Any) -> None:
+    """Close WinHTTP handle safely."""
     try:
         if h:
             win32["winhttp"].WinHttpCloseHandle(h)
@@ -1082,7 +1170,32 @@ def obtain_token(
     *,
     attestation_enabled: bool = True,
 ) -> Dict[str, Any]:
-    """Acquire mtls_pop token using Windows KeyGuard + MAA attestation."""
+    """
+    Acquire mtls_pop token using Windows KeyGuard + MAA attestation.
+    
+    Flow:
+      1. getplatformmetadata: fetch client_id, tenant_id, cu_id, attestationEndpoint
+      2. Open/create named per-boot KeyGuard RSA key (non-exportable)
+      3. Build PKCS#10 CSR with cuId attribute, sign with RSA-PSS/SHA256
+      4. Get attestation JWT from MAA (or cached)
+      5. issuecredential: submit CSR + attestation → get X.509 cert
+      6. Create CERT_CONTEXT, bind to KeyGuard private key
+      7. POST /oauth2/v2.0/token via WinHTTP/SChannel with mTLS
+    
+    Returns:
+        {
+            "access_token": "...",
+            "expires_in": 3600,
+            "token_type": "mtls_pop",
+            "resource": "...",
+            "cert_pem": "-----BEGIN CERTIFICATE-----\\n...",  # For mTLS with resource
+            "cert_der_b64": "base64-encoded...",                # DER format
+            "cert_thumbprint_sha256": "...",                    # For verification
+        }
+    
+    Raises:
+        MsiV2Error: on any failure (no fallback to MSI v1)
+    """
     from .managed_identity import MsiV2Error
 
     win32 = _load_win32()
@@ -1096,9 +1209,10 @@ def obtain_token(
     prov = None
     key = None
     cert_ctx = None
+    cert_der = None  # Track for return
 
     try:
-        # 1) metadata
+        # 1) getplatformmetadata: fetch metadata (client_id, tenant_id, cu_id, attestationEndpoint)
         meta_url = base + _CSR_METADATA_PATH
         meta = _imds_get_json(http_client, meta_url, params, _imds_headers(corr))
 
@@ -1115,7 +1229,7 @@ def obtain_token(
         prov, key, key_name, opened = _open_or_create_keyguard_rsa_key(win32, key_name=key_name)
         logger.debug("[msi_v2] KeyGuard key name=%s opened_existing=%s", key_name, opened)
 
-        # 3) CSR
+        # 3) Build PKCS#10 CSR with cuId attribute, signed by KeyGuard key (RSA-PSS/SHA256)
         csr_b64 = _build_csr_b64(win32, key, str(client_id), str(tenant_id), cu_id)
 
         # 4) Attestation (required for KeyGuard flow in this scenario)
@@ -1124,7 +1238,7 @@ def obtain_token(
         if not attestation_endpoint:
             raise MsiV2Error("[msi_v2] attestationEndpoint missing from metadata.")
 
-        # Use a stable cache key so the attestation module can reuse the JWT across opens/closes.
+        # Get attestation JWT from MAA (with stable cache key so it persists across opens/closes)
         from .msi_v2_attestation import get_attestation_jwt
         att_jwt = get_attestation_jwt(
             attestation_endpoint=str(attestation_endpoint),
@@ -1135,7 +1249,7 @@ def obtain_token(
         if not att_jwt or not str(att_jwt).strip():
             raise MsiV2Error("[msi_v2] Attestation token is missing/empty; refusing to call issuecredential.")
 
-        # 5) issuecredential
+        # 5) issuecredential: submit CSR + attestation JWT → get X.509 cert
         issue_url = base + _ISSUE_CREDENTIAL_PATH
         issue_headers = _imds_headers(corr)
         issue_headers["Content-Type"] = "application/json"
@@ -1154,22 +1268,32 @@ def obtain_token(
         canonical_client_id = _get_first(cred, "client_id", "clientId") or str(client_id)
         token_endpoint = _token_endpoint_from_credential(cred)
 
-        # 6) Bind key->cert then call ESTS over mTLS using SChannel
+        # 6) Create CERT_CONTEXT and bind to KeyGuard private key
         cert_ctx, _, _ = _create_cert_context_with_key(win32, cert_der, key, key_name)
         scope = _resource_to_scope(resource)
 
+        # 7) POST /oauth2/v2.0/token via WinHTTP/SChannel with mTLS (client cert presentation)
         token_json = _acquire_token_mtls_schannel(win32, token_endpoint, cert_ctx, canonical_client_id, scope)
 
+        # Return token + certificate for mTLS use with resource
         if token_json.get("access_token") and token_json.get("expires_in"):
+            cert_pem = _der_to_pem(cert_der)
+            cert_thumbprint = get_cert_thumbprint_sha256(cert_pem)
+            
             return {
                 "access_token": token_json["access_token"],
                 "expires_in": int(token_json["expires_in"]),
                 "token_type": token_json.get("token_type") or "mtls_pop",
                 "resource": token_json.get("resource"),
+                # Certificate for mTLS with resource
+                "cert_pem": cert_pem,
+                "cert_der_b64": base64.b64encode(cert_der).decode("ascii"),
+                "cert_thumbprint_sha256": cert_thumbprint,
             }
         return token_json
 
     finally:
+        # Cleanup: release handles (key persists for the boot because it is named + per-boot)
         # Crypt32: free cert context (request-scoped)
         try:
             if cert_ctx:
@@ -1177,7 +1301,7 @@ def obtain_token(
         except Exception:
             pass
 
-        # NCrypt: release handles (key persists for the boot because it is named + per-boot)
+        # NCrypt: release provider and key handles (key persists)
         try:
             if key:
                 ncrypt.NCryptFreeObject(key)
