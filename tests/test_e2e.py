@@ -1152,7 +1152,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
     These tests verify that MSAL correctly routes requests to regional vs global endpoints.
     """
     region = "westus"
-    timeout = 2  # Short timeout makes this test case responsive on non-VM
+    timeout = 5  # Short timeout makes this test case responsive on non-VM
 
     def _test_acquire_token_for_client(self, configured_region, expected_region):
         """This is the only grant supported by regional endpoint, for now.

@@ -6,7 +6,7 @@ except:
 
 import msal
 from msal.authority import *
-from msal.authority import _CIAM_DOMAIN_SUFFIX, TRUSTED_ISSUER_HOSTS  # Explicitly import private/new constants
+from msal.authority import _CIAM_DOMAIN_SUFFIX
 from tests import unittest
 from tests.http_client import MinimalHttpClient
 
@@ -37,10 +37,90 @@ class TestAuthority(unittest.TestCase):
         c.close()
 
     def test_wellknown_host_and_tenant(self):
-        # Assert all well known authority hosts are using their own "common" tenant
+        # This test makes real HTTP calls to authority endpoints.
+        # It is intentionally network-based to validate reachable hosts end-to-end.
+        excluded_hosts = {
+            DEPRECATED_AZURE_CHINA,
+            "login.microsoftonline.de",  # deprecated
+            "login.microsoft.com",  # issuer-only in this test context
+            "login.windows.net",  # issuer-only in this test context
+            "sts.windows.net",  # issuer-only in this test context
+            "login.partner.microsoftonline.cn",  # issuer-only in this test context
+            "login.usgovcloudapi.net",  # issuer-only in this test context
+            AZURE_GOV_FR,  # currently unreachable in this environment
+            AZURE_GOV_DE,  # currently unreachable in this environment
+            AZURE_GOV_SG,  # currently unreachable in this environment
+        }
         for host in WELL_KNOWN_AUTHORITY_HOSTS:
-            if host != AZURE_CHINA:  # It is prone to ConnectionError
-                self._test_given_host_and_tenant(host, "common")
+            if host in excluded_hosts:
+                continue
+            self._test_given_host_and_tenant(host, "common")
+
+    @patch("msal.authority._instance_discovery")
+    @patch("msal.authority.tenant_discovery")
+    def test_new_sovereign_hosts_should_build_authority_endpoints(
+            self, tenant_discovery_mock, instance_discovery_mock):
+        for host in WELL_KNOWN_AUTHORITY_HOSTS:
+            tenant_discovery_mock.return_value = {
+                "authorization_endpoint": "https://{}/common/oauth2/v2.0/authorize".format(host),
+                "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(host),
+                "issuer": "https://{}/common/v2.0".format(host),
+            }
+            instance_discovery_mock.return_value = {
+                "tenant_discovery_endpoint": (
+                    "https://{}/common/v2.0/.well-known/openid-configuration".format(host)
+                ),
+            }
+            c = MinimalHttpClient()
+            a = Authority(AuthorityBuilder(host, "common"), c)
+            self.assertEqual(
+                a.authorization_endpoint,
+                "https://{}/common/oauth2/v2.0/authorize".format(host))
+            self.assertEqual(
+                a.token_endpoint,
+                "https://{}/common/oauth2/v2.0/token".format(host))
+            c.close()
+
+    @patch("msal.authority._instance_discovery")
+    @patch("msal.authority.tenant_discovery")
+    def test_known_authority_should_use_same_host_and_skip_instance_discovery(
+            self, tenant_discovery_mock, instance_discovery_mock):
+        for host in WELL_KNOWN_AUTHORITY_HOSTS:
+            tenant_discovery_mock.return_value = {
+                "authorization_endpoint": "https://{}/common/oauth2/v2.0/authorize".format(host),
+                "token_endpoint": "https://{}/common/oauth2/v2.0/token".format(host),
+                "issuer": "https://{}/common/v2.0".format(host),
+            }
+            c = MinimalHttpClient()
+            Authority("https://{}/common".format(host), c)
+            c.close()
+
+            instance_discovery_mock.assert_not_called()
+            tenant_discovery_endpoint = tenant_discovery_mock.call_args[0][0]
+            self.assertTrue(
+                tenant_discovery_endpoint.startswith(
+                    "https://{}/common/v2.0/.well-known/openid-configuration".format(host)))
+
+    @patch("msal.authority._instance_discovery")
+    @patch("msal.authority.tenant_discovery")
+    def test_unknown_authority_should_use_world_wide_instance_discovery_endpoint(
+            self, tenant_discovery_mock, instance_discovery_mock):
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/tenant/oauth2/v2.0/authorize",
+            "token_endpoint": "https://example.com/tenant/oauth2/v2.0/token",
+            "issuer": "https://example.com/tenant/v2.0",
+        }
+        instance_discovery_mock.return_value = {
+            "tenant_discovery_endpoint": "https://example.com/tenant/v2.0/.well-known/openid-configuration",
+        }
+
+        c = MinimalHttpClient()
+        Authority("https://example.com/tenant", c)
+        c.close()
+
+        self.assertEqual(
+            "https://{}/common/discovery/instance".format(WORLD_WIDE),
+            instance_discovery_mock.call_args[0][2])
 
     def test_wellknown_host_and_tenant_using_new_authority_builder(self):
         self._test_authority_builder(AZURE_PUBLIC, "consumers")
@@ -276,7 +356,24 @@ class TestMsalBehaviorsWithoutAndWithInstanceDiscoveryBoolean(unittest.TestCase)
         app = msal.ClientApplication("id", authority="https://login.microsoftonline.com/common")
         known_to_microsoft_validation.assert_not_called()
         app.get_accounts()  # This could make an instance metadata call for authority aliases
-        instance_metadata.assert_called_once_with()
+        instance_metadata.assert_called_once_with("login.microsoftonline.com")
+
+    def test_by_default_a_sovereign_known_authority_should_use_cloud_local_instance_metadata(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        app = msal.ClientApplication("id", authority="https://login.microsoftonline.us/common")
+        known_to_microsoft_validation.assert_not_called()
+        app.get_accounts()  # This could make an instance metadata call for authority aliases
+        instance_metadata.assert_called_once_with("login.microsoftonline.us")
+
+    def test_fr_known_authority_should_still_work_when_instance_metadata_has_no_alias_entry(
+            self, instance_metadata, known_to_microsoft_validation, _):
+        app = msal.ClientApplication("id", authority="https://{}/common".format(AZURE_GOV_FR))
+        known_to_microsoft_validation.assert_not_called()
+
+        accounts = app.get_accounts()
+
+        self.assertEqual([], accounts)
+        instance_metadata.assert_called_once_with(AZURE_GOV_FR)
 
     def test_validate_authority_boolean_should_skip_validation_and_instance_metadata(
             self, instance_metadata, known_to_microsoft_validation, _):

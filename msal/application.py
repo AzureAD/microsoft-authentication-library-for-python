@@ -11,7 +11,12 @@ import os
 
 from .oauth2cli import Client, JwtAssertionCreator
 from .oauth2cli.oidc import decode_part
-from .authority import Authority, WORLD_WIDE
+from .authority import (
+    Authority,
+    WORLD_WIDE,
+    _get_instance_discovery_endpoint,
+    _get_instance_discovery_host,
+)
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
@@ -671,7 +676,7 @@ class ClientApplication(object):
         self._region_detected = None
         self.client, self._regional_client = self._build_client(
             client_credential, self.authority)
-        self.authority_groups = None
+        self.authority_groups = {}
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
         _msal_extension_check()
@@ -1304,9 +1309,16 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             }
         return list(grouped_accounts.values())
 
-    def _get_instance_metadata(self):  # This exists so it can be mocked in unit test
+    def _get_instance_metadata(self, instance):  # This exists so it can be mocked in unit test
+        instance_discovery_host = _get_instance_discovery_host(instance)
         resp = self.http_client.get(
-            "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https://login.microsoftonline.com/common/oauth2/authorize",  # TBD: We may extend this to use self._instance_discovery endpoint
+            _get_instance_discovery_endpoint(instance),
+            params={
+                'api-version': '1.1',
+                'authorization_endpoint': (
+                    "https://{}/common/oauth2/authorize".format(instance_discovery_host)
+                    ),
+            },
             headers={'Accept': 'application/json'})
         resp.raise_for_status()
         return json.loads(resp.text)['metadata']
@@ -1318,10 +1330,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             # Then it is an ADFS/B2C/known_authority_hosts situation
             # which may not reach the central endpoint, so we skip it.
             return []
-        if not self.authority_groups:
-            self.authority_groups = [
-                set(group['aliases']) for group in self._get_instance_metadata()]
-        for group in self.authority_groups:
+        if instance not in self.authority_groups:
+            self.authority_groups[instance] = [
+                set(group['aliases']) for group in self._get_instance_metadata(instance)]
+        for group in self.authority_groups[instance]:
             if instance in group:
                 return [alias for alias in group if alias != instance]
         return []

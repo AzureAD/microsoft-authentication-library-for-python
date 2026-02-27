@@ -9,38 +9,28 @@ logger = logging.getLogger(__name__)
 # Endpoints were copied from here
 # https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud#azure-ad-authentication-endpoints
 AZURE_US_GOVERNMENT = "login.microsoftonline.us"
-AZURE_CHINA = "login.chinacloudapi.cn"
+DEPRECATED_AZURE_CHINA = "login.chinacloudapi.cn"
 AZURE_PUBLIC = "login.microsoftonline.com"
+AZURE_GOV_FR = "login.sovcloud-identity.fr"
+AZURE_GOV_DE = "login.sovcloud-identity.de"
+AZURE_GOV_SG = "login.sovcloud-identity.sg"
 
 WORLD_WIDE = 'login.microsoftonline.com'  # There was an alias login.windows.net
-WELL_KNOWN_AUTHORITY_HOSTS = set([
+WELL_KNOWN_AUTHORITY_HOSTS = frozenset([
     WORLD_WIDE,
-    AZURE_CHINA,
-    'login-us.microsoftonline.com',
-    AZURE_US_GOVERNMENT,
-    ])
-
-# Trusted issuer hosts for OIDC issuer validation
-# Includes all well-known Microsoft identity provider hosts and national clouds
-TRUSTED_ISSUER_HOSTS = frozenset([
-    # Global/Public cloud
-    "login.microsoftonline.com",
     "login.microsoft.com",
     "login.windows.net",
     "sts.windows.net",
-    # China cloud
-    "login.chinacloudapi.cn",
+    DEPRECATED_AZURE_CHINA,
     "login.partner.microsoftonline.cn",
-    # Germany cloud (legacy)
-    "login.microsoftonline.de",
-    # US Government clouds
-    "login.microsoftonline.us",
+    "login.microsoftonline.de",  # deprecated
+    'login-us.microsoftonline.com',
+    AZURE_US_GOVERNMENT,
     "login.usgovcloudapi.net",
-    "login-us.microsoftonline.com",
-    "https://login.sovcloud-identity.fr", # AzureBleu
-    "https://login.sovcloud-identity.de", # AzureDelos
-    "https://login.sovcloud-identity.sg", # AzureGovSG
-])
+    AZURE_GOV_FR,
+    AZURE_GOV_DE,
+    AZURE_GOV_SG,
+    ])
 
 WELL_KNOWN_B2C_HOSTS = [
     "b2clogin.com",
@@ -50,6 +40,15 @@ WELL_KNOWN_B2C_HOSTS = [
     "ciamlogin.com",
     ]
 _CIAM_DOMAIN_SUFFIX = ".ciamlogin.com"
+
+
+def _get_instance_discovery_host(instance):
+    return instance if instance in WELL_KNOWN_AUTHORITY_HOSTS else WORLD_WIDE
+
+
+def _get_instance_discovery_endpoint(instance):
+    return 'https://{}/common/discovery/instance'.format(
+        _get_instance_discovery_host(instance))
 
 
 class AuthorityBuilder(object):
@@ -157,10 +156,8 @@ class Authority(object):
             ) or (len(parts) == 3 and parts[2].lower().startswith("b2c_"))
         self._is_known_to_developer = self.is_adfs or self._is_b2c or not validate_authority
         is_known_to_microsoft = self.instance in WELL_KNOWN_AUTHORITY_HOSTS
-        instance_discovery_endpoint = 'https://{}/common/discovery/instance'.format(  # Note: This URL seemingly returns V1 endpoint only
-            WORLD_WIDE  # Historically using WORLD_WIDE. Could use self.instance too
-                # See https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadInstanceDiscovery.cs#L101-L103
-                # and https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/4.0.0/src/Microsoft.Identity.Client/Instance/AadAuthority.cs#L19-L33
+        instance_discovery_endpoint = _get_instance_discovery_endpoint(  # Note: This URL seemingly returns V1 endpoint only
+            self.instance
             ) if instance_discovery in (None, True) else instance_discovery
         if instance_discovery_endpoint and not (
                 is_known_to_microsoft or self._is_known_to_developer):
@@ -172,8 +169,8 @@ class Authority(object):
             if payload.get("error") == "invalid_instance":
                 raise ValueError(
                     "invalid_instance: "
-                    "The authority you provided, %s, is not whitelisted. "
-                    "If it is indeed your legit customized domain name, "
+                    "The authority you provided, %s, is not known. "
+                    "If it is a valid domain name known to you, "
                     "you can turn off this check by passing in "
                     "instance_discovery=False"
                     % authority_url)
@@ -230,7 +227,7 @@ class Authority(object):
             return False
         
         # Case 2: Issuer is from a trusted Microsoft host - O(1) lookup
-        if issuer_host in TRUSTED_ISSUER_HOSTS:
+        if issuer_host in WELL_KNOWN_AUTHORITY_HOSTS:
             return True
 
         # Case 3: Regional variant check - O(1) lookup
@@ -240,7 +237,7 @@ class Authority(object):
             potential_base = issuer_host[dot_index + 1:]
             if "." not in issuer_host[:dot_index]:
                 # 3a: Base host is a trusted Microsoft host
-                if potential_base in TRUSTED_ISSUER_HOSTS:
+                if potential_base in WELL_KNOWN_AUTHORITY_HOSTS:
                     return True
                 # 3b: Issuer has a region prefix on the authority host
                 #     e.g. issuer=us.someweb.com, authority=someweb.com
