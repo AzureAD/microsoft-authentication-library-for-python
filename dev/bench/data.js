@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772649258980,
+  "lastUpdate": 1772652193069,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -36339,6 +36339,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000012480303353202793",
             "extra": "mean: 118.9300223303497 usec\nrounds: 3493"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "62066438+Avery-Dunn@users.noreply.github.com",
+            "name": "Avery-Dunn",
+            "username": "Avery-Dunn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a756d8cc2a4d74e7570d860ecc3883965b40471b",
+          "message": "Potential fix for code scanning alert no. 74: Workflow does not contain permissions\n\nCo-authored-by: Copilot Autofix powered by AI <62310815+github-advanced-security[bot]@users.noreply.github.com>",
+          "timestamp": "2026-03-04T11:19:33-08:00",
+          "tree_id": "10ec6580acac7283d3b4c80164f4deb54659094f",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/a756d8cc2a4d74e7570d860ecc3883965b40471b"
+        },
+        "date": 1772652191824,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40123.786954241135,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000028211167226858217",
+            "extra": "mean: 24.9228718400993 usec\nrounds: 8505"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37850.478434117795,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003156793682896156",
+            "extra": "mean: 26.419745307594752 usec\nrounds: 14225"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7508.433891594079,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000019010494298114215",
+            "extra": "mean: 133.18356589907924 usec\nrounds: 4082"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7413.3150107441315,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001603353665202688",
+            "extra": "mean: 134.89241972730125 usec\nrounds: 4765"
           }
         ]
       }
