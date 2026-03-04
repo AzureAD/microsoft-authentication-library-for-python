@@ -13,6 +13,8 @@ on:
 
 jobs:
   ci:
+    permissions:
+      contents: read
     env:
       # Fake a TRAVIS env so that the pre-existing test cases would behave like before
       TRAVIS: true
