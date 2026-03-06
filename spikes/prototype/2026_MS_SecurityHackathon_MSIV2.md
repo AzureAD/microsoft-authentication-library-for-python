@@ -92,7 +92,7 @@ GitHub PR: https://github.com/AzureAD/microsoft-authentication-library-for-pytho
 pip install msal-msiv2==1.35.0rc3
 ```
 
-**8 New Files (≈2,250 lines added)**
+**8 New Files (≈2,420 lines added)**
 
 | File | Lines | Purpose |
 |------|------:|---------|
@@ -445,7 +445,7 @@ print(f"Thumbprint: {result['cert_thumbprint_sha256']}")
 - PowerShell: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/tree/main/prototype/MsiV2UsingPowerShell
 - Python PR: https://github.com/AzureAD/microsoft-authentication-library-for-python/pull/882
 - PyPI: https://pypi.org/project/msal-msiv2/1.35.0rc3/
-- Pipeline run: https://identitydivision.visualstudio.com/IDDP/_build/results?buildId=1597011&view=results
+- Pipeline run (internal Azure DevOps): build ID 1597011
 
 ---
 
