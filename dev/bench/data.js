@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772667545378,
+  "lastUpdate": 1772801262727,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -36547,6 +36547,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000016252794706539324",
             "extra": "mean: 139.624699789071 usec\nrounds: 3794"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "copilot-swe-agent[bot]",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "copilot-swe-agent[bot]",
+            "username": "Copilot"
+          },
+          "distinct": true,
+          "id": "40dfa91a0f818ccacb3af2cdc2daa1ff266ead56",
+          "message": "Enhance SHA256 tests with comprehensive authority coverage\n\n- Add SHA256-only tests for all authority types (AAD, B2C, CIAM, ADFS, OIDC, dSTS)\n- Add SHA1-only tests for all authority types\n- Verify single thumbprint behavior across all authority types\n- Increased test count from 13 to 23 tests\n- All tests passing\n\nCo-authored-by: bgavrilMS <12273384+bgavrilMS@users.noreply.github.com>",
+          "timestamp": "2026-02-17T12:01:25Z",
+          "tree_id": "0fa97235f7e4a17af182b6ca2f77d999e9ce2a3b",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/40dfa91a0f818ccacb3af2cdc2daa1ff266ead56"
+        },
+        "date": 1772801261729,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39057.59616464181,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000026331995498894464",
+            "extra": "mean: 25.6032141810428 usec\nrounds: 14329"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38398.68836198556,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000027158787501887705",
+            "extra": "mean: 26.042556208508234 usec\nrounds: 17186"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7518.69491692767,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016355878634807555",
+            "extra": "mean: 133.0018056389799 usec\nrounds: 5001"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7487.207278081702,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015301979515306333",
+            "extra": "mean: 133.56114808353618 usec\nrounds: 4018"
           }
         ]
       }
