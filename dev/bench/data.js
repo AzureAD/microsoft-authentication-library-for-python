@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772805833336,
+  "lastUpdate": 1773684452634,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -36703,6 +36703,56 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015528970393693617",
             "extra": "mean: 138.16141168944011 usec\nrounds: 3901"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "petard@ntdev.microsoft.com",
+            "name": "Petar Dimov"
+          },
+          "committer": {
+            "email": "petard@ntdev.microsoft.com",
+            "name": "Petar Dimov"
+          },
+          "distinct": true,
+          "id": "7d9ccd55069383f762b96614cecc10e2b924b118",
+          "message": "Fix PoP flow in the test app\n\nCurrently the test app sends both PoP parameters (see placeholder_auth_scheme definition)\nand also passes req_cnf and token type. There parameters are not\ncompatible. If application passes PoP parameters, then MSAL (or the\nbroker) owns the key and does the signing of the SHR. If application\npasses req_cnf, then application owns the key and creates and signs the\nSHR, so in this case it should not pass PoP parameters.\n\nThe main flow is the first one - application passes only PoP parameters\nand either MSAL or the broker owns the key and generates the SHR.",
+          "timestamp": "2026-03-16T10:56:46-07:00",
+          "tree_id": "46fce01f6e5787b1c4d6e232a0ab23807bb69469",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/7d9ccd55069383f762b96614cecc10e2b924b118"
+        },
+        "date": 1773684451613,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38612.56383346437,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002984665422415887",
+            "extra": "mean: 25.898306165656095 usec\nrounds: 8515"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37570.50285677274,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002976045428279701",
+            "extra": "mean: 26.616625383275444 usec\nrounds: 14348"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7455.147380018354,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016628834810576214",
+            "extra": "mean: 134.13551054406358 usec\nrounds: 4742"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7176.249818402477,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015683403195497062",
+            "extra": "mean: 139.34854907581973 usec\nrounds: 5247"
           }
         ]
       }
