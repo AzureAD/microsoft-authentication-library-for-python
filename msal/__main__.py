@@ -194,7 +194,6 @@ def _acquire_pop_token_interactive(app):
     assert isinstance(app, msal.PublicClientApplication)
     POP_SCOPE = ['6256c85f-0aad-4d50-b960-e6e9b21efe35/.default']  # KAP 1P Server App Scope, obtained from https://github.com/Azure/azure-cli-extensions/pull/4468/files#diff-a47efa3186c7eb4f1176e07d0b858ead0bf4a58bfd51e448ee3607a5b4ef47f6R116
     result = _acquire_token_interactive(app, scopes=POP_SCOPE)
-    print_json(result)
     if result.get("token_type") != "pop":
         logging.error("Unable to acquire a pop token")
 
