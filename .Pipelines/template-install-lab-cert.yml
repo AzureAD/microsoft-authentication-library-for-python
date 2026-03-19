@@ -1,0 +1,32 @@
+# template-install-lab-cert.yml
+#
+# Retrieves the MSID Lab authentication certificate from Key Vault and writes
+# it to disk as a PFX file, then exposes the path as a pipeline variable so
+# the test step can pass it via LAB_APP_CLIENT_CERT_PFX_PATH.
+#
+# Prerequisites (one-time ADO setup):
+#   - Service connection 'AuthSdkResourceManager' must exist in the project and
+#     have 'Get' and 'List' access to the 'msidlabs' Key Vault.
+#   - Pipeline variable 'LAB_APP_CLIENT_ID' must be set on the pipeline
+#     (ADO UI: Pipelines -> MSAL-Python Publish -> Edit -> Variables).
+#
+# The 'LabAuth' secret in msidlabs Key Vault is a base64-encoded PFX
+# certificate used to authenticate to both the msidlabs and id4skeyvault
+# Key Vaults during e2e tests.
+
+steps:
+- task: AzureKeyVault@2
+  displayName: 'Retrieve lab certificate from Key Vault'
+  inputs:
+    azureSubscription: 'AuthSdkResourceManager'
+    KeyVaultName: 'msidlabs'
+    SecretsFilter: 'LabAuth'
+    RunAsPreJob: false
+
+- bash: |
+    set -euo pipefail
+    CERT_PATH="$(Build.SourcesDirectory)/lab-auth.pfx"
+    printf '%s' "$(LabAuth)" | base64 -d > "$CERT_PATH"
+    echo "##vso[task.setvariable variable=LAB_APP_CLIENT_CERT_PFX_PATH]$CERT_PATH"
+    echo "Lab cert written to: $CERT_PATH ($(wc -c < "$CERT_PATH") bytes)"
+  displayName: 'Write lab certificate to disk'

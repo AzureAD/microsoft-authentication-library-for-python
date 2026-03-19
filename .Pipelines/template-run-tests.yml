@@ -10,6 +10,10 @@
 #   - template: .Pipelines/template-run-tests.yml
 
 steps:
+# Retrieve the MSID Lab certificate used by e2e tests to authenticate to
+# msidlabs and id4skeyvault Key Vaults. Sets LAB_APP_CLIENT_CERT_PFX_PATH.
+- template: template-install-lab-cert.yml
+
 - task: UsePythonVersion@0
   inputs:
     versionSpec: '$(python.version)'
@@ -18,7 +22,7 @@ steps:
 - script: |
     python -m pip install --upgrade pip
     grep -v '^-e' requirements.txt | pip install -r /dev/stdin
-    pip install -e . --no-deps
+    pip install -e . --no-deps --no-build-isolation
   displayName: 'Install dependencies'
 
 # Use bash: (not script:) so set -o pipefail works — script: uses /bin/sh on Linux
@@ -29,6 +33,9 @@ steps:
     set -o pipefail
     pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
   displayName: 'Run tests'
+  env:
+    LAB_APP_CLIENT_ID: $(LAB_APP_CLIENT_ID)
+    LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
 
 - task: PublishTestResults@2
   displayName: 'Publish test results'
