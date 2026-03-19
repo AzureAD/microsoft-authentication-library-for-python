@@ -79,7 +79,7 @@ stages:
   condition: succeeded()
   jobs:
   - job: Test
-    displayName: 'pytest · Python $(python.version)'
+    displayName: 'Run unit tests'
     pool:
       vmImage: ubuntu-latest
     strategy:

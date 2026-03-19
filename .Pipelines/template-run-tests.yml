@@ -13,11 +13,12 @@ steps:
 - task: UsePythonVersion@0
   inputs:
     versionSpec: '$(python.version)'
-  displayName: 'Use Python $(python.version)'
+  displayName: 'Set up Python'
 
 - script: |
     python -m pip install --upgrade pip
-    pip install -r requirements.txt
+    pip install -e .
+    grep -v '^-e' requirements.txt | pip install -r /dev/stdin
   displayName: 'Install dependencies'
 
 # Use bash: (not script:) so set -o pipefail works — script: uses /bin/sh on Linux
@@ -27,7 +28,7 @@ steps:
     mkdir -p test-results
     set -o pipefail
     pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
-  displayName: 'Run pytest'
+  displayName: 'Run tests'
 
 - task: PublishTestResults@2
   displayName: 'Publish test results'
@@ -36,4 +37,4 @@ steps:
     testResultsFormat: 'JUnit'
     testResultsFiles: 'test-results/junit.xml'
     failTaskOnFailedTests: true
-    testRunTitle: 'Python $(python.version) pytest'
+    testRunTitle: 'Python $(python.version)'
