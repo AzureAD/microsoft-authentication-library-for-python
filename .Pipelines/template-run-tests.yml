@@ -17,8 +17,8 @@ steps:
 
 - script: |
     python -m pip install --upgrade pip
-    pip install -e .
     grep -v '^-e' requirements.txt | pip install -r /dev/stdin
+    pip install -e . --no-deps
   displayName: 'Install dependencies'
 
 # Use bash: (not script:) so set -o pipefail works — script: uses /bin/sh on Linux

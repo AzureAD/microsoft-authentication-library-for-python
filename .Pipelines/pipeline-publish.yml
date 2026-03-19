@@ -42,7 +42,7 @@ variables:
 # ══════════════════════════════════════════════════════════════════════════════
 stages:
 - stage: Validate
-  displayName: '🔍 Validate version'
+  displayName: 'Validate version'
   jobs:
   - job: ValidateVersion
     displayName: 'Check version matches source'
@@ -74,7 +74,7 @@ stages:
 # Stage 2 · CI — run the full test matrix
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: CI
-  displayName: '🧪 Run tests'
+  displayName: 'Run tests'
   dependsOn: Validate
   condition: succeeded()
   jobs:
@@ -101,7 +101,7 @@ stages:
 # Stage 3 · Build — compile sdist + wheel (single Python version)
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: Build
-  displayName: '📦 Build package'
+  displayName: 'Build package'
   dependsOn: CI
   condition: succeeded()
   jobs:
@@ -120,7 +120,7 @@ stages:
 #   Runs when: publishTarget == 'MSAL-Python'
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 - stage: PublishMSALPython
-  displayName: '🚀 Publish to test.pypi.org (Preview)'
+  displayName: 'Publish to test.pypi.org (Preview)'
   dependsOn: Build
   condition: >
     and(
@@ -151,7 +151,7 @@ stages:
 #   Runs when: publishTarget == 'pypi'
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: PublishPyPI
-  displayName: '🚀 Publish to PyPI (Production)'
+  displayName: 'Publish to PyPI (Production)'
   dependsOn: Build
   condition: >
     and(
