@@ -19,10 +19,12 @@ steps:
     versionSpec: '$(python.version)'
   displayName: 'Set up Python'
 
-- script: |
+- bash: |
     python -m pip install --upgrade pip
     grep -v '^-e' requirements.txt | pip install -r /dev/stdin
-    pip install -e . --no-deps --no-build-isolation
+    # Add the repo root to PYTHONPATH so 'import msal' resolves to this checkout
+    # without needing an editable install (avoids setuptools build environment issues).
+    echo "##vso[task.setvariable variable=PYTHONPATH]$(Build.SourcesDirectory):$PYTHONPATH"
   displayName: 'Install dependencies'
 
 # Use bash: (not script:) so set -o pipefail works — script: uses /bin/sh on Linux
