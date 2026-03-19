@@ -56,7 +56,7 @@ stages:
 
     - bash: |
         PARAM_VER="${{ parameters.packageVersion }}"
-        SKU_VER=$(python -c "exec(open('msal/sku.py').read()); print(__version__)")
+        SKU_VER=$(python -c "ns={}; exec(open('msal/sku.py').read(), ns); print(ns['__version__'])")
 
         if [ -z "$PARAM_VER" ]; then
           echo "##vso[task.logissue type=error]packageVersion is required. Enter the version to publish (must match msal/sku.py __version__)."
