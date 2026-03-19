@@ -27,8 +27,8 @@ parameters:
   displayName: 'Publish target'
   type: string
   values:
-  - MSAL-Python   # publishes to test.pypi.org (staging / preview)
-  - pypi          # publishes to PyPI (production)
+  - 'test.pypi.org (Preview / RC)'   # publishes to test.pypi.org (staging / preview)
+  - 'pypi.org (Production)'          # publishes to PyPI (production)
 
 trigger: none    # manual runs only — no automatic branch or tag triggers
 pr: none
@@ -125,7 +125,7 @@ stages:
   condition: >
     and(
       succeeded(),
-      eq('${{ parameters.publishTarget }}', 'MSAL-Python')
+      eq('${{ parameters.publishTarget }}', 'test.pypi.org (Preview / RC)')
     )
   jobs:
   - deployment: DeployMSALPython
@@ -156,7 +156,7 @@ stages:
   condition: >
     and(
       succeeded(),
-      eq('${{ parameters.publishTarget }}', 'pypi')
+      eq('${{ parameters.publishTarget }}', 'pypi.org (Production)')
     )
   jobs:
   - deployment: DeployPyPI
