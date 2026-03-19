@@ -1,0 +1,39 @@
+# template-run-tests.yml
+#
+# Reusable step template: install dependencies and run pytest.
+# The caller job is expected to set a 'python.version' matrix variable
+# (or any runtime variable) that UsePythonVersion will resolve.
+#
+# Usage (from a job that has a matrix strategy):
+#
+#   steps:
+#   - template: .Pipelines/template-run-tests.yml
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '$(python.version)'
+  displayName: 'Use Python $(python.version)'
+
+- script: |
+    python -m pip install --upgrade pip
+    pip install -r requirements.txt
+  displayName: 'Install dependencies'
+
+# Use bash: (not script:) so set -o pipefail works — script: uses /bin/sh on Linux
+# which does not support pipefail; without it, tee always exits 0 masking test failures.
+- bash: |
+    pip install pytest pytest-azurepipelines
+    mkdir -p test-results
+    set -o pipefail
+    pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
+  displayName: 'Run pytest'
+
+- task: PublishTestResults@2
+  displayName: 'Publish test results'
+  condition: succeededOrFailed()
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: 'test-results/junit.xml'
+    failTaskOnFailedTests: true
+    testRunTitle: 'Python $(python.version) pytest'
