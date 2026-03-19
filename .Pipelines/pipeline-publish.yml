@@ -42,21 +42,21 @@ variables:
 # ══════════════════════════════════════════════════════════════════════════════
 stages:
 - stage: Validate
-  displayName: 'Validate version'
+  displayName: '🔍 Validate version'
   jobs:
   - job: ValidateVersion
-    displayName: 'Assert packageVersion matches msal/sku.py'
+    displayName: 'Check version matches source'
     pool:
       vmImage: ubuntu-latest
     steps:
     - task: UsePythonVersion@0
       inputs:
         versionSpec: '3.12'
-      displayName: 'Use Python 3.12'
+      displayName: 'Set up Python'
 
     - bash: |
         PARAM_VER="${{ parameters.packageVersion }}"
-        SKU_VER=$(python -c "import sys; sys.path.insert(0,'msal'); from sku import __version__; print(__version__)")
+        SKU_VER=$(python -c "exec(open('msal/sku.py').read()); print(__version__)")
 
         if [ -z "$PARAM_VER" ]; then
           echo "##vso[task.logissue type=error]packageVersion is required. Enter the version to publish (must match msal/sku.py __version__)."
@@ -68,18 +68,18 @@ stages:
         else
           echo "Version validated: $PARAM_VER"
         fi
-      displayName: 'Validate version matches msal/sku.py'
+      displayName: 'Verify version parameter matches msal/sku.py'
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 2 · CI — run the full test matrix
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: CI
-  displayName: 'Test'
+  displayName: '🧪 Run tests'
   dependsOn: Validate
   condition: succeeded()
   jobs:
   - job: Test
-    displayName: 'pytest – Python $(python.version)'
+    displayName: 'pytest · Python $(python.version)'
     pool:
       vmImage: ubuntu-latest
     strategy:
@@ -101,12 +101,12 @@ stages:
 # Stage 3 · Build — compile sdist + wheel (single Python version)
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: Build
-  displayName: 'Build distribution'
+  displayName: '📦 Build package'
   dependsOn: CI
   condition: succeeded()
   jobs:
   - job: BuildDist
-    displayName: 'Build sdist + wheel'
+    displayName: 'Build sdist + wheel (Python 3.12)'
     pool:
       vmImage: ubuntu-latest
     steps:
@@ -120,7 +120,7 @@ stages:
 #   Runs when: publishTarget == 'MSAL-Python'
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 - stage: PublishMSALPython
-  displayName: 'Publish → MSAL-Python (test.pypi.org)'
+  displayName: '🚀 Publish to test.pypi.org (Preview)'
   dependsOn: Build
   condition: >
     and(
@@ -129,7 +129,7 @@ stages:
     )
   jobs:
   - deployment: DeployMSALPython
-    displayName: 'Upload to MSAL-Python (test.pypi.org)'
+    displayName: 'Upload to test.pypi.org'
     pool:
       vmImage: ubuntu-latest
     # Optional: add approval checks in ADO → Pipelines → Environments → MSAL-Python
@@ -151,7 +151,7 @@ stages:
 #   Runs when: publishTarget == 'pypi'
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: PublishPyPI
-  displayName: 'Publish → PyPI'
+  displayName: '🚀 Publish to PyPI (Production)'
   dependsOn: Build
   condition: >
     and(
@@ -160,7 +160,7 @@ stages:
     )
   jobs:
   - deployment: DeployPyPI
-    displayName: 'Upload to PyPI'
+    displayName: 'Upload to pypi.org'
     pool:
       vmImage: ubuntu-latest
     # IMPORTANT: configure a required manual approval on this environment in
