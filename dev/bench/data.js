@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773965893768,
+  "lastUpdate": 1774011770810,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -37013,6 +37013,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000012769832379936744",
             "extra": "mean: 119.31272836035279 usec\nrounds: 4263"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "copilot-swe-agent[bot]",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "copilot-swe-agent[bot]",
+            "username": "Copilot"
+          },
+          "distinct": true,
+          "id": "bd8754bb03d7732b5966ee611a17903a63a375dd",
+          "message": "Replace random.sample() with secrets.choice() for PKCE, nonce, and state generation\n\nCo-authored-by: bgavrilMS <12273384+bgavrilMS@users.noreply.github.com>",
+          "timestamp": "2026-03-19T22:16:36Z",
+          "tree_id": "068c3683c4c8e335db3b6a75817a1ba600c56e59",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/bd8754bb03d7732b5966ee611a17903a63a375dd"
+        },
+        "date": 1774011769440,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39498.27278455271,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000027641983612433234",
+            "extra": "mean: 25.31756275659445 usec\nrounds: 8039"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37091.57128886511,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000621565676018313",
+            "extra": "mean: 26.96030298129214 usec\nrounds: 17308"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7203.018514253319,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000039808774385736486",
+            "extra": "mean: 138.83068577724768 usec\nrounds: 4535"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7339.428706088612,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014910239244914422",
+            "extra": "mean: 136.2503867869749 usec\nrounds: 5101"
           }
         ]
       }
