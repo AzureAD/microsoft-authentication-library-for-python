@@ -94,6 +94,8 @@ stages:
           python.version: '3.12'
         Python313:
           python.version: '3.13'
+        Python314:
+          python.version: '3.14'
     steps:
     - template: template-run-tests.yml      # python.version resolved from matrix
 
