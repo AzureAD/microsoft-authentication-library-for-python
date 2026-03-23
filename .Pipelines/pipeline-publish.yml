@@ -118,8 +118,8 @@ stages:
         artifactName: python-dist
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Stage 4a · Publish to MSAL-Python (test.pypi.org)
-#   Runs when: publishTarget == 'MSAL-Python'
+# Stage 4a · Publish to test.pypi.org (Preview / RC) for MSAL-Python
+#   Runs when: publishTarget == 'test.pypi.org (Preview / RC)'
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 - stage: PublishMSALPython
   displayName: 'Publish to test.pypi.org (Preview)'
