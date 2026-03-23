@@ -8,10 +8,8 @@ The `.Pipelines/` folder follows the same template convention as [MSAL.NET](http
 
 | File | Purpose |
 |------|---------|
-| [`pipeline-publish.yml`](pipeline-publish.yml) | Top-level orchestrator — triggers, variables, stage wiring |
-| [`template-run-tests.yml`](template-run-tests.yml) | Reusable step template — pytest across Python version matrix |
-| [`template-build-package.yml`](template-build-package.yml) | Reusable step template — `python -m build` + `twine check` + artifact publish |
-| [`template-publish-package.yml`](template-publish-package.yml) | Reusable step template — `TwineAuthenticate` + `twine upload` (parameterized for MSAL-Python/PyPI) |
+| [`pipeline-publish.yml`](pipeline-publish.yml) | Thin top-level wrapper — triggers, parameters, calls `template-pipeline-stages.yml` with `runPublish: true` |
+| [`template-pipeline-stages.yml`](template-pipeline-stages.yml) | Shared stages template — Validate, CI, Build, Publish stages; reusable by PR-gate and post-merge CI pipelines |
 
 ---
 
@@ -22,9 +20,9 @@ Every publish requires explicitly entering a version and selecting a destination
 
 | Stage | Trigger | Target |
 |-------|---------|--------|
-| **Validate** | always | asserts `packageVersion` matches `msal/sku.py` |
-| **CI** (tests on Py 3.9–3.14) | after Validate | — |
-| **Build** (sdist + wheel) | after CI | dist artifact |
+| **Validate** | release runs only (`runPublish: true`) | asserts `packageVersion` matches `msal/sku.py` |
+| **CI** (tests on Py 3.9–3.14) | after Validate (or immediately on PR/merge runs) | — |
+| **Build** (sdist + wheel) | after CI, release runs only | dist artifact |
 | **PublishMSALPython** | `publishTarget = test.pypi.org (Preview / RC)` | test.pypi.org |
 | **PublishPyPI** | `publishTarget = pypi.org (Production)` | PyPI (production) |
 

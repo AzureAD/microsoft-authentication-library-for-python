@@ -1,23 +1,12 @@
 # pipeline-publish.yml
 #
-# Publish pipeline for the msal Python package.
+# Release pipeline for the msal Python package — manually triggered only.
 # Source: https://github.com/AzureAD/microsoft-authentication-library-for-python
 #
-# Composes reusable templates from this folder:
-#   template-run-tests.yml         - pytest across Python version matrix
-#   template-build-package.yml     - sdist + wheel build + twine check
-#   template-publish-package.yml   - TwineAuthenticate + twine upload (parameterized)
-#
-# Trigger logic:
-#   This pipeline is MANUALLY TRIGGERED ONLY.
-#   Both packageVersion and publishTarget must be explicitly set at queue time.
-#
-# One-time ADO setup: see ADO-PUBLISH-SETUP.md
+# Delegates all stages to template-pipeline-stages.yml, which is shared with
+# the (future) PR gate and post-merge CI pipelines.
+# For one-time ADO setup, see ADO-PUBLISH-SETUP.md.
 
-# ── Pipeline parameters ────────────────────────────────────────────────────────
-# Both fields are shown as required inputs in the ADO "Run pipeline" UI.
-# Neither has a default — the Validate stage will fail if either is empty or
-# if packageVersion does not match msal/sku.py __version__.
 parameters:
 - name: packageVersion
   displayName: 'Package version to publish (must match msal/sku.py, e.g. 1.36.0 or 1.36.0rc1)'
@@ -27,155 +16,15 @@ parameters:
   displayName: 'Publish target'
   type: string
   values:
-  - 'test.pypi.org (Preview / RC)'   # publishes to test.pypi.org (staging / preview)
-  - 'pypi.org (Production)'          # publishes to PyPI (production)
+  - 'test.pypi.org (Preview / RC)'
+  - 'pypi.org (Production)'
 
 trigger: none    # manual runs only — no automatic branch or tag triggers
 pr: none
 
-variables:
-  pythonBuildVersion: '3.12'    # single version used for build + publish jobs
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Stage 1 · Validate — verify packageVersion matches msal/sku.py before
-#           anything else runs.
-# ══════════════════════════════════════════════════════════════════════════════
 stages:
-- stage: Validate
-  displayName: 'Validate version'
-  jobs:
-  - job: ValidateVersion
-    displayName: 'Check version matches source'
-    pool:
-      vmImage: ubuntu-latest
-    steps:
-    - task: UsePythonVersion@0
-      inputs:
-        versionSpec: '3.12'
-      displayName: 'Set up Python'
-
-    - bash: |
-        PARAM_VER="${{ parameters.packageVersion }}"
-        SKU_VER=$(grep '__version__' msal/sku.py | sed 's/.*"\(.*\)".*/\1/')
-
-        if [ -z "$PARAM_VER" ]; then
-          echo "##vso[task.logissue type=error]packageVersion is required. Enter the version to publish (must match msal/sku.py __version__)."
-          exit 1
-        elif [ "$PARAM_VER" != "$SKU_VER" ]; then
-          echo "##vso[task.logissue type=error]Version mismatch: parameter '$PARAM_VER' != msal/sku.py '$SKU_VER'"
-          echo "Update msal/sku.py __version__ to match the packageVersion parameter, or correct the parameter."
-          exit 1
-        else
-          echo "Version validated: $PARAM_VER"
-        fi
-      displayName: 'Verify version parameter matches msal/sku.py'
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Stage 2 · CI — run the full test matrix
-# ══════════════════════════════════════════════════════════════════════════════
-- stage: CI
-  displayName: 'Run tests'
-  dependsOn: Validate
-  condition: succeeded()
-  jobs:
-  - job: Test
-    displayName: 'Run unit tests'
-    pool:
-      vmImage: ubuntu-latest
-    strategy:
-      matrix:
-        Python39:
-          python.version: '3.9'
-        Python310:
-          python.version: '3.10'
-        Python311:
-          python.version: '3.11'
-        Python312:
-          python.version: '3.12'
-        Python313:
-          python.version: '3.13'
-        Python314:
-          python.version: '3.14'
-    steps:
-    - template: template-run-tests.yml      # python.version resolved from matrix
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Stage 3 · Build — compile sdist + wheel (single Python version)
-# ══════════════════════════════════════════════════════════════════════════════
-- stage: Build
-  displayName: 'Build package'
-  dependsOn: CI
-  condition: succeeded()
-  jobs:
-  - job: BuildDist
-    displayName: 'Build sdist + wheel (Python 3.12)'
-    pool:
-      vmImage: ubuntu-latest
-    steps:
-    - template: template-build-package.yml
-      parameters:
-        pythonVersion: '3.12'     # must be a literal — template params resolve at compile time
-        artifactName: python-dist
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Stage 4a · Publish to MSAL-Python (test.pypi.org)
-#   Runs when: publishTarget == 'test.pypi.org (Preview / RC)'
-# ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-- stage: PublishMSALPython
-  displayName: 'Publish to test.pypi.org (Preview)'
-  dependsOn: Build
-  condition: >
-    and(
-      succeeded(),
-      eq('${{ parameters.publishTarget }}', 'test.pypi.org (Preview / RC)')
-    )
-  jobs:
-  - deployment: DeployMSALPython
-    displayName: 'Upload to test.pypi.org'
-    pool:
-      vmImage: ubuntu-latest
-    # Optional: add approval checks in ADO → Pipelines → Environments → MSAL-Python
-    environment: MSAL-Python
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - template: template-publish-package.yml
-            parameters:
-              serviceConnectionName: MSAL-Test-Python-Upload
-              repositoryName: MSAL-Test-Python-Upload
-              artifactName: python-dist
-              pythonVersion: '3.12'     # must be a literal — template params resolve at compile time
-              skipExisting: true
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Stage 4b · Publish to PyPI
-#   Runs when: publishTarget == 'pypi.org (Production)'
-# ══════════════════════════════════════════════════════════════════════════════
-- stage: PublishPyPI
-  displayName: 'Publish to PyPI (Production)'
-  dependsOn: Build
-  condition: >
-    and(
-      succeeded(),
-      eq('${{ parameters.publishTarget }}', 'pypi.org (Production)')
-    )
-  jobs:
-  - deployment: DeployPyPI
-    displayName: 'Upload to pypi.org'
-    pool:
-      vmImage: ubuntu-latest
-    # IMPORTANT: configure a required manual approval on this environment in
-    # ADO → Pipelines → Environments → MSAL-Python-Release → Approvals and checks.
-    environment: MSAL-Python-Release
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - template: template-publish-package.yml
-            parameters:
-              serviceConnectionName: MSAL-Prod-Python-Upload
-              repositoryName: MSAL-Prod-Python-Upload
-              artifactName: python-dist
-              pythonVersion: '3.12'     # must be a literal — template params resolve at compile time
-              skipExisting: false
+- template: template-pipeline-stages.yml
+  parameters:
+    packageVersion: ${{ parameters.packageVersion }}
+    publishTarget: ${{ parameters.publishTarget }}
+    runPublish: true

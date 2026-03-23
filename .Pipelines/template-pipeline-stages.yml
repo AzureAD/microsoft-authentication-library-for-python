@@ -1,0 +1,285 @@
+# template-pipeline-stages.yml
+#
+# Unified pipeline stages template for the msal Python package.
+#
+# Called from:
+#   pipeline-publish.yml              — release build (runPublish: true)
+#   (future) pipeline-ci.yml          — post-merge CI  (runPublish: false)
+#   (future) pipeline-pullrequest.yml — PR gate        (runPublish: false)
+#
+# Parameters:
+#   packageVersion  - Version to validate against msal/sku.py
+#                     Required when runPublish is true; unused otherwise.
+#   publishTarget   - 'test.pypi.org (Preview / RC)' or 'pypi.org (Production)'
+#                     Required when runPublish is true; unused otherwise.
+#   runPublish      - When true: also run Validate, Build, and Publish stages.
+#                     When false (PR / merge builds): only the CI stage runs.
+#
+# Stage flow:
+#
+#   runPublish: true  → Validate ─► CI ─► Build ─► PublishMSALPython
+#                                                └─► PublishPyPI
+#   runPublish: false → CI  (Validate / Build / Publish are skipped)
+
+parameters:
+- name: packageVersion
+  type: string
+  default: ''
+- name: publishTarget
+  type: string
+  default: ''
+- name: runPublish
+  type: boolean
+  default: false
+
+stages:
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 1 · Validate — verify packageVersion matches msal/sku.py __version__
+#           Skipped when runPublish is false (PR / merge builds).
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: Validate
+  displayName: 'Validate version'
+  condition: ${{ parameters.runPublish }}
+  jobs:
+  - job: ValidateVersion
+    displayName: 'Check version matches source'
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.12'
+      displayName: 'Set up Python'
+
+    - bash: |
+        PARAM_VER="${{ parameters.packageVersion }}"
+        SKU_VER=$(grep '__version__' msal/sku.py | sed 's/.*"\(.*\)".*/\1/')
+
+        if [ -z "$PARAM_VER" ]; then
+          echo "##vso[task.logissue type=error]packageVersion is required. Enter the version to publish (must match msal/sku.py __version__)."
+          exit 1
+        elif [ "$PARAM_VER" != "$SKU_VER" ]; then
+          echo "##vso[task.logissue type=error]Version mismatch: parameter '$PARAM_VER' != msal/sku.py '$SKU_VER'"
+          echo "Update msal/sku.py __version__ to match the packageVersion parameter, or correct the parameter."
+          exit 1
+        else
+          echo "Version validated: $PARAM_VER"
+        fi
+      displayName: 'Verify version parameter matches msal/sku.py'
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 2 · CI — run the full test matrix across all supported Python versions.
+#           Always runs. Waits for Validate when runPublish is true;
+#           runs immediately when Validate is skipped (PR / merge builds).
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: CI
+  displayName: 'Run tests'
+  dependsOn: Validate
+  condition: in(dependencies.Validate.result, 'Succeeded', 'Skipped')
+  jobs:
+  - job: Test
+    displayName: 'Run unit tests'
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      matrix:
+        Python39:
+          python.version: '3.9'
+        Python310:
+          python.version: '3.10'
+        Python311:
+          python.version: '3.11'
+        Python312:
+          python.version: '3.12'
+        Python313:
+          python.version: '3.13'
+        Python314:
+          python.version: '3.14'
+    steps:
+    # Retrieve the MSID Lab certificate from Key Vault (via AuthSdkResourceManager SC).
+    # The cert is written to disk and LAB_APP_CLIENT_CERT_PFX_PATH is set as a variable.
+    # Kept for when e2e tests are fully enabled on a lab-capable agent pool.
+    # Prerequisites: service connection 'AuthSdkResourceManager' with Get/List access
+    # to the 'msidlabs' Key Vault. The 'LabAuth' secret is a base64-encoded PFX.
+    - task: AzureKeyVault@2
+      displayName: 'Retrieve lab certificate from Key Vault'
+      inputs:
+        azureSubscription: 'AuthSdkResourceManager'
+        KeyVaultName: 'msidlabs'
+        SecretsFilter: 'LabAuth'
+        RunAsPreJob: false
+
+    - bash: |
+        set -euo pipefail
+        CERT_PATH="$(Build.SourcesDirectory)/lab-auth.pfx"
+        printf '%s' "$(LabAuth)" | base64 -d > "$CERT_PATH"
+        echo "##vso[task.setvariable variable=LAB_APP_CLIENT_CERT_PFX_PATH]$CERT_PATH"
+        echo "Lab cert written to: $CERT_PATH ($(wc -c < "$CERT_PATH") bytes)"
+      displayName: 'Write lab certificate to disk'
+
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(python.version)'
+      displayName: 'Set up Python'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      displayName: 'Install dependencies'
+
+    # Use bash: (not script:) so set -o pipefail works — script: uses /bin/sh on
+    # Linux which does not support pipefail; without it, tee always exits 0,
+    # masking test failures.
+    - bash: |
+        pip install pytest pytest-azurepipelines
+        mkdir -p test-results
+        set -o pipefail
+        pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
+      displayName: 'Run tests'
+      env:
+        # LAB_APP_CLIENT_ID is intentionally omitted to match the PR gate build
+        # behaviour (azure-pipelines.yml). Without it, _get_credential() in
+        # lab_config.py raises EnvironmentError and all e2e tests skip or error
+        # gracefully — identical to the PR build result.
+        # Uncomment and set this variable to enable full e2e runs on a
+        # lab-capable agent pool (requires CA-exempt network / internal agent).
+        # LAB_APP_CLIENT_ID: $(LAB_APP_CLIENT_ID)
+        LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
+
+    - task: PublishTestResults@2
+      displayName: 'Publish test results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results/junit.xml'
+        failTaskOnFailedTests: true
+        testRunTitle: 'Python $(python.version)'
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 3 · Build — build sdist + wheel (release only)
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: Build
+  displayName: 'Build package'
+  dependsOn: CI
+  condition: and(eq(dependencies.CI.result, 'Succeeded'), eq('${{ parameters.runPublish }}', 'true'))
+  jobs:
+  - job: BuildDist
+    displayName: 'Build sdist + wheel (Python 3.12)'
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.12'
+      displayName: 'Use Python 3.12'
+
+    - script: |
+        python -m pip install --upgrade pip build twine
+      displayName: 'Install build toolchain'
+
+    - script: |
+        python -m build
+      displayName: 'Build sdist and wheel'
+
+    - script: |
+        python -m twine check dist/*
+      displayName: 'Verify distribution (twine check)'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish dist/ as pipeline artifact'
+      inputs:
+        targetPath: dist/
+        artifact: python-dist
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 4a · Publish to test.pypi.org (Preview / RC)
+#   Runs when: runPublish is true AND publishTarget == 'test.pypi.org (Preview / RC)'
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: PublishMSALPython
+  displayName: 'Publish to test.pypi.org (Preview)'
+  dependsOn: Build
+  condition: >
+    and(
+      eq(dependencies.Build.result, 'Succeeded'),
+      eq('${{ parameters.publishTarget }}', 'test.pypi.org (Preview / RC)')
+    )
+  jobs:
+  - deployment: DeployMSALPython
+    displayName: 'Upload to test.pypi.org'
+    pool:
+      vmImage: ubuntu-latest
+    # Optional: add approval checks in ADO → Pipelines → Environments → MSAL-Python
+    environment: MSAL-Python
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+            displayName: 'Use Python 3.12'
+
+          - script: |
+              python -m pip install --upgrade pip
+              python -m pip install twine
+            displayName: 'Install twine'
+
+          - task: TwineAuthenticate@1
+            displayName: 'Authenticate with MSAL-Test-Python-Upload'
+            inputs:
+              pythonUploadServiceConnection: MSAL-Test-Python-Upload
+
+          - script: |
+              python -m twine upload \
+                -r "MSAL-Test-Python-Upload" \
+                --config-file $(PYPIRC_PATH) \
+                --skip-existing \
+                $(Pipeline.Workspace)/python-dist/*
+            displayName: 'Upload to MSAL-Test-Python-Upload (skip existing)'
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 4b · Publish to PyPI (Production)
+#   Runs when: runPublish is true AND publishTarget == 'pypi.org (Production)'
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: PublishPyPI
+  displayName: 'Publish to PyPI (Production)'
+  dependsOn: Build
+  condition: >
+    and(
+      eq(dependencies.Build.result, 'Succeeded'),
+      eq('${{ parameters.publishTarget }}', 'pypi.org (Production)')
+    )
+  jobs:
+  - deployment: DeployPyPI
+    displayName: 'Upload to pypi.org'
+    pool:
+      vmImage: ubuntu-latest
+    # IMPORTANT: configure a required manual approval on this environment in
+    # ADO → Pipelines → Environments → MSAL-Python-Release → Approvals and checks.
+    environment: MSAL-Python-Release
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+            displayName: 'Use Python 3.12'
+
+          - script: |
+              python -m pip install --upgrade pip
+              python -m pip install twine
+            displayName: 'Install twine'
+
+          - task: TwineAuthenticate@1
+            displayName: 'Authenticate with MSAL-Prod-Python-Upload'
+            inputs:
+              pythonUploadServiceConnection: MSAL-Prod-Python-Upload
+
+          - script: |
+              python -m twine upload \
+                -r "MSAL-Prod-Python-Upload" \
+                --config-file $(PYPIRC_PATH) \
+                $(Pipeline.Workspace)/python-dist/*
+            displayName: 'Upload to MSAL-Prod-Python-Upload'
