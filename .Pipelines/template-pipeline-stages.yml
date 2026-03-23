@@ -17,9 +17,9 @@
 #
 # Stage flow:
 #
-#   runPublish: true  → Validate ─► CI ─► Build ─► PublishMSALPython
-#                                                └─► PublishPyPI
-#   runPublish: false → CI  (Validate / Build / Publish are skipped)
+#   runPublish: true  → PreBuildCheck ─► Validate ─► CI ─► Build ─► PublishMSALPython
+#                                                                   └─► PublishPyPI
+#   runPublish: false → PreBuildCheck ─► CI  (Validate / Build / Publish are skipped)
 
 parameters:
 - name: packageVersion
@@ -35,12 +35,51 @@ parameters:
 stages:
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Stage 0 · PreBuildCheck — SDL security scans (PoliCheck + CredScan)
+#           Always runs, mirrors MSAL.NET pre-build analysis.
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: PreBuildCheck
+  displayName: 'Pre-build security checks'
+  jobs:
+  - job: SecurityScan
+    displayName: 'PoliCheck + CredScan'
+    pool:
+      vmImage: windows-latest
+    variables:
+      Codeql.SkipTaskAutoInjection: true
+    steps:
+    - task: NodeTool@0
+      displayName: 'Install NPM'
+      inputs:
+        versionSpec: '16.x'
+
+    - task: securedevelopmentteam.vss-secure-development-tools.build-task-policheck.PoliCheck@2
+      displayName: 'Run PoliCheck'
+      inputs:
+        targetType: F
+        optionsUEPATH: '$(Build.SourcesDirectory)/build/policheck_exclusion.xml'
+      continueOnError: true
+
+    - task: securedevelopmentteam.vss-secure-development-tools.build-task-credscan.CredScan@3
+      displayName: 'Run CredScan'
+      inputs:
+        toolMajorVersion: V2
+        debugMode: false
+
+    - task: securedevelopmentteam.vss-secure-development-tools.build-task-postanalysis.PostAnalysis@2
+      displayName: 'Post Analysis'
+      inputs:
+        GdnBreakGdnToolCredScan: true
+        GdnBreakGdnToolPoliCheck: true
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Stage 1 · Validate — verify packageVersion matches msal/sku.py __version__
 #           Skipped when runPublish is false (PR / merge builds).
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: Validate
   displayName: 'Validate version'
-  condition: ${{ parameters.runPublish }}
+  dependsOn: PreBuildCheck
+  condition: and(${{ parameters.runPublish }}, eq(dependencies.PreBuildCheck.result, 'Succeeded'))
   jobs:
   - job: ValidateVersion
     displayName: 'Check version matches source'
@@ -75,8 +114,14 @@ stages:
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: CI
   displayName: 'Run tests'
-  dependsOn: Validate
-  condition: in(dependencies.Validate.result, 'Succeeded', 'Skipped')
+  dependsOn:
+  - PreBuildCheck
+  - Validate
+  condition: |
+    and(
+      eq(dependencies.PreBuildCheck.result, 'Succeeded'),
+      in(dependencies.Validate.result, 'Succeeded', 'Skipped')
+    )
   jobs:
   - job: Test
     displayName: 'Run unit tests'

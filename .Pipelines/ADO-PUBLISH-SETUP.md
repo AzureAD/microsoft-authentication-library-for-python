@@ -20,6 +20,7 @@ Every publish requires explicitly entering a version and selecting a destination
 
 | Stage | Trigger | Target |
 |-------|---------|--------|
+| **PreBuildCheck** (PoliCheck + CredScan) | always | SDL security scans |
 | **Validate** | release runs only (`runPublish: true`) | asserts `packageVersion` matches `msal/sku.py` |
 | **CI** (tests on Py 3.9–3.14) | after Validate (or immediately on PR/merge runs) | — |
 | **Build** (sdist + wheel) | after CI, release runs only | dist artifact |
@@ -189,12 +190,15 @@ This pipeline is **always manually queued**. Both fields are required — the Va
 
 ```
 Manual queue (publishTarget = test.pypi.org (Preview / RC))
-  └─►  Validate  ─►  CI  ─►  Build  ─►  PublishMSALPython
-                                              (test.pypi.org (Preview / RC), auto)
+  └─►  PreBuildCheck  ─►  Validate  ─►  CI  ─►  Build  ─►  PublishMSALPython
+                                                              (test.pypi.org (Preview / RC), auto)
 
 Manual queue (publishTarget = pypi.org (Production))
-  └─►  Validate  ─►  CI  ─►  Build  ─►  PublishPyPI
-                                              (pypi.org (Production), requires approval)
+  └─►  PreBuildCheck  ─►  Validate  ─►  CI  ─►  Build  ─►  PublishPyPI
+                                                              (pypi.org (Production), requires approval)
+
+PR / merge build (runPublish: false)
+  └─►  PreBuildCheck  ─►  CI
 ```
 
 ---
