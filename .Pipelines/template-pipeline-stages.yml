@@ -57,7 +57,6 @@ stages:
       displayName: 'Run PoliCheck'
       inputs:
         targetType: F
-        optionsUEPATH: '$(Build.SourcesDirectory)/build/policheck_exclusion.xml'
       continueOnError: true
 
     - task: securedevelopmentteam.vss-secure-development-tools.build-task-credscan.CredScan@3
