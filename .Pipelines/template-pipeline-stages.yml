@@ -63,6 +63,7 @@ stages:
     - task: securedevelopmentteam.vss-secure-development-tools.build-task-credscan.CredScan@3
       displayName: 'Run CredScan'
       inputs:
+        suppressionsFile: '$(Build.SourcesDirectory)/.Pipelines/credscan-exclusion.json'
         toolMajorVersion: V2
         debugMode: false
 

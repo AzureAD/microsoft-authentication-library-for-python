@@ -1,0 +1,16 @@
+{
+  "tool": "Credential Scanner",
+  "suppressions": [
+    {
+      "placeholder": "placeholder",
+      "_justification": "tests/certificate-with-password.pfx is a test fixture certificate used only in unit tests. It is not a production credential.",
+      "file": "tests/certificate-with-password.pfx"
+    },
+    {
+      "placeholder": "placeholder",
+      "_justification": "tests/test_mi.py line 385 contains a WWW-Authenticate challenge header value used as a test fixture in a mock HTTP response. It is not a real credential.",
+      "file": "tests/test_mi.py",
+      "line": "385"
+    }
+  ]
+}
