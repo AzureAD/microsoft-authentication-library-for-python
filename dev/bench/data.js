@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774291423608,
+  "lastUpdate": 1774291694653,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -37429,6 +37429,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015607803396018665",
             "extra": "mean: 107.00401191230709 usec\nrounds: 4617"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "distinct": true,
+          "id": "364eb7dfe3779dc073b3a34e75fdd9230cf62a7b",
+          "message": "Fix PoliCheck InvalidArgumentsError (remove missing exclusion file path); fix CredScan suppression format",
+          "timestamp": "2026-03-23T11:44:34-07:00",
+          "tree_id": "c2f780a909026b58d609af16f380f960051c8bc8",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/364eb7dfe3779dc073b3a34e75fdd9230cf62a7b"
+        },
+        "date": 1774291693009,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 34998.08728604756,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009716657265948103",
+            "extra": "mean: 28.572990055906942 usec\nrounds: 8045"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 35403.67219748079,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000030449347721125527",
+            "extra": "mean: 28.245657524508342 usec\nrounds: 14001"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7517.541289686296,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015911632340582945",
+            "extra": "mean: 133.0222158369721 usec\nrounds: 3637"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 6975.870071621149,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000020037540880767527",
+            "extra": "mean: 143.35129377884272 usec\nrounds: 3472"
           }
         ]
       }
