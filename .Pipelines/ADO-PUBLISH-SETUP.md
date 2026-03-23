@@ -23,7 +23,7 @@ Every publish requires explicitly entering a version and selecting a destination
 | Stage | Trigger | Target |
 |-------|---------|--------|
 | **Validate** | always | asserts `packageVersion` matches `msal/sku.py` |
-| **CI** (tests on Py 3.9–3.13) | after Validate | — |
+| **CI** (tests on Py 3.9–3.14) | after Validate | — |
 | **Build** (sdist + wheel) | after CI | dist artifact |
 | **PublishMSALPython** | `publishTarget = test.pypi.org (Preview / RC)` | test.pypi.org |
 | **PublishPyPI** | `publishTarget = pypi.org (Production)` | PyPI (production) |
@@ -190,13 +190,13 @@ This pipeline is **always manually queued**. Both fields are required — the Va
 ## Pipeline Trigger Reference
 
 ```
-Manual queue (publishTarget = MSAL-Python)
+Manual queue (publishTarget = test.pypi.org (Preview / RC))
   └─►  Validate  ─►  CI  ─►  Build  ─►  PublishMSALPython
-                                              (test.pypi.org, auto)
+                                              (test.pypi.org (Preview / RC), auto)
 
-Manual queue (publishTarget = pypi)
+Manual queue (publishTarget = pypi.org (Production))
   └─►  Validate  ─►  CI  ─►  Build  ─►  PublishPyPI
-                                              (PyPI, requires approval)
+                                              (pypi.org (Production), requires approval)
 ```
 
 ---
@@ -208,7 +208,7 @@ The following requirements were identified during initial setup and testing:
 - The GitHub service connection **must** be created via OAuth (Grant authorization) in the ADO UI, not via CLI or PAT. The CLI `az pipelines create` command requires webhook installation on the GitHub repo, which requires org admin rights not available to service accounts.
 - The pipeline **must** be created via the ADO REST API (`/_apis/build/definitions`) or UI — not via `az pipelines create` — when using an OAuth GitHub service connection without org-level admin rights.
 - The `msal/sku.py __version__` must be updated and pushed to the source branch **before** the pipeline run is queued. The Validate stage reads the file from the checked-out branch at runtime.
-- The `requirements.txt` file includes `-e .` which causes pip to install `msal` from PyPI as a transitive dependency of `azure-identity`, overwriting the local editable install. The template handles this by removing the `-e .` line and reinstalling the local package last with `--no-deps`.
+- The `requirements.txt` file includes `-e .` (editable local install of `msal`). `azure-identity` does not depend on `msal`, so no PyPI version is pulled in as a transitive dependency and the local package is not overwritten. The template installs dependencies with `pip install -r requirements.txt`, which installs the editable local copy directly.
 - The `1.35.1` version bump (hotfix) was released from `origin/release-1.35.0` and was never merged back into `dev`. Before the next release from `dev`, this should be backfilled via PR: `https://github.com/AzureAD/microsoft-authentication-library-for-python/compare/dev...release-1.35.0`
 
 ---
@@ -221,7 +221,7 @@ The following requirements were identified during initial setup and testing:
 | `File already exists` error | Version already published; PyPI does not allow overwriting | Bump version in `msal/sku.py` |
 | Validate stage: `msal/sku.py ''` (empty version) | Python import silently failed | The template uses `grep`/`sed` to read the version — verify `msal/sku.py` contains a `__version__ = "..."` line |
 | Validate stage: version mismatch | `sku.py` on the source branch doesn't match the parameter entered | Update `msal/sku.py` on the branch the run is sourced from, not just the pipeline default branch |
-| Tests: collection failure across all modules | PyPI `msal` installed over the local editable install | Ensure the template installs local package last with `--no-deps` |
+| Tests: collection failure across all modules | Missing or broken dependency | Run `pip install -r requirements.txt` locally and confirm `msal` resolves to the local editable install (check `pip show msal`) |
 | `az pipelines create` fails with webhook error | GitHub service connection PAT/account lacks org admin rights | Create the pipeline via the ADO UI using a browser session with org admin GitHub access |
 | Pipeline creation fails: `Value cannot be null. Parameter name: Connection` | GitHub SC ID is wrong or SC was recreated | Re-query the SC ID with `az devops service-endpoint list` and use the current ID |
 | Service connection shows `Authentication: PersonalAccessToken` | SC was created via CLI with a PAT | Delete and recreate via UI using OAuth (Grant authorization) so repos are enumerable |
