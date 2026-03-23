@@ -10,6 +10,7 @@ The `.Pipelines/` folder follows the same template convention as [MSAL.NET](http
 |------|---------|
 | [`pipeline-publish.yml`](pipeline-publish.yml) | Thin top-level wrapper — triggers, parameters, calls `template-pipeline-stages.yml` with `runPublish: true` |
 | [`template-pipeline-stages.yml`](template-pipeline-stages.yml) | Shared stages template — Validate, CI, Build, Publish stages; reusable by PR-gate and post-merge CI pipelines |
+| [`credscan-exclusion.json`](credscan-exclusion.json) | CredScan suppression file — suppresses known false positives for test fixture files (`certificate-with-password.pfx`, `test_mi.py`) |
 
 ---
 
@@ -35,9 +36,11 @@ Every publish requires explicitly entering a version and selecting a destination
 |-------------|-------|
 | ADO Organization | [Create one](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/create-organization) if you don't have one |
 | ADO Project | Under the org; enable **Pipelines** and **Artifacts** |
+| [Secure Development Tools](https://marketplace.visualstudio.com/items?itemName=securedevelopmentteam.vss-secure-development-tools) extension | Must be installed in the ADO organization — required for the PreBuildCheck stage (PoliCheck, CredScan, PostAnalysis tasks) |
 | GitHub account with admin rights | Needed to authorize the ADO GitHub App |
 | PyPI API token | Scoped to the `msal` project — generate at <https://pypi.org/manage/account/token/> |
 | MSAL-Python (test.pypi.org) API token | Scoped to the `msal` project on test.pypi.org |
+| `AuthSdkResourceManager` Azure service connection *(optional)* | Required only if `LAB_APP_CLIENT_ID` is set to enable e2e tests. ARM service connection with **Get** access to the `LabAuth` secret in the `msidlabs` Key Vault. When not set, the Key Vault steps are automatically skipped. |
 
 ---
 
