@@ -189,21 +189,11 @@ def _acquire_ssh_cert_interactive(app):
     if result.get("token_type") != "ssh-cert":
         logging.error("Unable to acquire an ssh-cert")
 
-_POP_KEY_ID = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAAA'  # Fake key with a certain format and length
-_RAW_REQ_CNF = json.dumps({"kid": _POP_KEY_ID, "xms_ksl": "sw"})
-_POP_DATA = {  # Sampled from Azure CLI's plugin connectedk8s
-    'token_type': 'pop',
-    'key_id': _POP_KEY_ID,
-    "req_cnf": base64.urlsafe_b64encode(_RAW_REQ_CNF.encode('utf-8')).decode('utf-8').rstrip('='),
-        # Note: Sending _RAW_REQ_CNF without base64 encoding would result in an http 500 error
-}  # See also https://github.com/Azure/azure-cli-extensions/blob/main/src/connectedk8s/azext_connectedk8s/_clientproxyutils.py#L86-L92
-
 def _acquire_pop_token_interactive(app):
     """Acquire a POP token interactively - This typically only works with Azure CLI"""
     assert isinstance(app, msal.PublicClientApplication)
     POP_SCOPE = ['6256c85f-0aad-4d50-b960-e6e9b21efe35/.default']  # KAP 1P Server App Scope, obtained from https://github.com/Azure/azure-cli-extensions/pull/4468/files#diff-a47efa3186c7eb4f1176e07d0b858ead0bf4a58bfd51e448ee3607a5b4ef47f6R116
-    result = _acquire_token_interactive(app, scopes=POP_SCOPE, data=_POP_DATA)
-    print_json(result)
+    result = _acquire_token_interactive(app, scopes=POP_SCOPE)
     if result.get("token_type") != "pop":
         logging.error("Unable to acquire a pop token")
 
