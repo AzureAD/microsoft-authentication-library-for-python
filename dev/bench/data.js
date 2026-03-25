@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774292691994,
+  "lastUpdate": 1774459484096,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -37533,6 +37533,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001519083024425946",
             "extra": "mean: 141.55435169191114 usec\nrounds: 4285"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "psdimov@gmail.com",
+            "name": "PetarSDimov",
+            "username": "PetarSDimov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e4e692c5acaa798bd3f24f8178b042fd9a98ab0d",
+          "message": "Fix the PoP flow in the console app (#887)\n\n* Fix PoP flow in the test app\n\nCurrently the test app sends both PoP parameters (see placeholder_auth_scheme definition)\nand also passes req_cnf and token type. There parameters are not\ncompatible. If application passes PoP parameters, then MSAL (or the\nbroker) owns the key and does the signing of the SHR. If application\npasses req_cnf, then application owns the key and creates and signs the\nSHR, so in this case it should not pass PoP parameters.\n\nThe main flow is the first one - application passes only PoP parameters\nand either MSAL or the broker owns the key and generates the SHR.\n\n* Potential fix for pull request finding\n\nCo-authored-by: Copilot Autofix powered by AI <175728472+Copilot@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Petar Dimov <petard@ntdev.microsoft.com>\nCo-authored-by: Copilot Autofix powered by AI <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-03-25T10:10:38-07:00",
+          "tree_id": "5ceaaafc7cc8a9e00f1a53fa4fe0e8d5a39e0475",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/e4e692c5acaa798bd3f24f8178b042fd9a98ab0d"
+        },
+        "date": 1774459483021,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38727.049264089736,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003504507913630126",
+            "extra": "mean: 25.821745240148356 usec\nrounds: 8141"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37276.6609456767,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000036559001137710667",
+            "extra": "mean: 26.826437095782286 usec\nrounds: 17010"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7497.938957581519,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016732041292943225",
+            "extra": "mean: 133.36998415929392 usec\nrounds: 4419"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7062.850448043445,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001589345459129745",
+            "extra": "mean: 141.585894725694 usec\nrounds: 4626"
           }
         ]
       }
