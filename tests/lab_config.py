@@ -194,7 +194,12 @@ def _get_credential():
     """
     client_id = _clean_env("LAB_APP_CLIENT_ID")
     cert_path = _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
-    tenant_id = "72f988bf-86f1-41af-91ab-2d7cd011db47"  # Microsoft tenant
+    # Allow callers to override the tenant via LAB_APP_TENANT_ID.
+    # Defaults to the Microsoft tenant where the MSID Lab app is registered.
+    tenant_id = (
+        _clean_env("LAB_APP_TENANT_ID")
+        or "72f988bf-86f1-41af-91ab-2d7cd011db47"  # Microsoft tenant
+    )
     
     if not client_id:
         raise EnvironmentError(

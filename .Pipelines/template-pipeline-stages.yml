@@ -189,6 +189,7 @@ stages:
         # The matching certificate is retrieved from Key Vault by the steps above.
         # When unset, all LabBasedTestCase tests skip gracefully.
         LAB_APP_CLIENT_ID: $(LAB_APP_CLIENT_ID)
+        LAB_APP_TENANT_ID: $(LAB_APP_TENANT_ID)
         LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
 
     - task: PublishTestResults@2
