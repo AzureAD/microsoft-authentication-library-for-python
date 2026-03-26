@@ -44,6 +44,118 @@ Every publish requires explicitly entering a version and selecting a destination
 
 ---
 
+## ESRP App Registration — Add PyPI to the existing MSAL ESRP app (one-time)
+
+> **Why ESRP?** Microsoft policy requires production OSS package releases to go through ESRP
+> (Engineering System Release Pipeline) rather than direct API token uploads. ESRP handles
+> authenticated publishing to PyPI on behalf of the team using a managed identity and approved
+> Key Vault certificate — no long-lived API tokens are needed.
+>
+> The MSAL team already has an ESRP app registration (`MSALJavaReleaseBuilds`) used for MSAL Java
+> (Maven). PyPI must be added to that same app so the pipeline can reuse the same ADO service
+> connection (`MSAL-ESRP-AME`), Key Vault (`MSALVault`), and release signing cert
+> (`MSAL-ESRP-Release-Signing`).
+
+### Existing app reference values
+
+| Field | Value |
+|-------|-------|
+| **Client Name** | `MSALJavaReleaseBuilds` |
+| **Client Id** | `8650ce2b-38d4-466a-9144-bc5c19c88112` |
+| **Client Id Domain** | AME |
+| **Associated App Id** | `af541262-ac58-4cdf-9fb9-f7f2e02b2265` (AME domain) |
+| **Owners** | ryauld (Ryan Auld), avdunn (Avery Dunn), bogavril (Bogdan Gavril) |
+
+### Step A1 — Open the ESRP portal and navigate to the Release tab
+
+1. Open the ESRP portal and sign in with your AME credentials.
+2. Find the **MSALJavaReleaseBuilds** client (Client Id `8650ce2b-38d4-466a-9144-bc5c19c88112`).
+3. Click **Release** in the tab bar (between Scan and PKI).
+   - You will see the **Publishing Details** section with the current Maven configuration.
+
+### Step A2 — Enable PyPI
+
+1. Under **Content Type**, check **PyPI** (keep **Maven** checked — both coexist).
+2. In the **Package(s) Name** field, add `msal` alongside the existing `msal4j` entry.
+   Enter the value exactly as it appears on PyPI: `msal`
+3. Confirm the remaining fields match:
+
+   | Field | Value |
+   |-------|-------|
+   | **Workflow** | Releasing OSS to Package Manager Repo ✅ |
+   | **Link to ADO Org** | `https://identitydivision.visualstudio.com/IDDP` |
+   | **Content Type** | Maven ✅ + **PyPI** ✅ |
+   | **Package(s) Name** | `msal4j` (Maven), `msal` (PyPI) |
+   | **Main Publisher** | `ESRPRELPACMAN` |
+   | **Service Tree ID** | `38bfcbed-2abb-4fe1-9eb7-7df98a14bcfb` |
+   | **AAD Subscription ID** | `73d86754-e73c-4c3d-8934-f7ca99f5d632` |
+   | **# Submissions** | 2 per Month |
+   | **Files per Submission** | 20 |
+   | **Avg File Size** | 2 MBytes |
+   | **Avg Submission Size** | 40 MBytes |
+
+4. Click **Save** / **Update**.
+
+### Step A3 — Wait for approval
+
+After saving, the **Release** row under **Service Status of your Account** will show
+`UpdateInProgress`. Refresh the page until it shows `Approved` before proceeding.
+
+The **Approval and Verification Status** panel (top-right of the page) shows:
+- **Status:** Approved (once processed)
+- **One Cert Domain Verification Status:** Registered - Pass ✅
+
+> No new Key Vault, cert, or ADO service connection is needed — these are shared with the Java
+> app registration.
+
+### Step A4 — Authorize the MSAL Python pipeline to use `MSAL-ESRP-AME`
+
+The `MSAL-ESRP-AME` ADO service connection lives in the **IDDP** project. The MSAL Python pipeline
+must be authorized to use it:
+
+1. In ADO, go to **IDDP → Project Settings → Service connections → MSAL-ESRP-AME**.
+2. Click **Security** (or the `⋮` menu → **Security**).
+3. Under **Pipeline permissions**, click **+** and add the **MSAL Python · Publish** pipeline
+   (or grant access to all pipelines if preferred).
+
+### Step A5 — Update the pipeline YAML
+
+Once the ESRP app registration shows `Approved` with PyPI enabled, replace the `TwineAuthenticate@1` +
+`twine upload` steps in the production Publish stage of `template-pipeline-stages.yml` with
+`EsrpRelease@9`. The `folderlocation` points to where `DownloadPipelineArtifact@2` placed the dist
+files — no portal configuration needed for the folder path.
+
+```yaml
+- task: EsrpRelease@9
+  displayName: 'Publish to PyPI via ESRP'
+  inputs:
+    connectedservicename: 'MSAL-ESRP-AME'
+    usemanagedidentity: true
+    keyvaultname: 'MSALVault'
+    signcertname: 'MSAL-ESRP-Release-Signing'
+    clientid: '8650ce2b-38d4-466a-9144-bc5c19c88112'
+    intent: 'PackageDistribution'
+    contenttype: 'PyPi'
+    contentsource: 'Folder'
+    folderlocation: '$(Pipeline.Workspace)/python-dist'
+    waitforreleasecompletion: true
+    owners: 'ryauld@microsoft.com;avdunn@microsoft.com'
+    approvers: 'avdunn@microsoft.com;bogavril@microsoft.com'
+    serviceendpointurl: 'https://api.esrp.microsoft.com'
+    mainpublisher: 'ESRPRELPACMAN'
+    domaintenantid: '33e01921-4d64-4f8c-a055-5bdaffd5e33d'
+```
+
+> **Note:** `contenttype: 'PyPi'` is case-sensitive. Once ESRP is in use for production,
+> the `MSAL-Prod-Python-Upload` Twine service connection is no longer needed. The test.pypi.org
+> publish stage (preview/RC) can continue using `TwineAuthenticate@1` since ESRP is only required
+> for production PyPI releases.
+
+> **Note:** `EsrpRelease@9` requires a **Windows** agent. Update the `PublishPyPI` stage
+> `pool: vmImage: ubuntu-latest` to `windows-latest` when switching to ESRP.
+
+---
+
 ## Step 2 — Connect ADO to the GitHub Repository
 
 1. In your ADO project go to **Project Settings → Service connections → New service connection**.
