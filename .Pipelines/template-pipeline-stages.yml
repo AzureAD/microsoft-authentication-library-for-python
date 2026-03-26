@@ -51,7 +51,7 @@ stages:
     - task: NodeTool@0
       displayName: 'Install Node.js (includes npm)'
       inputs:
-        versionSpec: 'lts/*'
+        versionSpec: '20.x'
 
     - task: securedevelopmentteam.vss-secure-development-tools.build-task-policheck.PoliCheck@2
       displayName: 'Run PoliCheck'
