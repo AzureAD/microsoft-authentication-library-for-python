@@ -122,6 +122,11 @@ stages:
       eq(dependencies.PreBuildCheck.result, 'Succeeded'),
       in(dependencies.Validate.result, 'Succeeded', 'Skipped')
     )
+  variables:
+    # RequestMSIDLAB — the MSID Lab confidential client app used for Key Vault
+    # access and as a test subject. Matches usage in MSAL.js and MSAL Java pipelines.
+    # See https://docs.msidlab.com/accounts/confidentialclient.html
+    LAB_APP_CLIENT_ID: 'f62c5ae3-bf3a-4af5-afa8-a68b800396e9'
   jobs:
   - job: Test
     displayName: 'Run unit tests'
@@ -143,11 +148,9 @@ stages:
           python.version: '3.14'
     steps:
     # Retrieve the MSID Lab certificate from Key Vault (via AuthSdkResourceManager SC).
-    # Gated on LAB_APP_CLIENT_ID being non-empty — if e2e tests are not enabled (the default),
-    # both steps are skipped and the pipeline has no Key Vault dependency.
+    # Matches the pattern used by MSAL.js (install-keyvault-secrets.yml) and MSAL Java.
     - task: AzureKeyVault@2
       displayName: 'Retrieve lab certificate from Key Vault'
-      condition: and(succeeded(), ne(variables['LAB_APP_CLIENT_ID'], ''))
       inputs:
         azureSubscription: 'AuthSdkResourceManager'
         KeyVaultName: 'msidlabs'
@@ -161,7 +164,6 @@ stages:
         echo "##vso[task.setvariable variable=LAB_APP_CLIENT_CERT_PFX_PATH]$CERT_PATH"
         echo "Lab cert written to: $CERT_PATH ($(wc -c < "$CERT_PATH") bytes)"
       displayName: 'Write lab certificate to disk'
-      condition: and(succeeded(), ne(variables['LAB_APP_CLIENT_ID'], ''))
 
     - task: UsePythonVersion@0
       inputs:
@@ -183,13 +185,7 @@ stages:
         pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
       displayName: 'Run tests'
       env:
-        # LAB_APP_CLIENT_ID enables e2e tests against the MSID Lab infrastructure.
-        # Must be set as a pipeline variable to the lab app's client ID
-        # (see https://docs.msidlab.com/accounts/confidentialclient.html).
-        # The matching certificate is retrieved from Key Vault by the steps above.
-        # When unset, all LabBasedTestCase tests skip gracefully.
         LAB_APP_CLIENT_ID: $(LAB_APP_CLIENT_ID)
-        LAB_APP_TENANT_ID: $(LAB_APP_TENANT_ID)
         LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
 
     - task: PublishTestResults@2
@@ -203,7 +199,7 @@ stages:
 
     - bash: rm -f "$(Agent.TempDirectory)/lab-auth.pfx"
       displayName: 'Clean up lab certificate'
-      condition: and(always(), ne(variables['LAB_APP_CLIENT_ID'], ''))
+      condition: always()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 3 · Build — build sdist + wheel (release only)
