@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774560021658,
+  "lastUpdate": 1774567790926,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -37897,6 +37897,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015518030331672022",
             "extra": "mean: 108.82606993633445 usec\nrounds: 4404"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "distinct": true,
+          "id": "ef7a76e1daa2d7a7e7bdb9744f3d6447c34c6f3f",
+          "message": "Add LAB_APP_TENANT_ID support; wire up RequestMSIDLAB client ID for ADO\n\n- lab_config.py: _get_credential() now reads LAB_APP_TENANT_ID env var\n  (with fallback to Microsoft tenant 72f988bf-...) so ADO builds can\n  override the tenant if needed. GH builds are unaffected since they\n  don't set LAB_APP_TENANT_ID.\n- template-pipeline-stages.yml: pass LAB_APP_TENANT_ID to the test step\n  alongside LAB_APP_CLIENT_ID and LAB_APP_CLIENT_CERT_PFX_PATH.\n\nLAB_APP_CLIENT_ID for ADO = f62c5ae3-bf3a-4af5-afa8-a68b800396e9 (RequestMSIDLAB)\nVerified locally: both msidlabs and id4skeyvault accessible with this ID + LabAuth cert.",
+          "timestamp": "2026-03-26T16:26:38-07:00",
+          "tree_id": "cd18574bdd009e4160e0790bd97cc792f9bcc858",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/ef7a76e1daa2d7a7e7bdb9744f3d6447c34c6f3f"
+        },
+        "date": 1774567789147,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38917.478323036536,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000005343205017785916",
+            "extra": "mean: 25.695395567499222 usec\nrounds: 10423"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39905.674609761976,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003379663319785965",
+            "extra": "mean: 25.059092717489705 usec\nrounds: 14830"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7518.2510837701075,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001684214177142356",
+            "extra": "mean: 133.0096572803657 usec\nrounds: 4155"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7257.101053563262,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000018397485175214607",
+            "extra": "mean: 137.79606934217853 usec\nrounds: 3663"
           }
         ]
       }
