@@ -164,6 +164,21 @@ _msid_lab_client: Optional[SecretClient] = None
 _msal_team_client: Optional[SecretClient] = None
 
 
+def _clean_env(name: str) -> Optional[str]:
+    """Return the env var value, or None if unset or it contains an unexpanded
+    ADO pipeline variable literal such as ``$(VAR_NAME)``.
+
+    Azure DevOps injects the literal string ``$(VAR_NAME)`` when a ``$(...)``
+    reference in a step ``env:`` block refers to a variable that has not been
+    defined at runtime.  That literal is truthy, so a plain ``os.getenv()``
+    check would incorrectly proceed as if the variable were set.
+    """
+    value = os.getenv(name)
+    if value and value.startswith("$("):
+        return None
+    return value or None
+
+
 def _get_credential():
     """
     Create an Azure credential for Key Vault access.
@@ -177,8 +192,8 @@ def _get_credential():
     Raises:
         EnvironmentError: If required environment variables are not set.
     """
-    client_id = os.getenv("LAB_APP_CLIENT_ID")
-    cert_path = os.getenv("LAB_APP_CLIENT_CERT_PFX_PATH")
+    client_id = _clean_env("LAB_APP_CLIENT_ID")
+    cert_path = _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
     tenant_id = "72f988bf-86f1-41af-91ab-2d7cd011db47"  # Microsoft tenant
     
     if not client_id:
@@ -396,7 +411,7 @@ def get_client_certificate() -> Dict[str, object]:
     Raises:
         EnvironmentError: If LAB_APP_CLIENT_CERT_PFX_PATH is not set.
     """
-    cert_path = os.getenv("LAB_APP_CLIENT_CERT_PFX_PATH")
+    cert_path = _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
     if not cert_path:
         raise EnvironmentError(
             "LAB_APP_CLIENT_CERT_PFX_PATH environment variable is required "

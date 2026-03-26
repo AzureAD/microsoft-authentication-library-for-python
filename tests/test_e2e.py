@@ -54,6 +54,14 @@ _SKIP_UNATTENDED_E2E_TESTS = (
     os.getenv("TRAVIS") or os.getenv("TF_BUILD") or not os.getenv("CI")
 )
 
+
+def _clean_env(name):
+    """Return the env var value, or None if unset or it contains an unexpanded
+    ADO pipeline variable literal such as ``$(VAR_NAME)``."""
+    value = os.getenv(name)
+    return None if (not value or value.startswith("$(")) else value
+
+
 def _get_app_and_auth_code(
         client_id,
         client_secret=None,
@@ -345,7 +353,7 @@ class PublicCloudScenariosTestCase(E2eTestCase):
 
     @classmethod
     def setUpClass(cls):
-        if not os.getenv("LAB_APP_CLIENT_ID"):
+        if not _clean_env("LAB_APP_CLIENT_ID"):
             raise unittest.SkipTest(
                 "LAB_APP_CLIENT_ID not set; skipping PublicCloud e2e tests")
         pca_app = get_app_config(AppSecrets.PCA_CLIENT)
@@ -473,13 +481,14 @@ def get_lab_app(
         "Reading ENV variables %s and %s for lab app defined at "
         "https://docs.msidlab.com/accounts/confidentialclient.html",
         env_client_id, env_client_cert_path)
-    if os.getenv(env_client_id) and os.getenv(env_client_cert_path):
+    client_id = _clean_env(env_client_id)
+    cert_path = _clean_env(env_client_cert_path)
+    if client_id and cert_path:
         # id came from https://docs.msidlab.com/accounts/confidentialclient.html
-        client_id = os.getenv(env_client_id)
         client_credential = {
             "private_key_pfx_path":
                 # Cert came from https://ms.portal.azure.com/#@microsoft.onmicrosoft.com/asset/Microsoft_Azure_KeyVault/Certificate/https://msidlabs.vault.azure.net/certificates/LabAuth
-                os.getenv(env_client_cert_path),
+                cert_path,
             "public_certificate": True,  # Opt in for SNI
             }
     else:
