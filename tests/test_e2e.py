@@ -44,7 +44,15 @@ except ImportError:
 
 _PYMSALRUNTIME_INSTALLED = is_pymsalruntime_installed()
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
-_SKIP_UNATTENDED_E2E_TESTS = os.getenv("TRAVIS") or not os.getenv("CI")
+# Skip interactive / browser-dependent tests when:
+#   - on Travis CI (TRAVIS), or
+#   - on Azure DevOps (TF_BUILD) where there is no display/browser on the agent, or
+#   - not running in any CI environment at all (not CI).
+# Service-principal and ROPC tests are NOT gated on this flag; only tests that
+# call acquire_token_interactive() or acquire_token_by_device_flow() are.
+_SKIP_UNATTENDED_E2E_TESTS = (
+    os.getenv("TRAVIS") or os.getenv("TF_BUILD") or not os.getenv("CI")
+)
 
 def _get_app_and_auth_code(
         client_id,
@@ -329,13 +337,17 @@ class CloudShellTestCase(E2eTestCase):
         self.assertIsNotNone(result.get("access_token"))
 
 
-@unittest.skipIf(os.getenv("TF_BUILD"), "Skip PublicCloud scenarios on Azure DevOps")
 class PublicCloudScenariosTestCase(E2eTestCase):
     # Historically this class was driven by tests/config.json for semi-automated runs.
-    # It now uses lab config + env vars so it can run automatically without local files.
+    # It now uses lab config + env vars so it can run automatically on any CI
+    # (including Azure DevOps) as long as LAB_APP_CLIENT_ID and
+    # LAB_APP_CLIENT_CERT_PFX_PATH are set.
 
     @classmethod
     def setUpClass(cls):
+        if not os.getenv("LAB_APP_CLIENT_ID"):
+            raise unittest.SkipTest(
+                "LAB_APP_CLIENT_ID not set; skipping PublicCloud e2e tests")
         pca_app = get_app_config(AppSecrets.PCA_CLIENT)
         user = get_user_config(UserSecrets.PUBLIC_CLOUD)
         cls.config = {

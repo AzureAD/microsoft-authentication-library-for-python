@@ -183,13 +183,12 @@ stages:
         pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
       displayName: 'Run tests'
       env:
-        # LAB_APP_CLIENT_ID is intentionally omitted to match the PR gate build
-        # behaviour (azure-pipelines.yml). Without it, _get_credential() in
-        # lab_config.py raises EnvironmentError and all e2e tests skip or error
-        # gracefully — identical to the PR build result.
-        # Uncomment and set this variable to enable full e2e runs on a
-        # lab-capable agent pool (requires CA-exempt network / internal agent).
-        # LAB_APP_CLIENT_ID: $(LAB_APP_CLIENT_ID)
+        # LAB_APP_CLIENT_ID enables e2e tests against the MSID Lab infrastructure.
+        # Must be set as a pipeline variable to the lab app's client ID
+        # (see https://docs.msidlab.com/accounts/confidentialclient.html).
+        # The matching certificate is retrieved from Key Vault by the steps above.
+        # When unset, all LabBasedTestCase tests skip gracefully.
+        LAB_APP_CLIENT_ID: $(LAB_APP_CLIENT_ID)
         LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
 
     - task: PublishTestResults@2
