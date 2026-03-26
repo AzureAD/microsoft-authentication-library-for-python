@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774558729700,
+  "lastUpdate": 1774558924715,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -37741,6 +37741,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000020633062727032746",
             "extra": "mean: 142.5339284437278 usec\nrounds: 3913"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "distinct": true,
+          "id": "08ba11338b0c31234a256a876f1ba7e3a47d79ec",
+          "message": "Enable e2e tests in CI pipeline + fix interactive-test skip logic for ADO\n\n- tests/test_e2e.py:\n  - Add TF_BUILD to _SKIP_UNATTENDED_E2E_TESTS so acquire_token_interactive()\n    and acquire_token_by_device_flow() tests skip on ADO (no browser/display),\n    preventing hangs on headless agents.\n  - Remove the class-level @unittest.skipIf(TF_BUILD) from PublicCloudScenariosTestCase;\n    the class now uses lab config so can run on ADO when LAB_APP_CLIENT_ID is set.\n  - Add a LAB_APP_CLIENT_ID guard in PublicCloudScenariosTestCase.setUpClass()\n    so the class raises unittest.SkipTest (not EnvironmentError) when the env var\n    is absent, giving the same clean-skip behaviour as LabBasedTestCase.\n\n- .Pipelines/template-pipeline-stages.yml:\n  - Uncomment LAB_APP_CLIENT_ID env var in the Run tests step so integration\n    tests run when the pipeline variable is configured.",
+          "timestamp": "2026-03-26T13:58:43-07:00",
+          "tree_id": "ef3902f2477f4cba396afa28176867e63d3dff16",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/08ba11338b0c31234a256a876f1ba7e3a47d79ec"
+        },
+        "date": 1774558923670,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39136.67137596109,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000285026465090035",
+            "extra": "mean: 25.55148317018677 usec\nrounds: 7457"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 36620.23326717862,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000031709077736477267",
+            "extra": "mean: 27.30730830423911 usec\nrounds: 18605"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7448.385864282943,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001688511722031656",
+            "extra": "mean: 134.25727643827838 usec\nrounds: 4728"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 6974.90352817012,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001567105114755836",
+            "extra": "mean: 143.37115860616814 usec\nrounds: 3329"
           }
         ]
       }
