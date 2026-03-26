@@ -1,5 +1,4 @@
 """If the following ENV VAR were available, many end-to-end test cases would run.
-LAB_APP_CLIENT_ID=...
 LAB_APP_CLIENT_CERT_PFX_PATH=...
 """
 try:
@@ -29,7 +28,7 @@ from msal.oauth2cli.oidc import decode_part
 from tests.broker_util import is_pymsalruntime_installed
 from tests.lab_config import (
     get_user_config, get_app_config, get_user_password, get_secret,
-    UserSecrets, AppSecrets,
+    UserSecrets, AppSecrets, LAB_APP_CLIENT_ID,
 )
 
 
@@ -348,14 +347,13 @@ class CloudShellTestCase(E2eTestCase):
 class PublicCloudScenariosTestCase(E2eTestCase):
     # Historically this class was driven by tests/config.json for semi-automated runs.
     # It now uses lab config + env vars so it can run automatically on any CI
-    # (including Azure DevOps) as long as LAB_APP_CLIENT_ID and
-    # LAB_APP_CLIENT_CERT_PFX_PATH are set.
+    # (including Azure DevOps) as long as LAB_APP_CLIENT_CERT_PFX_PATH is set.
 
     @classmethod
     def setUpClass(cls):
-        if not _clean_env("LAB_APP_CLIENT_ID"):
+        if not _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
             raise unittest.SkipTest(
-                "LAB_APP_CLIENT_ID not set; skipping PublicCloud e2e tests")
+                "LAB_APP_CLIENT_CERT_PFX_PATH not set; skipping PublicCloud e2e tests")
         pca_app = get_app_config(AppSecrets.PCA_CLIENT)
         user = get_user_config(UserSecrets.PUBLIC_CLOUD)
         cls.config = {
@@ -436,13 +434,11 @@ class PublicCloudScenariosTestCase(E2eTestCase):
 
     def test_subject_name_issuer_authentication(self):
         from tests.lab_config import get_client_certificate
-
-        client_id = os.getenv("LAB_APP_CLIENT_ID")
-        if not client_id:
-            self.skipTest("LAB_APP_CLIENT_ID environment variable is required")
+        if not _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
 
         self.app = msal.ConfidentialClientApplication(
-            client_id,
+            LAB_APP_CLIENT_ID,
             authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
             client_credential=get_client_certificate(),
             http_client=MinimalHttpClient())
@@ -467,7 +463,6 @@ class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only on
 
 
 def get_lab_app(
-        env_client_id="LAB_APP_CLIENT_ID",
         env_client_cert_path="LAB_APP_CLIENT_CERT_PFX_PATH",
         authority="https://login.microsoftonline.com/"
             "72f988bf-86f1-41af-91ab-2d7cd011db47",  # Microsoft tenant ID
@@ -475,15 +470,15 @@ def get_lab_app(
         **kwargs):
     """Returns the lab app as an MSAL confidential client.
 
-    Get it from environment variables if defined, otherwise fall back to use MSI.
+    Uses the hardcoded lab app client ID (RequestMSIDLAB) and a certificate
+    from the LAB_APP_CLIENT_CERT_PFX_PATH env var.
     """
     logger.info(
-        "Reading ENV variables %s and %s for lab app defined at "
+        "Reading ENV variable %s for lab app defined at "
         "https://docs.msidlab.com/accounts/confidentialclient.html",
-        env_client_id, env_client_cert_path)
-    client_id = _clean_env(env_client_id)
+        env_client_cert_path)
     cert_path = _clean_env(env_client_cert_path)
-    if client_id and cert_path:
+    if cert_path:
         # id came from https://docs.msidlab.com/accounts/confidentialclient.html
         client_credential = {
             "private_key_pfx_path":
@@ -496,7 +491,7 @@ def get_lab_app(
         # See also https://microsoft.sharepoint-df.com/teams/MSIDLABSExtended/SitePages/Programmatically-accessing-LAB-API's.aspx
         raise unittest.SkipTest("MSI-based mechanism has not been implemented yet")
     return msal.ConfidentialClientApplication(
-            client_id,
+            LAB_APP_CLIENT_ID,
             client_credential=client_credential,
             authority=authority,
             http_client=MinimalHttpClient(timeout=timeout),
@@ -1183,15 +1178,13 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
         import os
         from tests.lab_config import get_client_certificate
         
-        # Get client ID from environment and certificate from lab_config
-        client_id = os.getenv("LAB_APP_CLIENT_ID")
-        if not client_id:
-            self.skipTest("LAB_APP_CLIENT_ID environment variable is required")
-        
+        # Get client ID from lab_config constant and certificate from lab_config
+        if not _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH is required")
         client_credential = get_client_certificate()
         
         self.app = msal.ConfidentialClientApplication(
-            client_id,
+            LAB_APP_CLIENT_ID,
             client_credential=client_credential,
             authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
             azure_region=configured_region,

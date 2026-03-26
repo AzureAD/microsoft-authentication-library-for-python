@@ -122,11 +122,6 @@ stages:
       eq(dependencies.PreBuildCheck.result, 'Succeeded'),
       in(dependencies.Validate.result, 'Succeeded', 'Skipped')
     )
-  variables:
-    # RequestMSIDLAB — the MSID Lab confidential client app used for Key Vault
-    # access and as a test subject. Matches usage in MSAL.js and MSAL Java pipelines.
-    # See https://docs.msidlab.com/accounts/confidentialclient.html
-    LAB_APP_CLIENT_ID: 'f62c5ae3-bf3a-4af5-afa8-a68b800396e9'
   jobs:
   - job: Test
     displayName: 'Run unit tests'
@@ -185,7 +180,6 @@ stages:
         pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
       displayName: 'Run tests'
       env:
-        LAB_APP_CLIENT_ID: $(LAB_APP_CLIENT_ID)
         LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
 
     - task: PublishTestResults@2
