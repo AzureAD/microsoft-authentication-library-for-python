@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774559324490,
+  "lastUpdate": 1774560021658,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -37845,6 +37845,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000013355252532075062",
             "extra": "mean: 125.95163249801755 usec\nrounds: 2634"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "distinct": true,
+          "id": "c8662ac7cb2be50ea0ed1d4ba9a2799d4aa072e4",
+          "message": "Fix e2e test skip logic for undefined ADO pipeline variables\n\nWhen a pipeline variable referenced in a step env: block is not defined,\nADO injects the literal string '' into the process environment\ninstead of an empty value. That literal is truthy, so plain os.getenv()\nguards fail to skip and tests error trying to open '' as a path.\n\nFix: add _clean_env() helper in both lab_config.py and test_e2e.py that\nreturns None for unset values AND for ADO-literal '' strings.\n\n- lab_config.py: _get_credential() and get_client_certificate() use _clean_env()\n- test_e2e.py: get_lab_app() uses _clean_env(); PublicCloudScenariosTestCase\n  setUpClass() guard uses _clean_env()\n\nThis makes all LabBasedTestCase and PublicCloudScenariosTestCase tests skip\ncleanly (rather than error) when LAB_APP_CLIENT_ID is not configured as a\npipeline variable.",
+          "timestamp": "2026-03-26T14:16:04-07:00",
+          "tree_id": "41827fbc88c36b0cc929c54ad9a7ec00b15441e7",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/c8662ac7cb2be50ea0ed1d4ba9a2799d4aa072e4"
+        },
+        "date": 1774560020536,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 48659.978591225445,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000017992321192361532",
+            "extra": "mean: 20.550769419786054 usec\nrounds: 7325"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 45119.82454883664,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002307138265393304",
+            "extra": "mean: 22.163206750009046 usec\nrounds: 16000"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9869.190049733334,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001578748368218424",
+            "extra": "mean: 101.32543754459569 usec\nrounds: 2802"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9188.97466925913,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015518030331672022",
+            "extra": "mean: 108.82606993633445 usec\nrounds: 4404"
           }
         ]
       }
