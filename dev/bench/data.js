@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774556978315,
+  "lastUpdate": 1774558729700,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -37689,6 +37689,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000017431088316587404",
             "extra": "mean: 151.53328169340196 usec\nrounds: 4370"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "distinct": true,
+          "id": "7ea9adc1f44d1b8f12ce6c109b7e8bb766dc9054",
+          "message": "Enable e2e tests in CI pipeline + fix interactive-test skip logic for ADO\n\n- tests/test_e2e.py:\n  - Add TF_BUILD to _SKIP_UNATTENDED_E2E_TESTS so acquire_token_interactive()\n    and acquire_token_by_device_flow() tests skip on ADO (no browser/display),\n    preventing hangs in SshCertTestCase.test_user_account, AtPopWithExternalKey,\n    and any other interactive test method that runs on a headless agent.\n  - Remove the class-level @unittest.skipIf(TF_BUILD) from PublicCloudScenariosTestCase\n    now that the class uses lab config instead of the old config.json. The tests\n    can now run on ADO when LAB_APP_CLIENT_ID is set.\n  - Add a LAB_APP_CLIENT_ID guard in PublicCloudScenariosTestCase.setUpClass()\n    so the class raises unittest.SkipTest (not EnvironmentError) when the env var\n    is absent, giving the same clean-skip behaviour as LabBasedTestCase.\n\n- .Pipelines/template-pipeline-stages.yml:\n  - Uncomment LAB_APP_CLIENT_ID: \\ in the 'Run tests' env block.\n    Service-principal / ROPC e2e tests now run when the pipeline variable is set;\n    interactive tests remain skipped on ADO via the _SKIP_UNATTENDED_E2E_TESTS fix.\n\n- .Pipelines/ADO-PUBLISH-SETUP.md:\n  - Add Step 5b documenting how to set the LAB_APP_CLIENT_ID pipeline variable\n    and link to docs.msidlab.com for the client ID value.",
+          "timestamp": "2026-03-26T13:55:03-07:00",
+          "tree_id": "ec4e07a5b66a70a695afcd14fa2638958736c068",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/7ea9adc1f44d1b8f12ce6c109b7e8bb766dc9054"
+        },
+        "date": 1774558728718,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40183.93190842469,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000036641786949055913",
+            "extra": "mean: 24.88556874620691 usec\nrounds: 8255"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 36897.17708250853,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003767822211291997",
+            "extra": "mean: 27.102344381626416 usec\nrounds: 11676"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7469.024190128021,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017497358305998927",
+            "extra": "mean: 133.88629820234385 usec\nrounds: 2837"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7015.873419884015,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000020633062727032746",
+            "extra": "mean: 142.5339284437278 usec\nrounds: 3913"
           }
         ]
       }
