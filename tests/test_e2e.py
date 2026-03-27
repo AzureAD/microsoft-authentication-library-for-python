@@ -847,7 +847,6 @@ class AtPopWithExternalKeyTestCase(PopWithExternalKeyTestCase):
 
 
 class WorldWideTestCase(LabBasedTestCase):
-    _ADFS_LABS_UNAVAILABLE = "ADFS labs were temporarily down since July 2025 until further notice"
 
     def test_aad_managed_user(self):  # Pure cloud
         """Test username/password flow for a managed AAD user."""
@@ -862,7 +861,6 @@ class WorldWideTestCase(LabBasedTestCase):
             scope=["https://graph.microsoft.com/.default"],
         )
 
-    @unittest.skip(_ADFS_LABS_UNAVAILABLE)
     def test_adfs2022_fed_user(self):
         """Test username/password flow for a federated user via ADFS 2022."""
         app = get_app_config(AppSecrets.PCA_CLIENT)
