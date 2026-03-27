@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774568283030,
+  "lastUpdate": 1774579881230,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -38001,6 +38001,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015186808276183275",
             "extra": "mean: 141.86155789219953 usec\nrounds: 3852"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "distinct": true,
+          "id": "91b7c2b6dba2453e35c3c955c0235c6f6c08af88",
+          "message": "Re-enable test_adfs2022_fed_user - ADFS labs are back up\n\nADFS labs were marked as temporarily down since July 2025.\nKV data for User-Federated-Config matches the expected lab user:\n- upn: fIDLAB@ID4SLAB1.COM\n- tenant: 10c419d4-4a50-45b2-aa4e-919fb84df24f\n- provider: ADFSv2022 / ID4SLab1",
+          "timestamp": "2026-03-26T19:48:07-07:00",
+          "tree_id": "1d5fafc898dfa75988f63814cbe9f0c22fd9cd76",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/91b7c2b6dba2453e35c3c955c0235c6f6c08af88"
+        },
+        "date": 1774579879526,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40344.22309393469,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000029637904808203896",
+            "extra": "mean: 24.786696168907984 usec\nrounds: 7909"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38531.8132624354,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003342461583070864",
+            "extra": "mean: 25.95258087620025 usec\nrounds: 15635"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7587.815275372995,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015934711777322324",
+            "extra": "mean: 131.79024049855286 usec\nrounds: 4973"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7301.159316765613,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016250424717219576",
+            "extra": "mean: 136.96454995903258 usec\nrounds: 4884"
           }
         ]
       }
