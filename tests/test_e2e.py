@@ -28,7 +28,7 @@ from msal.oauth2cli.oidc import decode_part
 from tests.broker_util import is_pymsalruntime_installed
 from tests.lab_config import (
     get_user_config, get_app_config, get_user_password, get_secret,
-    UserSecrets, AppSecrets, LAB_APP_CLIENT_ID,
+    UserSecrets, AppSecrets, LAB_APP_CLIENT_ID, _clean_env,
 )
 
 
@@ -53,12 +53,6 @@ _SKIP_UNATTENDED_E2E_TESTS = (
     os.getenv("TRAVIS") or os.getenv("TF_BUILD") or not os.getenv("CI")
 )
 
-
-def _clean_env(name):
-    """Return the env var value, or None if unset or it contains an unexpanded
-    ADO pipeline variable literal such as ``$(VAR_NAME)``."""
-    value = os.getenv(name)
-    return None if (not value or value.startswith("$(")) else value
 
 
 def _get_app_and_auth_code(
