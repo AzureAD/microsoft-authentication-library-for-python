@@ -87,20 +87,22 @@ stages:
         versionSpec: '3.12'
       displayName: 'Set up Python'
 
-    - bash: |
-        PARAM_VER="${{ parameters.packageVersion }}"
-        SKU_VER=$(grep '__version__' msal/sku.py | sed 's/.*"\(.*\)".*/\1/')
-
-        if [ -z "$PARAM_VER" ]; then
-          echo "##vso[task.logissue type=error]packageVersion is required. Enter the version to publish (must match msal/sku.py __version__)."
-          exit 1
-        elif [ "$PARAM_VER" != "$SKU_VER" ]; then
-          echo "##vso[task.logissue type=error]Version mismatch: parameter '$PARAM_VER' != msal/sku.py '$SKU_VER'"
-          echo "Update msal/sku.py __version__ to match the packageVersion parameter, or correct the parameter."
-          exit 1
-        else
-          echo "Version validated: $PARAM_VER"
-        fi
+    - script: |
+        python - <<'EOF'
+        import sys, runpy
+        ns = runpy.run_path("msal/sku.py")
+        sku_ver = ns.get("__version__", "")
+        param_ver = "${{ parameters.packageVersion }}"
+        if not param_ver:
+            print("##vso[task.logissue type=error]packageVersion is required. Enter the version to publish (must match msal/sku.py __version__).")
+            sys.exit(1)
+        elif param_ver != sku_ver:
+            print(f"##vso[task.logissue type=error]Version mismatch: parameter '{param_ver}' != msal/sku.py '{sku_ver}'")
+            print("Update msal/sku.py __version__ to match the packageVersion parameter, or correct the parameter.")
+            sys.exit(1)
+        else:
+            print(f"Version validated: {param_ver}")
+        EOF
       displayName: 'Verify version parameter matches msal/sku.py'
 
 # ══════════════════════════════════════════════════════════════════════════════
