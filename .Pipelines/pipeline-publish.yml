@@ -1,0 +1,179 @@
+# pipeline-publish.yml
+#
+# Release pipeline for the msal Python package — manually triggered only.
+# Source: https://github.com/AzureAD/microsoft-authentication-library-for-python
+#
+# Publish targets:
+#   test.pypi.org (Preview / RC) — preview releases via MSAL-Test-Python-Upload SC
+#                                   (SC creation pending test.pypi.org API token)
+#   pypi.org (ESRP Production)   — production releases via MSAL-Prod-Python-Upload SC
+#
+# For one-time ADO setup, see ADO-PUBLISH-SETUP.md.
+
+parameters:
+- name: packageVersion
+  displayName: 'Package version to publish (must match msal/sku.py, e.g. 1.36.0 or 1.36.0rc1)'
+  type: string
+
+- name: publishTarget
+  displayName: 'Publish target'
+  type: string
+  values:
+  - 'test.pypi.org (Preview / RC)'
+  - 'pypi.org (ESRP Production)'
+
+trigger: none    # manual runs only — no automatic branch or tag triggers
+pr: none
+
+# Stage flow:
+#
+#   PreBuildCheck ─► Validate ─► CI ─► Build ─► PublishMSALPython  (publishTarget == Preview)
+#                                             └─► PublishPyPI       (publishTarget == ESRP Production)
+
+stages:
+
+# PreBuildCheck, Validate, and CI stages are defined in the shared template.
+- template: template-pipeline-stages.yml
+  parameters:
+    packageVersion: ${{ parameters.packageVersion }}
+    runPublish: true
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 3 · Build — build sdist + wheel
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: Build
+  displayName: 'Build package'
+  dependsOn: CI
+  condition: eq(dependencies.CI.result, 'Succeeded')
+  jobs:
+  - job: BuildDist
+    displayName: 'Build sdist + wheel (Python 3.12)'
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.12'
+      displayName: 'Use Python 3.12'
+
+    - script: |
+        python -m pip install --upgrade pip build twine
+      displayName: 'Install build toolchain'
+
+    - script: |
+        python -m build
+      displayName: 'Build sdist and wheel'
+
+    - script: |
+        python -m twine check dist/*
+      displayName: 'Verify distribution (twine check)'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish dist/ as pipeline artifact'
+      inputs:
+        targetPath: dist/
+        artifact: python-dist
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 4a · Publish to test.pypi.org (Preview / RC)
+#   Note: requires MSAL-Test-Python-Upload SC in ADO (pending test.pypi.org API token)
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: PublishMSALPython
+  displayName: 'Publish to test.pypi.org (Preview)'
+  dependsOn: Build
+  condition: >
+    and(
+      eq(dependencies.Build.result, 'Succeeded'),
+      eq('${{ parameters.publishTarget }}', 'test.pypi.org (Preview / RC)')
+    )
+  jobs:
+  - deployment: DeployMSALPython
+    displayName: 'Upload to test.pypi.org'
+    pool:
+      vmImage: ubuntu-latest
+    environment: MSAL-Python
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download python-dist artifact'
+            inputs:
+              artifactName: python-dist
+              targetPath: $(Pipeline.Workspace)/python-dist
+
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+            displayName: 'Use Python 3.12'
+
+          - script: |
+              python -m pip install --upgrade pip twine
+            displayName: 'Install twine'
+
+          # TODO: create MSAL-Test-Python-Upload SC with test.pypi.org API token, then uncomment:
+          # - task: TwineAuthenticate@1
+          #   displayName: 'Authenticate with MSAL-Test-Python-Upload'
+          #   inputs:
+          #     pythonUploadServiceConnection: MSAL-Test-Python-Upload
+
+          # - script: |
+          #     python -m twine upload \
+          #       -r "MSAL-Test-Python-Upload" \
+          #       --config-file $(PYPIRC_PATH) \
+          #       --skip-existing \
+          #       $(Pipeline.Workspace)/python-dist/*
+          #   displayName: 'Upload to test.pypi.org'
+
+          - script: echo "Publish to test.pypi.org skipped — MSAL-Test-Python-Upload SC not yet created."
+            displayName: 'Skip upload (SC pending)'
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 4b · Publish to PyPI (ESRP Production)
+#   Uses EsrpRelease@9 via the MSAL-ESRP-AME service connection.
+#   IMPORTANT: configure a required manual approval on this environment in
+#   ADO → Pipelines → Environments → MSAL-Python-Release → Approvals and checks.
+#   IMPORTANT: EsrpRelease@9 requires a Windows agent.
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: PublishPyPI
+  displayName: 'Publish to PyPI (ESRP Production)'
+  dependsOn: Build
+  condition: >
+    and(
+      eq(dependencies.Build.result, 'Succeeded'),
+      eq('${{ parameters.publishTarget }}', 'pypi.org (ESRP Production)')
+    )
+  jobs:
+  - deployment: DeployPyPI
+    displayName: 'Upload to PyPI via ESRP'
+    pool:
+      vmImage: windows-latest
+    environment: MSAL-Python-Release
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download python-dist artifact'
+            inputs:
+              artifactName: python-dist
+              targetPath: $(Pipeline.Workspace)/python-dist
+
+          - task: EsrpRelease@9
+            displayName: 'Publish to PyPI via ESRP'
+            inputs:
+              connectedservicename: 'MSAL-ESRP-AME'
+              usemanagedidentity: true
+              keyvaultname: 'MSALVault'
+              signcertname: 'MSAL-ESRP-Release-Signing'
+              clientid: '8650ce2b-38d4-466a-9144-bc5c19c88112'
+              intent: 'PackageDistribution'
+              contenttype: 'PyPi'
+              contentsource: 'Folder'
+              folderlocation: '$(Pipeline.Workspace)/python-dist'
+              waitforreleasecompletion: true
+              owners: 'ryauld@microsoft.com,avdunn@microsoft.com'
+              approvers: 'avdunn@microsoft.com,bogavril@microsoft.com'
+              serviceendpointurl: 'https://api.esrp.microsoft.com'
+              mainpublisher: 'ESRPRELPACMAN'
+              domaintenantid: '33e01921-4d64-4f8c-a055-5bdaffd5e33d'

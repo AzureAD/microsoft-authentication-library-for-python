@@ -20,7 +20,6 @@ Usage::
     app = get_app_config(AppSecrets.PCA_CLIENT)
 
 Environment Variables:
-    LAB_APP_CLIENT_ID: Client ID for Key Vault authentication (required)
     LAB_APP_CLIENT_CERT_PFX_PATH: Path to .pfx certificate file (required)
 """
 
@@ -43,6 +42,7 @@ __all__ = [
     "UserConfig",
     "AppConfig",
     # Functions
+    "LAB_APP_CLIENT_ID",
     "get_secret",
     "get_user_config",
     "get_app_config",
@@ -56,6 +56,12 @@ __all__ = [
 
 _MSID_LAB_VAULT = "https://msidlabs.vault.azure.net"
 _MSAL_TEAM_VAULT = "https://id4skeyvault.vault.azure.net"
+
+# Client ID for the RequestMSIDLAB app used to authenticate against the lab
+# Key Vaults. Hardcoded here following the same pattern as MSAL.NET
+# (see build/template-install-keyvault-secrets.yaml in that repo).
+# See https://docs.msidlab.com/accounts/confidentialclient.html
+LAB_APP_CLIENT_ID = "f62c5ae3-bf3a-4af5-afa8-a68b800396e9"
 
 # =============================================================================
 # Secret Name Constants
@@ -164,6 +170,21 @@ _msid_lab_client: Optional[SecretClient] = None
 _msal_team_client: Optional[SecretClient] = None
 
 
+def _clean_env(name: str) -> Optional[str]:
+    """Return the env var value, or None if unset or it contains an unexpanded
+    ADO pipeline variable literal such as ``$(VAR_NAME)``.
+
+    Azure DevOps injects the literal string ``$(VAR_NAME)`` when a ``$(...)``
+    reference in a step ``env:`` block refers to a variable that has not been
+    defined at runtime.  That literal is truthy, so a plain ``os.getenv()``
+    check would incorrectly proceed as if the variable were set.
+    """
+    value = os.getenv(name)
+    if value and value.startswith("$("):
+        return None
+    return value or None
+
+
 def _get_credential():
     """
     Create an Azure credential for Key Vault access.
@@ -177,19 +198,14 @@ def _get_credential():
     Raises:
         EnvironmentError: If required environment variables are not set.
     """
-    client_id = os.getenv("LAB_APP_CLIENT_ID")
-    cert_path = os.getenv("LAB_APP_CLIENT_CERT_PFX_PATH")
+    cert_path = _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
     tenant_id = "72f988bf-86f1-41af-91ab-2d7cd011db47"  # Microsoft tenant
-    
-    if not client_id:
-        raise EnvironmentError(
-            "LAB_APP_CLIENT_ID environment variable is required for Key Vault access")
-    
+
     if cert_path:
         logger.debug("Using certificate credential for Key Vault access")
         return CertificateCredential(
             tenant_id=tenant_id,
-            client_id=client_id,
+            client_id=LAB_APP_CLIENT_ID,
             certificate_path=cert_path,
             send_certificate_chain=True,
         )
@@ -396,7 +412,7 @@ def get_client_certificate() -> Dict[str, object]:
     Raises:
         EnvironmentError: If LAB_APP_CLIENT_CERT_PFX_PATH is not set.
     """
-    cert_path = os.getenv("LAB_APP_CLIENT_CERT_PFX_PATH")
+    cert_path = _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
     if not cert_path:
         raise EnvironmentError(
             "LAB_APP_CLIENT_CERT_PFX_PATH environment variable is required "
