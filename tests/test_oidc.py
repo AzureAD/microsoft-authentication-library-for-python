@@ -50,7 +50,8 @@ class TestCsprngUsage(unittest.TestCase):
         states = set()
         for _ in range(10):
             flow = client.initiate_auth_code_flow(
-                redirect_uri="http://localhost", scope=["openid"])
+                redirect_uri="http://localhost", scope=["openid"],
+                response_mode="form_post")
             state = flow["state"]
             self.assertRegex(state, r'^[A-Za-z0-9_-]+$',
                 "state should be URL-safe")
@@ -67,7 +68,8 @@ class TestCsprngUsage(unittest.TestCase):
         nonces = set()
         for _ in range(10):
             flow = client.initiate_auth_code_flow(
-                redirect_uri="http://localhost", scope=["openid"])
+                redirect_uri="http://localhost", scope=["openid"],
+                response_mode="form_post")
             nonce = flow["nonce"]
             self.assertRegex(nonce, r'^[A-Za-z0-9_-]+$',
                 "nonce should be URL-safe")
