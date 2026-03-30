@@ -13,7 +13,7 @@ import time
 import base64
 import sys
 import functools
-import random
+import secrets
 import string
 import hashlib
 
@@ -277,8 +277,9 @@ def _scope_set(scope):
 
 def _generate_pkce_code_verifier(length=43):
     assert 43 <= length <= 128
+    alphabet = string.ascii_letters + string.digits + "-._~"
     verifier = "".join(  # https://tools.ietf.org/html/rfc7636#section-4.1
-        random.sample(string.ascii_letters + string.digits + "-._~", length))
+        secrets.choice(alphabet) for _ in range(length))
     code_challenge = (
         # https://tools.ietf.org/html/rfc7636#section-4.2
         base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
@@ -488,7 +489,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
             raise ValueError('response_type="token ..." is not allowed')
         pkce = _generate_pkce_code_verifier()
         flow = {  # These data are required by obtain_token_by_auth_code_flow()
-            "state": state or "".join(random.sample(string.ascii_letters, 16)),
+            "state": state or secrets.token_urlsafe(16),
             "redirect_uri": redirect_uri,
             "scope": scope,
             }

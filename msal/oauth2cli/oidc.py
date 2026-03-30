@@ -1,7 +1,7 @@
 import json
 import base64
 import time
-import random
+import secrets
 import string
 import warnings
 import hashlib
@@ -238,7 +238,7 @@ class Client(oauth2.Client):
             # Here we just automatically add it. If the caller do not want id_token,
             # they should simply go with oauth2.Client.
             _scope.append("openid")
-        nonce = "".join(random.sample(string.ascii_letters, 16))
+        nonce = secrets.token_urlsafe(16)
         flow = super(Client, self).initiate_auth_code_flow(
             scope=_scope, nonce=_nonce_hash(nonce), **kwargs)
         flow["nonce"] = nonce
