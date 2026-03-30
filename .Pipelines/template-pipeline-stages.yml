@@ -142,8 +142,11 @@ stages:
     steps:
     # Retrieve the MSID Lab certificate from Key Vault (via AuthSdkResourceManager SC).
     # Matches the pattern used by MSAL.js (install-keyvault-secrets.yml) and MSAL Java.
+    # Skipped on forked PRs — service connections are not available to forks.
+    # E2E tests self-skip when LAB_APP_CLIENT_CERT_PFX_PATH is unset.
     - task: AzureKeyVault@2
       displayName: 'Retrieve lab certificate from Key Vault'
+      condition: ne(variables['System.PullRequest.IsFork'], 'True')
       inputs:
         azureSubscription: 'AuthSdkResourceManager'
         KeyVaultName: 'msidlabs'
@@ -161,6 +164,7 @@ stages:
         echo "##vso[task.setvariable variable=LAB_APP_CLIENT_CERT_PFX_PATH]$CERT_PATH"
         echo "Lab cert written to: $CERT_PATH ($(wc -c < "$CERT_PATH") bytes)"
       displayName: 'Write lab certificate to disk'
+      condition: ne(variables['System.PullRequest.IsFork'], 'True')
       env:
         LAB_AUTH_B64: $(LabAuth)
 
