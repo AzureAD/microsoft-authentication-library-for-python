@@ -13,7 +13,7 @@ pr:
     - '*'
 
 schedules:
-- cron: '45 7 * * *'  # 11:45 PM Pacific (UTC-8) / matches legacy MSAL-Python-SDL-CI schedule
+- cron: '45 7 * * *'  # 07:45 UTC daily (11:45 PM PST / 12:45 AM PDT) — matches legacy MSAL-Python-SDL-CI schedule
   displayName: 'Daily SDL + CI (dev)'
   branches:
     include:
