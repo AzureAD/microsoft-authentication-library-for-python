@@ -1,5 +1,5 @@
 # PR gate and branch CI for the msal Python package.
-# Runs on pushes to dev/azure-pipelines and on all pull requests.
+# Runs on pushes to dev/azure-pipelines, on all pull requests, and on a daily schedule.
 # Delegates all stages to .Pipelines/template-pipeline-stages.yml with
 # runPublish: false — PreBuildCheck (SDL scans) + CI (test matrix) only.
 
@@ -11,6 +11,14 @@ pr:
   branches:
     include:
     - '*'
+
+schedules:
+- cron: '45 7 * * *'  # 11:45 PM Pacific (UTC-8) / matches legacy MSAL-Python-SDL-CI schedule
+  displayName: 'Daily SDL + CI (dev)'
+  branches:
+    include:
+    - dev
+  always: false  # only run when there are new changes
 
 stages:
 - template: .Pipelines/template-pipeline-stages.yml
