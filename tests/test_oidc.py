@@ -31,13 +31,9 @@ class TestCsprngUsage(unittest.TestCase):
 
     def test_pkce_code_verifier_can_have_repeated_characters(self):
         """secrets.choice() samples with replacement, unlike the old random.sample()."""
-        seen_repeat = False
-        for _ in range(100):
-            result = _generate_pkce_code_verifier(128)
-            if len(set(result["code_verifier"])) < len(result["code_verifier"]):
-                seen_repeat = True
-                break
-        self.assertTrue(seen_repeat,
+        result = _generate_pkce_code_verifier(128)
+        code_verifier = result["code_verifier"]
+        self.assertLess(len(set(code_verifier)), len(code_verifier),
             "At length 128 with a 66-char alphabet, repeated chars are expected")
 
     def test_pkce_code_verifier_is_not_deterministic(self):
