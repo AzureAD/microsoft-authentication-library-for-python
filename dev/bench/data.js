@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774911150133,
+  "lastUpdate": 1774911211999,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -38833,6 +38833,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001755726378223766",
             "extra": "mean: 145.05757498575525 usec\nrounds: 3494"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "copilot-swe-agent[bot]",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4561a6eaed4653a60b3ad39058ef44d53890ee9f",
+          "message": "Address PR review feedback: remove unused imports, simplify loop, add response_mode\n\nAgent-Logs-Url: https://github.com/AzureAD/microsoft-authentication-library-for-python/sessions/20f5cbfd-04ca-45f5-8c71-f8df1d00a01e\n\nCo-authored-by: ashok672 <83938949+ashok672@users.noreply.github.com>",
+          "timestamp": "2026-03-30T22:49:45Z",
+          "tree_id": "0aa5431a2116d92fdd5badbcb4ee3704f6fa3c6c",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/4561a6eaed4653a60b3ad39058ef44d53890ee9f"
+        },
+        "date": 1774911210157,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40255.15450950899,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003059533339834055",
+            "extra": "mean: 24.841539231051318 usec\nrounds: 7698"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38401.93300267746,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003335013067256562",
+            "extra": "mean: 26.04035583131396 usec\nrounds: 15631"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7570.61824440396,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001622256740420593",
+            "extra": "mean: 132.08960849917094 usec\nrounds: 4871"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7201.721012887765,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015557540345649447",
+            "extra": "mean: 138.85569827135214 usec\nrounds: 3818"
           }
         ]
       }
