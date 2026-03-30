@@ -8,7 +8,7 @@
 #                                   (SC creation pending test.pypi.org API token)
 #   pypi.org (ESRP Production)   — production releases via ESRP (EsrpRelease@9) using MSAL-ESRP-AME SC
 #
-# For one-time ADO setup, see ADO-PUBLISH-SETUP.md.
+# For pipeline documentation, see .Pipelines/CI-AND-RELEASE-PIPELINES.md.
 
 parameters:
 - name: packageVersion
