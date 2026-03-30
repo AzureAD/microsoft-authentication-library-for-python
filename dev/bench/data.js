@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774911211999,
+  "lastUpdate": 1774911268798,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -38885,6 +38885,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015557540345649447",
             "extra": "mean: 138.85569827135214 usec\nrounds: 3818"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "distinct": true,
+          "id": "42aa35ab74dba2bf2c331b43a1df413db305d9e9",
+          "message": "Skip Key Vault and cert steps on forked PRs; e2e tests self-skip when cert is absent",
+          "timestamp": "2026-03-30T15:51:34-07:00",
+          "tree_id": "e2ae17a1b0d4ea3a603b675183ceb8bde1dd99fb",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/42aa35ab74dba2bf2c331b43a1df413db305d9e9"
+        },
+        "date": 1774911267504,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40355.618330943566,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000029536388092749406",
+            "extra": "mean: 24.779697136575102 usec\nrounds: 8172"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38798.38049200597,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004962968521072951",
+            "extra": "mean: 25.774271691727964 usec\nrounds: 15363"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7596.322496634023,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016368168638108913",
+            "extra": "mean: 131.6426468785529 usec\nrounds: 3588"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7382.571093894696,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015896059433967992",
+            "extra": "mean: 135.45416458325596 usec\nrounds: 3840"
           }
         ]
       }
