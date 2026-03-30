@@ -28,7 +28,7 @@ from msal.oauth2cli.oidc import decode_part
 from tests.broker_util import is_pymsalruntime_installed
 from tests.lab_config import (
     get_user_config, get_app_config, get_user_password, get_secret,
-    UserSecrets, AppSecrets, LAB_APP_CLIENT_ID, _clean_env,
+    UserSecrets, AppSecrets, LAB_APP_CLIENT_ID, clean_env,
 )
 
 
@@ -345,7 +345,7 @@ class PublicCloudScenariosTestCase(E2eTestCase):
 
     @classmethod
     def setUpClass(cls):
-        if not _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
             raise unittest.SkipTest(
                 "LAB_APP_CLIENT_CERT_PFX_PATH not set; skipping PublicCloud e2e tests")
         pca_app = get_app_config(AppSecrets.PCA_CLIENT)
@@ -428,7 +428,7 @@ class PublicCloudScenariosTestCase(E2eTestCase):
 
     def test_subject_name_issuer_authentication(self):
         from tests.lab_config import get_client_certificate
-        if not _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
             self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
 
         self.app = msal.ConfidentialClientApplication(
@@ -471,7 +471,7 @@ def get_lab_app(
         "Reading ENV variable %s for lab app defined at "
         "https://docs.msidlab.com/accounts/confidentialclient.html",
         env_client_cert_path)
-    cert_path = _clean_env(env_client_cert_path)
+    cert_path = clean_env(env_client_cert_path)
     if cert_path:
         # id came from https://docs.msidlab.com/accounts/confidentialclient.html
         client_credential = {
@@ -1167,11 +1167,10 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
         
         Uses the lab app certificate for authentication.
         """
-        import os
         from tests.lab_config import get_client_certificate
         
         # Get client ID from lab_config constant and certificate from lab_config
-        if not _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
             self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH is required")
         client_credential = get_client_certificate()
         

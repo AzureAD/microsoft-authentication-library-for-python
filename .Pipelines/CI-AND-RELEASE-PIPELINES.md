@@ -62,8 +62,8 @@ with both parameters filled in.
 ### Stage Flow
 
 ```
-PreBuildCheck ─► Validate ─► CI ─► Build ─┬─► PublishMSALPython  (publishTarget == test.pypi.org)
-                                           └─► PublishPyPI        (publishTarget == pypi.org)
+PreBuildCheck ─► Validate ─► CI ─► Build ─┬─► PublishMSALPython  (publishTarget == 'test.pypi.org (Preview / RC)')
+                                           └─► PublishPyPI        (publishTarget == 'pypi.org (ESRP Production)')
 ```
 
 | Stage | What it does | Condition |

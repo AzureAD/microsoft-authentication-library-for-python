@@ -36,18 +36,19 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     # Constants
+    "LAB_APP_CLIENT_ID",
     "UserSecrets",
     "AppSecrets",
     # Data classes
     "UserConfig",
     "AppConfig",
     # Functions
-    "LAB_APP_CLIENT_ID",
     "get_secret",
     "get_user_config",
     "get_app_config",
     "get_user_password",
     "get_client_certificate",
+    "clean_env",
 ]
 
 # =============================================================================
@@ -170,7 +171,7 @@ _msid_lab_client: Optional[SecretClient] = None
 _msal_team_client: Optional[SecretClient] = None
 
 
-def _clean_env(name: str) -> Optional[str]:
+def clean_env(name: str) -> Optional[str]:
     """Return the env var value, or None if unset or it contains an unexpanded
     ADO pipeline variable literal such as ``$(VAR_NAME)``.
 
@@ -198,7 +199,7 @@ def _get_credential():
     Raises:
         EnvironmentError: If required environment variables are not set.
     """
-    cert_path = _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
+    cert_path = clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
     tenant_id = "72f988bf-86f1-41af-91ab-2d7cd011db47"  # Microsoft tenant
 
     if cert_path:
@@ -412,7 +413,7 @@ def get_client_certificate() -> Dict[str, object]:
     Raises:
         EnvironmentError: If LAB_APP_CLIENT_CERT_PFX_PATH is not set.
     """
-    cert_path = _clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
+    cert_path = clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
     if not cert_path:
         raise EnvironmentError(
             "LAB_APP_CLIENT_CERT_PFX_PATH environment variable is required "
