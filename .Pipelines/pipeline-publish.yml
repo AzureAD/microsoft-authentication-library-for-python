@@ -6,7 +6,7 @@
 # Publish targets:
 #   test.pypi.org (Preview / RC) — preview releases via MSAL-Test-Python-Upload SC
 #                                   (SC creation pending test.pypi.org API token)
-#   pypi.org (ESRP Production)   — production releases via MSAL-Prod-Python-Upload SC
+#   pypi.org (ESRP Production)   — production releases via ESRP (EsrpRelease@9) using MSAL-ESRP-AME SC
 #
 # For one-time ADO setup, see ADO-PUBLISH-SETUP.md.
 
