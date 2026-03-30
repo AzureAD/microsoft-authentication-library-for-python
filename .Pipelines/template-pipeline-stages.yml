@@ -152,11 +152,17 @@ stages:
 
     - bash: |
         set -euo pipefail
+        if [ -z "${LAB_AUTH_B64:-}" ]; then
+          echo "##vso[task.logissue type=error]LabAuth secret is empty or was not injected — Key Vault retrieval may have failed."
+          exit 1
+        fi
         CERT_PATH="$(Agent.TempDirectory)/lab-auth.pfx"
-        printf '%s' "$(LabAuth)" | base64 -d > "$CERT_PATH"
+        printf '%s' "$LAB_AUTH_B64" | base64 -d > "$CERT_PATH"
         echo "##vso[task.setvariable variable=LAB_APP_CLIENT_CERT_PFX_PATH]$CERT_PATH"
         echo "Lab cert written to: $CERT_PATH ($(wc -c < "$CERT_PATH") bytes)"
       displayName: 'Write lab certificate to disk'
+      env:
+        LAB_AUTH_B64: $(LabAuth)
 
     - task: UsePythonVersion@0
       inputs:
