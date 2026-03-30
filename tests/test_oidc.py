@@ -1,4 +1,3 @@
-import re
 import string
 
 from tests import unittest
