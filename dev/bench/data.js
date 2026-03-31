@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774912445695,
+  "lastUpdate": 1774979371159,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -39249,6 +39249,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000012097871666398384",
             "extra": "mean: 119.391820728181 usec\nrounds: 4284"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ryauld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1f71ede35133ed2a2fa707928e60de6d4f067566",
+          "message": "Add ADO CI, SDL, and release pipelines with e2e test enablement (#890)\n\n* Add ADO CI/release pipelines with SDL, e2e tests, and ESRP publish support\n\n* Use Python runpy to read __version__ in Validate stage instead of grep/sed\n\n* Remove duplicate _clean_env in test_e2e.py; import from lab_config instead\n\n* Pass LabAuth secret via env var to avoid bash command substitution on undefined variable\n\n* Skip Key Vault and cert steps on forked PRs; e2e tests self-skip when cert is absent\n\n* Fix header comment: production path uses EsrpRelease@9 not Twine SC\n\n* Fix CredScan suppression paths: prefix with tests/\n\n* Add daily scheduled trigger to azure-pipelines.yml (11:45 PM Pacific, dev only)\n\n* Fix dead doc reference: ADO-PUBLISH-SETUP.md -> CI-AND-RELEASE-PIPELINES.md\n\n* Address review comments: rename _clean_env to clean_env, fix __all__, fix doc diagram, drop redundant import os\n\n* Clarify cron comment: 07:45 UTC = 11:45 PM PST / 12:45 AM PDT",
+          "timestamp": "2026-03-31T10:46:09-07:00",
+          "tree_id": "2fab3d4f23f249af19452c67871afb6615d06b74",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/1f71ede35133ed2a2fa707928e60de6d4f067566"
+        },
+        "date": 1774979369783,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39164.96239414043,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000031242620886738215",
+            "extra": "mean: 25.533025920883116 usec\nrounds: 14660"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 32332.231671667283,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011699110250776942",
+            "extra": "mean: 30.928888860965923 usec\nrounds: 15917"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7488.975325039142,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001731644067281393",
+            "extra": "mean: 133.52961608199362 usec\nrounds: 3420"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7264.865441165842,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000018910522427064866",
+            "extra": "mean: 137.64879860452356 usec\nrounds: 5303"
           }
         ]
       }
