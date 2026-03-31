@@ -68,6 +68,14 @@ stages:
         GdnBreakGdnToolCredScan: true
         GdnBreakGdnToolPoliCheck: true
 
+    - task: securedevelopmentteam.vss-secure-development-tools.build-task-publishsecurityanalysislogs.PublishSecurityAnalysisLogs@3
+      displayName: 'Publish Security Analysis Logs (TSA)'
+      condition: succeededOrFailed()
+
+    - task: mspremier.PostBuildCleanup.PostBuildCleanup-task.PostBuildCleanup@3
+      displayName: 'Clean agent directories'
+      condition: always()
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 1 · Validate — verify packageVersion matches msal/sku.py __version__
 #           Skipped when runPublish is false (PR / merge builds).
@@ -123,6 +131,7 @@ stages:
   jobs:
   - job: Test
     displayName: 'Run unit tests'
+    retries: 3
     pool:
       vmImage: ubuntu-latest
     strategy:

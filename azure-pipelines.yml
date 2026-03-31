@@ -33,7 +33,12 @@ stages:
   condition: |
     and(
       succeeded('CI'),
-      eq(variables['Build.Reason'], 'IndividualCI')
+      eq(variables['Build.SourceBranch'], 'refs/heads/dev'),
+      or(
+        eq(variables['Build.Reason'], 'IndividualCI'),
+        eq(variables['Build.Reason'], 'BatchedCI'),
+        eq(variables['Build.Reason'], 'Manual')
+      )
     )
   jobs:
   - job: Benchmark
@@ -61,9 +66,9 @@ stages:
         pytest --benchmark-only --benchmark-json benchmark.json --log-cli-level INFO tests/test_benchmark.py
       displayName: 'Run benchmarks'
 
-    - task: PublishBuildArtifacts@1
+    - task: PublishPipelineArtifact@1
       displayName: 'Publish benchmark results'
       condition: succeededOrFailed()
       inputs:
-        PathtoPublish: 'benchmark.json'
-        ArtifactName: 'benchmark-results'
+        targetPath: 'benchmark.json'
+        artifact: 'benchmark-results'
