@@ -131,7 +131,6 @@ stages:
   jobs:
   - job: Test
     displayName: 'Run unit tests'
-    retries: 3
     pool:
       vmImage: ubuntu-latest
     strategy:
@@ -198,6 +197,7 @@ stages:
         set -o pipefail
         pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
       displayName: 'Run tests'
+      retryCountOnTaskFailure: 3
       env:
         LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
 
