@@ -7,16 +7,16 @@ including what each pipeline does, when it runs, and how to trigger a release.
 
 ## Pipeline Files
 
-| File | Purpose |
-|------|---------|
-| [`azure-pipelines.yml`](../azure-pipelines.yml) | PR gate and post-merge CI — calls the shared template with `runPublish: false` |
-| [`pipeline-publish.yml`](pipeline-publish.yml) | Release pipeline — manually queued, builds and publishes to PyPI |
-| [`template-pipeline-stages.yml`](template-pipeline-stages.yml) | Shared stages template — PreBuildCheck, Validate, and CI stages reused by both pipelines |
-| [`credscan-exclusion.json`](credscan-exclusion.json) | CredScan suppression file for known test fixtures |
+| File | ADO Pipeline | Purpose |
+|------|-------------|---------|
+| [`azure-pipelines.yml`](../azure-pipelines.yml) | [MSAL.Python-PR-OneBranch-Official (3064)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3064) | PR gate and post-merge CI — calls the shared template with `runPublish: false` |
+| [`pipeline-publish.yml`](pipeline-publish.yml) | [MSAL.Python-Publish (3067)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3067) | Release pipeline — manually queued, builds and publishes to PyPI |
+| [`template-pipeline-stages.yml`](template-pipeline-stages.yml) | — | Shared stages template — PreBuildCheck, Validate, and CI stages reused by both pipelines |
+| [`credscan-exclusion.json`](credscan-exclusion.json) | — | CredScan suppression file for known test fixtures |
 
 ---
 
-## PR / CI Pipeline (`azure-pipelines.yml`)
+## PR / CI Pipeline — [MSAL.Python-PR-OneBranch-Official (3064)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3064)
 
 ### Triggers
 
@@ -45,7 +45,7 @@ The Validate stage is **skipped** on PR/CI runs (it only applies to release buil
 
 ---
 
-## Release Pipeline (`pipeline-publish.yml`)
+## Release Pipeline — [MSAL.Python-Publish (3067)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3067)
 
 ### Triggers
 
