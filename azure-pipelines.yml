@@ -24,3 +24,46 @@ stages:
 - template: .Pipelines/template-pipeline-stages.yml
   parameters:
     runPublish: false
+
+- stage: Benchmark
+  displayName: 'Run benchmarks'
+  dependsOn: CI
+  # Only run on post-merge pushes to dev — not on PRs or scheduled runs.
+  # Benchmarks are noisy and the baseline cache is only meaningful on a stable branch.
+  condition: |
+    and(
+      succeeded('CI'),
+      eq(variables['Build.Reason'], 'IndividualCI')
+    )
+  jobs:
+  - job: Benchmark
+    displayName: 'Performance benchmarks (Python 3.9)'
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.9'
+      displayName: 'Set up Python 3.9'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      displayName: 'Install dependencies'
+
+    - task: Cache@2
+      displayName: 'Restore performance baseline cache'
+      inputs:
+        key: '"perf-baseline" | "$(Agent.OS)" | tests/test_benchmark.py'
+        path: .perf.baseline
+
+    - bash: |
+        pytest --benchmark-only --benchmark-json benchmark.json --log-cli-level INFO tests/test_benchmark.py
+      displayName: 'Run benchmarks'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish benchmark results'
+      condition: succeededOrFailed()
+      inputs:
+        PathtoPublish: 'benchmark.json'
+        ArtifactName: 'benchmark-results'
