@@ -35,7 +35,7 @@ PreBuildCheck ─► CI
 | Stage | What it does |
 |-------|-------------|
 | **PreBuildCheck** | Runs SDL security scans: PoliCheck (policy/offensive content), CredScan (leaked credentials), and PostAnalysis (breaks the build on findings) |
-| **CI** | Runs the full test suite on Python 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 |
+| **CI** | Runs the full test suite on Python 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 |
 
 The Validate stage is **skipped** on PR/CI runs (it only applies to release builds).
 
@@ -70,7 +70,7 @@ PreBuildCheck ─► Validate ─► CI ─► Build ─┬─► PublishMSALPyt
 |-------|-------------|-----------|
 | **PreBuildCheck** | PoliCheck + CredScan scans | Always |
 | **Validate** | Asserts the `packageVersion` parameter matches `msal/sku.py __version__` | Always (release runs only) |
-| **CI** | Full test matrix (Python 3.9–3.14) | After Validate passes |
+| **CI** | Full test matrix (Python 3.8–3.14) | After Validate passes |
 | **Build** | Builds `sdist` and `wheel` via `python -m build`; publishes `python-dist` artifact | After CI passes |
 | **PublishMSALPython** | Uploads to test.pypi.org | `publishTarget == test.pypi.org (Preview / RC)` |
 | **PublishPyPI** | Uploads to PyPI via ESRP; requires manual approval | `publishTarget == pypi.org (ESRP Production)` |
