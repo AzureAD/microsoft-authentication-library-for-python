@@ -71,6 +71,8 @@ stages:
     - task: securedevelopmentteam.vss-secure-development-tools.build-task-publishsecurityanalysislogs.PublishSecurityAnalysisLogs@3
       displayName: 'Publish Security Analysis Logs (TSA)'
       condition: succeededOrFailed()
+      inputs:
+        tsaConfigFile: '$(Build.SourcesDirectory)/.Pipelines/tsaConfig.json'
 
     - task: mspremier.PostBuildCleanup.PostBuildCleanup-task.PostBuildCleanup@3
       displayName: 'Clean agent directories'

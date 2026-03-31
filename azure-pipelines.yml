@@ -59,7 +59,7 @@ stages:
     - task: Cache@2
       displayName: 'Restore performance baseline cache'
       inputs:
-        key: '"perf-baseline" | "$(Agent.OS)" | tests/test_benchmark.py'
+        key: 'perf-baseline | "$(Agent.OS)" | tests/test_benchmark.py'
         path: .perf.baseline
 
     - bash: |
