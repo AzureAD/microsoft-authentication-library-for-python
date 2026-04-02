@@ -124,6 +124,21 @@ class TokenCache(object):
         with self._lock:
             return self._cache.get(credential_type, {}).get(key, default)
 
+    def _get_username_by_home_account_id(self, home_account_id, environment):
+        """Look up existing accounts with the same home_account_id to inherit username.
+
+        When broker returns a token without id_token (e.g. CachedRefreshToken path),
+        the username would be empty. This method finds a previously cached account
+        with the same home_account_id that has a non-empty username.
+        """
+        if not home_account_id:
+            return None
+        for entry in self._cache.get(self.CredentialType.ACCOUNT, {}).values():
+            if (entry.get("home_account_id") == home_account_id
+                    and entry.get("username")):
+                return entry["username"]
+        return None
+
     @staticmethod
     def _is_matching(entry: dict, query: dict, target_set: set = None) -> bool:
         query_with_lowercase_environment = {
@@ -295,6 +310,8 @@ class TokenCache(object):
                     "username": _get_username(id_token_claims)
                         or data.get("username")  # Falls back to ROPC username
                         or event.get("username")  # Falls back to Federated ROPC username
+                        or self._get_username_by_home_account_id(
+                            home_account_id, environment)
                         or "",  # The schema does not like null
                     "authority_type": event.get(
                         "authority_type",  # Honor caller's choice of authority_type
