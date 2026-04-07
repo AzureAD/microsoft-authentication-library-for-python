@@ -38,6 +38,7 @@ from .managed_identity import (
     SystemAssignedManagedIdentity, UserAssignedManagedIdentity,
     ManagedIdentityClient,
     ManagedIdentityError,
+    MsiV2Error,
     ArcPlatformNotSupportedError,
     )
 
