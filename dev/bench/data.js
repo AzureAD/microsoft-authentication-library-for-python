@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775580005476,
+  "lastUpdate": 1775580283871,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -40027,6 +40027,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001542184743458219",
             "extra": "mean: 136.0746031098732 usec\nrounds: 3923"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "83938949+ashok672@users.noreply.github.com",
+            "name": "Ashok Kumar Ramakrishnan",
+            "username": "ashok672"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6a92f2498d221c673d6e725e7f99d958bd189c5a",
+          "message": "Use cryptographically secure randomness for PKCE, state, and nonce generation (#894)\n\n* Use cryptographically secure randomness for PKCE, state, and nonce generation\n\n* Update tests/test_oidc.py\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\n\n* Update tests/test_oidc.py\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\n\n* Update msal/oauth2cli/oidc.py\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\n\n* Address PR review feedback: remove unused imports, simplify loop, add response_mode\n\nAgent-Logs-Url: https://github.com/AzureAD/microsoft-authentication-library-for-python/sessions/20f5cbfd-04ca-45f5-8c71-f8df1d00a01e\n\nCo-authored-by: ashok672 <83938949+ashok672@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-04-07T09:41:23-07:00",
+          "tree_id": "b40e9661e2e164bb5b04adf94486c5ae164d8dd0",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/6a92f2498d221c673d6e725e7f99d958bd189c5a"
+        },
+        "date": 1775580282439,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37672.39409664657,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000030904900757461907",
+            "extra": "mean: 26.544636304094507 usec\nrounds: 15249"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 36833.15832564503,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003609112905602392",
+            "extra": "mean: 27.14945026323609 usec\nrounds: 14245"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7399.020548754206,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001643995865060737",
+            "extra": "mean: 135.1530237564177 usec\nrounds: 3578"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7378.991782976649,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015625970281261018",
+            "extra": "mean: 135.5198690296691 usec\nrounds: 3978"
           }
         ]
       }
