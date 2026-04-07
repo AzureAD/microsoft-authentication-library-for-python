@@ -349,7 +349,7 @@ sequenceDiagram
 
 ## Impact & Results
 
-- **~2,250 lines** of production-ready Python code generated across **8 files**
+- **≈2,420 lines** of production-ready Python code generated across **8 files**
 - Integrated into MSAL Python codebase (PR #882)
 - Published on PyPI as **`msal-msiv2==1.35.0rc3`**
 - Unit tests + E2E tests in Azure Pipelines (real IMDSv2 environment)
