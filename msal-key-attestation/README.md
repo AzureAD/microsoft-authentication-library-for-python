@@ -1,0 +1,94 @@
+# msal-key-attestation
+
+KeyGuard attestation support for **MSAL Python** MSI v2 (mTLS Proof-of-Possession).
+
+This package provides the `AttestationClientLib.dll` bindings for Windows
+Credential Guard / KeyGuard key attestation via Azure Attestation (MAA).
+
+## Installation
+
+```bash
+pip install msal msal-key-attestation
+```
+
+## Prerequisites
+
+- **Windows** with Credential Guard / KeyGuard enabled (Azure VM with VBS)
+- **AttestationClientLib.dll** — place it next to your application, or set
+  `ATTESTATION_CLIENTLIB_PATH` environment variable to its full path.
+
+## Usage
+
+```python
+import msal, requests
+
+client = msal.ManagedIdentityClient(
+    msal.SystemAssignedManagedIdentity(),
+    http_client=requests.Session(),
+)
+
+# with_attestation_support=True auto-discovers msal-key-attestation
+result = client.acquire_token_for_client(
+    resource="https://graph.microsoft.com",
+    mtls_proof_of_possession=True,
+    with_attestation_support=True,
+)
+
+if "access_token" in result:
+    print(f"Token type: {result['token_type']}")  # mtls_pop
+    print(f"Cert thumbprint: {result.get('cert_thumbprint_sha256', 'N/A')}")
+else:
+    print(f"Error: {result.get('error_description', result)}")
+```
+
+## How it works
+
+1. MSAL Python's MSI v2 flow creates a KeyGuard-protected RSA key (via NCrypt)
+2. When `with_attestation_support=True`, MSAL auto-imports this package
+3. This package calls `AttestationClientLib.dll` to attest the key with MAA
+4. The attestation JWT is cached in-memory (~90% of its lifetime)
+5. MSAL sends the JWT + CSR to IMDS `/issuecredential`
+6. IMDS returns a short-lived certificate, which MSAL uses for mTLS token
+   acquisition
+
+## Architecture
+
+```
+┌─────────────────────────────────────────┐
+│  msal  (pip install msal)               │
+│                                         │
+│  ManagedIdentityClient                  │
+│    └─ acquire_token_for_client()        │
+│         mtls_proof_of_possession=True   │
+│         with_attestation_support=True   │
+│                                         │
+│  msal.msi_v2  (core flow)              │
+│    - NCrypt KeyGuard key (ctypes)       │
+│    - PKCS#10 CSR builder                │
+│    - IMDS getplatformmetadata           │
+│    - IMDS issuecredential               │
+│    - Crypt32 cert binding               │
+│    - WinHTTP/SChannel mTLS              │
+│    - Certificate cache (in-memory)      │
+└────────────────┬────────────────────────┘
+                 │  auto-discovers via import
+┌────────────────▼────────────────────────┐
+│  msal-key-attestation                   │
+│  (pip install msal-key-attestation)     │
+│                                         │
+│  create_attestation_provider()          │
+│    - AttestationClientLib.dll bindings  │
+│    - MAA token cache (in-memory)        │
+└─────────────────────────────────────────┘
+```
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `ATTESTATION_CLIENTLIB_PATH` | Full path to `AttestationClientLib.dll` |
+| `MSAL_MSI_V2_ATTESTATION_CACHE` | `"0"` to disable MAA JWT caching |
+
+## License
+
+MIT

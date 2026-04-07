@@ -1,0 +1,13 @@
+{
+  "tool": "Credential Scanner",
+  "suppressions": [
+    {
+      "file": "tests/certificate-with-password.pfx",
+      "_justification": "Self-signed certificate used only in unit tests. Not a production credential."
+    },
+    {
+      "file": "tests/test_mi.py",
+      "_justification": "WWW-Authenticate challenge header value used as a mock HTTP response fixture in unit tests. Not a real credential."
+    }
+  ]
+}
