@@ -251,7 +251,7 @@ class Authority(object):
             return True
         
         # Case 5: Check if issuer host ends with any well-known B2C host (e.g., tenant.b2clogin.com)
-        if any(issuer_host.endswith(h) for h in WELL_KNOWN_B2C_HOSTS):
+        if any(issuer_host.endswith("." + h) for h in WELL_KNOWN_B2C_HOSTS):
             return True
 
         return False
