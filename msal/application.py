@@ -20,7 +20,7 @@ from .authority import (
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
-from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER
+from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER, _compute_ext_cache_key
 import msal.telemetry
 from .region import _detect_region
 from .throttled_http_client import ThrottledHttpClient
@@ -1583,6 +1583,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             key_id = kwargs.get("data", {}).get("key_id")
             if key_id:  # Some token types (SSH-certs, POP) are bound to a key
                 query["key_id"] = key_id
+            ext_cache_key = _compute_ext_cache_key(kwargs.get("data", {}))
+            if ext_cache_key:  # FMI tokens need cache isolation by path
+                query["ext_cache_key"] = ext_cache_key
             now = time.time()
             refresh_reason = msal.telemetry.AT_ABSENT
             for entry in self.token_cache.search(  # A generator allows us to
@@ -2436,7 +2439,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
     except that ``allow_broker`` parameter shall remain ``None``.
     """
 
-    def acquire_token_for_client(self, scopes, claims_challenge=None, **kwargs):
+    def acquire_token_for_client(self, scopes, claims_challenge=None, fmi_path=None, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
 
         Since MSAL Python 1.23, it will automatically look for token from cache,
@@ -2449,7 +2452,17 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             in the form of a claims_challenge directive in the www-authenticate header to be
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
+        :param str fmi_path:
+            Optional. The Federated Managed Identity (FMI) credential path.
+            When provided, it is sent as the ``fmi_path`` parameter in the
+            token request body, and the resulting token is cached separately
+            so that different FMI paths do not share cached tokens.
+            Example usage::
 
+                result = cca.acquire_token_for_client(
+                    scopes=["api://resource/.default"],
+                    fmi_path="SomeFmiPath/FmiCredentialPath",
+                )
         :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
@@ -2459,6 +2472,12 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             raise ValueError(  # We choose to disallow force_refresh
                 "Historically, this method does not support force_refresh behavior. "
             )
+        if fmi_path is not None:
+            if not isinstance(fmi_path, str):
+                raise ValueError(
+                    "fmi_path must be a string, got {}".format(type(fmi_path).__name__))
+            kwargs["data"] = kwargs.get("data", {})
+            kwargs["data"]["fmi_path"] = fmi_path
         return _clean_up(self._acquire_token_silent_with_error(
             scopes, None, claims_challenge=claims_challenge, **kwargs))
 

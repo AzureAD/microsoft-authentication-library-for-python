@@ -89,7 +89,6 @@ class Authority(object):
         self._http_client = http_client
         self._oidc_authority_url = oidc_authority_url
         if oidc_authority_url:
-            logger.debug("Initializing with OIDC authority: %s", oidc_authority_url)
             tenant_discovery_endpoint = self._initialize_oidc_authority(
                 oidc_authority_url)
         else:

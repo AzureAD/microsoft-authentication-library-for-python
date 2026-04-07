@@ -708,6 +708,170 @@ class TestClientCredentialGrant(unittest.TestCase):
 
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestAcquireTokenForClientWithFmiPath(unittest.TestCase):
+    """Test that acquire_token_for_client(fmi_path=...) attaches fmi_path to HTTP body."""
+
+    def test_fmi_path_rejects_non_string_types(self):
+        app = ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+        for bad_value in [123, True, ["path"], {"path": "value"}, b"bytes"]:
+            with self.assertRaises(ValueError, msg="fmi_path={!r} should raise".format(bad_value)):
+                app.acquire_token_for_client(["scope"], fmi_path=bad_value)
+
+    def test_fmi_path_is_included_in_request_body(self):
+        app = ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+        fmi_path = "SomeFmiPath/FmiCredentialPath"
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an AT",
+                    "expires_in": 3600,
+                }))
+
+        result = app.acquire_token_for_client(
+            ["scope"], fmi_path=fmi_path, post=mock_post)
+        self.assertIn("access_token", result)
+        self.assertIn("fmi_path", captured_data,
+            "fmi_path should be present in the HTTP request body")
+        self.assertEqual(fmi_path, captured_data["fmi_path"],
+            "fmi_path value should match the input")
+
+    def test_fmi_path_coexists_with_other_data(self):
+        app = ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+        fmi_path = "another/fmi/path"
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an AT",
+                    "expires_in": 3600,
+                }))
+
+        result = app.acquire_token_for_client(
+            ["scope"], fmi_path=fmi_path, post=mock_post)
+        self.assertIn("access_token", result)
+        self.assertEqual(fmi_path, captured_data["fmi_path"])
+        self.assertEqual("client_credentials", captured_data.get("grant_type"))
+
+    def test_fmi_path_preserves_existing_data_params(self):
+        app = ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+        fmi_path = "my/fmi/path"
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an AT",
+                    "expires_in": 3600,
+                }))
+
+        result = app.acquire_token_for_client(
+            ["scope"], fmi_path=fmi_path,
+            data={"extra_key": "extra_value"},
+            post=mock_post)
+        self.assertIn("access_token", result)
+        self.assertEqual(fmi_path, captured_data["fmi_path"])
+        self.assertEqual("extra_value", captured_data.get("extra_key"),
+            "Pre-existing data params should be preserved")
+
+    def test_cached_token_is_returned_on_second_call(self):
+        app = ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+        fmi_path = "SomeFmiPath/FmiCredentialPath"
+        call_count = [0]
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            call_count[0] += 1
+            return MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an AT",
+                    "expires_in": 3600,
+                }))
+
+        result1 = app.acquire_token_for_client(
+            ["scope"], fmi_path=fmi_path, post=mock_post)
+        self.assertIn("access_token", result1)
+        self.assertEqual(result1[app._TOKEN_SOURCE], app._TOKEN_SOURCE_IDP)
+
+        result2 = app.acquire_token_for_client(
+            ["scope"], fmi_path=fmi_path, post=mock_post)
+        self.assertIn("access_token", result2)
+        self.assertEqual(result2[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE,
+            "Second call should return token from cache")
+
+    def test_different_fmi_paths_are_cached_separately(self):
+        """Tokens acquired with different fmi_path values must NOT share cache entries."""
+        app = ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+
+        def mock_post_factory(token_value):
+            def mock_post(url, headers=None, data=None, *args, **kwargs):
+                return MinimalResponse(
+                    status_code=200, text=json.dumps({
+                        "access_token": token_value,
+                        "expires_in": 3600,
+                    }))
+            return mock_post
+
+        # Acquire token with path A
+        result_a = app.acquire_token_for_client(
+            ["scope"], fmi_path="PathA/credential", post=mock_post_factory("AT_for_path_A"))
+        self.assertEqual("AT_for_path_A", result_a["access_token"])
+
+        # Acquire token with path B (should NOT get path A's cached token)
+        result_b = app.acquire_token_for_client(
+            ["scope"], fmi_path="PathB/credential", post=mock_post_factory("AT_for_path_B"))
+        self.assertEqual("AT_for_path_B", result_b["access_token"])
+        self.assertEqual(result_b[app._TOKEN_SOURCE], app._TOKEN_SOURCE_IDP,
+            "Different FMI path should NOT return a cached token from another path")
+
+        # Verify path A still returns its own cached token
+        result_a2 = app.acquire_token_for_client(
+            ["scope"], fmi_path="PathA/credential", post=mock_post_factory("should_not_be_used"))
+        self.assertEqual("AT_for_path_A", result_a2["access_token"])
+        self.assertEqual(result_a2[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE,
+            "Same FMI path should return cached token")
+
+    def test_fmi_token_does_not_interfere_with_non_fmi_token(self):
+        """FMI-cached tokens must not be returned for non-FMI acquire_token_for_client."""
+        app = ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+
+        # First, cache a token via FMI path
+        app.acquire_token_for_client(
+            ["scope"], fmi_path="some/fmi/path",
+            post=lambda url, **kwargs: MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "FMI_AT", "expires_in": 3600})))
+
+        # Now call regular acquire_token_for_client — should NOT get FMI token
+        result = app.acquire_token_for_client(
+            ["scope"],
+            post=lambda url, **kwargs: MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "regular_AT", "expires_in": 3600})))
+        self.assertEqual("regular_AT", result["access_token"])
+        self.assertEqual(result[app._TOKEN_SOURCE], app._TOKEN_SOURCE_IDP,
+            "Non-FMI call should not return FMI-cached token")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestRemoveTokensForClient(unittest.TestCase):
     def test_remove_tokens_for_client_should_remove_client_tokens_only(self):
         at_for_user = "AT for user"
