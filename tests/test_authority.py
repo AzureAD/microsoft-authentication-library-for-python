@@ -701,3 +701,65 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
         self.assertTrue(authority.has_valid_issuer(),
             "Issuer ending with ciamlogin.com should be valid")
 
+    # Domain spoofing prevention tests
+    @patch("msal.authority.tenant_discovery")
+    def test_spoofed_b2c_host_should_be_rejected(self, tenant_discovery_mock):
+        """fakeb2clogin.com must NOT match b2clogin.com"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = "https://fakeb2clogin.com/tenant"
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+        with self.assertRaises(ValueError):
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_spoofed_b2c_host_with_prefix_should_be_rejected(self, tenant_discovery_mock):
+        """evilb2clogin.com must NOT match b2clogin.com"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = "https://evilb2clogin.com/tenant"
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+        with self.assertRaises(ValueError):
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_b2c_domain_used_as_subdomain_of_evil_site_should_be_rejected(self, tenant_discovery_mock):
+        """b2clogin.com.evil.com must NOT match b2clogin.com"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = "https://b2clogin.com.evil.com/tenant"
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+        with self.assertRaises(ValueError):
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_spoofed_ciamlogin_host_should_be_rejected(self, tenant_discovery_mock):
+        """fakeciamlogin.com must NOT match ciamlogin.com"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = "https://fakeciamlogin.com/tenant"
+        tenant_discovery_mock.return_value = {
+            "authorization_endpoint": "https://example.com/oauth2/authorize",
+            "token_endpoint": "https://example.com/oauth2/token",
+            "issuer": issuer,
+        }
+        with self.assertRaises(ValueError):
+            Authority(None, self.http_client, oidc_authority_url=authority_url)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_valid_b2c_subdomain_should_be_accepted(self, tenant_discovery_mock):
+        """login.b2clogin.com should match .b2clogin.com"""
+        authority_url = "https://custom-domain.com/tenant"
+        issuer = "https://login.b2clogin.com/tenant"
+        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
+        self.assertTrue(authority.has_valid_issuer(),
+            "Legitimate subdomain of b2clogin.com should be valid")
+
