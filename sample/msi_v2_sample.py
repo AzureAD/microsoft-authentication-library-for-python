@@ -21,7 +21,6 @@ Environment variables (optional):
     MSI_V2_VERBOSE  - Set to "1" for verbose logging
 """
 
-import json
 import logging
 import os
 import sys
@@ -80,33 +79,29 @@ def main():
     )
 
     if "access_token" not in result:
-        logger.error("Token acquisition failed:")
-        logger.error("  %s", json.dumps(result, indent=2))
+        # Only log error code/description — never log tokens or secrets
+        logger.error("Token acquisition failed: %s - %s",
+                     result.get("error", "unknown"),
+                     result.get("error_description", "no description"))
         sys.exit(1)
 
     token_type = result.get("token_type", "unknown")
     expires_in = result.get("expires_in", 0)
-    cert_thumbprint = result.get("cert_thumbprint_sha256", "N/A")
-    token_preview = result["access_token"][:40] + "..."
 
     logger.info("Token acquired successfully!")
-    logger.info("  token_type:     %s", token_type)
-    logger.info("  expires_in:     %s seconds", expires_in)
-    logger.info("  cert_thumbprint: %s", cert_thumbprint)
-    logger.info("  token (preview): %s", token_preview)
+    logger.info("  token_type: %s", token_type)
+    logger.info("  expires_in: %s seconds", expires_in)
 
-    # Strict mode: token_type must be mtls_pop
     if token_type != "mtls_pop":
         logger.warning(
-            "Expected token_type='mtls_pop' but got '%s'. "
-            "The VM may not support MSI v2.", token_type)
+            "Expected token_type='mtls_pop' but got '%s'.", token_type)
 
     # --- Verify binding ---
     from msal.msi_v2 import verify_cnf_binding
     cert_pem = result.get("cert_pem", "")
     if cert_pem:
         bound = verify_cnf_binding(result["access_token"], cert_pem)
-        logger.info("  cnf binding:    %s", "VERIFIED" if bound else "FAILED")
+        logger.info("  cnf binding: %s", "VERIFIED" if bound else "FAILED")
         if not bound:
             logger.error("Token is NOT bound to the certificate!")
             sys.exit(1)
@@ -115,25 +110,23 @@ def main():
     if resource_url:
         logger.info("Calling resource: %s", resource_url)
 
-        # For mTLS resource calls, we need to present the same cert.
-        # Note: The cert_pem + private key are bound in the KeyGuard key;
-        # the actual mTLS resource call would need WinHTTP or a similar
-        # mechanism. This is a demonstration of the Authorization header.
+        # Note: mTLS resource calls require presenting the same cert.
+        # The cert + private key are bound via KeyGuard; a real mTLS call
+        # would use WinHTTP/SChannel. This demonstrates the auth header.
+        access_token = result["access_token"]
         headers = {
-            "Authorization": f"{token_type} {result['access_token']}",
+            "Authorization": f"{token_type} {access_token}",
             "Accept": "application/json",
         }
 
         try:
             resp = http_session.get(resource_url, headers=headers)
             logger.info("  Status: %d", resp.status_code)
-            if resp.ok:
-                logger.info("  Response (first 200 chars): %s",
-                            resp.text[:200])
-            else:
-                logger.warning("  Response: %s", resp.text[:500])
+            if not resp.ok:
+                logger.warning("  Request failed with status %d",
+                               resp.status_code)
         except Exception as exc:
-            logger.warning("  Resource call failed: %s", exc)
+            logger.warning("  Resource call failed: %s", type(exc).__name__)
             logger.info(
                 "Note: mTLS resource calls may require WinHTTP/SChannel; "
                 "the requests library may not present the mTLS cert.")
