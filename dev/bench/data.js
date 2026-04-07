@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775580283871,
+  "lastUpdate": 1775581853961,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -40079,6 +40079,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015625970281261018",
             "extra": "mean: 135.5198690296691 usec\nrounds: 3978"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107404295+4gust@users.noreply.github.com",
+            "name": "Nilesh Choudhary",
+            "username": "4gust"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a3ba722660e838f58659f8f501a2624044266247",
+          "message": "Fix OIDC issuer domain spoofing in B2C host validation (#896)\n\n* added a additional check for domain checking in b2c\n\n* updated comment",
+          "timestamp": "2026-04-07T18:07:40+01:00",
+          "tree_id": "b674cb4cd470f5b21d3ace3c4e45a1f5b65f9f7f",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/a3ba722660e838f58659f8f501a2624044266247"
+        },
+        "date": 1775581852702,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 47693.15273915786,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000017104311221613333",
+            "extra": "mean: 20.967370420428566 usec\nrounds: 7397"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 42645.21913105995,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000025056985957369916",
+            "extra": "mean: 23.449287408436984 usec\nrounds: 15431"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9753.632291416454,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015671929824645962",
+            "extra": "mean: 102.52590728482105 usec\nrounds: 2869"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8647.071069894953,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001835948388531101",
+            "extra": "mean: 115.64609472004122 usec\nrounds: 3125"
           }
         ]
       }
