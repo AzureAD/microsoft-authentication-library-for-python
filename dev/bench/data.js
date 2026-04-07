@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775571546847,
+  "lastUpdate": 1775571639096,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -39717,6 +39717,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000017065675424115587",
             "extra": "mean: 143.8145530797029 usec\nrounds: 3052"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gljohns@microsoft.com",
+            "name": "Gladwin Johnson",
+            "username": "GladwinJohnson"
+          },
+          "committer": {
+            "email": "gljohns@microsoft.com",
+            "name": "Gladwin Johnson",
+            "username": "GladwinJohnson"
+          },
+          "distinct": true,
+          "id": "ededbe2c30a3a3b48ad4cd776a23a7be9b4685ad",
+          "message": "Fix CI test collection: remove conflicting tests/__init__.py and add testpaths\n\n- Remove msal-key-attestation/tests/__init__.py to prevent namespace\n  conflict with the main tests/ package (caused all 24 existing tests\n  to fail with 'ModuleNotFoundError: No module named tests.test_*')\n- Add [tool:pytest] testpaths=tests to setup.cfg so bare 'pytest' only\n  collects the main test suite\n- Fix remaining CodeQL alert: avoid printing result dict data on failure\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-04-07T06:55:16-07:00",
+          "tree_id": "3b1167b806df72ce1f87ce558cd9ec2ae0ea6536",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/ededbe2c30a3a3b48ad4cd776a23a7be9b4685ad"
+        },
+        "date": 1775571637560,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39800.01340797955,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000356231352473738",
+            "extra": "mean: 25.12561967628656 usec\nrounds: 7725"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 35123.27670853539,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003793318507374495",
+            "extra": "mean: 28.471147731982178 usec\nrounds: 14506"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7484.06499705418,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016261398471406867",
+            "extra": "mean: 133.61722545082281 usec\nrounds: 3992"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7102.658686212006,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001631829349588324",
+            "extra": "mean: 140.7923489187569 usec\nrounds: 3422"
           }
         ]
       }
