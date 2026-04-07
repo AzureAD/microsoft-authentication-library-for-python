@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775573830737,
+  "lastUpdate": 1775579569748,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -39871,6 +39871,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001822731134248302",
             "extra": "mean: 140.664067479922 usec\nrounds: 3853"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90415114+gladjohn@users.noreply.github.com",
+            "name": "Gladwin Johnson",
+            "username": "gladjohn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6de712edbf3310aa4af163a51ac8b9eeb9dbe65c",
+          "message": "Add documentation for Managed Identity v2 Hackathon (#885)\n\n* Add documentation for Managed Identity v2 Hackathon\n\nDocument the results and outcomes of the Managed Identity v2 Multi-Language Implementation Hackathon, highlighting the achievements and deliverables.\n\n* Apply suggestions from code review\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\n\n* Update spikes/prototype/2026_MS_SecurityHackathon_MSIV2.md\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-04-07T09:28:57-07:00",
+          "tree_id": "8d5c48d89f7201f125e88e2fb623fcbc88453fe9",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/6de712edbf3310aa4af163a51ac8b9eeb9dbe65c"
+        },
+        "date": 1775579567844,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39814.973080966614,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003447389245208741",
+            "extra": "mean: 25.116179231527497 usec\nrounds: 8224"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38723.14545471314,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003911029768755179",
+            "extra": "mean: 25.8243484163626 usec\nrounds: 11050"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7569.544247337193,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016163092380282177",
+            "extra": "mean: 132.1083498985793 usec\nrounds: 3944"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 6229.844760065376,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000047592842139915644",
+            "extra": "mean: 160.51764345882447 usec\nrounds: 4036"
           }
         ]
       }
