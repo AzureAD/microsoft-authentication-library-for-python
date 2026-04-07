@@ -56,6 +56,8 @@ class ExpiresOnTestCase(unittest.TestCase):
             "1234567890": 1234567890,
             "1970-01-01T00:00:12.0000000+00:00": 12,
             "2024-10-18T19:51:37.0000000+00:00": 1729281097,  # Copied from https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/issues/4963
+            "2025-01-01T00:00:00Z": 1735689600,  # Z/Zulu suffix
+            "2025-01-01T00:00:00+00:00": 1735689600,  # No fractional seconds
             "01/01/1970 00:00:12 +00:00": 12,
             "06/20/2019 02:57:58 +00:00": 1560999478,  # Derived from https://github.com/Azure/azure-sdk-for-python/blob/azure-identity_1.21.0/sdk/identity/azure-identity/azure/identity/_credentials/azure_ml.py#L52
             "1/1/1970 12:0:12 AM +00:00": 12,
