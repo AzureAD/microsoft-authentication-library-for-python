@@ -250,7 +250,9 @@ class Authority(object):
             authority_parsed.netloc == issuer_parsed.netloc):
             return True
         
-        # Case 5: Check if issuer host ends with any well-known B2C host (e.g., tenant.b2clogin.com)
+        # Case 5: Check if issuer host is a subdomain of a well-known B2C host
+        # e.g., tenant.b2clogin.com matches .b2clogin.com
+        # but fakeb2clogin.com does not
         if any(issuer_host.endswith("." + h) for h in WELL_KNOWN_B2C_HOSTS):
             return True
 
