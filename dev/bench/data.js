@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775549912895,
+  "lastUpdate": 1775569680829,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -39561,6 +39561,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000017037254758089536",
             "extra": "mean: 144.0343832070833 usec\nrounds: 3168"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "nichoudhary@microsoft.com",
+            "name": "Nilesh Choudhary",
+            "username": "4gust"
+          },
+          "committer": {
+            "email": "nichoudhary@microsoft.com",
+            "name": "Nilesh Choudhary",
+            "username": "4gust"
+          },
+          "distinct": true,
+          "id": "f1b98622a8a3879abbd2dcd9062ebd7c2d196dde",
+          "message": "Use secrets module instead of random for security-sensitive token generation\n\nReplace random.sample() with secrets.choice() for generating PKCE code\nverifiers, OAuth2 state parameters, and OIDC nonces. The random module\nuses Mersenne Twister which is not cryptographically secure. The secrets\nmodule uses os.urandom(), providing a CSPRNG suitable for security tokens.\n\nThis also fixes a subtle entropy reduction caused by random.sample()\ndrawing without replacement, which prevented character repetition.",
+          "timestamp": "2026-04-07T14:44:42+01:00",
+          "tree_id": "cec231bc7f41b7cadbfd8b457fbd10f6608e3d8f",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/f1b98622a8a3879abbd2dcd9062ebd7c2d196dde"
+        },
+        "date": 1775569678716,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 44193.06799970974,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014162766508984382",
+            "extra": "mean: 22.62798319425499 usec\nrounds: 9104"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40045.473045439634,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002246104724792743",
+            "extra": "mean: 24.97161161925342 usec\nrounds: 13667"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8786.672567907046,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001292092079604812",
+            "extra": "mean: 113.80872477853086 usec\nrounds: 3499"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8339.930073883057,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012708590755734285",
+            "extra": "mean: 119.90508207395578 usec\nrounds: 3375"
           }
         ]
       }
