@@ -121,12 +121,15 @@ _CERT_CACHE: Dict[str, _CertCacheEntry] = {}
 
 def _cert_cache_key(managed_identity: Optional[Dict[str, Any]],
                     attested: bool) -> str:
-    """Build a cache key from managed identity + attestation flag."""
+    """Build a cache key from managed identity + identifier type + attestation flag."""
+    mi_id_type = "SYSTEM_ASSIGNED"
     mi_id = "SYSTEM_ASSIGNED"
     if isinstance(managed_identity, dict):
+        mi_id_type = str(
+            managed_identity.get("ManagedIdentityIdType") or "SYSTEM_ASSIGNED")
         mi_id = str(managed_identity.get("Id") or "SYSTEM_ASSIGNED")
     tag = "#att=1" if attested else "#att=0"
-    return mi_id + tag
+    return mi_id_type + ":" + mi_id + tag
 
 
 def _cert_cache_get(key: str) -> Optional[_CertCacheEntry]:
@@ -231,16 +234,15 @@ def _der_to_pem(der_bytes: bytes) -> str:
             + "\n-----END CERTIFICATE-----")
 
 
-def _try_parse_cert_not_after(der_bytes: bytes) -> Optional[float]:
+def _try_parse_cert_not_after(der_bytes: bytes) -> float:
     """
     Best-effort extraction of notAfter from a DER X.509 certificate.
-    Returns epoch seconds, or None on failure.
+    Returns epoch seconds.  Falls back to now + 8 hours on any failure.
     """
     try:
         from cryptography import x509
         from cryptography.hazmat.backends import default_backend
         cert = x509.load_der_x509_certificate(der_bytes, default_backend())
-        import datetime
         na = cert.not_valid_after_utc if hasattr(
             cert, "not_valid_after_utc") else cert.not_valid_after
         if na.tzinfo is None:
@@ -653,7 +655,7 @@ def _der_integer(value: int) -> bytes:
 
 def _der_oid(oid: str) -> bytes:
     parts = [int(x) for x in oid.split(".")]
-    if len(parts) < 2 or parts[0] > 2 or parts[1] >= 40:
+    if len(parts) < 2 or parts[0] > 2 or (parts[0] < 2 and parts[1] >= 40):
         raise ValueError(f"Invalid OID: {oid}")
     first = 40 * parts[0] + parts[1]
     out = bytearray([first])

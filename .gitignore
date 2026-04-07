@@ -15,6 +15,7 @@ __pycache__/
 # Result of running python setup.py install/pip install -e
 /build/
 /msal.egg-info/
+/msal-key-attestation/msal_key_attestation.egg-info/
 
 # Test results
 /TestResults/

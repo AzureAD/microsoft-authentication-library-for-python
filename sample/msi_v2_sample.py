@@ -79,22 +79,20 @@ def main():
     )
 
     if "access_token" not in result:
-        # Only log error code/description — never log tokens or secrets
-        logger.error("Token acquisition failed: %s - %s",
-                     result.get("error", "unknown"),
-                     result.get("error_description", "no description"))
+        print("ERROR: Token acquisition failed:",
+              result.get("error", "unknown"), "-",
+              result.get("error_description", "no description"))
         sys.exit(1)
 
     token_type = result.get("token_type", "unknown")
     expires_in = result.get("expires_in", 0)
 
-    logger.info("Token acquired successfully!")
-    logger.info("  token_type: %s", token_type)
-    logger.info("  expires_in: %s seconds", expires_in)
+    print("Token acquired successfully!")
+    print(f"  token_type: {token_type}")
+    print(f"  expires_in: {expires_in} seconds")
 
     if token_type != "mtls_pop":
-        logger.warning(
-            "Expected token_type='mtls_pop' but got '%s'.", token_type)
+        print(f"WARNING: Expected token_type='mtls_pop' but got '{token_type}'.")
 
     # --- Verify binding ---
     from msal.msi_v2 import verify_cnf_binding

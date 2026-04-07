@@ -260,13 +260,19 @@ class TestCertificateCache(unittest.TestCase):
     def test_cache_key_generation(self):
         mi_sys = {"ManagedIdentityIdType": "SystemAssigned", "Id": None}
         mi_user = {"ManagedIdentityIdType": "ClientId", "Id": "abc"}
+        mi_obj = {"ManagedIdentityIdType": "ObjectId", "Id": "abc"}
         k1 = _cert_cache_key(mi_sys, True)
         k2 = _cert_cache_key(mi_sys, False)
         k3 = _cert_cache_key(mi_user, True)
+        k4 = _cert_cache_key(mi_obj, True)
         self.assertNotEqual(k1, k2)
         self.assertNotEqual(k1, k3)
+        # Same Id but different IdType must produce different keys
+        self.assertNotEqual(k3, k4)
         self.assertIn("#att=1", k1)
         self.assertIn("#att=0", k2)
+        self.assertIn("ClientId:", k3)
+        self.assertIn("ObjectId:", k4)
 
 
 # ---------------------------------------------------------------------------

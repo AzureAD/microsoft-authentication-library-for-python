@@ -327,9 +327,8 @@ class ManagedIdentityClient(object):
 
         if with_attestation_support and not mtls_proof_of_possession:
             raise ManagedIdentityError(
-                "attestation_requires_pop",
-                "with_attestation_support=True requires "
-                "mtls_proof_of_possession=True (mTLS PoP).")
+                "attestation_requires_pop: with_attestation_support=True "
+                "requires mtls_proof_of_possession=True (mTLS PoP).")
 
         if use_msi_v2:
             # Auto-discover attestation provider from msal-key-attestation
