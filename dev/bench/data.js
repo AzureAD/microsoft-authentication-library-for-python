@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775579953467,
+  "lastUpdate": 1775580005476,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -39975,6 +39975,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000163678360539388",
             "extra": "mean: 137.74621586829298 usec\nrounds: 4739"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107404295+4gust@users.noreply.github.com",
+            "name": "Nilesh Choudhary",
+            "username": "4gust"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ecf515a542feb3bcdfa34ed69144c793ed3be4b6",
+          "message": "Added withFmi method for cca app (#876)\n\n* Added withFmi method for cca app\n\n* Added Cache support for fmi keys\n\n* updated the cache key ext\n\n* updated cache key excluded\n\n* Update msal/token_cache.py\n\nCo-authored-by: Bogdan Gavril <bogavril@microsoft.com>\n\n* updated API for fmi\n\n---------\n\nCo-authored-by: Bogdan Gavril <bogavril@microsoft.com>",
+          "timestamp": "2026-04-07T17:36:39+01:00",
+          "tree_id": "b73246323efda29708239144d5528b5b8b26690e",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/ecf515a542feb3bcdfa34ed69144c793ed3be4b6"
+        },
+        "date": 1775580003775,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38818.69641180443,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000028375340808935248",
+            "extra": "mean: 25.760782623702653 usec\nrounds: 8713"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37971.03319184414,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000030527018403276894",
+            "extra": "mean: 26.335864893315353 usec\nrounds: 15188"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7477.060557545504,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001690701092165749",
+            "extra": "mean: 133.74239680202217 usec\nrounds: 4065"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7348.909915192269,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001542184743458219",
+            "extra": "mean: 136.0746031098732 usec\nrounds: 3923"
           }
         ]
       }
