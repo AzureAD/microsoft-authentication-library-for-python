@@ -39,7 +39,10 @@ pca = msal.PublicClientApplication(
     _AZURE_CLI,
     authority="https://login.microsoftonline.com/organizations",
     enable_broker_on_mac=True,
-    enable_broker_on_windows=True)
+    enable_broker_on_windows=True,
+    enable_broker_on_linux=True,
+    enable_broker_on_wsl=True,
+    )
 
 def interactive_and_silent(scopes, auth_scheme, data, expected_token_type):
     print("An account picker shall be pop up, possibly behind this console. Continue from there.")
@@ -68,10 +71,10 @@ def test_broker_username_password(scopes, expected_token_type):
     print("Testing broker username password flows by using accounts in local .env")
     username = os.getenv("BROKER_TEST_ACCOUNT") or input("Input test account for broker test: ")
     password = os.getenv("BROKER_TEST_ACCOUNT_PASSWORD") or getpass.getpass("Input test account's password: ")
-    assert(username and password, "You need to provide a test account and its password")
+    assert username and password, "You need to provide a test account and its password"
     result = pca.acquire_token_by_username_password(username, password, scopes)
     _assert(result, expected_token_type)
-    assert(result.get("token_source") == "broker")
+    assert result.get("token_source") == "broker"
     print("Username password test succeeds.")
 
 def _assert(result, expected_token_type):

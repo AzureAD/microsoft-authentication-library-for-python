@@ -17,18 +17,14 @@ jobs:
       # Fake a TRAVIS env so that the pre-existing test cases would behave like before
       TRAVIS: true
       LAB_APP_CLIENT_ID: ${{ secrets.LAB_APP_CLIENT_ID }}
-      LAB_APP_CLIENT_SECRET: ${{ secrets.LAB_APP_CLIENT_SECRET }}
       LAB_APP_CLIENT_CERT_BASE64: ${{ secrets.LAB_APP_CLIENT_CERT_BASE64 }}
       LAB_APP_CLIENT_CERT_PFX_PATH: lab_cert.pfx
-      LAB_OBO_CLIENT_SECRET: ${{ secrets.LAB_OBO_CLIENT_SECRET }}
-      LAB_OBO_CONFIDENTIAL_CLIENT_ID: ${{ secrets.LAB_OBO_CONFIDENTIAL_CLIENT_ID }}
-      LAB_OBO_PUBLIC_CLIENT_ID: ${{ secrets.LAB_OBO_PUBLIC_CLIENT_ID }}
 
     # Derived from https://docs.github.com/en/actions/guides/building-and-testing-python#starting-with-the-python-workflow-template
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        python-version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
 
     steps:
     - uses: actions/checkout@v4
@@ -119,7 +115,7 @@ jobs:
     - name: |
         Publish to TestPyPI when pushing to release-* branch.
         You better test with a1, a2, b1, b2 releases first.
-      uses: pypa/gh-action-pypi-publish@v1.4.2
+      uses: pypa/gh-action-pypi-publish@v1.13.0
       if: startsWith(github.ref, 'refs/heads/release-')
       with:
         user: __token__
@@ -127,7 +123,7 @@ jobs:
         repository_url: https://test.pypi.org/legacy/
     - name: Publish to PyPI when tagged
       if: startsWith(github.ref, 'refs/tags')
-      uses: pypa/gh-action-pypi-publish@v1.4.2
+      uses: pypa/gh-action-pypi-publish@v1.13.0
       with:
         user: __token__
         password: ${{ secrets.PYPI_API_TOKEN }}

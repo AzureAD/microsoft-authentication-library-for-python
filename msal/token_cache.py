@@ -126,7 +126,13 @@ class TokenCache(object):
 
     @staticmethod
     def _is_matching(entry: dict, query: dict, target_set: set = None) -> bool:
-        return is_subdict_of(query or {}, entry) and (
+        query_with_lowercase_environment = {
+            # __add() canonicalized entry's environment value to lower case,
+            # so we do the same here.
+            k: v.lower() if k == "environment" and isinstance(v, str) else v
+            for k, v in query.items()
+        } if query else {}
+        return is_subdict_of(query_with_lowercase_environment, entry) and (
             target_set <= set(entry.get("target", "").split())
             if target_set else True)
 

@@ -59,6 +59,10 @@ class _ExpiringMapping(MutableMapping):
         self._expires_in = expires_in
         self._lock = Lock() if lock is None else lock
 
+    def _peek(self):
+        # Returns (sequence, timestamps) without triggering maintenance
+        return self._mapping.get(self._INDEX, ([], {}))
+
     def _validate_key(self, key):
         if key == self._INDEX:
             raise ValueError("key {} is a reserved keyword in {}".format(
@@ -85,7 +89,7 @@ class _ExpiringMapping(MutableMapping):
         # This internal implementation powers both set() and __setitem__(),
         # so that they don't depend on each other.
         self._validate_key(key)
-        sequence, timestamps = self._mapping.get(self._INDEX, ([], {}))
+        sequence, timestamps = self._peek()
         self._maintenance(sequence, timestamps)  # O(logN)
         now = int(time.time())
         expires_at = now + expires_in
@@ -136,7 +140,7 @@ class _ExpiringMapping(MutableMapping):
         self._validate_key(key)
         with self._lock:
             # Skip self._maintenance(), because it would need O(logN) time
-            sequence, timestamps = self._mapping.get(self._INDEX, ([], {}))
+            sequence, timestamps = self._peek()
             expires_at, created_at = timestamps[key]  # Would raise KeyError accordingly
             now = int(time.time())
             if not created_at <= now < expires_at:
@@ -155,14 +159,14 @@ class _ExpiringMapping(MutableMapping):
         with self._lock:
             # Skip self._maintenance(), because it would need O(logN) time
             self._mapping.pop(key, None)  # O(1)
-            sequence, timestamps = self._mapping.get(self._INDEX, ([], {}))
+            sequence, timestamps = self._peek()
             del timestamps[key]  # O(1)
             self._mapping[self._INDEX] = sequence, timestamps
 
     def __len__(self):  # O(logN)
         """Drop all expired items and return the remaining length"""
         with self._lock:
-            sequence, timestamps = self._mapping.get(self._INDEX, ([], {}))
+            sequence, timestamps = self._peek()
             self._maintenance(sequence, timestamps)  # O(logN)
             self._mapping[self._INDEX] = sequence, timestamps
             return len(timestamps)  # Faster than iter(self._mapping) when it is on disk
@@ -170,7 +174,7 @@ class _ExpiringMapping(MutableMapping):
     def __iter__(self):
         """Drop all expired items and return an iterator of the remaining items"""
         with self._lock:
-            sequence, timestamps = self._mapping.get(self._INDEX, ([], {}))
+            sequence, timestamps = self._peek()
             self._maintenance(sequence, timestamps)  # O(logN)
             self._mapping[self._INDEX] = sequence, timestamps
         return iter(timestamps)  # Faster than iter(self._mapping) when it is on disk

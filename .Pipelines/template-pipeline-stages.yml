@@ -1,0 +1,204 @@
+# template-pipeline-stages.yml
+#
+# Shared stages template for the msal Python package.
+#
+# Called from:
+#   pipeline-publish.yml — release build (runPublish: true)
+#   azure-pipelines.yml  — PR gate and post-merge CI (runPublish: false)
+#
+# Parameters:
+#   packageVersion  - Version to validate against msal/sku.py
+#                     Required when runPublish is true; unused otherwise.
+#   runPublish      - When true: also runs the Validate stage before CI.
+#                     When false (PR / merge builds): only PreBuildCheck + CI run.
+#
+# Stage flow:
+#
+#   runPublish: true  → PreBuildCheck ─► Validate ─► CI
+#   runPublish: false → PreBuildCheck ─► CI  (Validate is skipped)
+#
+# Build and Publish stages are defined in pipeline-publish.yml (not here),
+# so that the PR build never references PyPI service connections.
+
+parameters:
+- name: packageVersion
+  type: string
+  default: ''
+- name: runPublish
+  type: boolean
+  default: false
+
+stages:
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 0 · PreBuildCheck — SDL security scans (PoliCheck + CredScan)
+#           Always runs, mirrors MSAL.NET pre-build analysis.
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: PreBuildCheck
+  displayName: 'Pre-build security checks'
+  jobs:
+  - job: SecurityScan
+    displayName: 'PoliCheck + CredScan'
+    pool:
+      vmImage: windows-latest
+    variables:
+      Codeql.SkipTaskAutoInjection: true
+    steps:
+    - task: NodeTool@0
+      displayName: 'Install Node.js (includes npm)'
+      inputs:
+        versionSpec: '20.x'
+
+    - task: securedevelopmentteam.vss-secure-development-tools.build-task-policheck.PoliCheck@2
+      displayName: 'Run PoliCheck'
+      inputs:
+        targetType: F
+      continueOnError: true
+
+    - task: securedevelopmentteam.vss-secure-development-tools.build-task-credscan.CredScan@3
+      displayName: 'Run CredScan'
+      inputs:
+        suppressionsFile: '$(Build.SourcesDirectory)/.Pipelines/credscan-exclusion.json'
+        toolMajorVersion: V2
+        debugMode: false
+
+    - task: securedevelopmentteam.vss-secure-development-tools.build-task-postanalysis.PostAnalysis@2
+      displayName: 'Post Analysis'
+      inputs:
+        GdnBreakGdnToolCredScan: true
+        GdnBreakGdnToolPoliCheck: true
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 1 · Validate — verify packageVersion matches msal/sku.py __version__
+#           Skipped when runPublish is false (PR / merge builds).
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: Validate
+  displayName: 'Validate version'
+  dependsOn: PreBuildCheck
+  condition: and(${{ parameters.runPublish }}, eq(dependencies.PreBuildCheck.result, 'Succeeded'))
+  jobs:
+  - job: ValidateVersion
+    displayName: 'Check version matches source'
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.12'
+      displayName: 'Set up Python'
+
+    - script: |
+        python - <<'EOF'
+        import sys, runpy
+        ns = runpy.run_path("msal/sku.py")
+        sku_ver = ns.get("__version__", "")
+        param_ver = "${{ parameters.packageVersion }}"
+        if not param_ver:
+            print("##vso[task.logissue type=error]packageVersion is required. Enter the version to publish (must match msal/sku.py __version__).")
+            sys.exit(1)
+        elif param_ver != sku_ver:
+            print(f"##vso[task.logissue type=error]Version mismatch: parameter '{param_ver}' != msal/sku.py '{sku_ver}'")
+            print("Update msal/sku.py __version__ to match the packageVersion parameter, or correct the parameter.")
+            sys.exit(1)
+        else:
+            print(f"Version validated: {param_ver}")
+        EOF
+      displayName: 'Verify version parameter matches msal/sku.py'
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 2 · CI — run the full test matrix across all supported Python versions.
+#           Always runs. Waits for Validate when runPublish is true;
+#           runs immediately when Validate is skipped (PR / merge builds).
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: CI
+  displayName: 'Run tests'
+  dependsOn:
+  - PreBuildCheck
+  - Validate
+  condition: |
+    and(
+      eq(dependencies.PreBuildCheck.result, 'Succeeded'),
+      in(dependencies.Validate.result, 'Succeeded', 'Skipped')
+    )
+  jobs:
+  - job: Test
+    displayName: 'Run unit tests'
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      matrix:
+        Python39:
+          python.version: '3.9'
+        Python310:
+          python.version: '3.10'
+        Python311:
+          python.version: '3.11'
+        Python312:
+          python.version: '3.12'
+        Python313:
+          python.version: '3.13'
+        Python314:
+          python.version: '3.14'
+    steps:
+    # Retrieve the MSID Lab certificate from Key Vault (via AuthSdkResourceManager SC).
+    # Matches the pattern used by MSAL.js (install-keyvault-secrets.yml) and MSAL Java.
+    # Skipped on forked PRs — service connections are not available to forks.
+    # E2E tests self-skip when LAB_APP_CLIENT_CERT_PFX_PATH is unset.
+    - task: AzureKeyVault@2
+      displayName: 'Retrieve lab certificate from Key Vault'
+      condition: ne(variables['System.PullRequest.IsFork'], 'True')
+      inputs:
+        azureSubscription: 'AuthSdkResourceManager'
+        KeyVaultName: 'msidlabs'
+        SecretsFilter: 'LabAuth'
+        RunAsPreJob: false
+
+    - bash: |
+        set -euo pipefail
+        if [ -z "${LAB_AUTH_B64:-}" ]; then
+          echo "##vso[task.logissue type=error]LabAuth secret is empty or was not injected — Key Vault retrieval may have failed."
+          exit 1
+        fi
+        CERT_PATH="$(Agent.TempDirectory)/lab-auth.pfx"
+        printf '%s' "$LAB_AUTH_B64" | base64 -d > "$CERT_PATH"
+        echo "##vso[task.setvariable variable=LAB_APP_CLIENT_CERT_PFX_PATH]$CERT_PATH"
+        echo "Lab cert written to: $CERT_PATH ($(wc -c < "$CERT_PATH") bytes)"
+      displayName: 'Write lab certificate to disk'
+      condition: ne(variables['System.PullRequest.IsFork'], 'True')
+      env:
+        LAB_AUTH_B64: $(LabAuth)
+
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(python.version)'
+      displayName: 'Set up Python'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      displayName: 'Install dependencies'
+
+    # Use bash: explicitly; set -o pipefail so that pytest failures aren't hidden by the pipe to tee.
+    # Without pipefail, tee exits 0 and the step can succeed even when tests fail.
+    # (set -o pipefail also works in script: steps, but bash: makes the shell choice explicit.)
+    - bash: |
+        pip install pytest pytest-azurepipelines
+        mkdir -p test-results
+        set -o pipefail
+        pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
+      displayName: 'Run tests'
+      env:
+        LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
+
+    - task: PublishTestResults@2
+      displayName: 'Publish test results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results/junit.xml'
+        failTaskOnFailedTests: true
+        testRunTitle: 'Python $(python.version)'
+
+    - bash: rm -f "$(Agent.TempDirectory)/lab-auth.pfx"
+      displayName: 'Clean up lab certificate'
+      condition: always()

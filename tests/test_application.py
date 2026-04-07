@@ -24,6 +24,7 @@ _OIDC_DISCOVERY = "msal.authority.tenant_discovery"
 _OIDC_DISCOVERY_MOCK = Mock(return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/tenant",
 })
 
 
@@ -153,8 +154,8 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             return MinimalResponse(status_code=400, text=error_response)
         app._acquire_token_silent_by_finding_rt_belongs_to_me_or_my_family(
             app.authority, self.scopes, self.account, post=tester)
-        self.assertNotEqual([], app.token_cache.find(
-            msal.TokenCache.CredentialType.REFRESH_TOKEN, query={"secret": self.frt}),
+        self.assertIsNotNone(next(app.token_cache.search(
+            msal.TokenCache.CredentialType.REFRESH_TOKEN, query={"secret": self.frt}), None),
             "The FRT should not be removed from the cache")
 
     def test_known_orphan_app_will_skip_frt_and_only_use_its_own_rt(self):
@@ -187,11 +188,11 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
             app.authority, self.scopes, self.account, post=tester)
         logger.debug("%s.cache = %s", self.id(), self.cache.serialize())
         self.assertEqual("at", at.get("access_token"), "New app should get a new AT")
-        app_metadata = app.token_cache.find(
+        app_metadata = next(app.token_cache.search(
             msal.TokenCache.CredentialType.APP_METADATA,
-            query={"client_id": app.client_id})
-        self.assertNotEqual([], app_metadata, "Should record new app's metadata")
-        self.assertEqual("1", app_metadata[0].get("family_id"),
+            query={"client_id": app.client_id}), None)
+        self.assertIsNotNone(app_metadata, "Should record new app's metadata")
+        self.assertEqual("1", app_metadata.get("family_id"),
             "The new family app should be recorded as in the same family")
     # Known family app will simply use FRT, which is largely the same as this one
 
@@ -218,25 +219,25 @@ class TestClientApplicationAcquireTokenSilentFociBehaviors(unittest.TestCase):
         account = app.get_accounts()[0]
         mine = {"home_account_id": account["home_account_id"]}
 
-        self.assertNotEqual([], self.cache.find(
-            self.cache.CredentialType.ACCESS_TOKEN, query=mine))
-        self.assertNotEqual([], self.cache.find(
-            self.cache.CredentialType.REFRESH_TOKEN, query=mine))
-        self.assertNotEqual([], self.cache.find(
-            self.cache.CredentialType.ID_TOKEN, query=mine))
-        self.assertNotEqual([], self.cache.find(
-            self.cache.CredentialType.ACCOUNT, query=mine))
+        self.assertIsNotNone(next(self.cache.search(
+            self.cache.CredentialType.ACCESS_TOKEN, query=mine), None))
+        self.assertIsNotNone(next(self.cache.search(
+            self.cache.CredentialType.REFRESH_TOKEN, query=mine), None))
+        self.assertIsNotNone(next(self.cache.search(
+            self.cache.CredentialType.ID_TOKEN, query=mine), None))
+        self.assertIsNotNone(next(self.cache.search(
+            self.cache.CredentialType.ACCOUNT, query=mine), None))
 
         app.remove_account(account)
 
-        self.assertEqual([], self.cache.find(
-            self.cache.CredentialType.ACCESS_TOKEN, query=mine))
-        self.assertEqual([], self.cache.find(
-            self.cache.CredentialType.REFRESH_TOKEN, query=mine))
-        self.assertEqual([], self.cache.find(
-            self.cache.CredentialType.ID_TOKEN, query=mine))
-        self.assertEqual([], self.cache.find(
-            self.cache.CredentialType.ACCOUNT, query=mine))
+        self.assertIsNone(next(self.cache.search(
+            self.cache.CredentialType.ACCESS_TOKEN, query=mine), None))
+        self.assertIsNone(next(self.cache.search(
+            self.cache.CredentialType.REFRESH_TOKEN, query=mine), None))
+        self.assertIsNone(next(self.cache.search(
+            self.cache.CredentialType.ID_TOKEN, query=mine), None))
+        self.assertIsNone(next(self.cache.search(
+            self.cache.CredentialType.ACCOUNT, query=mine), None))
 
 
 class TestClientApplicationForAuthorityMigration(unittest.TestCase):
@@ -690,6 +691,7 @@ class TestClientCredentialGrant(unittest.TestCase):
     @patch(_OIDC_DISCOVERY, new=Mock(return_value={
         "authorization_endpoint": "https://contoso.com/common",
         "token_endpoint": "https://contoso.com/common",
+        "issuer": "https://contoso.com/common",
         }))
     def test_common_authority_should_emit_warning(self):
         self._test_certain_authority_should_emit_warning(
@@ -698,6 +700,7 @@ class TestClientCredentialGrant(unittest.TestCase):
     @patch(_OIDC_DISCOVERY, new=Mock(return_value={
         "authorization_endpoint": "https://contoso.com/organizations",
         "token_endpoint": "https://contoso.com/organizations",
+        "issuer": "https://contoso.com/organizations",
         }))
     def test_organizations_authority_should_emit_warning(self):
         self._test_certain_authority_should_emit_warning(
@@ -711,14 +714,14 @@ class TestRemoveTokensForClient(unittest.TestCase):
         cca = msal.ConfidentialClientApplication(
             "client_id", client_credential="secret",
             authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com")
-        self.assertEqual(
-            0, len(cca.token_cache.find(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+        self.assertIsNone(next(cca.token_cache.search(
+            msal.TokenCache.CredentialType.ACCESS_TOKEN), None))
         cca.acquire_token_for_client(
             ["scope"],
             post=lambda url, **kwargs: MinimalResponse(
                 status_code=200, text=json.dumps({"access_token": "AT for client"})))
-        self.assertEqual(
-            1, len(cca.token_cache.find(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+        self.assertEqual(1, len(list(cca.token_cache.search(
+            msal.TokenCache.CredentialType.ACCESS_TOKEN))))
         cca.acquire_token_by_username_password(
             "johndoe", "password", ["scope"],
             post=lambda url, **kwargs: MinimalResponse(
@@ -726,10 +729,11 @@ class TestRemoveTokensForClient(unittest.TestCase):
                     access_token=at_for_user, expires_in=3600,
                     uid="uid", utid="utid",  # This populates home_account_id
                     ))))
-        self.assertEqual(
-            2, len(cca.token_cache.find(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+        self.assertEqual(2, len(list(cca.token_cache.search(
+            msal.TokenCache.CredentialType.ACCESS_TOKEN))))
         cca.remove_tokens_for_client()
-        remaining_tokens = cca.token_cache.find(msal.TokenCache.CredentialType.ACCESS_TOKEN)
+        remaining_tokens = list(cca.token_cache.search(
+            msal.TokenCache.CredentialType.ACCESS_TOKEN))
         self.assertEqual(1, len(remaining_tokens))
         self.assertEqual(at_for_user, remaining_tokens[0].get("secret"))
 
@@ -754,6 +758,7 @@ class TestScopeDecoration(unittest.TestCase):
 @patch("msal.authority.tenant_discovery", new=Mock(return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/placeholder",
     }))
 class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
 
@@ -795,6 +800,7 @@ class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
 @patch("msal.authority.tenant_discovery", new=Mock(return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/placeholder",
     }))
 @patch("msal.application._init_broker", new=Mock())  # Pretend pymsalruntime installed and working
 class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
@@ -874,3 +880,50 @@ class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
                 parent_window_handle=app.CONSOLE_WINDOW_HANDLE,
                 )
             self.assertEqual(result.get("error"), "broker_error")
+
+
+class MismatchingScopeTestCase(unittest.TestCase):
+    """Test cache behavior when HTTP response scope differs from requested scope"""
+
+    def test_token_should_be_cached_with_response_scope(self):
+        """Based on https://datatracker.ietf.org/doc/html/rfc6749#section-3.3
+        authorization server may issue an access token with different scope.
+        For example, eSTS normalizes scopes by adding or removing trailing slash.
+        Calling app is supposed to use the normalized scope for subsequent calls.
+        """
+
+        # Create a fresh app instance
+        app = ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/common")
+
+        # Mocked request: ask for "invalid_scope" scope but receive "valid_scope1 valid_scope2" scope in response
+        def mock_post(url, headers=None, *args, **kwargs):
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "AT_with_valid_scope1_valid_scope2_scopes",
+                "expires_in": 3600,
+                "scope": "valid_scope1 valid_scope2",  # Response scope differs from requested scope
+                "token_type": "Bearer"
+            }))
+
+        result1 = app.acquire_token_for_client(["invalid_scope"], post=mock_post)
+        self.assertEqual(result1[app._TOKEN_SOURCE], app._TOKEN_SOURCE_IDP)
+        self.assertEqual("AT_with_valid_scope1_valid_scope2_scopes", result1.get("access_token"))
+        self.assertEqual(["valid_scope1", "valid_scope2"], result1.get("scope").split())  # Scope from response
+
+        # Second request: ask for same "invalid_scope" scope again
+        # Since cached token has "valid_scope1 valid_scope2" scopes, it shouldn't match the "invalid_scope" request
+        # This should go to IDP again and receive the same response
+        result2 = app.acquire_token_for_client(["invalid_scope"], post=mock_post)
+        # Should get a new token from IDP, not from cache
+        self.assertEqual(result2[app._TOKEN_SOURCE], app._TOKEN_SOURCE_IDP)
+        self.assertEqual("AT_with_valid_scope1_valid_scope2_scopes", result2.get("access_token"))
+        self.assertEqual(["valid_scope1", "valid_scope2"], result2.get("scope").split())
+
+        # Third and fourth requests: ask for individual valid scopes
+        # Should hit cache for the token that has "valid_scope1 valid_scope2" scopes
+        for scope in ["valid_scope1", "valid_scope2"]:
+            result = app.acquire_token_for_client([scope])
+            self.assertEqual(result[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
+            self.assertEqual("AT_with_valid_scope1_valid_scope2_scopes", result.get("access_token"))
+            self.assertIsNone(result.get("scope"), "scope field is not returned when token comes from cache")

@@ -27,6 +27,7 @@ except (ImportError, AttributeError):  # AttributeError happens when a prior pym
     min_ver = {
         "win32": "1.20",
         "darwin": "1.31",
+        "linux": "1.33",
     }.get(sys.platform)
     if min_ver:
         raise ImportError(
@@ -59,8 +60,10 @@ def _convert_error(error, client_id):
             or "AADSTS7000218" in context  # This "request body must contain ... client_secret" is just a symptom of current app has no WAM redirect_uri
             ):
         raise RedirectUriError(  # This would be seen by either the app developer or end user
-            "MsalRuntime needs the current app to register these redirect_uri "
-            "(1) ms-appx-web://Microsoft.AAD.BrokerPlugin/{} (2) {}".format(
+            """MsalRuntime needs the current app to register these redirect_uri
+(1) ms-appx-web://Microsoft.AAD.BrokerPlugin/{}
+(2) {}
+(3) https://login.microsoftonline.com/common/oauth2/nativeclient""".format(
             client_id, _redirect_uri_on_mac))
         # OTOH, AAD would emit other errors when other error handling branch was hit first,
         # so, the AADSTS50011/RedirectUriError is not guaranteed to happen.
@@ -142,12 +145,20 @@ def _build_msal_runtime_auth_params(client_id, authority):
     params.set_additional_parameter("msal_client_ver", __version__)
     return params
 
+def _set_redirect_uri_for_linux(params):
+    if sys.platform == "linux":
+        # This is required by Linux Java Broker to set a non-empty valid redirect_uri
+        params.set_redirect_uri(
+            "https://login.microsoftonline.com/common/oauth2/nativeclient"
+        )
+
 def _signin_silently(
         authority, client_id, scopes, correlation_id=None, claims=None,
         enable_msa_pt=False,
         auth_scheme=None,
         **kwargs):
     params = _build_msal_runtime_auth_params(client_id, authority)
+    _set_redirect_uri_for_linux(params)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
@@ -237,6 +248,7 @@ def _acquire_token_silently(
     if account is None:
         return
     params = _build_msal_runtime_auth_params(client_id, authority)
+    _set_redirect_uri_for_linux(params)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
