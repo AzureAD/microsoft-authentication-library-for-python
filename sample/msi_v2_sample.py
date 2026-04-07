@@ -79,9 +79,7 @@ def main():
     )
 
     if "access_token" not in result:
-        print("ERROR: Token acquisition failed:",
-              result.get("error", "unknown"), "-",
-              result.get("error_description", "no description"))
+        print("ERROR: Token acquisition failed. Check logs for details.")
         sys.exit(1)
 
     token_type = result.get("token_type", "unknown")
