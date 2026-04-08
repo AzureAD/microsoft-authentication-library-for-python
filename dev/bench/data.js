@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775634166994,
+  "lastUpdate": 1775656035879,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -40183,6 +40183,56 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015258611973290574",
             "extra": "mean: 132.11861944676534 usec\nrounds: 4772"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "YOUR_GITHUB_NOREPLY_EMAIL",
+            "name": "Gladwin Johnson"
+          },
+          "committer": {
+            "email": "YOUR_GITHUB_NOREPLY_EMAIL",
+            "name": "Gladwin Johnson"
+          },
+          "distinct": true,
+          "id": "8a56bc117cdceb36f46582db8ff0cfe8dd2d1bc0",
+          "message": "Fix exception-contract and cache-key regressions vs #882\n\nBlocker 1 — Exception contract:\nRuntimeError from msal-key-attestation (DLL load, attestation call) now\ngets caught and wrapped as MsiV2Error at both the provider call site in\nmsi_v2.py and the outer boundary in managed_identity.py.  Only\nMsiV2Error (or its subclasses) can escape to the caller.\n\nBlocker 2 — Stable attestation cache key:\nThe provider callback signature is expanded from (endpoint, key_handle,\nclient_id) to (endpoint, key_handle, client_id, cache_key).  MSAL now\npasses the stable per-boot key name as cache_key, which\nget_attestation_jwt() uses for its MAA token cache instead of falling\nback to the less cache-friendly numeric handle.\n\nTests: 59 passed (44 core + 15 attestation), including new tests for\nRuntimeError wrapping and cache_key forwarding.\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-04-08T06:44:16-07:00",
+          "tree_id": "6ce49ec99bd59a19b6d6be33c3afa0cae6cebbe7",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/8a56bc117cdceb36f46582db8ff0cfe8dd2d1bc0"
+        },
+        "date": 1775656034574,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 48260.017978649834,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001947651629132855",
+            "extra": "mean: 20.721086354389644 usec\nrounds: 7365"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 40445.0096230759,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000023823516572353423",
+            "extra": "mean: 24.724929214244764 usec\nrounds: 11556"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9744.267699629205,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001913582614491376",
+            "extra": "mean: 102.62443836985848 usec\nrounds: 3018"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8959.87917721607,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015618424108293686",
+            "extra": "mean: 111.60864786468144 usec\nrounds: 3723"
           }
         ]
       }
