@@ -477,6 +477,8 @@ def _parse_expires_on(raw: str) -> int:
                 r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)([+-]\d{2}:\d{2})',
                 r'\1\3',
                 raw)
+            if raw.endswith("Z"):  # fromisoformat() doesn't support Z before 3.11
+                raw = raw[:-1] + "+00:00"
         return int(datetime.datetime.fromisoformat(raw).timestamp())
     except ValueError:
         pass
