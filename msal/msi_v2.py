@@ -1232,9 +1232,10 @@ def _acquire_token_mtls_schannel(
 # Public API
 # ---------------------------------------------------------------------------
 
-# Type alias for attestation provider callback matching .NET delegate:
-#   (endpoint: str, key_handle: int, client_id: str) -> str (JWT)
-AttestationTokenProvider = Callable[[str, int, str], str]
+# Type alias for attestation provider callback.
+# Signature: (endpoint, key_handle, client_id, cache_key) -> JWT string.
+# cache_key is the stable per-boot key name for optimal caching.
+AttestationTokenProvider = Callable[[str, int, str, str], str]
 
 
 def obtain_token(
@@ -1263,8 +1264,10 @@ def obtain_token(
         resource: Resource URI for token acquisition
         attestation_enabled: Whether attestation is enabled
         attestation_token_provider: Callback (endpoint, key_handle,
-            client_id) -> JWT string.  Provided by msal-key-attestation
-            package.  None means non-attested flow.
+            client_id, cache_key) -> JWT string.  Provided by
+            msal-key-attestation package.  cache_key is the stable
+            per-boot key name for optimal caching.  None means
+            non-attested flow.
 
     Returns:
         Token response dict with access_token, expires_in, token_type,
@@ -1335,10 +1338,18 @@ def obtain_token(
                 if not attestation_endpoint:
                     raise MsiV2Error(
                         "[msi_v2] attestationEndpoint missing from metadata.")
-                att_jwt = attestation_token_provider(
-                    str(attestation_endpoint),
-                    int(key.value),
-                    str(client_id))
+                try:
+                    att_jwt = attestation_token_provider(
+                        str(attestation_endpoint),
+                        int(key.value),
+                        str(client_id),
+                        str(key_name))
+                except MsiV2Error:
+                    raise
+                except Exception as exc:
+                    raise MsiV2Error(
+                        f"[msi_v2] Attestation provider failed: {exc}"
+                    ) from exc
                 if not att_jwt or not str(att_jwt).strip():
                     raise MsiV2Error(
                         "[msi_v2] Attestation provider returned empty JWT.")

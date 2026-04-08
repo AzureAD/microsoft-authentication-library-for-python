@@ -403,7 +403,7 @@ class TestManagedIdentityClientStrictGating(unittest.TestCase):
         with patch.dict("sys.modules", {
             "msal_key_attestation": MagicMock(
                 create_attestation_provider=MagicMock(
-                    return_value=lambda ep, kh, ci: "fake.jwt"))
+                    return_value=lambda ep, kh, ci, ck="": "fake.jwt"))
         }):
             res = client.acquire_token_for_client(
                 resource="https://mtlstb.graph.microsoft.com",
@@ -425,13 +425,33 @@ class TestManagedIdentityClientStrictGating(unittest.TestCase):
         with patch.dict("sys.modules", {
             "msal_key_attestation": MagicMock(
                 create_attestation_provider=MagicMock(
-                    return_value=lambda ep, kh, ci: "fake.jwt"))
+                    return_value=lambda ep, kh, ci, ck="": "fake.jwt"))
         }):
             with self.assertRaises(MsiV2Error):
                 client.acquire_token_for_client(
                     resource="https://mtlstb.graph.microsoft.com",
                     mtls_proof_of_possession=True,
                     with_attestation_support=True)
+        mock_v1.assert_not_called()
+
+    @patch("msal.msi_v2.obtain_token",
+           side_effect=RuntimeError("DLL load failed"))
+    @patch("msal.managed_identity._obtain_token")
+    def test_runtime_error_wrapped_as_msi_v2_error(
+            self, mock_v1, mock_v2):
+        """RuntimeError from provider/DLL must surface as MsiV2Error."""
+        client = self._make_client()
+        with patch.dict("sys.modules", {
+            "msal_key_attestation": MagicMock(
+                create_attestation_provider=MagicMock(
+                    return_value=lambda ep, kh, ci, ck="": "fake.jwt"))
+        }):
+            with self.assertRaises(MsiV2Error) as ctx:
+                client.acquire_token_for_client(
+                    resource="R",
+                    mtls_proof_of_possession=True,
+                    with_attestation_support=True)
+            self.assertIn("DLL load failed", str(ctx.exception))
         mock_v1.assert_not_called()
 
     def test_missing_attestation_package_raises_clear_error(self):

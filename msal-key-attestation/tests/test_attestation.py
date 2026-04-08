@@ -109,12 +109,26 @@ class TestCreateAttestationProvider(unittest.TestCase):
     def test_provider_calls_get_attestation_jwt(self, mock_get):
         mock_get.return_value = "fake.attestation.jwt"
         provider = create_attestation_provider()
-        result = provider("https://attest.example.com", 12345, "client-id")
+        result = provider(
+            "https://attest.example.com", 12345, "client-id", "my-key-name")
         self.assertEqual(result, "fake.attestation.jwt")
         mock_get.assert_called_once_with(
             attestation_endpoint="https://attest.example.com",
             client_id="client-id",
             key_handle=12345,
+            cache_key="my-key-name",
+        )
+
+    @patch("msal_key_attestation.attestation.get_attestation_jwt")
+    def test_provider_forwards_empty_cache_key_as_none(self, mock_get):
+        mock_get.return_value = "fake.jwt"
+        provider = create_attestation_provider()
+        provider("https://ep", 1, "cid", "")
+        mock_get.assert_called_once_with(
+            attestation_endpoint="https://ep",
+            client_id="cid",
+            key_handle=1,
+            cache_key=None,
         )
 
 

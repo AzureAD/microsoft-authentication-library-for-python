@@ -343,11 +343,17 @@ class ManagedIdentityClient(object):
                     "Install it with: pip install msal-key-attestation")
 
             from .msi_v2 import obtain_token as _obtain_token_v2
-            result = _obtain_token_v2(
-                self._http_client, self._managed_identity, resource,
-                attestation_enabled=True,
-                attestation_token_provider=attestation_token_provider,
-            )
+            try:
+                result = _obtain_token_v2(
+                    self._http_client, self._managed_identity, resource,
+                    attestation_enabled=True,
+                    attestation_token_provider=attestation_token_provider,
+                )
+            except MsiV2Error:
+                raise
+            except Exception as exc:
+                raise MsiV2Error(
+                    f"[msi_v2] Unexpected failure: {exc}") from exc
             if "access_token" in result and "error" not in result:
                 result[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
             return result

@@ -338,17 +338,21 @@ def get_attestation_jwt(
 
 # ---------------------------------------------------------------------------
 # Public factory — matches the callback signature MSAL expects:
-#   (endpoint: str, key_handle: int, client_id: str) -> str
+#   (endpoint: str, key_handle: int, client_id: str, cache_key: str) -> str
 # ---------------------------------------------------------------------------
 
-def create_attestation_provider() -> Callable[[str, int, str], str]:
+def create_attestation_provider() -> Callable[[str, int, str, str], str]:
     """
     Create an attestation token provider callable for MSAL MSI v2.
 
     The returned callable has signature::
 
         provider(attestation_endpoint: str, key_handle: int,
-                 client_id: str) -> str
+                 client_id: str, cache_key: str) -> str
+
+    ``cache_key`` should be the stable per-boot key name.  Using the key
+    name (rather than the numeric handle) maximizes MAA-token cache hits
+    across key re-opens.
 
     It wraps :func:`get_attestation_jwt` with caching support.
 
@@ -372,10 +376,12 @@ def create_attestation_provider() -> Callable[[str, int, str], str]:
         attestation_endpoint: str,
         key_handle: int,
         client_id: str,
+        cache_key: str = "",
     ) -> str:
         return get_attestation_jwt(
             attestation_endpoint=attestation_endpoint,
             client_id=client_id,
             key_handle=key_handle,
+            cache_key=cache_key or None,
         )
     return _provider
