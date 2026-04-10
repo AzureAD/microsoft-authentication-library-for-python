@@ -31,6 +31,7 @@ except ImportError:
     from xml.etree import ElementTree as ET
 import os
 
+from msal.wstrust_request import _build_rst, escape_xml
 from msal.wstrust_response import *
 
 from tests import unittest
@@ -95,4 +96,17 @@ class Test_WsTrustResponse(unittest.TestCase):
         result = parse_token_by_re(rst_body)
         self.assertEqual(result.get("type"), SAML_TOKEN_TYPE_V1)
         self.assertIn(b"<saml:Assertion", result.get("token", ""))
+
+
+class Test_WsTrustRequest(unittest.TestCase):
+
+    def test_escape_xml(self):
+        self.assertEqual(escape_xml('<>&"\''), '&lt;&gt;&amp;&quot;&apos;')
+
+    def test_username_xml_injection_is_prevented(self):
+        malicious = 'admin</wsse:Username><x>INJECTED'
+        rst = _build_rst(malicious, 'pw', 'urn:x', 'https://x',
+            'http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue')
+        self.assertEqual(rst.count('<wsse:Username>'), 1)
+        self.assertNotIn('<x>INJECTED', rst)
 

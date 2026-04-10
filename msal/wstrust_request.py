@@ -60,8 +60,8 @@ def send_request(
     return parse_response(resp.text)
 
 
-def escape_password(password):
-    return (password.replace('&', '&amp;').replace('"', '&quot;')
+def escape_xml(s):
+    return (s.replace('&', '&amp;').replace('"', '&quot;')
         .replace("'", '&apos;')  # the only one not provided by cgi.escape(s, True)
         .replace('<', '&lt;').replace('>', '&gt;'))
 
@@ -116,7 +116,7 @@ def _build_rst(username, password, cloud_audience_urn, endpoint_address, soap_ac
             endpoint_address=endpoint_address,
             time_now=wsu_time_format(now),
             time_expire=wsu_time_format(now + timedelta(minutes=10)),
-            username=username, password=escape_password(password),
+            username=escape_xml(username), password=escape_xml(password),
             wst=Mex.NS["wst"] if soap_action == Mex.ACTION_13 else Mex.NS["wst2005"],
             applies_to=cloud_audience_urn,
             key_type='http://docs.oasis-open.org/ws-sx/ws-trust/200512/Bearer'
