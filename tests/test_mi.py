@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from typing import List, Optional
 import unittest
 try:
@@ -31,6 +32,8 @@ from msal.managed_identity import (
     DEFAULT_TO_VM,
 )
 from msal.token_cache import is_subdict_of
+
+EXPECTED_SKU = "MSAL.Python"  # Hardcoded constant, not imported from product
 
 
 class ManagedIdentityTestCase(unittest.TestCase):
@@ -181,14 +184,23 @@ class VmTestCase(ClientTestCase):
             return mocked_method
 
     def test_happy_path_of_vm(self):
-        self._test_happy_path().assert_called_with(
+        mock_get = self._test_happy_path()
+        mock_get.assert_called_with(
             # The last call contained claims_challenge
             # but since IMDS doesn't support token_sha256_to_refresh,
             # the request shall remain the same as before
             'http://169.254.169.254/metadata/identity/oauth2/token',
             params={'api-version': '2018-02-01', 'resource': 'R'},
-            headers={'Metadata': 'true'},
+            headers={
+                'Metadata': 'true',
+                'x-client-SKU': EXPECTED_SKU,
+                'x-client-Ver': ANY,
+                'x-ms-client-request-id': ANY,
+            },
             )
+        # Validate correlation ID is a valid UUID
+        corr_id = mock_get.call_args.kwargs["headers"]["x-ms-client-request-id"]
+        uuid.UUID(corr_id)
 
     @patch.object(ManagedIdentityClient, "_ManagedIdentityClient__instance", "MixedCaseHostName")
     def test_happy_path_of_theoretical_mixed_case_hostname(self):
@@ -200,11 +212,20 @@ class VmTestCase(ClientTestCase):
 
     @patch.dict(os.environ, {"AZURE_POD_IDENTITY_AUTHORITY_HOST": "http://localhost:1234//"})
     def test_happy_path_of_pod_identity(self):
-        self._test_happy_path().assert_called_with(
+        mock_get = self._test_happy_path()
+        mock_get.assert_called_with(
             'http://localhost:1234/metadata/identity/oauth2/token',
             params={'api-version': '2018-02-01', 'resource': 'R'},
-            headers={'Metadata': 'true'},
+            headers={
+                'Metadata': 'true',
+                'x-client-SKU': EXPECTED_SKU,
+                'x-client-Ver': ANY,
+                'x-ms-client-request-id': ANY,
+            },
             )
+        # Validate correlation ID is a valid UUID
+        corr_id = mock_get.call_args.kwargs["headers"]["x-ms-client-request-id"]
+        uuid.UUID(corr_id)
 
     def test_vm_error_should_be_returned_as_is(self):
         raw_error = '{"raw": "error format is undefined"}'
@@ -229,8 +250,16 @@ class VmTestCase(ClientTestCase):
             mocked_method.assert_called_with(
                 'http://169.254.169.254/metadata/identity/oauth2/token',
                 params={'api-version': '2018-02-01', 'resource': 'R', 'msi_res_id': '1234'},
-                headers={'Metadata': 'true'},
+                headers={
+                    'Metadata': 'true',
+                    'x-client-SKU': EXPECTED_SKU,
+                    'x-client-Ver': ANY,
+                    'x-ms-client-request-id': ANY,
+                },
                 )
+            # Validate correlation ID is a valid UUID
+            corr_id = mocked_method.call_args.kwargs["headers"]["x-ms-client-request-id"]
+            uuid.UUID(corr_id)
 
 
 @patch.dict(os.environ, {"IDENTITY_ENDPOINT": "http://localhost", "IDENTITY_HEADER": "foo"})
