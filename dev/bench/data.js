@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775730047568,
+  "lastUpdate": 1776120166236,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -40441,6 +40441,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000015763452303445292",
             "extra": "mean: 136.9629982436143 usec\nrounds: 3986"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "copilot-swe-agent[bot]",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "40dd39373e0b746c4cf76643e866c34e59bdabfb",
+          "message": "Add MSAL client metadata headers to IMDS managed identity requests\n\nAdd x-client-SKU, x-client-Ver, and x-ms-client-request-id headers to\n_obtain_token_on_azure_vm() for IMDS token requests. Update existing\nIMDS tests to assert the new headers and validate UUID correlation IDs.\n\nAgent-Logs-Url: https://github.com/AzureAD/microsoft-authentication-library-for-python/sessions/3f0bb4c2-0e45-471e-9ab3-2a502ef8cddf\n\nCo-authored-by: gladjohn <90415114+gladjohn@users.noreply.github.com>",
+          "timestamp": "2026-04-13T22:31:24Z",
+          "tree_id": "96239fbdc44073c88ca99caeb65042c4a69e5686",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/40dd39373e0b746c4cf76643e866c34e59bdabfb"
+        },
+        "date": 1776120165023,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38081.299334466836,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000479511851543916",
+            "extra": "mean: 26.259608192909386 usec\nrounds: 8300"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 38057.28571682493,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003367071895801928",
+            "extra": "mean: 26.27617764022265 usec\nrounds: 13730"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7462.153936369107,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017019781897103207",
+            "extra": "mean: 134.00956460120605 usec\nrounds: 4729"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7111.892228971565,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000154721334845087",
+            "extra": "mean: 140.60955478576028 usec\nrounds: 4618"
           }
         ]
       }
