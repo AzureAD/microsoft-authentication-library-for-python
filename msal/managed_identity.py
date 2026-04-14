@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from urllib.parse import urlparse  # Python 3+
 from collections import UserDict  # Python 3+
 from typing import List, Optional, Union  # Needed in Python 3.7 & 3.8
@@ -15,6 +16,7 @@ from .token_cache import TokenCache
 from .individual_cache import _IndividualCache as IndividualCache
 from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
 from .cloudshell import _is_running_in_cloud_shell
+from .sku import SKU, __version__
 
 
 logger = logging.getLogger(__name__)
@@ -480,7 +482,12 @@ def _obtain_token_on_azure_vm(http_client, managed_identity, resource):
             "AZURE_POD_IDENTITY_AUTHORITY_HOST", "http://169.254.169.254"
             ).strip("/") + "/metadata/identity/oauth2/token",
         params=params,
-        headers={"Metadata": "true"},
+        headers={
+            "Metadata": "true",
+            "x-client-SKU": SKU,
+            "x-client-Ver": __version__,
+            "x-ms-client-request-id": str(uuid.uuid4()),
+            },
         )
     try:
         payload = json.loads(resp.text)
