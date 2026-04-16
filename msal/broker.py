@@ -52,6 +52,8 @@ _redirect_uri_on_mac = "msauth.com.msauth.unsignedapp://auth"  # Note:
     # so they have to use a generic placeholder anyway.
     # The v-team chose to combine two situations into using same placeholder.
 
+_redirect_uri_on_linux = "https://login.microsoftonline.com/common/oauth2/nativeclient"
+
 
 def _convert_error(error, client_id):
     context = error.get_context()  # Available since pymsalruntime 0.0.4
@@ -145,12 +147,11 @@ def _build_msal_runtime_auth_params(client_id, authority):
     params.set_additional_parameter("msal_client_ver", __version__)
     return params
 
-def _set_redirect_uri_for_linux(params):
+def _set_redirect_uri(params):
     if sys.platform == "linux":
-        # This is required by Linux Java Broker to set a non-empty valid redirect_uri
-        params.set_redirect_uri(
-            "https://login.microsoftonline.com/common/oauth2/nativeclient"
-        )
+        params.set_redirect_uri(_redirect_uri_on_linux)
+    elif sys.platform == "darwin":
+        params.set_redirect_uri(_redirect_uri_on_mac)
 
 def _signin_silently(
         authority, client_id, scopes, correlation_id=None, claims=None,
@@ -158,7 +159,7 @@ def _signin_silently(
         auth_scheme=None,
         **kwargs):
     params = _build_msal_runtime_auth_params(client_id, authority)
-    _set_redirect_uri_for_linux(params)
+    _set_redirect_uri(params)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
@@ -248,7 +249,7 @@ def _acquire_token_silently(
     if account is None:
         return
     params = _build_msal_runtime_auth_params(client_id, authority)
-    _set_redirect_uri_for_linux(params)
+    _set_redirect_uri(params)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
