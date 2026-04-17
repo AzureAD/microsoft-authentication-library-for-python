@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776455630453,
+  "lastUpdate": 1776455754963,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -40701,6 +40701,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000017798142470320705",
             "extra": "mean: 136.7028047316711 usec\nrounds: 5495"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90415114+gladjohn@users.noreply.github.com",
+            "name": "Gladwin Johnson",
+            "username": "gladjohn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ddfd537100b8050e78d6f529f7456ed1a8d32812",
+          "message": "Create design document for MSI v2 In-Memory Key Approach\n\nAdd design document for MSI v2 In-Memory Key Approach, detailing goals, .NET reference implementation, Python implementation design, comparison with KeyGuard, and API design.",
+          "timestamp": "2026-04-17T12:52:38-07:00",
+          "tree_id": "7815496fc3f0ed45f6eb138657cb5364fa1fe708",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/ddfd537100b8050e78d6f529f7456ed1a8d32812"
+        },
+        "date": 1776455753496,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 39251.7792064505,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003366478521781035",
+            "extra": "mean: 25.476552151696186 usec\nrounds: 8226"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 36966.0089954583,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003696634451242461",
+            "extra": "mean: 27.051878933505144 usec\nrounds: 14777"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7463.3740728674275,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016945962140217356",
+            "extra": "mean: 133.98765628476667 usec\nrounds: 4495"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7034.165048698833,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015699108449699206",
+            "extra": "mean: 142.16328349943655 usec\nrounds: 4515"
           }
         ]
       }
