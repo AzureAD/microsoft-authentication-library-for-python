@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777299555974,
+  "lastUpdate": 1777299939559,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -40805,6 +40805,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000017371010222224922",
             "extra": "mean: 137.5071931882834 usec\nrounds: 5461"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "Copilot",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "faf5dce2f72a5716c12b901eb52dea27e30d3e58",
+          "message": "Bump cryptography dependency ceiling to <50 (N+3) (#906)\n\n* Initial plan\n\n* Bump cryptography dependency ceiling to <50 (N+3)\n\nAgent-Logs-Url: https://github.com/AzureAD/microsoft-authentication-library-for-python/sessions/f2f7ccee-f03f-4253-b23a-c0fc969f0a1c\n\nCo-authored-by: gladjohn <90415114+gladjohn@users.noreply.github.com>\n\n---------\n\nCo-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>\nCo-authored-by: gladjohn <90415114+gladjohn@users.noreply.github.com>",
+          "timestamp": "2026-04-27T07:22:36-07:00",
+          "tree_id": "c518d67e1ecf3512c20b8c875012bcbccaecdb4c",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/faf5dce2f72a5716c12b901eb52dea27e30d3e58"
+        },
+        "date": 1777299938105,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 47648.927213499104,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001629209804703627",
+            "extra": "mean: 20.986831361791847 usec\nrounds: 6932"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 44224.92247170112,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000023413433016150757",
+            "extra": "mean: 22.611684636414804 usec\nrounds: 16064"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9670.567693763172,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016190532313169112",
+            "extra": "mean: 103.40654568241415 usec\nrounds: 3590"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 8987.752505634046,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015048211290195605",
+            "extra": "mean: 111.2625207884999 usec\nrounds: 5123"
           }
         ]
       }
