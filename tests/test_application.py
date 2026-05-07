@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import time
+import warnings
 from unittest.mock import patch, Mock
 import msal
 from msal.application import (
@@ -705,6 +706,99 @@ class TestClientCredentialGrant(unittest.TestCase):
     def test_organizations_authority_should_emit_warning(self):
         self._test_certain_authority_should_emit_warning(
             authority="https://login.microsoftonline.com/organizations")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestClientAssertionCallback(unittest.TestCase):
+    """Issue #746: client_credential={'client_assertion': callable} support."""
+
+    _AUTHORITY = "https://login.microsoftonline.com/my_tenant"
+
+    def _mock_post_capturing(self, captured):
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured.append(dict(data or {}))
+            return MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an AT", "expires_in": 3600}))
+        return mock_post
+
+    def test_callable_client_assertion_is_invoked_per_request(self):
+        calls = {"n": 0}
+        def assertion_cb():
+            calls["n"] += 1
+            return "assertion-{}".format(calls["n"])
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={"client_assertion": assertion_cb},
+            authority=self._AUTHORITY)
+        captured = []
+        app.acquire_token_for_client(
+            ["s1"], post=self._mock_post_capturing(captured))
+        app.acquire_token_for_client(
+            ["s2"], post=self._mock_post_capturing(captured))
+        self.assertEqual(2, calls["n"], "Callable should be called per request")
+        self.assertEqual("assertion-1", captured[0]["client_assertion"])
+        self.assertEqual("assertion-2", captured[1]["client_assertion"])
+        self.assertEqual(
+            "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            captured[0]["client_assertion_type"])
+
+    def test_autorefresher_caches_assertion(self):
+        from msal import AutoRefresher
+        calls = {"n": 0}
+        def assertion_cb():
+            calls["n"] += 1
+            return "static-assertion"
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={
+                "client_assertion": AutoRefresher(assertion_cb, expires_in=3600)},
+            authority=self._AUTHORITY)
+        captured = []
+        app.acquire_token_for_client(
+            ["s1"], post=self._mock_post_capturing(captured))
+        app.acquire_token_for_client(
+            ["s2"], post=self._mock_post_capturing(captured))
+        self.assertEqual(
+            1, calls["n"],
+            "AutoRefresher should reuse the assertion within its lifetime")
+        self.assertEqual("static-assertion", captured[0]["client_assertion"])
+        self.assertEqual("static-assertion", captured[1]["client_assertion"])
+
+    def test_string_client_assertion_still_works_for_backward_compat(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            app = ConfidentialClientApplication(
+                "client_id",
+                client_credential={"client_assertion": "static-jwt"},
+                authority=self._AUTHORITY)
+        captured = []
+        result = app.acquire_token_for_client(
+            ["s"], post=self._mock_post_capturing(captured))
+        self.assertEqual("an AT", result.get("access_token"))
+        self.assertEqual("static-jwt", captured[0]["client_assertion"])
+
+    def test_string_client_assertion_emits_deprecation_warning(self):
+        with self.assertWarns(DeprecationWarning):
+            ConfidentialClientApplication(
+                "client_id",
+                client_credential={"client_assertion": "static-jwt"},
+                authority=self._AUTHORITY)
+
+    def test_callable_client_assertion_does_not_emit_deprecation_warning(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ConfidentialClientApplication(
+                "client_id",
+                client_credential={"client_assertion": lambda: "x"},
+                authority=self._AUTHORITY)
+        offending = [
+            w for w in caught
+            if issubclass(w.category, DeprecationWarning)
+            and "client_assertion" in str(w.message)]
+        self.assertEqual(
+            [], offending,
+            "Callable client_assertion must not emit a deprecation warning")
 
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
