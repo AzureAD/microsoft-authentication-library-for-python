@@ -1,4 +1,6 @@
-﻿import json
+﻿import base64
+import hashlib
+import json
 import threading
 import time
 import logging
@@ -11,6 +13,89 @@ from .oauth2cli.oauth2 import Client
 
 logger = logging.getLogger(__name__)
 _GRANT_TYPE_BROKER = "broker"
+
+# Fields in the request data dict that should NOT be included in the extended
+# cache key hash. Everything else in data IS included, because those are extra
+# body parameters going on the wire and must differentiate cached tokens.
+#
+# Excluded fields and reasons:
+#   - "client_id"              : Standard OAuth2 client identifier, same for every request
+#   - "grant_type"             : It is possible to combine grants to get tokens, e.g. obo + refresh_token, auth_code + refresh_token etc.
+#   - "scope"                  : Already represented as "target" in the AT cache key
+#   - "claims"                 : Handled separately; its presence forces a token refresh
+#   - "username"               : Standard ROPC grant parameter. Tokens are cached by user ID (subject or oid+tid) instead
+#   - "password"               : Standard ROPC grant parameter. Tokens are tied to credentials.
+#   - "refresh_token"          : Standard refresh grant parameter
+#   - "code"                   : Standard authorization code grant parameter
+#   - "redirect_uri"           : Standard authorization code grant parameter
+#   - "code_verifier"          : Standard PKCE parameter
+#   - "device_code"            : Standard device flow parameter
+#   - "assertion"              : Standard OBO/SAML assertion (RFC 7521)
+#   - "requested_token_use"    : OBO indicator ("on_behalf_of"), not an extra param
+#   - "client_assertion"       : Client authentication credential (RFC 7521 §4.2)
+#   - "client_assertion_type"  : Client authentication type (RFC 7521 §4.2)
+#   - "client_secret"          : Client authentication secret
+#   - "token_type"             : Used for SSH-cert/POP detection; AT entry stores separately
+#   - "req_cnf"                : Ephemeral proof-of-possession nonce, changes per request
+#   - "key_id"                 : Already handled as a separate cache lookup field
+#
+# Included fields (examples — anything NOT in this set is included):
+#   - "fmi_path"               : Federated Managed Identity credential path
+#   - any future non-standard body parameter that should isolate cache entries
+_EXT_CACHE_KEY_EXCLUDED_FIELDS = frozenset({
+    # Standard OAuth2 body parameters — these appear in every token request
+    # and must NOT influence the extended cache key.
+    # Only non-standard fields (e.g. fmi_path) should contribute to the hash.
+    "client_id",
+    "grant_type",
+    "scope",
+    "claims",
+    "username",
+    "password",
+    "refresh_token",
+    "code",
+    "redirect_uri",
+    "code_verifier",
+    "device_code",
+    "assertion",
+    "requested_token_use",
+    "client_assertion",
+    "client_assertion_type",
+    "client_secret",
+    "token_type",
+    "req_cnf",
+    "key_id",
+})
+
+
+def _compute_ext_cache_key(data):
+    """Compute an extended cache key hash from extra body parameters in *data*.
+
+    All fields in *data* that go on the wire are included in the hash,
+    EXCEPT those listed in ``_EXT_CACHE_KEY_EXCLUDED_FIELDS``.
+    This ensures tokens acquired with different parameter values
+    (e.g., different FMI paths) are cached separately.
+
+    Returns an empty string when *data* has no hashable fields.
+
+    The algorithm matches the Go MSAL implementation (CacheExtKeyGenerator):
+    sorted key+value pairs are concatenated and SHA256 hashed, then base64url encoded.
+    """
+    if not data:
+        return ""
+    cache_components = {
+        k: str(v) for k, v in data.items()
+        if k not in _EXT_CACHE_KEY_EXCLUDED_FIELDS and v
+    }
+    if not cache_components:
+        return ""
+    # Sort keys for consistent hashing (matches Go implementation)
+    key_str = "".join(
+        k + cache_components[k] for k in sorted(cache_components.keys())
+    )
+    hash_bytes = hashlib.sha256(key_str.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(hash_bytes).rstrip(b"=").decode("ascii").lower()
+
 
 def is_subdict_of(small, big):
     return dict(big, **small) == big
@@ -30,6 +115,7 @@ class TokenCache(object):
 
     class CredentialType:
         ACCESS_TOKEN = "AccessToken"
+        ACCESS_TOKEN_EXTENDED = "atext"  # Used when ext_cache_key is present (matches Go/dotnet)
         REFRESH_TOKEN = "RefreshToken"
         ACCOUNT = "Account"  # Not exactly a credential type, but we put it here
         ID_TOKEN = "IdToken"
@@ -59,18 +145,22 @@ class TokenCache(object):
             self.CredentialType.ACCESS_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         realm=None, target=None,
+                        ext_cache_key=None,
                         # Note: New field(s) can be added here
                         #key_id=None,
                         **ignored_payload_from_a_real_token:
                     "-".join([  # Note: Could use a hash here to shorten key length
                         home_account_id or "",
                         environment or "",
-                        self.CredentialType.ACCESS_TOKEN,
+                        # Use "atext" credential type when ext_cache_key is
+                        # present, matching MSAL Go and MSAL .NET behaviour.
+                        "atext" if ext_cache_key else "AccessToken",
                         client_id or "",
                         realm or "",
                         target or "",
                         #key_id or "",  # So ATs of different key_id can coexist
-                        ]).lower(),
+                        ] + ([ext_cache_key] if ext_cache_key else [])
+                        ).lower(),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         realm=None, **ignored_payload_from_a_real_token:
@@ -98,6 +188,7 @@ class TokenCache(object):
     def _get_access_token(
         self,
         home_account_id, environment, client_id, realm, target,  # Together they form a compound key
+        ext_cache_key=None,
         default=None,
     ):  # O(1)
         return self._get(
@@ -108,6 +199,7 @@ class TokenCache(object):
                 client_id=client_id,
                 realm=realm,
                 target=" ".join(target),
+                ext_cache_key=ext_cache_key,
                 ),
             default=default)
 
@@ -153,7 +245,8 @@ class TokenCache(object):
         ):  # Special case for O(1) AT lookup
             preferred_result = self._get_access_token(
                 query["home_account_id"], query["environment"],
-                query["client_id"], query["realm"], target)
+                query["client_id"], query["realm"], target,
+                ext_cache_key=query.get("ext_cache_key"))
             if preferred_result and self._is_matching(
                 preferred_result, query,
                 # Needs no target_set here because it is satisfied by dict key
@@ -179,6 +272,13 @@ class TokenCache(object):
                 if (entry != preferred_result  # Avoid yielding the same entry twice
                     and self._is_matching(entry, query, target_set=target_set)
                 ):
+                    # Cache isolation for extended cache keys (e.g., FMI path).
+                    # Entries with ext_cache_key must not match queries without one.
+                    if (credential_type == self.CredentialType.ACCESS_TOKEN
+                        and "ext_cache_key" in entry
+                        and "ext_cache_key" not in (query or {})
+                    ):
+                        continue
                     yield entry
             for at in expired_access_tokens:
                 self.remove_at(at)
@@ -278,6 +378,12 @@ class TokenCache(object):
                     # So that we won't accidentally store a user's password etc.
                     "key_id",  # It happens in SSH-cert or POP scenario
                 }})
+                # Compute and store extended cache key for cache isolation
+                # (e.g., different FMI paths should have separate cache entries)
+                ext_cache_key = _compute_ext_cache_key(data)
+                
+                if ext_cache_key:
+                    at["ext_cache_key"] = ext_cache_key
                 if "refresh_in" in response:
                     refresh_in = response["refresh_in"]  # It is an integer
                     at["refresh_on"] = str(now + refresh_in)  # Schema wants a string

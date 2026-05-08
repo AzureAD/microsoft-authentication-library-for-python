@@ -4,7 +4,7 @@ import json
 import time
 import warnings
 
-from msal.token_cache import TokenCache, SerializableTokenCache
+from msal.token_cache import TokenCache, SerializableTokenCache, _compute_ext_cache_key
 from tests import unittest
 
 
@@ -321,3 +321,242 @@ class SerializableTokenCacheTestCase(unittest.TestCase):
             output.get("AccessToken", {}).get("an-entry"), {"foo": "bar"},
             "Undefined token keys and their values should be intact")
 
+
+class TestComputeExtCacheKey(unittest.TestCase):
+    """Tests for the _compute_ext_cache_key hash function."""
+
+    def test_empty_data_returns_empty_string(self):
+        self.assertEqual("", _compute_ext_cache_key(None))
+        self.assertEqual("", _compute_ext_cache_key({}))
+
+    def test_excluded_fields_are_ignored(self):
+        self.assertEqual("", _compute_ext_cache_key({"key_id": "k1", "token_type": "ssh-cert", "req_cnf": "nonce", "claims": "{}"}),
+            "Fields in _EXT_CACHE_KEY_EXCLUDED_FIELDS should produce an empty hash")
+
+    def test_fmi_path_produces_non_empty_hash(self):
+        result = _compute_ext_cache_key({"fmi_path": "SomePath/Credential"})
+        self.assertNotEqual("", result)
+        self.assertIsInstance(result, str)
+
+    def test_same_input_produces_same_hash(self):
+        h1 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        h2 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        self.assertEqual(h1, h2)
+
+    def test_different_fmi_paths_produce_different_hashes(self):
+        h1 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        h2 = _compute_ext_cache_key({"fmi_path": "path/b"})
+        self.assertNotEqual(h1, h2)
+
+    def test_empty_fmi_path_value_is_ignored(self):
+        self.assertEqual("", _compute_ext_cache_key({"fmi_path": ""}))
+
+    def test_excluded_fields_dont_affect_hash(self):
+        h1 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        h2 = _compute_ext_cache_key({"fmi_path": "path/a", "key_id": "k1", "req_cnf": "nonce"})
+        self.assertEqual(h1, h2, "Excluded fields should not affect the hash")
+
+    def test_non_excluded_fields_are_included_in_hash(self):
+        h1 = _compute_ext_cache_key({"fmi_path": "path/a"})
+        h2 = _compute_ext_cache_key({"fmi_path": "path/a", "custom_param": "val"})
+        self.assertNotEqual(h1, h2, "Non-excluded fields should change the hash")
+
+
+class TestExtCacheKeyIsolation(unittest.TestCase):
+    """Tests that ext_cache_key provides proper cache isolation in TokenCache."""
+
+    def _build_event(self, client_id, scope, token_endpoint, access_token, data=None, **kwargs):
+        return {
+            "client_id": client_id,
+            "scope": scope,
+            "token_endpoint": token_endpoint,
+            "response": build_response(access_token=access_token, expires_in=3600),
+            "data": data or {},
+            **kwargs,
+        }
+
+    def test_at_key_includes_ext_cache_key_when_present(self):
+        cache = TokenCache()
+        key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
+        key_without = key_maker(
+            home_account_id="", environment="env", client_id="cid",
+            realm="realm", target="scope")
+        key_with = key_maker(
+            home_account_id="", environment="env", client_id="cid",
+            realm="realm", target="scope", ext_cache_key="somehash")
+        self.assertNotEqual(key_without, key_with,
+            "Keys with and without ext_cache_key should differ")
+        self.assertIn("somehash", key_with)
+
+    def test_different_ext_cache_keys_produce_different_at_keys(self):
+        cache = TokenCache()
+        key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
+        key_a = key_maker(
+            home_account_id="", environment="env", client_id="cid",
+            realm="realm", target="scope", ext_cache_key="hash_a")
+        key_b = key_maker(
+            home_account_id="", environment="env", client_id="cid",
+            realm="realm", target="scope", ext_cache_key="hash_b")
+        self.assertNotEqual(key_a, key_b)
+
+    def test_fmi_tokens_are_stored_with_ext_cache_key(self):
+        cache = TokenCache()
+        event = self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "fmi_token", data={"fmi_path": "some/path"})
+        cache.add(event)
+        at_entries = list(cache.search(TokenCache.CredentialType.ACCESS_TOKEN, target=["s1"]))
+        self.assertEqual(0, len(at_entries),
+            "FMI tokens should NOT be found by a query without ext_cache_key")
+
+    def test_fmi_tokens_found_with_matching_ext_cache_key_query(self):
+        cache = TokenCache()
+        ext_key = _compute_ext_cache_key({"fmi_path": "some/path"})
+        event = self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "fmi_token", data={"fmi_path": "some/path"})
+        cache.add(event)
+        at_entries = list(cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, target=["s1"],
+            query={"client_id": "cid", "environment": "login.example.com",
+                   "realm": "tenant", "home_account_id": None,
+                   "ext_cache_key": ext_key}))
+        self.assertEqual(1, len(at_entries))
+        self.assertEqual("fmi_token", at_entries[0]["secret"])
+
+    def test_non_fmi_tokens_not_affected_by_fmi_cache(self):
+        cache = TokenCache()
+        # Add FMI token
+        cache.add(self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "fmi_token", data={"fmi_path": "some/path"}))
+        # Add regular token
+        cache.add(self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "regular_token"))
+        # Search without ext_cache_key should find only regular token
+        at_entries = list(cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, target=["s1"],
+            query={"client_id": "cid", "environment": "login.example.com",
+                   "realm": "tenant", "home_account_id": None}))
+        self.assertEqual(1, len(at_entries))
+        self.assertEqual("regular_token", at_entries[0]["secret"])
+
+
+class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
+    """Verify that _compute_ext_cache_key produces hashes identical to MSAL Go
+    (CacheExtKeyGenerator) and MSAL .NET (CoreHelpers.ComputeAccessTokenExtCacheKey).
+
+    All three libraries use the same algorithm:
+      1. Sort key-value pairs alphabetically by key (ordinal / case-sensitive)
+      2. Concatenate them: "key1value1key2value2…"
+      3. SHA-256 hash
+      4. Base64url encode (no padding), lowercased
+
+    The expected hashes below are copied from:
+      - MSAL Go:   authority_ext_cachekey_test.go  (TestAppKeyWithCacheKeyComponent)
+      - MSAL .NET: CacheKeyExtensionTests.cs       (RunHappyPathTest, CacheExtEnsurePopKeysFunctionAsync)
+    """
+
+    def test_two_params_hash_matches_go_and_dotnet(self):
+        """Go/dotnet expected: bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"""
+        result = _compute_ext_cache_key({"key1": "value1", "key2": "value2"})
+        self.assertEqual("bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi", result)
+
+    def test_two_different_params_hash_matches_go_and_dotnet(self):
+        """Go/dotnet expected: 3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u"""
+        result = _compute_ext_cache_key({"key3": "value3", "key4": "value4"})
+        self.assertEqual("3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u", result)
+
+    def test_five_params_hash_matches_go_and_dotnet(self):
+        """Go/dotnet expected (full hash): rn_gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e
+        Go test uses substring match 'gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e'."""
+        result = _compute_ext_cache_key({
+            "key3": "value3", "key4": "value4",
+            "key5": "value5", "key6": "value6", "key7": "value7",
+        })
+        self.assertEqual("rn_gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e", result)
+
+    def test_order_independence_matches_go_and_dotnet(self):
+        """Same keys in different insertion order must produce the same hash
+        (mirrors TestCacheKeyComponentHashConsistency in Go)."""
+        h1 = _compute_ext_cache_key({"key3": "value3", "key4": "value4",
+                                      "key5": "value5", "key6": "value6", "key7": "value7"})
+        h2 = _compute_ext_cache_key({"key7": "value7", "key4": "value4",
+                                      "key6": "value6", "key5": "value5", "key3": "value3"})
+        self.assertEqual(h1, h2)
+
+    def test_at_cache_key_uses_atext_credential_type(self):
+        """When ext_cache_key is present the credential type segment of the
+        AT cache key must be 'atext' (not 'accesstoken'), matching Go/dotnet.
+
+        Go:    {hid}-{env}-atext-{clientID}-{realm}-{scopes}-{hash}
+        .NET:  {hid}-{env}-atext-{clientID}-{tenantId}-{scopes}-{hash}
+        """
+        cache = TokenCache()
+        key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
+        key = key_maker(
+            home_account_id="hid", environment="env", client_id="cid",
+            realm="realm", target="scope",
+            ext_cache_key="bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi")
+        self.assertEqual(
+            "hid-env-atext-cid-realm-scope-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi",
+            key)
+
+    def test_at_cache_key_without_ext_uses_accesstoken(self):
+        """Regular ATs (no ext_cache_key) must keep 'accesstoken' credential type."""
+        cache = TokenCache()
+        key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
+        key = key_maker(
+            home_account_id="hid", environment="env", client_id="cid",
+            realm="realm", target="scope")
+        self.assertEqual("hid-env-accesstoken-cid-realm-scope", key)
+
+    def test_dotnet_style_full_at_cache_key(self):
+        """Reproduce the exact cache key from MSAL .NET CacheKeyExtensionTests:
+        expectedCacheKey1 = '-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi'
+        """
+        cache = TokenCache()
+        key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
+        ext_hash = _compute_ext_cache_key({"key1": "value1", "key2": "value2"})
+        key = key_maker(
+            home_account_id="",
+            environment="login.windows.net",
+            client_id="d3adb33f-c0de-ed0c-c0de-deadb33fc0d3",
+            realm="common",
+            target="r1/scope1 r1/scope2",
+            ext_cache_key=ext_hash)
+        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"
+        self.assertEqual(expected, key)
+
+    def test_dotnet_style_second_cache_key(self):
+        """Reproduce CacheKeyExtensionTests expectedCacheKey2."""
+        cache = TokenCache()
+        key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
+        ext_hash = _compute_ext_cache_key({"key3": "value3", "key4": "value4"})
+        key = key_maker(
+            home_account_id="",
+            environment="login.windows.net",
+            client_id="d3adb33f-c0de-ed0c-c0de-deadb33fc0d3",
+            realm="common",
+            target="r1/scope1 r1/scope2",
+            ext_cache_key=ext_hash)
+        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u"
+        self.assertEqual(expected, key)
+
+    def test_go_style_at_cache_key(self):
+        """Reproduce the Go AccessToken.Key() format:
+        Go test: 'testhid-env-atext-clientid-realm-user.read-{hash}'
+        """
+        cache = TokenCache()
+        key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
+        ext_hash = _compute_ext_cache_key({"key1": "value1", "key2": "value2"})
+        key = key_maker(
+            home_account_id="testhid",
+            environment="env",
+            client_id="clientid",
+            realm="realm",
+            target="user.read",
+            ext_cache_key=ext_hash)
+        expected = "testhid-env-atext-clientid-realm-user.read-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"
+        self.assertEqual(expected, key)

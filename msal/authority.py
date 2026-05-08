@@ -89,7 +89,6 @@ class Authority(object):
         self._http_client = http_client
         self._oidc_authority_url = oidc_authority_url
         if oidc_authority_url:
-            logger.debug("Initializing with OIDC authority: %s", oidc_authority_url)
             tenant_discovery_endpoint = self._initialize_oidc_authority(
                 oidc_authority_url)
         else:
@@ -250,8 +249,10 @@ class Authority(object):
             authority_parsed.netloc == issuer_parsed.netloc):
             return True
         
-        # Case 5: Check if issuer host ends with any well-known B2C host (e.g., tenant.b2clogin.com)
-        if any(issuer_host.endswith(h) for h in WELL_KNOWN_B2C_HOSTS):
+        # Case 5: Check if issuer host is a subdomain of a well-known B2C host
+        # e.g., tenant.b2clogin.com matches .b2clogin.com
+        # but fakeb2clogin.com does not
+        if any(issuer_host.endswith("." + h) for h in WELL_KNOWN_B2C_HOSTS):
             return True
 
         return False
