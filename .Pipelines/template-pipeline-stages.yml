@@ -197,11 +197,19 @@ stages:
         pip install pytest pytest-azurepipelines
         mkdir -p test-results
         set -o pipefail
-        pytest -vv --junitxml=test-results/junit.xml 2>&1 | tee test-results/pytest.log
+        pytest -vv --junitxml=test-results/junit.xml --deselect tests/test_cryptography.py::CryptographyTestCase::test_ceiling_should_be_latest_cryptography_version_plus_three --deselect tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography 2>&1 | tee test-results/pytest.log
       displayName: 'Run tests'
       retryCountOnTaskFailure: 3
       env:
         LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
+
+    # Run cryptography version-gating tests separately as a warning-only check.
+    # These tests fail when a new cryptography major version is released and setup.cfg
+    # needs its upper bound bumped. They should not block unrelated PRs.
+    - bash: |
+        pytest -vv tests/test_cryptography.py::CryptographyTestCase::test_ceiling_should_be_latest_cryptography_version_plus_three tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography --junitxml=test-results/junit-crypto-ceiling.xml
+      displayName: 'Check cryptography ceiling (warning only)'
+      continueOnError: true
 
     - task: PublishTestResults@2
       displayName: 'Publish test results'
@@ -211,6 +219,15 @@ stages:
         testResultsFiles: 'test-results/junit.xml'
         failTaskOnFailedTests: true
         testRunTitle: 'Python $(python.version)'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish cryptography ceiling results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results/junit-crypto-ceiling.xml'
+        failTaskOnFailedTests: false
+        testRunTitle: 'Cryptography ceiling check $(python.version)'
 
     - bash: rm -f "$(Agent.TempDirectory)/lab-auth.pfx"
       displayName: 'Clean up lab certificate'
