@@ -910,9 +910,8 @@ class WorldWideTestCase(LabBasedTestCase):
         web_api_app = get_app_config(AppSecrets.WEB_API_CLIENT)
 
         # Step 1: PCA gets token for user to access the WebAPI
-        # Note: Java test uses "organizations" authority for PCA
         config_pca = {
-            "authority": "https://login.microsoftonline.com/organizations",
+            "authority": user.authority,
             "client_id": web_api_app.app_id,
             "username": user.upn,
             "password": password,
@@ -923,7 +922,7 @@ class WorldWideTestCase(LabBasedTestCase):
         # Note: web_api_app.client_secret contains the Key Vault secret name,
         # which we pass to get_secret() to retrieve the actual secret value.
         config_cca = {
-            "authority": user.authority,  # Tenant-specific authority
+            "authority": user.authority,
             "client_id": web_api_app.app_id,
             "client_secret": get_secret(web_api_app.client_secret, vault="msal_team"),
             "scope": ["https://graph.microsoft.com/.default"],
@@ -1247,7 +1246,7 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
 
         # Step 1: PCA gets token for user to access the WebAPI
         config_pca = {
-            "authority": "https://login.microsoftonline.com/organizations",
+            "authority": user.authority,
             "client_id": web_api_app.app_id,
             "username": user.upn,
             "password": password,
