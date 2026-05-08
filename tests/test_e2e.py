@@ -902,30 +902,28 @@ class WorldWideTestCase(LabBasedTestCase):
         """Test On-Behalf-Of flow.
         
         Flow:
-        1. PCA acquires token for user to access the WebAPI (scope: api://<app_id>/access_as_user)
-        2. WebAPI (CCA) uses that token as assertion to get token for downstream service (Graph)
+        1. S2S app (PCA) acquires token for user, targeting the WebAPI
+        2. WebAPI (CCA) uses that token as assertion to get token for downstream (Graph)
         """
         user = get_user_config(UserSecrets.PUBLIC_CLOUD)
         password = get_user_password(user)
+        s2s_app = get_app_config(AppSecrets.S2S_CLIENT)
         web_api_app = get_app_config(AppSecrets.WEB_API_CLIENT)
 
-        # Step 1: PCA gets token for user to access the WebAPI
         config_pca = {
             "authority": user.authority,
-            "client_id": web_api_app.app_id,
+            "client_id": s2s_app.app_id,
             "username": user.upn,
             "password": password,
-            "scope": ["api://%s/access_as_user" % web_api_app.app_id],
+            "scope": [web_api_app.defaultscopes],
         }
 
-        # Step 2: WebAPI (CCA) exchanges the token via OBO for Graph access
-        # Note: web_api_app.client_secret contains the Key Vault secret name,
-        # which we pass to get_secret() to retrieve the actual secret value.
         config_cca = {
             "authority": user.authority,
             "client_id": web_api_app.app_id,
-            "client_secret": get_secret(web_api_app.client_secret, vault="msal_team"),
-            "scope": ["https://graph.microsoft.com/.default"],
+            "client_secret": get_secret(
+                AppSecrets.OBO_CLIENT_SECRET, vault="msal_team"),
+            "scope": ["User.Read"],
             "username": user.upn,
         }
 
@@ -1242,23 +1240,23 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
         """
         user = get_user_config(UserSecrets.PUBLIC_CLOUD)
         password = get_user_password(user)
+        s2s_app = get_app_config(AppSecrets.S2S_CLIENT)
         web_api_app = get_app_config(AppSecrets.WEB_API_CLIENT)
 
-        # Step 1: PCA gets token for user to access the WebAPI
         config_pca = {
             "authority": user.authority,
-            "client_id": web_api_app.app_id,
+            "client_id": s2s_app.app_id,
             "username": user.upn,
             "password": password,
-            "scope": ["api://%s/access_as_user" % web_api_app.app_id],
+            "scope": [web_api_app.defaultscopes],
         }
 
-        # Step 2: WebAPI (CCA) exchanges the token via OBO for Graph access
         config_cca = {
             "authority": user.authority,
             "client_id": web_api_app.app_id,
-            "client_secret": get_secret(web_api_app.client_secret, vault="msal_team"),
-            "scope": ["https://graph.microsoft.com/.default"],
+            "client_secret": get_secret(
+                AppSecrets.OBO_CLIENT_SECRET, vault="msal_team"),
+            "scope": ["User.Read"],
             "username": user.upn,
         }
 

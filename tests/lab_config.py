@@ -95,6 +95,7 @@ class AppSecrets:
     B2C_CLIENT = "MSAL-App-B2C-JSON"
     CIAM_CLIENT = "MSAL-App-CIAM-JSON"
     ARLINGTON_CLIENT = "MSAL-App-Arlington-JSON"
+    OBO_CLIENT_SECRET = "IdentityDivisionDotNetOBOServiceSecret"
 
 # =============================================================================
 # Data Classes
