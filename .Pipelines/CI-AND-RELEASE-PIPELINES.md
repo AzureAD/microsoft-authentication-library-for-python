@@ -9,7 +9,7 @@ including what each pipeline does, when it runs, and how to trigger a release.
 
 | File | ADO Pipeline | Purpose |
 |------|-------------|---------|
-| [`azure-pipelines.yml`](../azure-pipelines.yml) | [MSAL.Python-PR-OneBranch-Official (3064)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3064) | PR gate and post-merge CI — calls the shared template with `runPublish: false` |
+| [`azure-pipelines.yml`](../azure-pipelines.yml) | [MSAL.Python-PR-OneBranch-Official (3064)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3064) | PR gate, post-merge CI, and performance benchmarks — calls the shared template with `runPublish: false`; runs benchmarks on post-merge pushes to `dev` |
 | [`pipeline-publish.yml`](pipeline-publish.yml) | [MSAL.Python-Publish (3067)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3067) | Release pipeline — manually queued, builds and publishes to PyPI |
 | [`template-pipeline-stages.yml`](template-pipeline-stages.yml) | — | Shared stages template — PreBuildCheck, Validate, and CI stages reused by both pipelines |
 | [`credscan-exclusion.json`](credscan-exclusion.json) | — | CredScan suppression file for known test fixtures |
@@ -29,13 +29,14 @@ including what each pipeline does, when it runs, and how to trigger a release.
 ### Stages
 
 ```
-PreBuildCheck ─► CI
+PreBuildCheck ─► CI ─► Benchmark (post-merge to dev only)
 ```
 
-| Stage | What it does |
-|-------|-------------|
-| **PreBuildCheck** | Runs SDL security scans: PoliCheck (policy/offensive content), CredScan (leaked credentials), and PostAnalysis (breaks the build on findings) |
-| **CI** | Runs the full test suite on Python 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 |
+| Stage | What it does | When it runs |
+|-------|-------------|-------------|
+| **PreBuildCheck** | Runs SDL security scans: PoliCheck (policy/offensive content), CredScan (leaked credentials), and PostAnalysis (breaks the build on findings) | Always |
+| **CI** | Runs the full test suite on Python 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 | Always |
+| **Benchmark** | Runs performance benchmarks on Python 3.9 and publishes `benchmark-results` artifact | Post-merge pushes to `dev` and manual runs only |
 
 The Validate stage is **skipped** on PR/CI runs (it only applies to release builds).
 
