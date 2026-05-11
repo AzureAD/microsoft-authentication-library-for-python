@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG if "-v" in sys.argv else logging.INFO)
 
 # Test configuration
-_FMI_TENANT_ID = "f645ad92-e38d-4d1a-b510-d1b09a74a8ca"
-_FMI_CLIENT_ID = "4df2cbbb-8612-49c1-87c8-f334d6d065ad"
-_FMI_SCOPE = "3091264c-7afb-45d4-b527-39737ee86187/.default"
+_FMI_TENANT_ID = "10c419d4-4a50-45b2-aa4e-919fb84df24f"
+_FMI_CLIENT_ID = "3bf56293-fbb5-42bd-a407-248ba7431a8c"
+_FMI_SCOPE = "aa464f73-2868-4f67-b0e7-fc2f749e757f/.default"
 _FMI_PATH = "SomeFmiPath/FmiCredentialPath"
 _FMI_CLIENT_ID_URN = "urn:microsoft:identity:fmi"
 _FMI_SCOPE_FOR_RMA = "api://AzureFMITokenExchange/.default"
