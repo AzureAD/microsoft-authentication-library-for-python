@@ -221,6 +221,9 @@ class Client(oauth2.Client):
             **kwargs):
         """A native app can use this method to obtain token via a local browser.
 
+        This flow still uses the nonce generated during flow initiation,
+        but the SDK no longer validates that nonce against the ID token.
+
         It implements PKCE to mitigate the auth code interception attack.
 
         :param string display: Defined in
