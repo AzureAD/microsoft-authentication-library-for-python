@@ -195,6 +195,9 @@ class Client(oauth2.Client):
         """Validate the auth_response being redirected back, and then obtain tokens,
         including ID token which can be used for user sign in.
 
+        This method still uses the nonce generated during flow initiation,
+        but the SDK no longer validates that nonce against the ID token.
+
         It implements PKCE to mitigate the auth code interception attack.
 
         See :func:`oauth2.Client.obtain_token_by_auth_code_flow` in parent class

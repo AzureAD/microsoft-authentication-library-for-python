@@ -1202,7 +1202,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
 
         :param nonce:
             If you provided a nonce when calling :func:`get_authorization_request_url`,
-            same nonce can still be provided here for backward compatibility.
+            this parameter is ignored and only kept for backward compatibility.
 
         :param claims_challenge:
             The claims_challenge parameter requests specific claims requested by the resource provider
