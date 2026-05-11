@@ -84,6 +84,8 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
 
     The optional parameters ``client_id``, ``issuer``, ``nonce``, and ``now``
     are ignored and only kept for backward compatibility.
+    Callers that require claim validation are responsible for performing it
+    themselves.
     """
     return json.loads(decode_part(id_token.split('.')[1]))
 

@@ -1203,6 +1203,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         :param nonce:
             If you provided a nonce when calling :func:`get_authorization_request_url`,
             this parameter is ignored and only kept for backward compatibility.
+            Applications that require nonce validation need to validate the ID
+            token nonce themselves.
 
         :param claims_challenge:
             The claims_challenge parameter requests specific claims requested by the resource provider
