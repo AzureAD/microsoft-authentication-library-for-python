@@ -81,6 +81,9 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     per `specs <https://openid.net/specs/openid-connect-core-1_0.html#IDToken>`_
     and it may contain other optional content such as "preferred_username",
     `maybe more <https://openid.net/specs/openid-connect-core-1_0.html#Claims>`_
+
+    The optional parameters ``client_id``, ``issuer``, ``nonce``, and ``now``
+    are ignored and only kept for backward compatibility.
     """
     return json.loads(decode_part(id_token.split('.')[1]))
 
@@ -144,9 +147,7 @@ class Client(oauth2.Client):
         plus new parameter(s):
 
         :param nonce:
-            Optional. If you provided a nonce when calling
-            :func:`build_auth_request_uri`, you may still pass it here for
-            backward compatibility.
+            Optional. Ignored and only kept for backward compatibility.
         """
         warnings.warn(
             "Use obtain_token_by_auth_code_flow() instead", DeprecationWarning)

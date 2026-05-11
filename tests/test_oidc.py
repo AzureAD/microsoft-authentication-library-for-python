@@ -99,7 +99,7 @@ class TestIdToken(unittest.TestCase):
             ), {
                 "iss": "issuer",
                 "iat": 1706570732,
-                "exp": 1674948332,  # 2023-1-28
+                "exp": 1674948332,  # 2023-01-28
                 "aud": "foo",
                 "sub": "subject",
             })
