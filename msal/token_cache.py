@@ -343,8 +343,7 @@ class TokenCache(object):
         refresh_token = response.get("refresh_token")
         id_token = response.get("id_token")
         id_token_claims = response.get("id_token_claims") or (  # Prefer the claims from broker
-            # Only use decode_id_token() when necessary, it contains time-sensitive validation
-            decode_id_token(id_token, client_id=event["client_id"]) if id_token else {})
+            decode_id_token(id_token) if id_token else {})
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
         target = ' '.join(sorted(event.get("scope") or []))  # Schema should have required sorting
@@ -548,4 +547,3 @@ class SerializableTokenCache(TokenCache):
         with self._lock:
             self.has_state_changed = False
             return json.dumps(self._cache, indent=4)
-

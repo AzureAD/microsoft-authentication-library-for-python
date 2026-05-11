@@ -75,61 +75,14 @@ class IdTokenNonceError(IdTokenError):
     pass
 
 def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None):
-    """Decodes and validates an id_token and returns its claims as a dictionary.
+    """Decodes an id_token and returns its claims as a dictionary.
 
     ID token claims would at least contain: "iss", "sub", "aud", "exp", "iat",
     per `specs <https://openid.net/specs/openid-connect-core-1_0.html#IDToken>`_
     and it may contain other optional content such as "preferred_username",
     `maybe more <https://openid.net/specs/openid-connect-core-1_0.html#Claims>`_
     """
-    decoded = json.loads(decode_part(id_token.split('.')[1]))
-    # Based on https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
-    _now = int(now or time.time())
-    skew = 120  # 2 minutes
-
-    if _now + skew < decoded.get("nbf", _now - 1):  # nbf is optional per JWT specs
-        # This is not an ID token validation, but a JWT validation
-        # https://tools.ietf.org/html/rfc7519#section-4.1.5
-        _IdTokenTimeError("0. The ID token is not yet valid.", _now, decoded).log()
-
-    if issuer and issuer != decoded["iss"]:
-        # https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationResponse
-        raise IdTokenIssuerError(
-            '2. The Issuer Identifier for the OpenID Provider, "%s", '
-            "(which is typically obtained during Discovery), "
-            "MUST exactly match the value of the iss (issuer) Claim." % issuer,
-            _now,
-            decoded)
-
-    if client_id:
-        valid_aud = client_id in decoded["aud"] if isinstance(
-            decoded["aud"], list) else client_id == decoded["aud"]
-        if not valid_aud:
-            raise IdTokenAudienceError(
-                "3. The aud (audience) claim must contain this client's client_id "
-                '"%s", case-sensitively. Was your client_id in wrong casing?'
-                # Some IdP accepts wrong casing request but issues right casing IDT
-                % client_id,
-                _now,
-                decoded)
-
-    # Per specs:
-    # 6. If the ID Token is received via direct communication between
-    # the Client and the Token Endpoint (which it is during _obtain_token()),
-    # the TLS server validation MAY be used to validate the issuer
-    # in place of checking the token signature.
-
-    if _now - skew > decoded["exp"]:
-        _IdTokenTimeError("9. The ID token already expires.", _now, decoded).log()
-
-    if nonce and nonce != decoded.get("nonce"):
-        raise IdTokenNonceError(
-            "11. Nonce must be the same value "
-            "as the one that was sent in the Authentication Request.",
-            _now,
-            decoded)
-
-    return decoded
+    return json.loads(decode_part(id_token.split('.')[1]))
 
 
 def _nonce_hash(nonce):
@@ -158,9 +111,7 @@ class Client(oauth2.Client):
 
     def decode_id_token(self, id_token, nonce=None):
         """See :func:`~decode_id_token`."""
-        return decode_id_token(
-            id_token, nonce=nonce,
-            client_id=self.client_id, issuer=self.configuration.get("issuer"))
+        return decode_id_token(id_token)
 
     def _obtain_token(self, grant_type, *args, **kwargs):
         """The result will also contain one more key "id_token_claims",
@@ -193,20 +144,14 @@ class Client(oauth2.Client):
         plus new parameter(s):
 
         :param nonce:
-            If you provided a nonce when calling :func:`build_auth_request_uri`,
-            same nonce should also be provided here, so that we'll validate it.
-            An exception will be raised if the nonce in id token mismatches.
+            Optional. If you provided a nonce when calling
+            :func:`build_auth_request_uri`, you may still pass it here for
+            backward compatibility.
         """
         warnings.warn(
             "Use obtain_token_by_auth_code_flow() instead", DeprecationWarning)
-        result = super(Client, self).obtain_token_by_authorization_code(
+        return super(Client, self).obtain_token_by_authorization_code(
             code, **kwargs)
-        nonce_in_id_token = result.get("id_token_claims", {}).get("nonce")
-        if "id_token_claims" in result and nonce and nonce != nonce_in_id_token:
-            raise ValueError(
-                'The nonce in id token ("%s") should match your nonce ("%s")' %
-                (nonce_in_id_token, nonce))
-        return result
 
     def initiate_auth_code_flow(
             self,
@@ -249,42 +194,13 @@ class Client(oauth2.Client):
         """Validate the auth_response being redirected back, and then obtain tokens,
         including ID token which can be used for user sign in.
 
-        Internally, it implements nonce to mitigate replay attack.
         It also implements PKCE to mitigate the auth code interception attack.
 
         See :func:`oauth2.Client.obtain_token_by_auth_code_flow` in parent class
         for descriptions on other parameters and return value.
         """
-        result = super(Client, self).obtain_token_by_auth_code_flow(
+        return super(Client, self).obtain_token_by_auth_code_flow(
             auth_code_flow, auth_response, **kwargs)
-        if "id_token_claims" in result:
-            nonce_in_id_token = result.get("id_token_claims", {}).get("nonce")
-            expected_hash = _nonce_hash(auth_code_flow["nonce"])
-            if nonce_in_id_token != expected_hash:
-                raise RuntimeError(
-                    'The nonce in id token ("%s") should match our nonce ("%s")' %
-                    (nonce_in_id_token, expected_hash))
-
-            if auth_code_flow.get("max_age") is not None:
-                auth_time = result.get("id_token_claims", {}).get("auth_time")
-                if not auth_time:
-                    raise RuntimeError(
-                        "13. max_age was requested, ID token should contain auth_time")
-                now = int(time.time())
-                skew = 120  # 2 minutes. Hardcoded, for now
-                if now - skew > auth_time + auth_code_flow["max_age"]:
-                    raise RuntimeError(
-                            "13. auth_time ({auth_time}) was requested, "
-                            "by using max_age ({max_age}) parameter, "
-                            "and now ({now}) too much time has elasped "
-                            "since last end-user authentication. "
-                            "The ID token was: {id_token}".format(
-                        auth_time=auth_time,
-                        max_age=auth_code_flow["max_age"],
-                        now=now,
-                        id_token=json.dumps(result["id_token_claims"], indent=2),
-                        ))
-        return result
 
     def obtain_token_by_browser(
             self,
@@ -299,7 +215,6 @@ class Client(oauth2.Client):
             **kwargs):
         """A native app can use this method to obtain token via a local browser.
 
-        Internally, it implements nonce to mitigate replay attack.
         It also implements PKCE to mitigate the auth code interception attack.
 
         :param string display: Defined in
@@ -334,4 +249,3 @@ class Client(oauth2.Client):
         return super(Client, self).obtain_token_by_browser(
             auth_params=dict(kwargs.pop("auth_params", {}), **filtered_params),
             **kwargs)
-

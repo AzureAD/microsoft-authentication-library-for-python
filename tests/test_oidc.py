@@ -1,8 +1,8 @@
 import string
+from unittest.mock import patch
 
 from tests import unittest
 
-import msal
 from msal import oauth2cli
 from msal.oauth2cli.oauth2 import _generate_pkce_code_verifier
 
@@ -89,7 +89,51 @@ class TestIdToken(unittest.TestCase):
             "sub": "subject",
             }, "id_token is decoded correctly, without raising exception")
 
-    def test_id_token_should_error_out_on_client_id_error(self):
-        with self.assertRaises(msal.IdTokenError):
-            oauth2cli.oidc.decode_id_token(self.EXPIRED_ID_TOKEN, client_id="not foo")
+    def test_id_token_should_ignore_validation_parameters(self):
+        self.assertEqual(oauth2cli.oidc.decode_id_token(
+            self.EXPIRED_ID_TOKEN,
+            client_id="not foo",
+            issuer="not issuer",
+            nonce="not nonce",
+            now=0,
+            ), {
+                "iss": "issuer",
+                "iat": 1706570732,
+                "exp": 1674948332,  # 2023-1-28
+                "aud": "foo",
+                "sub": "subject",
+            })
 
+    def test_obtain_token_by_authorization_code_should_not_validate_nonce(self):
+        client = oauth2cli.oidc.Client(
+            {"authorization_endpoint": "https://example.com/auth",
+             "token_endpoint": "https://example.com/token",
+             "issuer": "issuer"},
+            client_id="foo")
+        result = {"id_token_claims": {"nonce": "unexpected"}}
+        with patch.object(
+                oauth2cli.oauth2.Client, "obtain_token_by_authorization_code",
+                return_value=result) as mocked:
+            self.assertEqual(
+                result,
+                client.obtain_token_by_authorization_code("code", nonce="expected"))
+        mocked.assert_called_once_with("code")
+
+    def test_obtain_token_by_auth_code_flow_should_not_validate_id_token_claims(self):
+        client = oauth2cli.oidc.Client(
+            {"authorization_endpoint": "https://example.com/auth",
+             "token_endpoint": "https://example.com/token",
+             "issuer": "issuer"},
+            client_id="foo")
+        result = {"id_token_claims": {"nonce": "unexpected"}}
+        with patch.object(
+                oauth2cli.oauth2.Client, "obtain_token_by_auth_code_flow",
+                return_value=result) as mocked:
+            self.assertEqual(
+                result,
+                client.obtain_token_by_auth_code_flow(
+                    {"state": "s", "nonce": "expected", "max_age": 1},
+                    {"state": "s", "code": "code"}))
+        mocked.assert_called_once_with(
+            {"state": "s", "nonce": "expected", "max_age": 1},
+            {"state": "s", "code": "code"})

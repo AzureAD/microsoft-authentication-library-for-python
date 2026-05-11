@@ -960,8 +960,6 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             If the elapsed time is greater than this value,
             Microsoft identity platform will actively re-authenticate the End-User.
 
-            MSAL Python will also automatically validate the auth_time in ID token.
-
             New in version 1.15.
 
         :param str response_mode:
@@ -1204,8 +1202,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
 
         :param nonce:
             If you provided a nonce when calling :func:`get_authorization_request_url`,
-            same nonce should also be provided here, so that we'll validate it.
-            An exception will be raised if the nonce in id token mismatches.
+            same nonce can still be provided here for backward compatibility.
 
         :param claims_challenge:
             The claims_challenge parameter requests specific claims requested by the resource provider
@@ -2161,8 +2158,6 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             since the last time the End-User was actively authenticated.
             If the elapsed time is greater than this value,
             Microsoft identity platform will actively re-authenticate the End-User.
-
-            MSAL Python will also automatically validate the auth_time in ID token.
 
             New in version 1.15.
 
