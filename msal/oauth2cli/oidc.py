@@ -197,8 +197,9 @@ class Client(oauth2.Client):
         """Validate the auth_response being redirected back, and then obtain tokens,
         including ID token which can be used for user sign in.
 
-        This method still uses the nonce generated during flow initiation,
-        but the SDK no longer validates that nonce against the ID token.
+        This method still sends a nonce during flow initiation for protocol
+        compatibility, but the SDK no longer validates that nonce against the
+        ID token.
 
         It implements PKCE to mitigate the auth code interception attack.
 
@@ -221,8 +222,9 @@ class Client(oauth2.Client):
             **kwargs):
         """A native app can use this method to obtain token via a local browser.
 
-        This flow still uses the nonce generated during flow initiation,
-        but the SDK no longer validates that nonce against the ID token.
+        This flow still sends a nonce during flow initiation for protocol
+        compatibility, but the SDK no longer validates that nonce against the
+        ID token.
 
         It implements PKCE to mitigate the auth code interception attack.
 
