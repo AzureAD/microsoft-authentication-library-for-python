@@ -195,7 +195,7 @@ class Client(oauth2.Client):
         """Validate the auth_response being redirected back, and then obtain tokens,
         including ID token which can be used for user sign in.
 
-        It also implements PKCE to mitigate the auth code interception attack.
+        It implements PKCE to mitigate the auth code interception attack.
 
         See :func:`oauth2.Client.obtain_token_by_auth_code_flow` in parent class
         for descriptions on other parameters and return value.
@@ -216,7 +216,7 @@ class Client(oauth2.Client):
             **kwargs):
         """A native app can use this method to obtain token via a local browser.
 
-        It also implements PKCE to mitigate the auth code interception attack.
+        It implements PKCE to mitigate the auth code interception attack.
 
         :param string display: Defined in
             `OIDC <https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest>`_.
