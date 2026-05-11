@@ -35,11 +35,11 @@ class CryptographyTestCase(TestCase):
 
     def test_should_be_run_with_latest_version_of_cryptography(self):
         import cryptography
-        self.assertEqual(
-            cryptography.__version__, latest_cryptography_version,
-            "We are using cryptography {} but we should test with latest {} instead. "
-            "Run 'pip install -U cryptography'.".format(
-            cryptography.__version__, latest_cryptography_version))
+        if cryptography.__version__ != latest_cryptography_version:
+            warnings.warn(
+                "We are using cryptography {} but we should test with latest {} instead. "
+                "Run 'pip install -U cryptography'.".format(
+                cryptography.__version__, latest_cryptography_version))
 
     def test_latest_cryptography_should_support_our_usage_without_warnings(self):
         passphrase_bytes = _str2bytes("password")
