@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778250575502,
+  "lastUpdate": 1778538156887,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -40961,6 +40961,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00002394156541073083",
             "extra": "mean: 113.04259948317788 usec\nrounds: 3483"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "RyAuld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "distinct": true,
+          "id": "36ee3abc6cc5dfee2da6a5b1f22c4b74973d22bd",
+          "message": "Change cryptography version check to warning as well\n\nPython 3.8 can't install latest cryptography (dropped support),\ncausing a hard failure unrelated to our changes.\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-05-11T15:13:25-07:00",
+          "tree_id": "22573dcae5a14529e24acc374466f15995a34186",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/36ee3abc6cc5dfee2da6a5b1f22c4b74973d22bd"
+        },
+        "date": 1778538155586,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 48299.7914822108,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000023550428466104877",
+            "extra": "mean: 20.704023129547213 usec\nrounds: 7566"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 43317.72877223098,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002453134561465984",
+            "extra": "mean: 23.08523619181656 usec\nrounds: 15462"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9733.536087906878,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015967267280597856",
+            "extra": "mean: 102.73758590595027 usec\nrounds: 3434"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9080.255633557434,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014900577184868732",
+            "extra": "mean: 110.12905807457132 usec\nrounds: 3771"
           }
         ]
       }
