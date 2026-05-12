@@ -1,7 +1,10 @@
-# Manual ADO pipeline that runs the msal Python unit tests only.
+# ADO pipeline that runs the msal Python unit tests only.
 # No lab cert, no e2e — those live in azure-pipelines.yml / future e2e pipeline.
 
-trigger: none
+trigger:
+  branches:
+    include:
+    - 4gust/ado-pipeline
 pr: none
 
 stages:
@@ -11,7 +14,7 @@ stages:
   - job: Test
     displayName: 'pytest (unit only)'
     pool:
-      vmImage: ubuntu-latest
+      vmImage: ubuntu-22.04
     strategy:
       matrix:
         Python39:
@@ -27,10 +30,19 @@ stages:
         Python314:
           python.version: '3.14'
     steps:
-    - task: UsePythonVersion@0
-      inputs:
-        versionSpec: '$(python.version)'
-      displayName: 'Set up Python'
+    # Install Python via uv (single-binary installer, no GitHub token needed).
+    # Replaces UsePythonVersion@0 to avoid the anonymous-download warning,
+    # and supports 3.14 today even when the hosted toolcache lags.
+    - bash: |
+        set -euo pipefail
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.local/bin:$PATH"
+        uv python install $(python.version)
+        PY="$(uv python find $(python.version))"
+        echo "Resolved interpreter: $PY"
+        echo "##vso[task.prependpath]$(dirname $PY)"
+        echo "##vso[task.prependpath]$HOME/.local/bin"
+      displayName: 'Install Python $(python.version) via uv'
 
     - script: |
         python -m pip install --upgrade pip
