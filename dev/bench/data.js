@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778582345505,
+  "lastUpdate": 1778598413602,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -41117,6 +41117,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001390130069383001",
             "extra": "mean: 121.02537908159016 usec\nrounds: 3461"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ryauld@microsoft.com",
+            "name": "Ryan Auld",
+            "username": "RyAuld"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8ea1eaaae97f416254bfe7f606d6c6babb80afed",
+          "message": "Switch FMI tests from disabled IDLABS_APP_FMI to MISE-App-FMICLIENT (#913)\n\n* Switch FMI tests from disabled IDLABS_APP_FMI to MISE-App-FMICLIENT\n\n- Client ID: 4df2cbbb -> 3bf56293 (MISE-App-FMICLIENT in id4slab1 tenant)\n- Tenant ID: f645ad92 -> 10c419d4 (id4slab1.onmicrosoft.com)\n- FMI Scope: 3091264c -> aa464f73 (MISE-App-FMIResource)\n- Note: TestFMIIntegration (RMA pattern) may still fail as\n  AzureFMITokenExchange resource does not exist in id4slab1 tenant\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>\n\n* Change cryptography ceiling check from assertion to warning\n\nOut of scope for the FMI app migration — this test fails when the\ncryptography package releases a new major version and setup.cfg has\nnot been bumped yet.\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>\n\n* Change cryptography version check to warning as well\n\nPython 3.8 can't install latest cryptography (dropped support),\ncausing a hard failure unrelated to our changes.\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-05-11T15:37:18-07:00",
+          "tree_id": "22573dcae5a14529e24acc374466f15995a34186",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/8ea1eaaae97f416254bfe7f606d6c6babb80afed"
+        },
+        "date": 1778598412238,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 48282.697006143884,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000016662262730153922",
+            "extra": "mean: 20.71135338344401 usec\nrounds: 6783"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 44023.798087715535,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002053397416933341",
+            "extra": "mean: 22.71498697153623 usec\nrounds: 15658"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9675.086329080346,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016072897074822427",
+            "extra": "mean: 103.35825087103422 usec\nrounds: 4018"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9135.6866828054,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016574134272761113",
+            "extra": "mean: 109.46084675628548 usec\nrounds: 3576"
           }
         ]
       }
