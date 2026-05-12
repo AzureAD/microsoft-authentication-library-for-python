@@ -27,22 +27,18 @@ stages:
           python.version: '3.12'
         Python313:
           python.version: '3.13'
-        Python314:
-          python.version: '3.14'
+        # Python314 disabled: not yet in the ubuntu-22.04 hosted toolcache.
+        # UsePythonVersion@0 would have to download it from actions/python-versions
+        # (anonymous → rate-limited, needs a GitHub token), and uv-installed
+        # 3.14 is PEP 668 externally-managed so `pip install` fails. Re-enable
+        # this row once the hosted agent ships 3.14 preinstalled.
+        # Python314:
+        #   python.version: '3.14'
     steps:
-    # Install Python via uv (single-binary installer, no GitHub token needed).
-    # Replaces UsePythonVersion@0 to avoid the anonymous-download warning,
-    # and supports 3.14 today even when the hosted toolcache lags.
-    - bash: |
-        set -euo pipefail
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        export PATH="$HOME/.local/bin:$PATH"
-        uv python install $(python.version)
-        PY="$(uv python find $(python.version))"
-        echo "Resolved interpreter: $PY"
-        echo "##vso[task.prependpath]$(dirname $PY)"
-        echo "##vso[task.prependpath]$HOME/.local/bin"
-      displayName: 'Install Python $(python.version) via uv'
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(python.version)'
+      displayName: 'Set up Python'
 
     - script: |
         python -m pip install --upgrade pip
