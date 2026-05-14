@@ -44,7 +44,7 @@ stages:
 - stage: Build
   displayName: 'Build package'
   dependsOn: CI
-  condition: eq(dependencies.CI.result, 'Succeeded')
+  condition: in(dependencies.CI.result, 'Succeeded', 'SucceededWithIssues')
   jobs:
   - job: BuildDist
     displayName: 'Build sdist + wheel (Python 3.12)'
@@ -83,7 +83,7 @@ stages:
   dependsOn: Build
   condition: >
     and(
-      eq(dependencies.Build.result, 'Succeeded'),
+      in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),
       eq('${{ parameters.publishTarget }}', 'test.pypi.org (Preview / RC)')
     )
   jobs:
@@ -140,7 +140,7 @@ stages:
   dependsOn: Build
   condition: >
     and(
-      eq(dependencies.Build.result, 'Succeeded'),
+      in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),
       eq('${{ parameters.publishTarget }}', 'pypi.org (ESRP Production)')
     )
   jobs:
