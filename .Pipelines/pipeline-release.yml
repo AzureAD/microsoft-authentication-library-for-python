@@ -1,0 +1,168 @@
+# ADO release pipeline for the msal Python package.
+#
+# Mirrors the GitHub CD flow in .github/workflows/python-package.yml (the `cd:` job):
+#   - push to a `release-*` branch  →  publish to TestPyPI
+#   - push of a tag (e.g. `1.36.0`) →  publish to PyPI (with manual approval)
+#
+# Secrets are fetched at run time from Key Vault `msidlabs` via the
+# `AuthSdkResourceManager` service connection (same pattern as the lab cert in
+# pipeline-unit-tests.yml). Required Key Vault secrets:
+#   - TestPyPiApiToken  →  TestPyPI API token (starts with `pypi-`)
+#   - PyPiApiToken      →  PyPI API token     (starts with `pypi-`)
+#
+# Required ADO setup before first run:
+#   1. Add the two secrets above to the `msidlabs` Key Vault.
+#   2. Authorize the `AuthSdkResourceManager` SC for this pipeline (one-time
+#      "Permit" prompt on the first run).
+#   3. Create an Environment named `msal-py-pypi` with a required approver
+#      (ADO → Pipelines → Environments → New environment → Approvals and checks).
+
+trigger:
+  branches:
+    include:
+    - release-*
+  tags:
+    include:
+    - '*'
+
+pr: none
+
+variables:
+  - name: pythonBuildVersion
+    value: '3.12'
+
+stages:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1 · Build sdist + wheel, publish as a pipeline artifact.
+# ─────────────────────────────────────────────────────────────────────────────
+- stage: Build
+  displayName: 'Build'
+  jobs:
+  - job: BuildDist
+    displayName: 'sdist + wheel'
+    pool:
+      vmImage: ubuntu-22.04
+    steps:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python $(pythonBuildVersion)'
+      inputs:
+        versionSpec: $(pythonBuildVersion)
+
+    - bash: |
+        set -euo pipefail
+        python -m pip install --upgrade pip build twine
+        python -m build --sdist --wheel --outdir dist/ .
+        python -m twine check dist/*
+        ls -la dist/
+      displayName: 'Build + twine check'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish dist/ as pipeline artifact'
+      inputs:
+        targetPath: dist/
+        artifact: python-dist
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2a · Publish to TestPyPI — runs on push to a release-* branch.
+# No approval gate (matches GitHub flow today).
+# ─────────────────────────────────────────────────────────────────────────────
+- stage: PublishTestPyPI
+  displayName: 'Publish to TestPyPI'
+  dependsOn: Build
+  condition: |
+    and(
+      succeeded(),
+      startsWith(variables['Build.SourceBranch'], 'refs/heads/release-')
+    )
+  jobs:
+  - job: Upload
+    displayName: 'twine upload → test.pypi.org'
+    pool:
+      vmImage: ubuntu-22.04
+    steps:
+    - checkout: none
+
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download dist/ artifact'
+      inputs:
+        artifactName: python-dist
+        targetPath: dist/
+
+    - task: UsePythonVersion@0
+      displayName: 'Use Python $(pythonBuildVersion)'
+      inputs:
+        versionSpec: $(pythonBuildVersion)
+
+    - task: AzureKeyVault@2
+      displayName: 'Fetch TestPyPI API token from Key Vault'
+      inputs:
+        azureSubscription: 'AuthSdkResourceManager'
+        KeyVaultName: 'msidlabs'
+        SecretsFilter: 'TestPyPiApiToken'
+        RunAsPreJob: false
+
+    - bash: |
+        set -euo pipefail
+        python -m pip install --upgrade pip twine
+        python -m twine upload \
+          --repository-url https://test.pypi.org/legacy/ \
+          --username __token__ \
+          --password "$TWINE_PASSWORD" \
+          --skip-existing \
+          dist/*
+      displayName: 'twine upload → test.pypi.org'
+      env:
+        TWINE_PASSWORD: $(TestPyPiApiToken)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2b · Publish to PyPI — runs on push of a tag.
+# Manual approval enforced via the `msal-py-pypi` Environment.
+# ─────────────────────────────────────────────────────────────────────────────
+- stage: PublishPyPI
+  displayName: 'Publish to PyPI'
+  dependsOn: Build
+  condition: |
+    and(
+      succeeded(),
+      startsWith(variables['Build.SourceBranch'], 'refs/tags/')
+    )
+  jobs:
+  - deployment: Upload
+    displayName: 'twine upload → pypi.org'
+    pool:
+      vmImage: ubuntu-22.04
+    environment: 'msal-py-pypi'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download dist/ artifact'
+            inputs:
+              artifactName: python-dist
+              targetPath: dist/
+
+          - task: UsePythonVersion@0
+            displayName: 'Use Python $(pythonBuildVersion)'
+            inputs:
+              versionSpec: $(pythonBuildVersion)
+
+          - task: AzureKeyVault@2
+            displayName: 'Fetch PyPI API token from Key Vault'
+            inputs:
+              azureSubscription: 'AuthSdkResourceManager'
+              KeyVaultName: 'msidlabs'
+              SecretsFilter: 'PyPiApiToken'
+              RunAsPreJob: false
+
+          - bash: |
+              set -euo pipefail
+              python -m pip install --upgrade pip twine
+              python -m twine upload \
+                --username __token__ \
+                --password "$TWINE_PASSWORD" \
+                dist/*
+            displayName: 'twine upload → pypi.org'
+            env:
+              TWINE_PASSWORD: $(PyPiApiToken)

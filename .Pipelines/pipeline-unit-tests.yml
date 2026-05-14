@@ -1,7 +1,7 @@
 # ADO pipeline for the msal Python test suite.
-# Two stages → two GitHub checks (Unit tests, E2E tests). Each stage is one
-# job that fans out the Python matrix as parallel bash background processes
-# so wall-clock time ≈ slowest single Python version, not the sum.
+# Two stages → two GitHub stage checks (Unit test, E2E tests). Each stage
+# fans out the Python matrix as separate jobs so every Python version runs
+# on its own agent in parallel with its own timeout.
 
 trigger:
   branches:
@@ -18,118 +18,65 @@ pr:
 stages:
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 1 · Unit tests — no Key Vault, no service connection.
+# Stage 1 · Unit test — no Key Vault, no service connection.
 # ─────────────────────────────────────────────────────────────────────────────
 - stage: UnitTests
   displayName: 'Unit test'
   jobs:
   - job: Pytest
-    displayName: 'Unit test'
+    displayName: 'pytest'
     pool:
       vmImage: ubuntu-22.04
     timeoutInMinutes: 30
+    strategy:
+      matrix:
+        Python39:  { python.version: '3.9'  }
+        Python310: { python.version: '3.10' }
+        Python311: { python.version: '3.11' }
+        Python312: { python.version: '3.12' }
+        Python313: { python.version: '3.13' }
+        Python314: { python.version: '3.14' }
+      maxParallel: 6
     steps:
     - task: UsePythonVersion@0
-      displayName: 'Use Python 3.9'
-      inputs: { versionSpec: '3.9' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.10'
-      inputs: { versionSpec: '3.10' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.11'
-      inputs: { versionSpec: '3.11' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.12'
-      inputs: { versionSpec: '3.12' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.13'
-      inputs: { versionSpec: '3.13' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.14'
-      inputs: { versionSpec: '3.14' }
+      displayName: 'Use Python $(python.version)'
+      inputs:
+        versionSpec: '$(python.version)'
 
     - bash: |
-        set -uo pipefail
-        mkdir -p test-results logs
+        set -euo pipefail
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-azurepipelines
+      displayName: 'Install Python dependencies'
 
-        run_unit() {
-          local V="$1"
-          local LOG="logs/unit-${V}.log"
-          {
-            echo "=== Unit tests · Python ${V} (parallel) ==="
-            local PY="python${V}"
-            if ! command -v "$PY" >/dev/null; then
-              echo "ERROR: $PY not on PATH"
-              exit 1
-            fi
-            "$PY" -m venv ".venv-unit-${V}"
-            # shellcheck disable=SC1090
-            source ".venv-unit-${V}/bin/activate"
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
-            pip install pytest pytest-azurepipelines
-            pytest -vv \
-              --junitxml="test-results/junit-unit-${V}.xml" \
-              --ignore=tests/test_e2e.py \
-              --ignore=tests/test_e2e_manual.py \
-              --ignore=tests/test_fmi_e2e.py
-            local RC=$?
-            deactivate
-            exit $RC
-          } >"$LOG" 2>&1
-        }
-
-        VERSIONS=(3.9 3.10 3.11 3.12 3.13 3.14)
-        PIDS=()
-        for V in "${VERSIONS[@]}"; do
-          run_unit "$V" &
-          PIDS+=($!)
-        done
-
-        OVERALL_RC=0
-        declare -A RESULTS
-        for i in "${!VERSIONS[@]}"; do
-          V="${VERSIONS[$i]}"
-          PID="${PIDS[$i]}"
-          if wait "$PID"; then
-            RESULTS[$V]="PASS"
-          else
-            RESULTS[$V]="FAIL (rc=$?)"
-            OVERALL_RC=1
-          fi
-        done
-
-        for V in "${VERSIONS[@]}"; do
-          echo ""
-          echo "############################################################"
-          echo "#  Unit tests · Python ${V} · ${RESULTS[$V]}"
-          echo "############################################################"
-          cat "logs/unit-${V}.log"
-        done
-
-        echo ""
-        echo "=== Summary ==="
-        for V in "${VERSIONS[@]}"; do
-          echo "  Python ${V}: ${RESULTS[$V]}"
-        done
-
-        exit $OVERALL_RC
-      displayName: 'Run pytest (unit, all Python versions in parallel)'
+    - bash: |
+        set -o pipefail
+        mkdir -p test-results
+        pytest -vv \
+          --junitxml=test-results/junit-unit.xml \
+          --ignore=tests/test_e2e.py \
+          --ignore=tests/test_e2e_manual.py \
+          --ignore=tests/test_fmi_e2e.py \
+          2>&1 | tee test-results/pytest-unit.log
+      displayName: 'Run pytest (unit)'
 
     - task: PublishTestResults@2
       displayName: 'Publish JUnit test results'
       condition: succeededOrFailed()
       inputs:
         testResultsFormat: 'JUnit'
-        testResultsFiles: 'test-results/junit-unit-*.xml'
+        testResultsFiles: 'test-results/junit-unit.xml'
         failTaskOnFailedTests: true
-        testRunTitle: 'Unit tests'
-        mergeTestResults: true
+        testRunTitle: 'Unit · Python $(python.version)'
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2 · E2E tests — runs only if unit tests pass. Fetches the MSID Lab
 # certificate from Key Vault (mirrors MSAL.NET's
 # build/template-install-keyvault-secrets.yaml).
+# Skipped on forked PRs — service connections / Key Vault are not
+# available to forks. E2E tests self-skip when LAB_APP_CLIENT_CERT_PFX_PATH
+# is unset (matches the pattern in template-pipeline-stages.yml).
 # ─────────────────────────────────────────────────────────────────────────────
 - stage: E2ETests
   displayName: 'E2E tests'
@@ -137,32 +84,28 @@ stages:
   condition: succeeded()
   jobs:
   - job: Pytest
-    displayName: 'E2E tests'
+    displayName: 'pytest'
     pool:
       vmImage: ubuntu-22.04
     timeoutInMinutes: 60
+    strategy:
+      matrix:
+        Python39:  { python.version: '3.9'  }
+        Python310: { python.version: '3.10' }
+        Python311: { python.version: '3.11' }
+        Python312: { python.version: '3.12' }
+        Python313: { python.version: '3.13' }
+        Python314: { python.version: '3.14' }
+      maxParallel: 6
     steps:
     - task: UsePythonVersion@0
-      displayName: 'Use Python 3.9'
-      inputs: { versionSpec: '3.9' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.10'
-      inputs: { versionSpec: '3.10' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.11'
-      inputs: { versionSpec: '3.11' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.12'
-      inputs: { versionSpec: '3.12' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.13'
-      inputs: { versionSpec: '3.13' }
-    - task: UsePythonVersion@0
-      displayName: 'Use Python 3.14'
-      inputs: { versionSpec: '3.14' }
+      displayName: 'Use Python $(python.version)'
+      inputs:
+        versionSpec: '$(python.version)'
 
     - task: AzureKeyVault@2
       displayName: 'Fetch MSID Lab certificate from Key Vault'
+      condition: ne(variables['System.PullRequest.IsFork'], 'True')
       inputs:
         azureSubscription: 'AuthSdkResourceManager'
         KeyVaultName: 'msidlabs'
@@ -180,74 +123,25 @@ stages:
         echo "##vso[task.setvariable variable=LAB_APP_CLIENT_CERT_PFX_PATH]$CERT_PATH"
         echo "Lab cert written to: $CERT_PATH ($(wc -c < "$CERT_PATH") bytes)"
       displayName: 'Decode lab certificate to PFX'
+      condition: ne(variables['System.PullRequest.IsFork'], 'True')
       env:
         LAB_AUTH_B64: $(LabAuth)
 
     - bash: |
-        set -uo pipefail
-        mkdir -p test-results logs
+        set -euo pipefail
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-azurepipelines
+      displayName: 'Install Python dependencies'
 
-        run_e2e() {
-          local V="$1"
-          local LOG="logs/e2e-${V}.log"
-          {
-            echo "=== E2E tests · Python ${V} (parallel) ==="
-            local PY="python${V}"
-            if ! command -v "$PY" >/dev/null; then
-              echo "ERROR: $PY not on PATH"
-              exit 1
-            fi
-            "$PY" -m venv ".venv-e2e-${V}"
-            # shellcheck disable=SC1090
-            source ".venv-e2e-${V}/bin/activate"
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
-            pip install pytest pytest-azurepipelines
-            pytest -vv \
-              --junitxml="test-results/junit-e2e-${V}.xml" \
-              tests/test_e2e.py tests/test_fmi_e2e.py
-            local RC=$?
-            deactivate
-            exit $RC
-          } >"$LOG" 2>&1
-        }
-
-        VERSIONS=(3.9 3.10 3.11 3.12 3.13 3.14)
-        PIDS=()
-        for V in "${VERSIONS[@]}"; do
-          run_e2e "$V" &
-          PIDS+=($!)
-        done
-
-        OVERALL_RC=0
-        declare -A RESULTS
-        for i in "${!VERSIONS[@]}"; do
-          V="${VERSIONS[$i]}"
-          PID="${PIDS[$i]}"
-          if wait "$PID"; then
-            RESULTS[$V]="PASS"
-          else
-            RESULTS[$V]="FAIL (rc=$?)"
-            OVERALL_RC=1
-          fi
-        done
-
-        for V in "${VERSIONS[@]}"; do
-          echo ""
-          echo "############################################################"
-          echo "#  E2E tests · Python ${V} · ${RESULTS[$V]}"
-          echo "############################################################"
-          cat "logs/e2e-${V}.log"
-        done
-
-        echo ""
-        echo "=== Summary ==="
-        for V in "${VERSIONS[@]}"; do
-          echo "  Python ${V}: ${RESULTS[$V]}"
-        done
-
-        exit $OVERALL_RC
-      displayName: 'Run pytest (E2E, all Python versions in parallel)'
+    - bash: |
+        set -o pipefail
+        mkdir -p test-results
+        pytest -vv \
+          --junitxml=test-results/junit-e2e.xml \
+          tests/test_e2e.py tests/test_fmi_e2e.py \
+          2>&1 | tee test-results/pytest-e2e.log
+      displayName: 'Run pytest (E2E)'
       env:
         LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
 
@@ -256,10 +150,9 @@ stages:
       condition: succeededOrFailed()
       inputs:
         testResultsFormat: 'JUnit'
-        testResultsFiles: 'test-results/junit-e2e-*.xml'
+        testResultsFiles: 'test-results/junit-e2e.xml'
         failTaskOnFailedTests: true
-        testRunTitle: 'E2E tests'
-        mergeTestResults: true
+        testRunTitle: 'E2E · Python $(python.version)'
 
     - bash: rm -f "$(Agent.TempDirectory)/lab-auth.pfx"
       displayName: 'Remove lab certificate from agent'
