@@ -1,7 +1,7 @@
 # ADO pipeline for the msal Python test suite.
-# Two stages → two GitHub checks (Unit tests, E2E tests). Each stage uses
-# one job that loops the supported Python matrix internally so the GitHub
-# check count stays small.
+# Two stages → two GitHub checks (Unit tests, E2E tests). Each stage is one
+# job that fans out the Python matrix as parallel bash background processes
+# so wall-clock time ≈ slowest single Python version, not the sum.
 
 trigger:
   branches:
@@ -21,10 +21,10 @@ stages:
 # Stage 1 · Unit tests — no Key Vault, no service connection.
 # ─────────────────────────────────────────────────────────────────────────────
 - stage: UnitTests
-  displayName: 'Unit tests'
+  displayName: 'Unit test'
   jobs:
   - job: Pytest
-    displayName: 'pytest (unit, all Python versions)'
+    displayName: 'Unit test'
     pool:
       vmImage: ubuntu-22.04
     timeoutInMinutes: 30
@@ -50,49 +50,71 @@ stages:
 
     - bash: |
         set -uo pipefail
-        mkdir -p test-results
+        mkdir -p test-results logs
+
+        run_unit() {
+          local V="$1"
+          local LOG="logs/unit-${V}.log"
+          {
+            echo "=== Unit tests · Python ${V} (parallel) ==="
+            local PY="python${V}"
+            if ! command -v "$PY" >/dev/null; then
+              echo "ERROR: $PY not on PATH"
+              exit 1
+            fi
+            "$PY" -m venv ".venv-unit-${V}"
+            # shellcheck disable=SC1090
+            source ".venv-unit-${V}/bin/activate"
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install pytest pytest-azurepipelines
+            pytest -vv \
+              --junitxml="test-results/junit-unit-${V}.xml" \
+              --ignore=tests/test_e2e.py \
+              --ignore=tests/test_e2e_manual.py \
+              --ignore=tests/test_fmi_e2e.py
+            local RC=$?
+            deactivate
+            exit $RC
+          } >"$LOG" 2>&1
+        }
+
+        VERSIONS=(3.9 3.10 3.11 3.12 3.13 3.14)
+        PIDS=()
+        for V in "${VERSIONS[@]}"; do
+          run_unit "$V" &
+          PIDS+=($!)
+        done
+
         OVERALL_RC=0
-
-        for V in 3.9 3.10 3.11 3.12 3.13 3.14; do
-          echo "============================================================"
-          echo "  Unit tests · Python ${V}"
-          echo "============================================================"
-
-          PY="python${V}"
-          if ! command -v "$PY" >/dev/null; then
-            echo "##vso[task.logissue type=error]${PY} not on PATH"
-            OVERALL_RC=1
-            continue
-          fi
-
-          "$PY" -m venv ".venv-${V}"
-          # shellcheck disable=SC1090
-          source ".venv-${V}/bin/activate"
-
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-azurepipelines
-
-          set -o pipefail
-          pytest -vv \
-            --junitxml="test-results/junit-unit-${V}.xml" \
-            --ignore=tests/test_e2e.py \
-            --ignore=tests/test_e2e_manual.py \
-            --ignore=tests/test_fmi_e2e.py \
-            2>&1 | tee "test-results/pytest-unit-${V}.log"
-          RC=$?
-          set +o pipefail
-
-          deactivate
-
-          if [ $RC -ne 0 ]; then
-            echo "Python ${V}: unit pytest exited ${RC}"
+        declare -A RESULTS
+        for i in "${!VERSIONS[@]}"; do
+          V="${VERSIONS[$i]}"
+          PID="${PIDS[$i]}"
+          if wait "$PID"; then
+            RESULTS[$V]="PASS"
+          else
+            RESULTS[$V]="FAIL (rc=$?)"
             OVERALL_RC=1
           fi
         done
 
+        for V in "${VERSIONS[@]}"; do
+          echo ""
+          echo "############################################################"
+          echo "#  Unit tests · Python ${V} · ${RESULTS[$V]}"
+          echo "############################################################"
+          cat "logs/unit-${V}.log"
+        done
+
+        echo ""
+        echo "=== Summary ==="
+        for V in "${VERSIONS[@]}"; do
+          echo "  Python ${V}: ${RESULTS[$V]}"
+        done
+
         exit $OVERALL_RC
-      displayName: 'Run pytest (unit, all Python versions)'
+      displayName: 'Run pytest (unit, all Python versions in parallel)'
 
     - task: PublishTestResults@2
       displayName: 'Publish JUnit test results'
@@ -115,7 +137,7 @@ stages:
   condition: succeeded()
   jobs:
   - job: Pytest
-    displayName: 'pytest (E2E, all Python versions)'
+    displayName: 'E2E tests'
     pool:
       vmImage: ubuntu-22.04
     timeoutInMinutes: 60
@@ -163,47 +185,69 @@ stages:
 
     - bash: |
         set -uo pipefail
-        mkdir -p test-results
+        mkdir -p test-results logs
+
+        run_e2e() {
+          local V="$1"
+          local LOG="logs/e2e-${V}.log"
+          {
+            echo "=== E2E tests · Python ${V} (parallel) ==="
+            local PY="python${V}"
+            if ! command -v "$PY" >/dev/null; then
+              echo "ERROR: $PY not on PATH"
+              exit 1
+            fi
+            "$PY" -m venv ".venv-e2e-${V}"
+            # shellcheck disable=SC1090
+            source ".venv-e2e-${V}/bin/activate"
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install pytest pytest-azurepipelines
+            pytest -vv \
+              --junitxml="test-results/junit-e2e-${V}.xml" \
+              tests/test_e2e.py tests/test_fmi_e2e.py
+            local RC=$?
+            deactivate
+            exit $RC
+          } >"$LOG" 2>&1
+        }
+
+        VERSIONS=(3.9 3.10 3.11 3.12 3.13 3.14)
+        PIDS=()
+        for V in "${VERSIONS[@]}"; do
+          run_e2e "$V" &
+          PIDS+=($!)
+        done
+
         OVERALL_RC=0
-
-        for V in 3.9 3.10 3.11 3.12 3.13 3.14; do
-          echo "============================================================"
-          echo "  E2E tests · Python ${V}"
-          echo "============================================================"
-
-          PY="python${V}"
-          if ! command -v "$PY" >/dev/null; then
-            echo "##vso[task.logissue type=error]${PY} not on PATH"
-            OVERALL_RC=1
-            continue
-          fi
-
-          "$PY" -m venv ".venv-${V}"
-          # shellcheck disable=SC1090
-          source ".venv-${V}/bin/activate"
-
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-azurepipelines
-
-          set -o pipefail
-          pytest -vv \
-            --junitxml="test-results/junit-e2e-${V}.xml" \
-            tests/test_e2e.py tests/test_fmi_e2e.py \
-            2>&1 | tee "test-results/pytest-e2e-${V}.log"
-          RC=$?
-          set +o pipefail
-
-          deactivate
-
-          if [ $RC -ne 0 ]; then
-            echo "Python ${V}: e2e pytest exited ${RC}"
+        declare -A RESULTS
+        for i in "${!VERSIONS[@]}"; do
+          V="${VERSIONS[$i]}"
+          PID="${PIDS[$i]}"
+          if wait "$PID"; then
+            RESULTS[$V]="PASS"
+          else
+            RESULTS[$V]="FAIL (rc=$?)"
             OVERALL_RC=1
           fi
         done
 
+        for V in "${VERSIONS[@]}"; do
+          echo ""
+          echo "############################################################"
+          echo "#  E2E tests · Python ${V} · ${RESULTS[$V]}"
+          echo "############################################################"
+          cat "logs/e2e-${V}.log"
+        done
+
+        echo ""
+        echo "=== Summary ==="
+        for V in "${VERSIONS[@]}"; do
+          echo "  Python ${V}: ${RESULTS[$V]}"
+        done
+
         exit $OVERALL_RC
-      displayName: 'Run pytest (E2E, all Python versions)'
+      displayName: 'Run pytest (E2E, all Python versions in parallel)'
       env:
         LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
 
