@@ -65,6 +65,11 @@ _EXT_CACHE_KEY_EXCLUDED_FIELDS = frozenset({
     "token_type",
     "req_cnf",
     "key_id",
+    # user_fic grant parameters — these are standard body params for the
+    # user_fic flow; FIC tokens use normal user cache keys (not extended).
+    "user_federated_identity_credential",
+    "user_id",
+    "client_info",
 })
 
 
