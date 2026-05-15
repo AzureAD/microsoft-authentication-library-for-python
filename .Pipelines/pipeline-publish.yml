@@ -159,7 +159,7 @@ stages:
               artifactName: python-dist
               targetPath: $(Pipeline.Workspace)/python-dist
 
-          - task: EsrpRelease@9
+          - task: EsrpRelease@12
             displayName: 'Publish to PyPI via ESRP'
             inputs:
               connectedservicename: 'MSAL-ESRP-AME'
