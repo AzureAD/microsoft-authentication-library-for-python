@@ -176,17 +176,23 @@ class BaseClient(object):
 
     @staticmethod
     def _accepts_context(func):
-        """Check if a callable accepts at least one positional argument."""
+        """Check if a callable requires at least one positional argument.
+
+        Returns True only when the callable has a positional parameter
+        **without** a default value.  This ensures that legacy zero-arg
+        callables — including ``lambda token=token: token`` patterns
+        where every positional param has a default — are still invoked
+        with no arguments.
+        """
         try:
             sig = inspect.signature(func)
-            params = [
-                p for p in sig.parameters.values()
+            for p in sig.parameters.values():
                 if p.kind in (
                     inspect.Parameter.POSITIONAL_ONLY,
                     inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                )
-            ]
-            return len(params) >= 1
+                ) and p.default is inspect.Parameter.empty:
+                    return True
+            return False
         except (ValueError, TypeError):
             return False  # Signature not inspectable; treat as zero-arg
 

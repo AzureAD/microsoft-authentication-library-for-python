@@ -306,6 +306,7 @@ class TokenCache(object):
             event,
             data=make_clean_copy(event.get("data", {}), (
                 "password", "client_secret", "refresh_token", "assertion",
+                "user_federated_identity_credential",
             )),
             response=make_clean_copy(event.get("response", {}), (
                 "id_token_claims",  # Provided by broker

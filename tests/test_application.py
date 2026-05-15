@@ -1,5 +1,6 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
+import base64
 import json
 import logging
 import sys
@@ -1120,9 +1121,6 @@ def _build_user_fic_response(uid="user_oid", utid="tenant_id", access_token="use
     })
 
 
-import base64
-
-
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestUserFicProtocol(unittest.TestCase):
     """Tests that acquire_token_by_user_federated_identity_credential sends correct POST body."""
@@ -1265,6 +1263,34 @@ class TestUserFicCacheBehavior(unittest.TestCase):
         self.assertIn("access_token", silent_result)
         self.assertEqual("cached_fic_at", silent_result["access_token"])
 
+    def test_oid_path_token_stored_and_retrievable_via_silent(self):
+        """user_fic with user_object_id should cache and retrieve like username."""
+        app = self._make_app()
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            return MinimalResponse(status_code=200, text=_build_user_fic_response(
+                uid="user_oid", utid="tenant_id", access_token="oid_fic_at"))
+
+        result = app.acquire_token_by_user_federated_identity_credential(
+            ["https://graph.microsoft.com/.default"],
+            assertion="t2", user_object_id="user_oid", post=mock_post)
+        self.assertIn("access_token", result)
+
+        # Verify no ext_cache_key on cached token
+        at_entries = list(app.token_cache.search(
+            msal.TokenCache.CredentialType.ACCESS_TOKEN, query={}))
+        self.assertTrue(len(at_entries) > 0, "AT should be cached")
+        self.assertNotIn("ext_cache_key", at_entries[0],
+            "OID-path user_fic tokens should NOT have ext_cache_key")
+
+        # Verify account and silent retrieval
+        accounts = app.get_accounts()
+        self.assertTrue(len(accounts) > 0)
+        silent_result = app.acquire_token_silent(
+            ["https://graph.microsoft.com/.default"], account=accounts[0])
+        self.assertIn("access_token", silent_result)
+        self.assertEqual("oid_fic_at", silent_result["access_token"])
+
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestUserFicInputValidation(unittest.TestCase):
@@ -1392,3 +1418,29 @@ class TestAssertionCallbackContext(unittest.TestCase):
                 post=lambda url, **kwargs: MinimalResponse(
                     status_code=200, text=json.dumps({
                         "access_token": "an_at", "expires_in": 3600})))
+
+    def test_lambda_with_defaulted_param_treated_as_zero_arg(self):
+        """A lambda like ``lambda token=token: token`` should be treated as
+        zero-arg because all its positional params have defaults."""
+        captured_value = "my_assertion_value"
+        assertion_callable = lambda token=captured_value: token  # noqa: E731
+
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={"client_assertion": assertion_callable},
+            authority="https://login.microsoftonline.com/my_tenant")
+
+        captured_data = {}
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an_at", "expires_in": 3600}))
+
+        result = app.acquire_token_for_client(["scope"], post=mock_post)
+        self.assertIn("access_token", result)
+        # The assertion should be the string value, not a dict context object
+        self.assertEqual(
+            captured_value, captured_data.get("client_assertion"),
+            "Lambda with defaulted params should return its default value, "
+            "not receive a context dict")
