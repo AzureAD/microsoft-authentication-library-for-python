@@ -126,7 +126,8 @@ class ThrottledHttpClient(ThrottledHttpClientBase):
                         # TODO: We may want to disable it for confidential client, though
                         _extract_data(kwargs, "refresh_token",  # "account" during refresh
                             _extract_data(kwargs, "code",  # "account" of auth code grant
-                                _extract_data(kwargs, "username")))),  # "account" of ROPC
+                                _extract_data(kwargs, "username",  # "account" of ROPC
+                                    _extract_data(kwargs, "user_id"))))),  # "account" of user_fic (OID path)
                     ),
             expires_in=RetryAfterParser(default_throttle_time or 5).parse,
             )(self.post)
