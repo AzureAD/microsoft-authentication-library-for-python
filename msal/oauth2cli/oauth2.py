@@ -106,9 +106,13 @@ class BaseClient(object):
                 It can also be a callable (recommended),
                 so that we will do lazy creation of an assertion.
 
-                The callable may accept zero arguments (legacy) or one argument.
-                When it accepts one argument, it will receive a dict containing
-                ``"client_id"``, ``"token_endpoint"``, and optionally ``"fmi_path"``
+                The callable may accept zero arguments (legacy) or one
+                required positional argument.  Callables whose positional
+                parameters all have default values (e.g.
+                ``lambda token=token: token``) are treated as zero-arg.
+                When the callable declares a required positional parameter,
+                it will receive a dict containing ``"client_id"``,
+                ``"token_endpoint"``, and optionally ``"fmi_path"``
                 (when an FMI path is set on the current request).
             client_assertion_type (str):
                 The type of your :attr:`client_assertion` parameter.

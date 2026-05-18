@@ -1197,6 +1197,37 @@ class TestUserFicProtocol(unittest.TestCase):
         self.assertNotIn("username", captured_data,
             "username should NOT be in body when user_object_id is provided")
 
+    def test_ccs_routing_header_with_username(self):
+        app = self._make_app()
+        captured_headers = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_headers.update(headers or {})
+            return MinimalResponse(status_code=200, text=_build_user_fic_response())
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["scope"], assertion="t2", username="user@contoso.com", post=mock_post)
+        self.assertEqual("upn:user@contoso.com",
+            captured_headers.get("X-AnchorMailbox"),
+            "CCS routing header should use UPN format for username path")
+
+    def test_ccs_routing_header_with_oid(self):
+        app = self._make_app()
+        captured_headers = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_headers.update(headers or {})
+            return MinimalResponse(status_code=200, text=_build_user_fic_response())
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["scope"], assertion="t2",
+            user_object_id="user_oid_123", post=mock_post)
+        self.assertIn("X-AnchorMailbox", captured_headers,
+            "CCS routing header should be present for OID path")
+        self.assertTrue(
+            captured_headers["X-AnchorMailbox"].startswith("Oid:"),
+            "CCS routing header should use Oid format for user_object_id path")
+
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestUserFicCacheBehavior(unittest.TestCase):
@@ -1290,6 +1321,24 @@ class TestUserFicCacheBehavior(unittest.TestCase):
             ["https://graph.microsoft.com/.default"], account=accounts[0])
         self.assertIn("access_token", silent_result)
         self.assertEqual("oid_fic_at", silent_result["access_token"])
+
+    def test_account_source_is_set_to_user_fic(self):
+        """Accounts created by user_fic should have account_source set."""
+        app = self._make_app()
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            return MinimalResponse(status_code=200, text=_build_user_fic_response(
+                uid="user_oid", utid="tenant_id"))
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["https://graph.microsoft.com/.default"],
+            assertion="t2", username="user@contoso.com", post=mock_post)
+
+        accounts = app.get_accounts()
+        self.assertTrue(len(accounts) > 0)
+        self.assertEqual("user_fic", accounts[0].get("account_source"),
+            "FIC accounts should have account_source='user_fic' to avoid "
+            "broker path misrouting")
 
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)

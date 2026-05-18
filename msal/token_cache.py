@@ -416,7 +416,7 @@ class TokenCache(object):
                     }
                 grant_types_that_establish_an_account = (
                     _GRANT_TYPE_BROKER, "authorization_code", "password",
-                    Client.DEVICE_FLOW["GRANT_TYPE"])
+                    Client.DEVICE_FLOW["GRANT_TYPE"], "user_fic")
                 if event.get("grant_type") in grant_types_that_establish_an_account:
                     account["account_source"] = event["grant_type"]
                 self.modify(self.CredentialType.ACCOUNT, account, account)

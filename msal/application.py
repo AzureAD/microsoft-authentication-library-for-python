@@ -2617,12 +2617,18 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_USER_FIC_ID)
+        headers = telemetry_context.generate_headers()
+        if username:
+            headers["X-AnchorMailbox"] = "upn:{}".format(username)
+        elif user_object_id:
+            headers["X-AnchorMailbox"] = "Oid:{}@{}".format(
+                user_object_id, self.authority.tenant)
         response = _clean_up(self.client.obtain_token_by_user_fic(
             scope=self._decorate_scope(scopes),
             assertion=assertion,
             username=username,
             user_object_id=user_object_id,
-            headers=telemetry_context.generate_headers(),
+            headers=headers,
             data=dict(
                 kwargs.pop("data", {}),
                 claims=_merge_claims_challenge_and_capabilities(
