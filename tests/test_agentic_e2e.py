@@ -6,10 +6,6 @@ These tests verify the full agent identity flow using MSAL Python APIs:
 3. Full 3-leg flow: FMI → assertion → user_fic → user-scoped token
 4. Cache isolation between app-only and user-scoped tokens
 
-Corresponds to:
-- .NET: Agentic.cs
-- Java: AgenticIT.java
-
 Test configuration uses the same lab infrastructure as test_fmi_e2e.py.
 Requires LAB_APP_CLIENT_CERT_PFX_PATH environment variable.
 """
@@ -28,7 +24,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG if "-v" in sys.argv else logging.INFO)
 
 # =============================================================================
-# Test configuration — matches .NET/Java agentic test constants
+# Test configuration — shared lab app registrations for agentic scenarios
 # =============================================================================
 _TENANT_ID = "10c419d4-4a50-45b2-aa4e-919fb84df24f"
 _BLUEPRINT_CLIENT_ID = "aab5089d-e764-47e3-9f28-cc11c2513821"
@@ -43,14 +39,14 @@ _AUTHORITY = "https://login.microsoftonline.com/" + _TENANT_ID
 
 
 # =============================================================================
-# Helpers — mirror .NET GetAppCredentialAsync / Java acquireFmiCredentialForAgent
+# Helpers
 # =============================================================================
 
 def _acquire_fmi_credential_for_agent(agent_app_id):
     """Leg 1: Blueprint app acquires FMI credential (T1) for the given agent.
 
     Uses certificate authentication with SNI (sendX5C) and fmi_path set to
-    the agent app ID — matching .NET and Java helper methods.
+    the agent app ID.
     """
     blueprint_app = msal.ConfidentialClientApplication(
         _BLUEPRINT_CLIENT_ID,
@@ -70,7 +66,7 @@ def _acquire_fmi_credential_for_agent(agent_app_id):
 def _acquire_fmi_credential_from_rma():
     """Acquire an FMI credential from the RMA app using certificate credentials.
 
-    Mirrors Java's acquireFmiCredentialFromRma and Python's test_fmi_e2e helper.
+    Uses the same RMA pattern as test_fmi_e2e._get_fmi_credential_from_rma().
     Used for assertion callback context tests where the callback just needs to
     return a valid FMI token (not specifically for an agent app).
     """
@@ -118,10 +114,7 @@ def _acquire_instance_token_for_agent():
 # =============================================================================
 
 class TestAssertionCallbackContext(LabBasedTestCase):
-    """Verify assertion callback receives correct context when fmi_path is set.
-
-    Corresponds to Java's assertionCallback_ReceivesFmiPathContext.
-    """
+    """Verify assertion callback receives correct context when fmi_path is set."""
 
     def test_assertion_callback_receives_fmi_path(self):
         captured_context = {}
@@ -155,9 +148,6 @@ class TestAssertionCallbackContext(LabBasedTestCase):
 class TestAgentAppToken(LabBasedTestCase):
     """Agent acquires app-only token for Graph using FMI-sourced assertion.
 
-    Corresponds to .NET's AgentGetsAppTokenForGraphTest and
-    Java's agentGetsAppToken_UsingFmiAssertion.
-
     Flow: Blueprint → T1 (assertion callback) → Agent CCA → app token
     """
 
@@ -182,9 +172,6 @@ class TestAgentAppToken(LabBasedTestCase):
 
 class TestAgentUserIdentity(LabBasedTestCase):
     """Full 3-leg agent identity flow: FMI → assertion → user_fic → user token.
-
-    Corresponds to .NET's AgentUserIdentityGetsTokenForGraphTest and
-    Java's agentUserIdentity_GetsTokenForGraph.
 
     Flow:
     1. Blueprint → T1 (FMI credential)
@@ -234,10 +221,7 @@ class TestAgentUserIdentity(LabBasedTestCase):
 
 
 class TestAgentCacheIsolation(LabBasedTestCase):
-    """App-only and user-scoped tokens are isolated in cache on the same CCA.
-
-    Corresponds to Java's agentCca_AppAndUserTokens_CacheIsolation.
-    """
+    """App-only and user-scoped tokens are isolated in cache on the same CCA."""
 
     def test_app_and_user_tokens_are_isolated(self):
         def assertion_provider(context):
