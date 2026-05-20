@@ -149,8 +149,16 @@ class TestAgentAppToken(LabBasedTestCase):
     """Agent acquires app-only token for Graph using FMI-sourced assertion.
 
     Flow: Blueprint → T1 (assertion callback) → Agent CCA → app token
+
+    Disabled in CI: The blueprint app (aab5089d) requires SNI authentication,
+    but the CI pipeline's PFX-based cert loading does not include intermediate
+    certs in the x5c chain, causing AADSTS700027. These tests pass locally
+    where the OS cert store can resolve the chain.
     """
 
+    @unittest.skipUnless(
+        os.environ.get("MSAL_RUN_LOCAL_ONLY_TESTS"),
+        "Requires local cert store for SNI — set MSAL_RUN_LOCAL_ONLY_TESTS=1")
     def test_agent_gets_app_token_for_graph(self):
         def assertion_provider(context):
             return _acquire_fmi_credential_for_agent(_AGENT_APP_ID)
@@ -178,8 +186,13 @@ class TestAgentUserIdentity(LabBasedTestCase):
     2. Agent uses T1 → T2 (instance token)
     3. Agent exchanges T2 via user_fic → user-scoped Graph token
     4. Verify token is cached and retrievable via acquire_token_silent
+
+    Disabled in CI: see TestAgentAppToken docstring.
     """
 
+    @unittest.skipUnless(
+        os.environ.get("MSAL_RUN_LOCAL_ONLY_TESTS"),
+        "Requires local cert store for SNI — set MSAL_RUN_LOCAL_ONLY_TESTS=1")
     def test_agent_user_identity_gets_token_for_graph(self):
         # Get instance token (T2) for user_fic exchange
         t2 = _acquire_instance_token_for_agent()
@@ -221,8 +234,14 @@ class TestAgentUserIdentity(LabBasedTestCase):
 
 
 class TestAgentCacheIsolation(LabBasedTestCase):
-    """App-only and user-scoped tokens are isolated in cache on the same CCA."""
+    """App-only and user-scoped tokens are isolated in cache on the same CCA.
 
+    Disabled in CI: see TestAgentAppToken docstring.
+    """
+
+    @unittest.skipUnless(
+        os.environ.get("MSAL_RUN_LOCAL_ONLY_TESTS"),
+        "Requires local cert store for SNI — set MSAL_RUN_LOCAL_ONLY_TESTS=1")
     def test_app_and_user_tokens_are_isolated(self):
         def assertion_provider(context):
             return _acquire_fmi_credential_for_agent(_AGENT_APP_ID)

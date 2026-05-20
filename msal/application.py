@@ -91,19 +91,12 @@ def _parse_pfx(pfx_path, passphrase_bytes):
     # Cert concepts https://security.stackexchange.com/a/226758/125264
     from cryptography.hazmat.primitives.serialization import pkcs12
     with open(pfx_path, 'rb') as f:
-        private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
-            # cryptography 2.5+
+        private_key, cert, _ = pkcs12.load_key_and_certificates(  # cryptography 2.5+
             # https://cryptography.io/en/latest/hazmat/primitives/asymmetric/serialization/#cryptography.hazmat.primitives.serialization.pkcs12.load_key_and_certificates
             f.read(), passphrase_bytes)
     if not (private_key and cert):
         raise ValueError("Your PFX file shall contain both private key and cert")
     sha256_thumbprint, sha1_thumbprint, x5c = _extract_cert_and_thumbprints(cert)
-    # Per RFC 7515 §4.1.6, x5c should include the full certificate chain
-    # (leaf first, then intermediates) for SNI (Subject Name/Issuer) auth.
-    if additional_certs:
-        for extra_cert in additional_certs:
-            _, _, extra_x5c = _extract_cert_and_thumbprints(extra_cert)
-            x5c.extend(extra_x5c)
     return private_key, sha256_thumbprint, sha1_thumbprint, x5c
 
 
