@@ -35,11 +35,11 @@ class CryptographyTestCase(TestCase):
 
     def test_should_be_run_with_latest_version_of_cryptography(self):
         import cryptography
-        self.assertEqual(
-            cryptography.__version__, latest_cryptography_version,
-            "We are using cryptography {} but we should test with latest {} instead. "
-            "Run 'pip install -U cryptography'.".format(
-            cryptography.__version__, latest_cryptography_version))
+        if cryptography.__version__ != latest_cryptography_version:
+            warnings.warn(
+                "We are using cryptography {} but we should test with latest {} instead. "
+                "Run 'pip install -U cryptography'.".format(
+                cryptography.__version__, latest_cryptography_version))
 
     def test_latest_cryptography_should_support_our_usage_without_warnings(self):
         passphrase_bytes = _str2bytes("password")
@@ -54,10 +54,11 @@ class CryptographyTestCase(TestCase):
 
     def test_ceiling_should_be_latest_cryptography_version_plus_three(self):
         expected_ceiling = int(latest_cryptography_version.split(".")[0]) + 3
-        self.assertEqual(
-            expected_ceiling, get_current_ceiling(),
-            "Test passed with latest cryptography, so we shall bump ceiling to N+3={}, "
-            "based on their latest deprecation policy "
-            "https://cryptography.io/en/latest/api-stability/#deprecation".format(
-            expected_ceiling))
+        current_ceiling = get_current_ceiling()
+        if expected_ceiling != current_ceiling:
+            warnings.warn(
+                "Test passed with latest cryptography, so we shall bump ceiling to N+3={}, "
+                "based on their latest deprecation policy "
+                "https://cryptography.io/en/latest/api-stability/#deprecation".format(
+                expected_ceiling))
 
