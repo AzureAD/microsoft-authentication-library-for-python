@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779302111241,
+  "lastUpdate": 1779314349939,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -42105,6 +42105,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000012663448536658062",
             "extra": "mean: 121.32119685037603 usec\nrounds: 3429"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "62066438+Avery-Dunn@users.noreply.github.com",
+            "name": "Avery-Dunn",
+            "username": "Avery-Dunn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "08aa7fd273e93933617e74be842da15d3e36bf25",
+          "message": "Add User Federated Identity Credential (user_fic) grant type support (#918)\n\n* First draft of FIC support\n\n* Small fixes and feedback\n\n* PR feedback\n\n* PR feedback\n\n* Add integration tests\n\n* Adjust SNI behavior around .pfx files\n\n* Revert pfx changes and disable tests",
+          "timestamp": "2026-05-20T14:53:53-07:00",
+          "tree_id": "8c24c0bff6c84e9b4effe4d971729a394f3c3df0",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/08aa7fd273e93933617e74be842da15d3e36bf25"
+        },
+        "date": 1779314347808,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 48358.432061429536,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000016894137546158436",
+            "extra": "mean: 20.67891694109734 usec\nrounds: 6983"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 44065.82071200274,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002341379304549085",
+            "extra": "mean: 22.693325208569597 usec\nrounds: 15467"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9658.668737860487,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016389470545786748",
+            "extra": "mean: 103.53393693689428 usec\nrounds: 4329"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 9019.459833225863,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001599749234319521",
+            "extra": "mean: 110.87138459403107 usec\nrounds: 3635"
           }
         ]
       }
