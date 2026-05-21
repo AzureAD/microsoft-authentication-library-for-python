@@ -344,6 +344,45 @@ class ClientApplication(object):
                         "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
                     }
 
+                .. note::
+
+                    A pre-signed JWT string has a fixed expiration. Long-running
+                    confidential client applications (for example, workloads using
+                    AKS workload identity federation, or any other dynamic
+                    credential source) should instead pass a **callable** which
+                    MSAL will invoke on demand to obtain a fresh assertion::
+
+                        def get_client_assertion():
+                            # e.g. read the projected service-account token from disk
+                            with open("/var/run/secrets/azure/tokens/azure-identity-token") as f:
+                                return f.read()
+
+                        app = ConfidentialClientApplication(
+                            "client_id",
+                            client_credential={"client_assertion": get_client_assertion},
+                            ...,
+                        )
+
+                    The callable is only invoked when MSAL needs to send a token
+                    request on the wire (the in-memory token cache transparently
+                    avoids unnecessary calls).
+
+                    If your callback is itself expensive (for example it calls
+                    out to a key vault), wrap it in :class:`msal.AutoRefresher`
+                    to memoize the assertion for its lifetime::
+
+                        from msal import AutoRefresher
+                        smart_callback = AutoRefresher(get_client_assertion, expires_in=3600)
+                        app = ConfidentialClientApplication(
+                            "client_id",
+                            client_credential={"client_assertion": smart_callback},
+                            ...,
+                        )
+
+                    Passing a plain ``str`` / ``bytes`` ``client_assertion`` is
+                    still supported for backward compatibility but is discouraged
+                    because the assertion will eventually expire.
+
             .. admonition:: Supporting reading client certificates from PFX files
 
                 This usage will automatically use SHA-256 thumbprint of the certificate.
@@ -677,6 +716,18 @@ class ClientApplication(object):
         self._region_detected = None
         self.client, self._regional_client = self._build_client(
             client_credential, self.authority)
+        # Warn if using a static string/bytes client_assertion (discouraged for long-running apps)
+        if isinstance(client_credential, dict) and isinstance(
+                client_credential.get("client_assertion"), (str, bytes)):
+            warnings.warn(
+                "Passing a static string/bytes 'client_assertion' is "
+                "discouraged because the JWT will eventually expire. "
+                "Pass a no-arg callable instead (optionally wrapped in "
+                "msal.AutoRefresher) so MSAL can obtain a fresh "
+                "assertion on demand. "
+                "See https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/746",
+                DeprecationWarning, stacklevel=2)
+
         self.authority_groups = {}
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
