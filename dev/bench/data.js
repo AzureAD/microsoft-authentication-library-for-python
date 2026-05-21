@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779378798476,
+  "lastUpdate": 1779379311015,
   "repoUrl": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
   "entries": {
     "Benchmark": [
@@ -42209,6 +42209,58 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001574846404907959",
             "extra": "mean: 136.08721741343703 usec\nrounds: 3928"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107404295+4gust@users.noreply.github.com",
+            "name": "Nilesh Choudhary",
+            "username": "4gust"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "192a82dcd6c5371ece4f14f9701b0134b2e92a07",
+          "message": "Removed support for Python 3.8 (#910)\n\n* Added a soft warning if callback is not callable\n\n* updated crypto version max to 51\n\n* removed support for 3.8 and added doc\n\n* Updated in warning placement\n\n* updated a fix for get()",
+          "timestamp": "2026-05-21T16:53:45+01:00",
+          "tree_id": "ce721057fc6b19d36c00858f7b03d4dc79af597e",
+          "url": "https://github.com/AzureAD/microsoft-authentication-library-for-python/commit/192a82dcd6c5371ece4f14f9701b0134b2e92a07"
+        },
+        "date": 1779379308760,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 37921.30628605127,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003300151545602031",
+            "extra": "mean: 26.37039959691034 usec\nrounds: 7938"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_hit",
+            "value": 35227.82425861302,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003846290397715963",
+            "extra": "mean: 28.386652342161188 usec\nrounds: 13962"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_1_tenant_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 7434.13388776288,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017565052406277602",
+            "extra": "mean: 134.5146610348345 usec\nrounds: 2841"
+          },
+          {
+            "name": "tests/test_benchmark.py::test_cca_many_tenants_with_10_tokens_per_tenant_and_cache_miss",
+            "value": 6971.721084052382,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001680320883458105",
+            "extra": "mean: 143.43660452617246 usec\nrounds: 3535"
           }
         ]
       }
