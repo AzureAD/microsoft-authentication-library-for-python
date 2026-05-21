@@ -716,7 +716,8 @@ class ClientApplication(object):
         self.client, self._regional_client = self._build_client(
             client_credential, self.authority)
         # Warn if using a static string/bytes client_assertion (discouraged for long-running apps)
-        if client_credential and isinstance(client_credential.get("client_assertion"), (str, bytes)):
+        if isinstance(client_credential, dict) and isinstance(
+                client_credential.get("client_assertion"), (str, bytes)):
             warnings.warn(
                 "Passing a static string/bytes 'client_assertion' is "
                 "discouraged because the JWT will eventually expire. "
@@ -725,7 +726,7 @@ class ClientApplication(object):
                 "assertion on demand. "
                 "See https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/746",
                 DeprecationWarning, stacklevel=2)
-        
+
         self.authority_groups = {}
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
