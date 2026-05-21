@@ -715,6 +715,17 @@ class ClientApplication(object):
         self._region_detected = None
         self.client, self._regional_client = self._build_client(
             client_credential, self.authority)
+        # Warn if using a static string/bytes client_assertion (discouraged for long-running apps)
+        if client_credential and isinstance(client_credential.get("client_assertion"), (str, bytes)):
+            warnings.warn(
+                "Passing a static string/bytes 'client_assertion' is "
+                "discouraged because the JWT will eventually expire. "
+                "Pass a no-arg callable instead (optionally wrapped in "
+                "msal.AutoRefresher) so MSAL can obtain a fresh "
+                "assertion on demand. "
+                "See https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/746",
+                DeprecationWarning, stacklevel=2)
+        
         self.authority_groups = {}
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
@@ -846,19 +857,6 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             # so that we can ignore an empty string came from an empty ENV VAR.
             if client_credential.get("client_assertion"):
                 client_assertion = client_credential['client_assertion']
-                if not callable(client_assertion):
-                    # Soft-deprecation: a fixed string assertion has a fixed
-                    # expiration. Long-running apps should pass a callable so
-                    # MSAL can fetch a fresh assertion on demand. See
-                    # https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/746
-                    warnings.warn(
-                        "Passing a static string/bytes 'client_assertion' is "
-                        "discouraged because the JWT will eventually expire. "
-                        "Pass a no-arg callable instead (optionally wrapped in "
-                        "msal.AutoRefresher) so MSAL can obtain a fresh "
-                        "assertion on demand. "
-                        "See https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/746",
-                        DeprecationWarning, stacklevel=2)
             else:
                 headers = {}
                 sha1_thumbprint = sha256_thumbprint = None
