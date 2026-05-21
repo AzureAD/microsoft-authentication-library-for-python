@@ -3,6 +3,15 @@
 Azure Active Directory SDK projects welcomes new contributors.  This document will guide you
 through the process.
 
+### SUPPORTED PYTHON VERSIONS
+
+The set of Python versions that MSAL Python supports, and the policy for
+adding/removing support, is documented in
+[doc/python_version_support_policy.md](doc/python_version_support_policy.md).
+Any change that adds or removes a Python version must update both that
+policy document and the supported-version declarations it lists
+(`setup.cfg`, the GitHub Actions matrix, and the cryptography test).
+
 ### CONTRIBUTOR LICENSE AGREEMENT
 
 Please visit [https://cla.microsoft.com/](https://cla.microsoft.com/) and sign the Contributor License

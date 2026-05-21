@@ -1,9 +1,11 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
+import base64
 import json
 import logging
 import sys
 import time
+import warnings
 from unittest.mock import patch, Mock
 import msal
 from msal.application import (
@@ -708,6 +710,99 @@ class TestClientCredentialGrant(unittest.TestCase):
 
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestClientAssertionCallback(unittest.TestCase):
+    """Issue #746: client_credential={'client_assertion': callable} support."""
+
+    _AUTHORITY = "https://login.microsoftonline.com/my_tenant"
+
+    def _mock_post_capturing(self, captured):
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured.append(dict(data or {}))
+            return MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an AT", "expires_in": 3600}))
+        return mock_post
+
+    def test_callable_client_assertion_is_invoked_per_request(self):
+        calls = {"n": 0}
+        def assertion_cb():
+            calls["n"] += 1
+            return "assertion-{}".format(calls["n"])
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={"client_assertion": assertion_cb},
+            authority=self._AUTHORITY)
+        captured = []
+        app.acquire_token_for_client(
+            ["s1"], post=self._mock_post_capturing(captured))
+        app.acquire_token_for_client(
+            ["s2"], post=self._mock_post_capturing(captured))
+        self.assertEqual(2, calls["n"], "Callable should be called per request")
+        self.assertEqual("assertion-1", captured[0]["client_assertion"])
+        self.assertEqual("assertion-2", captured[1]["client_assertion"])
+        self.assertEqual(
+            "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            captured[0]["client_assertion_type"])
+
+    def test_autorefresher_caches_assertion(self):
+        from msal import AutoRefresher
+        calls = {"n": 0}
+        def assertion_cb():
+            calls["n"] += 1
+            return "static-assertion"
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={
+                "client_assertion": AutoRefresher(assertion_cb, expires_in=3600)},
+            authority=self._AUTHORITY)
+        captured = []
+        app.acquire_token_for_client(
+            ["s1"], post=self._mock_post_capturing(captured))
+        app.acquire_token_for_client(
+            ["s2"], post=self._mock_post_capturing(captured))
+        self.assertEqual(
+            1, calls["n"],
+            "AutoRefresher should reuse the assertion within its lifetime")
+        self.assertEqual("static-assertion", captured[0]["client_assertion"])
+        self.assertEqual("static-assertion", captured[1]["client_assertion"])
+
+    def test_string_client_assertion_still_works_for_backward_compat(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            app = ConfidentialClientApplication(
+                "client_id",
+                client_credential={"client_assertion": "static-jwt"},
+                authority=self._AUTHORITY)
+        captured = []
+        result = app.acquire_token_for_client(
+            ["s"], post=self._mock_post_capturing(captured))
+        self.assertEqual("an AT", result.get("access_token"))
+        self.assertEqual("static-jwt", captured[0]["client_assertion"])
+
+    def test_string_client_assertion_emits_deprecation_warning(self):
+        with self.assertWarns(DeprecationWarning):
+            ConfidentialClientApplication(
+                "client_id",
+                client_credential={"client_assertion": "static-jwt"},
+                authority=self._AUTHORITY)
+
+    def test_callable_client_assertion_does_not_emit_deprecation_warning(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ConfidentialClientApplication(
+                "client_id",
+                client_credential={"client_assertion": lambda: "x"},
+                authority=self._AUTHORITY)
+        offending = [
+            w for w in caught
+            if issubclass(w.category, DeprecationWarning)
+            and "client_assertion" in str(w.message)]
+        self.assertEqual(
+            [], offending,
+            "Callable client_assertion must not emit a deprecation warning")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestAcquireTokenForClientWithFmiPath(unittest.TestCase):
     """Test that acquire_token_for_client(fmi_path=...) attaches fmi_path to HTTP body."""
 
@@ -1091,3 +1186,404 @@ class MismatchingScopeTestCase(unittest.TestCase):
             self.assertEqual(result[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
             self.assertEqual("AT_with_valid_scope1_valid_scope2_scopes", result.get("access_token"))
             self.assertIsNone(result.get("scope"), "scope field is not returned when token comes from cache")
+
+
+def _build_user_fic_response(uid="user_oid", utid="tenant_id", access_token="user_at"):
+    """Build a mock user_fic response with client_info and id_token."""
+    client_info = base64.b64encode(json.dumps({
+        "uid": uid, "utid": utid,
+    }).encode()).decode("utf-8")
+    id_token_claims = {
+        "iss": "https://login.microsoftonline.com/tenant_id/v2.0",
+        "sub": "subject",
+        "aud": "agent_app_id",
+        "exp": time.time() + 3600,
+        "iat": time.time(),
+        "oid": uid,
+        "preferred_username": "user@contoso.com",
+        "tid": utid,
+    }
+    id_token = "header.%s.signature" % base64.b64encode(
+        json.dumps(id_token_claims).encode()).decode("utf-8")
+    return json.dumps({
+        "access_token": access_token,
+        "expires_in": 3600,
+        "token_type": "Bearer",
+        "client_info": client_info,
+        "id_token": id_token,
+        "refresh_token": "a_refresh_token",
+    })
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestUserFicProtocol(unittest.TestCase):
+    """Tests that acquire_token_by_user_federated_identity_credential sends correct POST body."""
+
+    def _make_app(self):
+        return ConfidentialClientApplication(
+            "agent_app_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+
+    def test_sends_correct_grant_type_and_params(self):
+        app = self._make_app()
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=_build_user_fic_response())
+
+        result = app.acquire_token_by_user_federated_identity_credential(
+            ["https://graph.microsoft.com/.default"],
+            assertion="instance_token_t2",
+            username="user@contoso.com",
+            post=mock_post)
+        self.assertIn("access_token", result)
+        self.assertEqual("user_fic", captured_data.get("grant_type"))
+        self.assertEqual("instance_token_t2",
+            captured_data.get("user_federated_identity_credential"))
+        self.assertEqual("1", captured_data.get("client_info"))
+        self.assertEqual("agent_app_id", captured_data.get("client_id"))
+
+    def test_scope_includes_oidc_scopes(self):
+        app = self._make_app()
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=_build_user_fic_response())
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["https://graph.microsoft.com/.default"],
+            assertion="t2", username="user@contoso.com", post=mock_post)
+        scope_str = captured_data.get("scope", "")
+        for oidc_scope in ("openid", "offline_access", "profile"):
+            self.assertIn(oidc_scope, scope_str,
+                "OIDC scope '{}' should be present".format(oidc_scope))
+
+    def test_with_username_sends_username_not_user_id(self):
+        app = self._make_app()
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=_build_user_fic_response())
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["scope"], assertion="t2", username="user@contoso.com", post=mock_post)
+        self.assertEqual("user@contoso.com", captured_data.get("username"))
+        self.assertNotIn("user_id", captured_data,
+            "user_id should NOT be in body when username is provided")
+
+    def test_with_oid_sends_user_id_not_username(self):
+        app = self._make_app()
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=_build_user_fic_response())
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["scope"], assertion="t2",
+            user_object_id="00000000-0000-0000-0000-000000000001",
+            post=mock_post)
+        self.assertEqual("00000000-0000-0000-0000-000000000001",
+            captured_data.get("user_id"))
+        self.assertNotIn("username", captured_data,
+            "username should NOT be in body when user_object_id is provided")
+
+    def test_ccs_routing_header_with_username(self):
+        app = self._make_app()
+        captured_headers = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_headers.update(headers or {})
+            return MinimalResponse(status_code=200, text=_build_user_fic_response())
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["scope"], assertion="t2", username="user@contoso.com", post=mock_post)
+        self.assertEqual("upn:user@contoso.com",
+            captured_headers.get("X-AnchorMailbox"),
+            "CCS routing header should use UPN format for username path")
+
+    def test_ccs_routing_header_with_oid(self):
+        app = self._make_app()
+        captured_headers = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_headers.update(headers or {})
+            return MinimalResponse(status_code=200, text=_build_user_fic_response())
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["scope"], assertion="t2",
+            user_object_id="user_oid_123", post=mock_post)
+        self.assertIn("X-AnchorMailbox", captured_headers,
+            "CCS routing header should be present for OID path")
+        self.assertTrue(
+            captured_headers["X-AnchorMailbox"].startswith("Oid:"),
+            "CCS routing header should use Oid format for user_object_id path")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestUserFicCacheBehavior(unittest.TestCase):
+    """Tests that user_fic tokens are stored in user cache with account info."""
+
+    def _make_app(self):
+        return ConfidentialClientApplication(
+            "agent_app_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+
+    def test_token_stored_in_user_cache_with_account(self):
+        app = self._make_app()
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            return MinimalResponse(status_code=200, text=_build_user_fic_response(
+                uid="user_oid", utid="tenant_id", access_token="fic_at"))
+
+        result = app.acquire_token_by_user_federated_identity_credential(
+            ["https://graph.microsoft.com/.default"],
+            assertion="t2", username="user@contoso.com", post=mock_post)
+        self.assertIn("access_token", result)
+
+        # Verify the account was created
+        accounts = app.get_accounts()
+        self.assertTrue(len(accounts) > 0, "Account should be created from user_fic response")
+        account = accounts[0]
+        self.assertEqual("user_oid.tenant_id", account["home_account_id"])
+
+    def test_token_not_stored_as_atext(self):
+        """user_fic tokens should use standard AccessToken type, not atext."""
+        app = self._make_app()
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            return MinimalResponse(status_code=200, text=_build_user_fic_response())
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["https://graph.microsoft.com/.default"],
+            assertion="t2", username="user@contoso.com", post=mock_post)
+
+        # Check the raw cache for credential type
+        at_entries = list(app.token_cache.search(
+            msal.TokenCache.CredentialType.ACCESS_TOKEN, query={}))
+        self.assertTrue(len(at_entries) > 0, "AT should be cached")
+        self.assertNotIn("ext_cache_key", at_entries[0],
+            "user_fic tokens should NOT have ext_cache_key")
+
+    def test_acquire_token_silent_returns_cached_fic_token(self):
+        app = self._make_app()
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            return MinimalResponse(status_code=200, text=_build_user_fic_response(
+                uid="user_oid", utid="tenant_id", access_token="cached_fic_at"))
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["https://graph.microsoft.com/.default"],
+            assertion="t2", username="user@contoso.com", post=mock_post)
+
+        accounts = app.get_accounts()
+        self.assertTrue(len(accounts) > 0)
+
+        # Silent call should return cached token without hitting network
+        silent_result = app.acquire_token_silent(
+            ["https://graph.microsoft.com/.default"], account=accounts[0])
+        self.assertIn("access_token", silent_result)
+        self.assertEqual("cached_fic_at", silent_result["access_token"])
+
+    def test_oid_path_token_stored_and_retrievable_via_silent(self):
+        """user_fic with user_object_id should cache and retrieve like username."""
+        app = self._make_app()
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            return MinimalResponse(status_code=200, text=_build_user_fic_response(
+                uid="user_oid", utid="tenant_id", access_token="oid_fic_at"))
+
+        result = app.acquire_token_by_user_federated_identity_credential(
+            ["https://graph.microsoft.com/.default"],
+            assertion="t2", user_object_id="user_oid", post=mock_post)
+        self.assertIn("access_token", result)
+
+        # Verify no ext_cache_key on cached token
+        at_entries = list(app.token_cache.search(
+            msal.TokenCache.CredentialType.ACCESS_TOKEN, query={}))
+        self.assertTrue(len(at_entries) > 0, "AT should be cached")
+        self.assertNotIn("ext_cache_key", at_entries[0],
+            "OID-path user_fic tokens should NOT have ext_cache_key")
+
+        # Verify account and silent retrieval
+        accounts = app.get_accounts()
+        self.assertTrue(len(accounts) > 0)
+        silent_result = app.acquire_token_silent(
+            ["https://graph.microsoft.com/.default"], account=accounts[0])
+        self.assertIn("access_token", silent_result)
+        self.assertEqual("oid_fic_at", silent_result["access_token"])
+
+    def test_account_source_is_set_to_user_fic(self):
+        """Accounts created by user_fic should have account_source set."""
+        app = self._make_app()
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            return MinimalResponse(status_code=200, text=_build_user_fic_response(
+                uid="user_oid", utid="tenant_id"))
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["https://graph.microsoft.com/.default"],
+            assertion="t2", username="user@contoso.com", post=mock_post)
+
+        accounts = app.get_accounts()
+        self.assertTrue(len(accounts) > 0)
+        self.assertEqual("user_fic", accounts[0].get("account_source"),
+            "FIC accounts should have account_source='user_fic' to avoid "
+            "broker path misrouting")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestUserFicInputValidation(unittest.TestCase):
+    """Tests that input validation rejects invalid parameters."""
+
+    def _make_app(self):
+        return ConfidentialClientApplication(
+            "agent_app_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+
+    def test_empty_assertion_raises(self):
+        app = self._make_app()
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_user_federated_identity_credential(
+                ["scope"], assertion="", username="user@contoso.com")
+
+    def test_none_assertion_raises(self):
+        app = self._make_app()
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_user_federated_identity_credential(
+                ["scope"], assertion=None, username="user@contoso.com")
+
+    def test_no_user_identifier_raises(self):
+        app = self._make_app()
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_user_federated_identity_credential(
+                ["scope"], assertion="t2")
+
+    def test_both_user_identifiers_raises(self):
+        app = self._make_app()
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_user_federated_identity_credential(
+                ["scope"], assertion="t2",
+                username="user@contoso.com",
+                user_object_id="oid-123")
+
+    def test_reserved_scopes_rejected(self):
+        app = self._make_app()
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_user_federated_identity_credential(
+                ["openid"], assertion="t2", username="user@contoso.com")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestAssertionCallbackContext(unittest.TestCase):
+    """Tests that assertion callbacks receive context when they accept arguments."""
+
+    def test_context_aware_callback_receives_fmi_path(self):
+        received_context = {}
+
+        def assertion_with_context(context):
+            received_context.update(context)
+            return "assertion_value"
+
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={"client_assertion": assertion_with_context},
+            authority="https://login.microsoftonline.com/my_tenant")
+
+        app.acquire_token_for_client(
+            ["scope"], fmi_path="agent_app_123",
+            post=lambda url, **kwargs: MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an_at", "expires_in": 3600})))
+
+        self.assertEqual("client_id", received_context.get("client_id"))
+        self.assertIn("token_endpoint", received_context)
+        self.assertEqual("agent_app_123", received_context.get("fmi_path"))
+
+    def test_context_aware_callback_omits_fmi_path_when_not_set(self):
+        received_context = {}
+
+        def assertion_with_context(context):
+            received_context.update(context)
+            return "assertion_value"
+
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={"client_assertion": assertion_with_context},
+            authority="https://login.microsoftonline.com/my_tenant")
+
+        app.acquire_token_for_client(
+            ["scope"],
+            post=lambda url, **kwargs: MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an_at", "expires_in": 3600})))
+
+        self.assertEqual("client_id", received_context.get("client_id"))
+        self.assertNotIn("fmi_path", received_context)
+
+    def test_legacy_zero_arg_callback_still_works(self):
+        call_count = [0]
+
+        def legacy_callback():
+            call_count[0] += 1
+            return "legacy_assertion"
+
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={"client_assertion": legacy_callback},
+            authority="https://login.microsoftonline.com/my_tenant")
+
+        result = app.acquire_token_for_client(
+            ["scope"],
+            post=lambda url, **kwargs: MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an_at", "expires_in": 3600})))
+
+        self.assertIn("access_token", result)
+        self.assertEqual(1, call_count[0], "Legacy callback should be invoked once")
+
+    def test_context_callback_type_error_not_swallowed(self):
+        """If a one-arg callback raises TypeError internally, it should propagate."""
+        def buggy_callback(context):
+            raise TypeError("Bug inside callback")
+
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={"client_assertion": buggy_callback},
+            authority="https://login.microsoftonline.com/my_tenant")
+
+        with self.assertRaises(TypeError, msg="Internal TypeError should propagate"):
+            app.acquire_token_for_client(
+                ["scope"],
+                post=lambda url, **kwargs: MinimalResponse(
+                    status_code=200, text=json.dumps({
+                        "access_token": "an_at", "expires_in": 3600})))
+
+    def test_lambda_with_defaulted_param_treated_as_zero_arg(self):
+        """A lambda like ``lambda token=token: token`` should be treated as
+        zero-arg because all its positional params have defaults."""
+        captured_value = "my_assertion_value"
+        assertion_callable = lambda token=captured_value: token  # noqa: E731
+
+        app = ConfidentialClientApplication(
+            "client_id",
+            client_credential={"client_assertion": assertion_callable},
+            authority="https://login.microsoftonline.com/my_tenant")
+
+        captured_data = {}
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(
+                status_code=200, text=json.dumps({
+                    "access_token": "an_at", "expires_in": 3600}))
+
+        result = app.acquire_token_for_client(["scope"], post=mock_post)
+        self.assertIn("access_token", result)
+        # The assertion should be the string value, not a dict context object
+        self.assertEqual(
+            captured_value, captured_data.get("client_assertion"),
+            "Lambda with defaulted params should return its default value, "
+            "not receive a context dict")

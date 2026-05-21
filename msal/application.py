@@ -242,6 +242,7 @@ class ClientApplication(object):
     ACQUIRE_TOKEN_FOR_CLIENT_ID = "730"
     ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID = "832"
     ACQUIRE_TOKEN_INTERACTIVE = "169"
+    ACQUIRE_TOKEN_BY_USER_FIC_ID = "950"
     GET_ACCOUNTS_ID = "902"
     REMOVE_ACCOUNT_ID = "903"
 
@@ -342,6 +343,45 @@ class ClientApplication(object):
                     {
                         "client_assertion": "...a JWT with claims aud, exp, iss, jti, nbf, and sub..."
                     }
+
+                .. note::
+
+                    A pre-signed JWT string has a fixed expiration. Long-running
+                    confidential client applications (for example, workloads using
+                    AKS workload identity federation, or any other dynamic
+                    credential source) should instead pass a **callable** which
+                    MSAL will invoke on demand to obtain a fresh assertion::
+
+                        def get_client_assertion():
+                            # e.g. read the projected service-account token from disk
+                            with open("/var/run/secrets/azure/tokens/azure-identity-token") as f:
+                                return f.read()
+
+                        app = ConfidentialClientApplication(
+                            "client_id",
+                            client_credential={"client_assertion": get_client_assertion},
+                            ...,
+                        )
+
+                    The callable is only invoked when MSAL needs to send a token
+                    request on the wire (the in-memory token cache transparently
+                    avoids unnecessary calls).
+
+                    If your callback is itself expensive (for example it calls
+                    out to a key vault), wrap it in :class:`msal.AutoRefresher`
+                    to memoize the assertion for its lifetime::
+
+                        from msal import AutoRefresher
+                        smart_callback = AutoRefresher(get_client_assertion, expires_in=3600)
+                        app = ConfidentialClientApplication(
+                            "client_id",
+                            client_credential={"client_assertion": smart_callback},
+                            ...,
+                        )
+
+                    Passing a plain ``str`` / ``bytes`` ``client_assertion`` is
+                    still supported for backward compatibility but is discouraged
+                    because the assertion will eventually expire.
 
             .. admonition:: Supporting reading client certificates from PFX files
 
@@ -676,6 +716,18 @@ class ClientApplication(object):
         self._region_detected = None
         self.client, self._regional_client = self._build_client(
             client_credential, self.authority)
+        # Warn if using a static string/bytes client_assertion (discouraged for long-running apps)
+        if isinstance(client_credential, dict) and isinstance(
+                client_credential.get("client_assertion"), (str, bytes)):
+            warnings.warn(
+                "Passing a static string/bytes 'client_assertion' is "
+                "discouraged because the JWT will eventually expire. "
+                "Pass a no-arg callable instead (optionally wrapped in "
+                "msal.AutoRefresher) so MSAL can obtain a fresh "
+                "assertion on demand. "
+                "See https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/746",
+                DeprecationWarning, stacklevel=2)
+
         self.authority_groups = {}
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
@@ -2567,6 +2619,71 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     self._client_capabilities, claims_challenge)),
             headers=telemetry_context.generate_headers(),
                 # TBD: Expose a login_hint (or ccs_routing_hint) param for web app
+            **kwargs))
+        if "access_token" in response:
+            response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
+        telemetry_context.update_telemetry(response)
+        return response
+
+    def acquire_token_by_user_federated_identity_credential(
+            self, scopes, assertion, username=None, user_object_id=None,
+            claims_challenge=None, **kwargs):
+        """Acquires a user-scoped token using the ``user_fic`` grant type.
+
+        This method exchanges a federated identity credential (typically an
+        agent instance token from Leg 2 of the agent identity protocol) for
+        a user-scoped access token, enabling an agent to act on behalf of
+        a specific user.
+
+        :param list[str] scopes: Scopes required by downstream API (a resource).
+        :param str assertion:
+            The federated identity credential token (e.g. the instance token
+            obtained from Leg 2 of the agent identity flow).
+        :param str username:
+            The target user's UPN (User Principal Name).
+            Mutually exclusive with ``user_object_id``.
+        :param str user_object_id:
+            The target user's Object ID.
+            Mutually exclusive with ``username``.
+        :param claims_challenge:
+            The claims_challenge parameter requests specific claims requested by the resource provider
+            in the form of a claims_challenge directive in the www-authenticate header to be
+            returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
+            It is a string of a JSON object which contains lists of claims being requested from these locations.
+
+        :return: A dict representing the json response from Microsoft Entra:
+
+            - A successful response would contain "access_token" key,
+            - an error response would contain "error" and usually "error_description".
+        """
+        # Input validation
+        if not assertion:
+            raise ValueError("assertion is required and must be non-empty")
+        if not username and not user_object_id:
+            raise ValueError(
+                "Either username or user_object_id must be provided")
+        if username and user_object_id:
+            raise ValueError(
+                "username and user_object_id are mutually exclusive")
+
+        telemetry_context = self._build_telemetry_context(
+            self.ACQUIRE_TOKEN_BY_USER_FIC_ID)
+        headers = telemetry_context.generate_headers()
+        if username:
+            headers["X-AnchorMailbox"] = "upn:{}".format(username)
+        elif user_object_id:
+            headers["X-AnchorMailbox"] = "Oid:{}@{}".format(
+                user_object_id, self.authority.tenant)
+        response = _clean_up(self.client.obtain_token_by_user_fic(
+            scope=self._decorate_scope(scopes),
+            assertion=assertion,
+            username=username,
+            user_object_id=user_object_id,
+            headers=headers,
+            data=dict(
+                kwargs.pop("data", {}),
+                claims=_merge_claims_challenge_and_capabilities(
+                    self._client_capabilities, claims_challenge)),
             **kwargs))
         if "access_token" in response:
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP

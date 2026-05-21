@@ -7,6 +7,7 @@ try:
 except ImportError:
     from urlparse import parse_qs, urlparse, urlunparse
     from urllib import urlencode, quote_plus
+import inspect
 import logging
 import warnings
 import time
@@ -104,6 +105,15 @@ class BaseClient(object):
                 or a raw JWT assertion in bytes (which we will relay to http layer).
                 It can also be a callable (recommended),
                 so that we will do lazy creation of an assertion.
+
+                The callable may accept zero arguments (legacy) or one
+                required positional argument.  Callables whose positional
+                parameters all have default values (e.g.
+                ``lambda token=token: token``) are treated as zero-arg.
+                When the callable declares a required positional parameter,
+                it will receive a dict containing ``"client_id"``,
+                ``"token_endpoint"``, and optionally ``"fmi_path"``
+                (when an FMI path is set on the current request).
             client_assertion_type (str):
                 The type of your :attr:`client_assertion` parameter.
                 It is typically the value of :attr:`CLIENT_ASSERTION_TYPE_SAML2` or
@@ -168,6 +178,41 @@ class BaseClient(object):
                 # A workaround for requests not supporting session-wide timeout
                 self._http_client.request, timeout=timeout)
 
+    @staticmethod
+    def _accepts_context(func):
+        """Check if a callable requires at least one positional argument.
+
+        Returns True only when the callable has a positional parameter
+        **without** a default value.  This ensures that legacy zero-arg
+        callables — including ``lambda token=token: token`` patterns
+        where every positional param has a default — are still invoked
+        with no arguments.
+        """
+        try:
+            sig = inspect.signature(func)
+            for p in sig.parameters.values():
+                if p.kind in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                ) and p.default is inspect.Parameter.empty:
+                    return True
+            return False
+        except (ValueError, TypeError):
+            return False  # Signature not inspectable; treat as zero-arg
+
+    def _invoke_assertion_callable(self, assertion_callable, data=None):
+        """Invoke an assertion callable, passing context if it accepts one."""
+        if self._accepts_context(assertion_callable):
+            context = {
+                "client_id": self.client_id,
+                "token_endpoint": self.configuration.get(
+                    "token_endpoint", ""),
+            }
+            if data and data.get("fmi_path"):
+                context["fmi_path"] = data["fmi_path"]
+            return assertion_callable(context)
+        return assertion_callable()
+
     def _build_auth_request_params(self, response_type, **kwargs):
         # response_type is a string defined in
         #   https://tools.ietf.org/html/rfc6749#section-3.1.1
@@ -198,11 +243,11 @@ class BaseClient(object):
             # See https://tools.ietf.org/html/rfc7521#section-4.2
             encoder = self.client_assertion_encoders.get(
                     self.default_body["client_assertion_type"], lambda a: a)
-            _data["client_assertion"] = encoder(
-                self.client_assertion()  # Do lazy on-the-fly computation
-                if callable(self.client_assertion) else self.client_assertion
-                )   # The type is bytes, which is preferable. See also:
-                    # https://github.com/psf/requests/issues/4503#issuecomment-455001070
+            if callable(self.client_assertion):
+                raw = self._invoke_assertion_callable(self.client_assertion, data)
+            else:
+                raw = self.client_assertion
+            _data["client_assertion"] = encoder(raw)
 
         _data.update(self.default_body)  # It may contain authen parameters
         _data.update(data or {})  # So the content in data param prevails
@@ -769,6 +814,34 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         data = kwargs.pop("data", {})
         data.update(scope=scope)
         return self._obtain_token("client_credentials", data=data, **kwargs)
+
+    def obtain_token_by_user_fic(
+            self, scope, assertion, username=None, user_object_id=None,
+            **kwargs):
+        """Obtain token using the ``user_fic`` grant type.
+
+        This exchanges a federated identity credential (e.g. an agent
+        instance token) for a user-scoped access token.
+
+        :param scope: Scopes for the target resource (already decorated
+            with OIDC scopes by the caller).
+        :param str assertion: The federated identity credential token.
+        :param str username: The target user's UPN (mutually exclusive
+            with *user_object_id*).
+        :param str user_object_id: The target user's Object ID (mutually
+            exclusive with *username*).
+        """
+        data = kwargs.pop("data", {})
+        data.update(
+            scope=scope,
+            user_federated_identity_credential=assertion,
+            client_info="1",
+        )
+        if user_object_id:
+            data["user_id"] = str(user_object_id)
+        elif username:
+            data["username"] = username
+        return self._obtain_token("user_fic", data=data, **kwargs)
 
     def __init__(self,
             server_configuration, client_id,

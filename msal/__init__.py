@@ -30,6 +30,7 @@ from .application import (
     ConfidentialClientApplication,
     PublicClientApplication,
     )
+from .oauth2cli.assertion import AutoRefresher
 from .oauth2cli.oidc import Prompt, IdTokenError
 from .sku import __version__
 from .token_cache import TokenCache, SerializableTokenCache

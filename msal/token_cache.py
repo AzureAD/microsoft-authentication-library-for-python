@@ -65,6 +65,11 @@ _EXT_CACHE_KEY_EXCLUDED_FIELDS = frozenset({
     "token_type",
     "req_cnf",
     "key_id",
+    # user_fic grant parameters — these are standard body params for the
+    # user_fic flow; FIC tokens use normal user cache keys (not extended).
+    "user_federated_identity_credential",
+    "user_id",
+    "client_info",
 })
 
 
@@ -301,6 +306,7 @@ class TokenCache(object):
             event,
             data=make_clean_copy(event.get("data", {}), (
                 "password", "client_secret", "refresh_token", "assertion",
+                "user_federated_identity_credential",
             )),
             response=make_clean_copy(event.get("response", {}), (
                 "id_token_claims",  # Provided by broker
@@ -410,7 +416,7 @@ class TokenCache(object):
                     }
                 grant_types_that_establish_an_account = (
                     _GRANT_TYPE_BROKER, "authorization_code", "password",
-                    Client.DEVICE_FLOW["GRANT_TYPE"])
+                    Client.DEVICE_FLOW["GRANT_TYPE"], "user_fic")
                 if event.get("grant_type") in grant_types_that_establish_an_account:
                     account["account_source"] = event["grant_type"]
                 self.modify(self.CredentialType.ACCOUNT, account, account)

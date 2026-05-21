@@ -45,13 +45,17 @@ class TokenTypeError(ValueError):
     pass
 
 
-_redirect_uri_on_mac = "msauth.com.msauth.unsignedapp://auth"  # Note:
+_default_redirect_uri_on_mac = "msauth.com.msauth.unsignedapp://auth"  # Note:
     # On Mac, the native Python has a team_id which links to bundle id
     # com.apple.python3 however it won't give Python scripts better security.
     # Besides, the homebrew-installed Pythons have no team_id
     # so they have to use a generic placeholder anyway.
     # The v-team chose to combine two situations into using same placeholder.
 
+_default_redirect_uri = "https://login.microsoftonline.com/common/oauth2/nativeclient"
+    # Linux Java Broker requires a non-empty valid redirect_uri.
+    # On Windows, WAM does not currently use this default redirect_uri,
+    # but MSAL.cpp still requires it to be non-empty and valid.
 
 def _convert_error(error, client_id):
     context = error.get_context()  # Available since pymsalruntime 0.0.4
@@ -63,8 +67,7 @@ def _convert_error(error, client_id):
             """MsalRuntime needs the current app to register these redirect_uri
 (1) ms-appx-web://Microsoft.AAD.BrokerPlugin/{}
 (2) {}
-(3) https://login.microsoftonline.com/common/oauth2/nativeclient""".format(
-            client_id, _redirect_uri_on_mac))
+(3) {}""".format(client_id, _default_redirect_uri_on_mac, _default_redirect_uri))
         # OTOH, AAD would emit other errors when other error handling branch was hit first,
         # so, the AADSTS50011/RedirectUriError is not guaranteed to happen.
     return {
@@ -145,12 +148,11 @@ def _build_msal_runtime_auth_params(client_id, authority):
     params.set_additional_parameter("msal_client_ver", __version__)
     return params
 
-def _set_redirect_uri_for_linux(params):
-    if sys.platform == "linux":
-        # This is required by Linux Java Broker to set a non-empty valid redirect_uri
-        params.set_redirect_uri(
-            "https://login.microsoftonline.com/common/oauth2/nativeclient"
-        )
+def _set_redirect_uri(params):
+    if sys.platform == "darwin":
+        params.set_redirect_uri(_default_redirect_uri_on_mac)
+    else:
+        params.set_redirect_uri(_default_redirect_uri)
 
 def _signin_silently(
         authority, client_id, scopes, correlation_id=None, claims=None,
@@ -158,7 +160,7 @@ def _signin_silently(
         auth_scheme=None,
         **kwargs):
     params = _build_msal_runtime_auth_params(client_id, authority)
-    _set_redirect_uri_for_linux(params)
+    _set_redirect_uri(params)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
@@ -193,12 +195,7 @@ def _signin_interactively(
         **kwargs):
     params = _build_msal_runtime_auth_params(client_id, authority)
     params.set_requested_scopes(scopes)
-    params.set_redirect_uri(
-        _redirect_uri_on_mac if sys.platform == "darwin" else
-        "https://login.microsoftonline.com/common/oauth2/nativeclient"
-        # This default redirect_uri value is not currently used by WAM
-        # but it is required by the MSAL.cpp to be set to a non-empty valid URI.
-    )
+    _set_redirect_uri(params)
     if prompt:
         if prompt == "select_account":
             if login_hint:
@@ -248,7 +245,7 @@ def _acquire_token_silently(
     if account is None:
         return
     params = _build_msal_runtime_auth_params(client_id, authority)
-    _set_redirect_uri_for_linux(params)
+    _set_redirect_uri(params)
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
