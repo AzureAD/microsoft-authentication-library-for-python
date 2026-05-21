@@ -1,20 +1,22 @@
 # PR gate and branch CI for the msal Python package.
-# Runs on pushes to dev/azure-pipelines, on all pull requests, and on a daily schedule.
-# Delegates all stages to .Pipelines/template-pipeline-stages.yml with
-# runPublish: false — PreBuildCheck (SDL scans) + CI (test matrix) only.
+# Runs on pushes to dev, on all PRs to dev, and on a daily schedule.
+# Delegates test stages to .Pipelines/template-pipeline-stages.yml with
+# runPublish: false — PreBuildCheck (SDL scans) + UnitTests + E2ETests only.
 
 trigger:
-- dev
-- azure-pipelines
+  branches:
+    include:
+    - dev
 
 pr:
   branches:
     include:
-    - '*'
+    - dev
+  drafts: false
 
 schedules:
-- cron: '45 7 * * *'  # 07:45 UTC daily (11:45 PM PST / 12:45 AM PDT) — matches legacy MSAL-Python-SDL-CI schedule
-  displayName: 'Daily SDL + CI (dev)'
+- cron: '45 7 * * *'  # 07:45 UTC daily (11:45 PM PST / 12:45 AM PDT)
+  displayName: 'Daily CI (dev)'
   branches:
     include:
     - dev
@@ -27,12 +29,11 @@ stages:
 
 - stage: Benchmark
   displayName: 'Run benchmarks'
-  dependsOn: CI
+  dependsOn: E2ETests
   # Only run on post-merge pushes to dev — not on PRs or scheduled runs.
-  # Benchmarks are noisy and the baseline cache is only meaningful on a stable branch.
   condition: |
     and(
-      succeeded('CI'),
+      succeeded('E2ETests'),
       eq(variables['Build.SourceBranch'], 'refs/heads/dev'),
       or(
         eq(variables['Build.Reason'], 'IndividualCI'),
