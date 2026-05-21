@@ -218,7 +218,7 @@ stages:
 - stage: E2ETests
   displayName: 'E2E tests'
   dependsOn: UnitTests
-  condition: succeeded()
+  condition: eq(dependencies.UnitTests.result, 'Succeeded')
   jobs:
   - job: Pytest
     displayName: 'pytest'
