@@ -6,7 +6,7 @@
 # Publish targets:
 #   test.pypi.org (Preview / RC) — preview releases via MSAL-Test-Python-Upload SC
 #                                   (SC creation pending test.pypi.org API token)
-#   pypi.org (ESRP Production)   — production releases via ESRP (EsrpRelease@9) using MSAL-ESRP-AME SC
+#   pypi.org (ESRP Production)   — production releases via ESRP (EsrpRelease@12) using MSAL-ESRP-AME SC
 #
 # For pipeline documentation, see .Pipelines/CI-AND-RELEASE-PIPELINES.md.
 
@@ -130,10 +130,10 @@ stages:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 4b · Publish to PyPI (ESRP Production)
-#   Uses EsrpRelease@9 via the MSAL-ESRP-AME service connection.
+#   Uses EsrpRelease@12 via the MSAL-ESRP-AME service connection.
 #   IMPORTANT: configure a required manual approval on this environment in
 #   ADO → Pipelines → Environments → MSAL-Python-Release → Approvals and checks.
-#   IMPORTANT: EsrpRelease@9 requires a Windows agent.
+#   IMPORTANT: EsrpRelease@12 requires a Windows agent.
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: PublishPyPI
   displayName: 'Publish to PyPI (ESRP Production)'
