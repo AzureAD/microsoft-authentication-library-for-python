@@ -1,0 +1,17 @@
+{
+    "codebaseName": "MSAL Python",
+    "notificationAliases": [
+        "IdentityDevExDotnet@microsoft.com"
+    ],
+    "codebaseAdmins": [
+        "EUROPE\\aadidagt"
+    ],
+    "instanceUrl": "https://identitydivision.visualstudio.com",
+    "projectName": "IDDP",
+    "areaPath": "IDDP\\DevEx-Client-SDK\\Python",
+    "iterationPath": "IDDP\\Unscheduled",
+    "tools": [
+        "credscan",
+        "policheck"
+    ]
+}

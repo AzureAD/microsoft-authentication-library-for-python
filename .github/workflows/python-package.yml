@@ -1,30 +1,57 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
+# Build verification + unit tests for the msal Python package.
+#
+# This workflow runs on every PR (against any target branch) to give contributors
+# fast feedback that the package still builds and that the unit tests pass across
+# all supported Python versions.
+#
+# Post-merge validation on dev, E2E tests, benchmarks, SDL scans, and PyPI
+# publishing are NOT run here. Those run in the ADO pipelines:
+#   - azure-pipelines.yml             (PRs + pushes to dev: unit + E2E + SDL)
+#   - .Pipelines/pipeline-publish.yml (manual release to TestPyPI / PyPI)
 
-name: CI/CD
+name: Build and Unit Tests
 
 on:
-  push:
   pull_request:
-    branches: [ dev ]
-
-    # This guards against unknown PR until a community member vet it and label it.
-    types: [ labeled ]
+    # No `branches` filter — run on PRs against any target branch.
 
 jobs:
-  ci:
+  build:
+    name: Build package (sdist + wheel)
     permissions:
       contents: read
-    env:
-      # Fake a TRAVIS env so that the pre-existing test cases would behave like before
-      TRAVIS: true
-      LAB_APP_CLIENT_ID: ${{ secrets.LAB_APP_CLIENT_ID }}
-      LAB_APP_CLIENT_CERT_BASE64: ${{ secrets.LAB_APP_CLIENT_CERT_BASE64 }}
-      LAB_APP_CLIENT_CERT_PFX_PATH: lab_cert.pfx
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+    - name: Install build tooling
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install build twine
+    - name: Build sdist and wheel
+      run: python -m build --sdist --wheel --outdir dist/ .
+    - name: Verify built artifacts
+      # `twine check` catches broken long_description / metadata that would fail PyPI upload.
+      run: twine check dist/*
+    - name: Upload built artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist
+        path: dist/
+        retention-days: 7
 
-    # Derived from https://docs.github.com/en/actions/guides/building-and-testing-python#starting-with-the-python-workflow-template
+  ci:
+    name: Unit tests Python ${{ matrix.python-version }}
+    permissions:
+      contents: read
+
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
 
@@ -41,91 +68,14 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install flake8 pytest
+        python -m pip install pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Populate lab cert.pfx
-      # https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions#storing-base64-binary-blobs-as-secrets
-      run: echo $LAB_APP_CLIENT_CERT_BASE64 | base64 -d > $LAB_APP_CLIENT_CERT_PFX_PATH
-    - name: Test with pytest
-      run: pytest --benchmark-skip
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        #flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        #flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-  cb:
-    # Benchmark only after the correctness has been tested by CI,
-    # and then run benchmark only once (sampling with only one Python version).
-    needs: ci
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.9
-        cache: 'pip'
-    - name: Install dependencies
+    - name: Run unit tests
+      # Skip benchmarks and E2E tests — those require lab credentials and run in ADO.
       run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Setup an updatable cache for Performance Baselines
-      uses: actions/cache@v4
-      with:
-        path: .perf.baseline
-        key: ${{ runner.os }}-performance-${{ hashFiles('tests/test_benchmark.py') }}
-        restore-keys: ${{ runner.os }}-performance-
-    - name: Run benchmark
-      run: pytest --benchmark-only --benchmark-json benchmark.json --log-cli-level INFO tests/test_benchmark.py
-    - name: Render benchmark result
-      uses: benchmark-action/github-action-benchmark@v1
-      with:
-        tool: 'pytest'
-        output-file-path: benchmark.json
-        fail-on-alert: true
-    - name: Publish Gibhub Pages
-      run: git push origin gh-pages
-
-  cd:
-    needs: ci
-    # Note: github.event.pull_request.draft == false WON'T WORK in "if" statement,
-    # because the triggered event is a push, not a pull_request.
-    # This means each commit will trigger a release on TestPyPI.
-    # Those releases will only succeed when each push has a new version number: a1, a2, a3, etc.
-    if: |
-      github.event_name == 'push' &&
-      (
-        startsWith(github.ref, 'refs/tags') ||
-        startsWith(github.ref, 'refs/heads/release-')
-      )
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.9
-        cache: 'pip'
-    - name: Build a package for release
-      run: |
-        python -m pip install build --user
-        python -m build --sdist --wheel --outdir dist/ .
-    - name: |
-        Publish to TestPyPI when pushing to release-* branch.
-        You better test with a1, a2, b1, b2 releases first.
-      uses: pypa/gh-action-pypi-publish@v1.13.0
-      if: startsWith(github.ref, 'refs/heads/release-')
-      with:
-        user: __token__
-        password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        repository_url: https://test.pypi.org/legacy/
-    - name: Publish to PyPI when tagged
-      if: startsWith(github.ref, 'refs/tags')
-      uses: pypa/gh-action-pypi-publish@v1.13.0
-      with:
-        user: __token__
-        password: ${{ secrets.PYPI_API_TOKEN }}
+        pytest tests/ \
+          --benchmark-skip \
+          --ignore=tests/test_e2e.py \
+          --ignore=tests/test_e2e_manual.py \
+          --ignore=tests/test_fmi_e2e.py

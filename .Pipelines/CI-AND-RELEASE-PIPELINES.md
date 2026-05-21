@@ -7,37 +7,44 @@ including what each pipeline does, when it runs, and how to trigger a release.
 
 ## Pipeline Files
 
-| File | Purpose |
-|------|---------|
-| [`azure-pipelines.yml`](../azure-pipelines.yml) | PR gate and post-merge CI — calls the shared template with `runPublish: false` |
-| [`pipeline-publish.yml`](pipeline-publish.yml) | Release pipeline — manually queued, builds and publishes to PyPI |
-| [`template-pipeline-stages.yml`](template-pipeline-stages.yml) | Shared stages template — PreBuildCheck, Validate, and CI stages reused by both pipelines |
-| [`credscan-exclusion.json`](credscan-exclusion.json) | CredScan suppression file for known test fixtures |
+| File | ADO Pipeline | Purpose |
+|------|-------------|---------|
+| [`azure-pipelines.yml`](../azure-pipelines.yml) | [MSAL.Python-PR-OneBranch-Official (3064)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3064) | PR gate, post-merge CI, and performance benchmarks — calls the shared template with `runPublish: false`; runs benchmarks on post-merge pushes to `dev` |
+| [`pipeline-publish.yml`](pipeline-publish.yml) | [MSAL.Python-Publish (3067)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3067) | Release pipeline — manually queued, builds and publishes to PyPI |
+| [`template-pipeline-stages.yml`](template-pipeline-stages.yml) | — | Shared stages template — PreBuildCheck, Validate, UnitTests, and E2ETests stages reused by both pipelines |
+| [`credscan-exclusion.json`](credscan-exclusion.json) | — | CredScan suppression file for known test fixtures |
 
 ---
 
-## PR / CI Pipeline (`azure-pipelines.yml`)
+## PR / CI Pipeline — [MSAL.Python-PR-OneBranch-Official (3064)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3064)
 
 ### Triggers
 
 | Event | Branches |
 |-------|----------|
-| Pull request opened / updated | all branches |
-| Push / merge | `dev`, `azure-pipelines` |
+| Pull request opened / updated | `dev` (PRs targeting `dev` only) |
+| Push / merge | `dev` |
 | Scheduled | Daily at 11:45 PM Pacific, `dev` branch (only when there are new changes) |
+
+Fast unit-test feedback for PRs targeting **other** branches (e.g. `release-x.y.z`)
+is provided separately by the GitHub Actions workflow
+[`.github/workflows/python-package.yml`](../.github/workflows/python-package.yml),
+which runs the package build and unit tests on every PR.
 
 ### Stages
 
 ```
-PreBuildCheck ─► CI
+PreBuildCheck ─► UnitTests ─► E2ETests ─► Benchmark (post-merge to dev only)
 ```
 
-| Stage | What it does |
-|-------|-------------|
-| **PreBuildCheck** | Runs SDL security scans: PoliCheck (policy/offensive content), CredScan (leaked credentials), and PostAnalysis (breaks the build on findings) |
-| **CI** | Runs the full test suite on Python 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 |
+| Stage | What it does | When it runs |
+|-------|-------------|-------------|
+| **PreBuildCheck** | Runs SDL security scans: PoliCheck (policy/offensive content), CredScan (leaked credentials), and PostAnalysis (breaks the build on findings) | Always |
+| **UnitTests** | Runs the unit test suite on Python 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 (no Key Vault required) | After PreBuildCheck |
+| **E2ETests** | Fetches the MSID Lab certificate from Key Vault and runs `tests/test_e2e.py` + `tests/test_fmi_e2e.py` on the same Python matrix. On forked PRs the stage still runs, but the Key Vault tasks are skipped and the E2E tests self-skip (because `LAB_APP_CLIENT_CERT_PFX_PATH` is unset), so the stage reports green with all E2E tests marked Skipped in the Tests tab. | After UnitTests |
+| **Benchmark** | Runs performance benchmarks on Python 3.9 and publishes `benchmark-results` artifact | Post-merge pushes to `dev` and manual runs only |
 
-The Validate stage is **skipped** on PR/CI runs (it only applies to release builds).
+The `Validate` stage is **skipped** on PR/CI runs (it only applies to release builds).
 
 > **SDL coverage:** The PreBuildCheck stage satisfies the OneBranch SDL requirement.
 > It runs on every PR, every merge to `dev`, and on the daily schedule — ensuring
@@ -45,7 +52,7 @@ The Validate stage is **skipped** on PR/CI runs (it only applies to release buil
 
 ---
 
-## Release Pipeline (`pipeline-publish.yml`)
+## Release Pipeline — [MSAL.Python-Publish (3067)](https://dev.azure.com/IdentityDivision/IDDP/_build?definitionId=3067)
 
 ### Triggers
 
@@ -62,18 +69,25 @@ with both parameters filled in.
 ### Stage Flow
 
 ```
-PreBuildCheck ─► Validate ─► CI ─► Build ─┬─► PublishMSALPython  (publishTarget == 'test.pypi.org (Preview / RC)')
-                                           └─► PublishPyPI        (publishTarget == 'pypi.org (ESRP Production)')
+PreBuildCheck ─► Validate ─► UnitTests ─► E2ETests ─► Build ─┬─► PublishMSALPython  (publishTarget == 'test.pypi.org (Preview / RC)')
+                                                       └─► PublishPyPI        (publishTarget == 'pypi.org (ESRP Production)')
 ```
 
 | Stage | What it does | Condition |
 |-------|-------------|-----------|
 | **PreBuildCheck** | PoliCheck + CredScan scans | Always |
 | **Validate** | Asserts the `packageVersion` parameter matches `msal/sku.py __version__` | Always (release runs only) |
-| **CI** | Full test matrix (Python 3.9–3.14) | After Validate passes |
-| **Build** | Builds `sdist` and `wheel` via `python -m build`; publishes `python-dist` artifact | After CI passes |
+| **UnitTests** | Unit test matrix (Python 3.9–3.14) | After Validate passes |
+| **E2ETests** | E2E test matrix (Python 3.9–3.14) with MSID Lab cert from Key Vault | After UnitTests passes |
+| **Build** | Builds `sdist` and `wheel` via `python -m build`; publishes `python-dist` artifact | After E2ETests passes |
 | **PublishMSALPython** | Uploads to test.pypi.org | `publishTarget == test.pypi.org (Preview / RC)` |
-| **PublishPyPI** | Uploads to PyPI via ESRP; requires manual approval | `publishTarget == pypi.org (ESRP Production)` |
+| **PublishPyPI** | Uploads to PyPI via ESRP (`EsrpRelease@12`); requires manual approval | `publishTarget == pypi.org (ESRP Production)` |
+
+> ⚠️ **TestPyPI publishing is currently a no-op.** The `MSAL-Test-Python-Upload`
+> service connection has not yet been created (pending a test.pypi.org API
+> token), so the `PublishMSALPython` stage prints a skip message rather than
+> uploading. Until the SC exists, use the `pypi.org (ESRP Production)` path
+> with an RC version (e.g. `1.36.0rc1`) for end-to-end validation.
 
 ---
 
