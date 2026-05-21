@@ -156,7 +156,7 @@ stages:
         set -euo pipefail
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-azurepipelines
+        pip install pytest pytest-azurepipelines pytest-timeout
       displayName: 'Install Python dependencies'
 
     - bash: |
@@ -164,6 +164,7 @@ stages:
         mkdir -p test-results
         pytest -vv \
           --benchmark-skip \
+          --timeout=120 \
           --junitxml=test-results/junit-unit.xml \
           --ignore=tests/test_e2e.py \
           --ignore=tests/test_e2e_manual.py \
@@ -172,15 +173,21 @@ stages:
           --deselect tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography \
           2>&1 | tee test-results/pytest-unit.log
       displayName: 'Run pytest (unit)'
+      env:
+        # Force unbuffered stdout so ADO logs stream in real time through the tee pipe.
+        PYTHONUNBUFFERED: '1'
 
     # Run cryptography version-gating tests separately as a warning-only check.
     - bash: |
         pytest -vv \
+          --timeout=60 \
           tests/test_cryptography.py::CryptographyTestCase::test_ceiling_should_be_latest_cryptography_version_plus_three \
           tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography \
           --junitxml=test-results/junit-crypto-ceiling.xml
       displayName: 'Check cryptography ceiling (warning only)'
       continueOnError: true
+      env:
+        PYTHONUNBUFFERED: '1'
 
     - task: PublishTestResults@2
       displayName: 'Publish unit test results'
@@ -261,18 +268,21 @@ stages:
         set -euo pipefail
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-azurepipelines
+        pip install pytest pytest-azurepipelines pytest-timeout
       displayName: 'Install Python dependencies'
 
     - bash: |
         set -o pipefail
         mkdir -p test-results
         pytest -vv \
+          --timeout=300 \
           --junitxml=test-results/junit-e2e.xml \
           tests/test_e2e.py tests/test_fmi_e2e.py \
           2>&1 | tee test-results/pytest-e2e.log
       displayName: 'Run pytest (E2E)'
       env:
+        # Force unbuffered stdout so ADO logs stream in real time through the tee pipe.
+        PYTHONUNBUFFERED: '1'
         LAB_APP_CLIENT_CERT_PFX_PATH: $(LAB_APP_CLIENT_CERT_PFX_PATH)
 
     - task: PublishTestResults@2
