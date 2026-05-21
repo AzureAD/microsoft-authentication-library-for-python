@@ -178,14 +178,22 @@ stages:
         PYTHONUNBUFFERED: '1'
 
     # Run cryptography version-gating tests separately as a warning-only check.
+    # These tests fail whenever a new `cryptography` release ships (signalling a
+    # required ceiling bump in setup.cfg). We deliberately swallow the non-zero
+    # exit code with `|| true` so the step always succeeds at the shell level —
+    # this keeps the stage result as 'Succeeded' (not 'SucceededWithIssues') so
+    # downstream publish gates can stay strict. Failures are still surfaced as
+    # JUnit test failures in the Tests tab via PublishTestResults below
+    # (failTaskOnFailedTests: false), giving maintainers visibility without
+    # blocking unrelated PRs or releases.
     - bash: |
         pytest -vv \
           --timeout=60 \
           tests/test_cryptography.py::CryptographyTestCase::test_ceiling_should_be_latest_cryptography_version_plus_three \
           tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography \
-          --junitxml=test-results/junit-crypto-ceiling.xml
+          --junitxml=test-results/junit-crypto-ceiling.xml \
+          || true
       displayName: 'Check cryptography ceiling (warning only)'
-      continueOnError: true
       env:
         PYTHONUNBUFFERED: '1'
 
@@ -211,13 +219,17 @@ stages:
 # Stage 3 · E2ETests — runs only if unit tests pass. Fetches the MSID Lab
 #           certificate from Key Vault (mirrors MSAL.NET's
 #           build/template-install-keyvault-secrets.yaml).
-#           Skipped on forked PRs — service connections / Key Vault are not
-#           available to forks. E2E tests self-skip when
-#           LAB_APP_CLIENT_CERT_PFX_PATH is unset.
-# ══════════════════════════════════════════════════════════════════════════════
+#           Fork behaviour: the stage still runs on forked PRs, but the
+#           Key Vault retrieval and certificate decoding steps are skipped
+#           via `ne(System.PullRequest.IsFork, 'True')`. The pytest step then
+#           self-skips each test because LAB_APP_CLIENT_CERT_PFX_PATH is unset
+#           (see tests/test_e2e.py). Result: green stage on forks with all
+#           E2E tests reported as Skipped in the Tests tab.
+# ═══════════════════════════════════════════════════════════════════════════
 - stage: E2ETests
   displayName: 'E2E tests'
   dependsOn: UnitTests
+
   condition: eq(dependencies.UnitTests.result, 'Succeeded')
   jobs:
   - job: Pytest

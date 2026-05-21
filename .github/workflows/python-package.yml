@@ -78,5 +78,4 @@ jobs:
           --benchmark-skip \
           --ignore=tests/test_e2e.py \
           --ignore=tests/test_e2e_manual.py \
-          --ignore=tests/test_fmi_e2e.py \
-          --ignore=tests/test_client_obtain_token_by_browser.py
+          --ignore=tests/test_fmi_e2e.py
