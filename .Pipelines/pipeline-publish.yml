@@ -62,7 +62,7 @@ extends:
     stages:
 
     # Validate, UnitTests, and E2ETests stages from the shared template.
-    - template: .Pipelines/template-pipeline-stages.yml
+    - template: /.Pipelines/template-pipeline-stages.yml
       parameters:
         packageVersion: ${{ parameters.packageVersion }}
         runPublish: true
