@@ -166,7 +166,7 @@ stages:
               usemanagedidentity: true
               keyvaultname: 'MSALVault'
               signcertname: 'MSAL-ESRP-Release-Signing'
-              clientid: '8650ce2b-38d4-466a-9144-bc5c19c88112'
+              clientid: '8650ce2b-384d-466a-9144-bc5c19c88112'
               intent: 'PackageDistribution'
               contenttype: 'PyPi'
               contentsource: 'Folder'
