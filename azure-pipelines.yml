@@ -114,4 +114,4 @@ extends:
           condition: and(succeededOrFailed(), eq(variables['benchmarkFileExists'], 'true'))
           inputs:
             targetPath: 'benchmark.json'
-            artifact: 'benchmark-results'
+            artifact: 'drop_Benchmark_Benchmark'

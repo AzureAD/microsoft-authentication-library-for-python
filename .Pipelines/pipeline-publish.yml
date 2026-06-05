@@ -15,10 +15,12 @@ parameters:
 - name: packageVersion
   displayName: 'Package version to publish (must match msal/sku.py, e.g. 1.36.0 or 1.36.0rc1)'
   type: string
+  default: '1.37.0'
 
 - name: publishTarget
   displayName: 'Publish target'
   type: string
+  default: 'test.pypi.org (Preview / RC)'
   values:
   - 'test.pypi.org (Preview / RC)'
   - 'pypi.org (ESRP Production)'
@@ -103,7 +105,7 @@ extends:
           displayName: 'Publish dist/ as pipeline artifact'
           inputs:
             targetPath: dist/
-            artifact: python-dist
+            artifact: drop_Build_BuildDist
 
     # ========================================================================
     # Stage 5a - Publish to test.pypi.org (Preview / RC)
@@ -133,7 +135,7 @@ extends:
               - task: DownloadPipelineArtifact@2
                 displayName: 'Download python-dist artifact'
                 inputs:
-                  artifactName: python-dist
+                  artifactName: drop_Build_BuildDist
                   targetPath: $(Pipeline.Workspace)/python-dist
 
               - task: UsePythonVersion@0
@@ -209,7 +211,7 @@ extends:
         - task: DownloadPipelineArtifact@2
           displayName: 'Download python-dist artifact'
           inputs:
-            artifactName: python-dist
+            artifactName: drop_Build_BuildDist
             targetPath: $(Pipeline.Workspace)/python-dist
 
         - task: EsrpRelease@12
