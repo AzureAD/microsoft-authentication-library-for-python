@@ -1,7 +1,9 @@
-# PR gate and branch CI for the msal Python package.
-# Runs on pushes to dev, on all PRs to dev, and on a daily schedule.
-# Delegates test stages to .Pipelines/template-pipeline-stages.yml with
-# runPublish: false — PreBuildCheck (SDL scans) + UnitTests + E2ETests only.
+#################################################################################
+#                      OneBranch Pipelines - PR Gate and CI                      #
+# Runs on pushes to dev, on all PRs to dev, and on a daily schedule.            #
+# Documentation:  https://aka.ms/obpipelines                                    #
+# Yaml Schema:    https://aka.ms/obpipelines/yaml/schema                        #
+#################################################################################
 
 trigger:
   branches:
@@ -22,59 +24,94 @@ schedules:
     - dev
   always: false  # only run when there are new changes
 
-stages:
-- template: .Pipelines/template-pipeline-stages.yml
+variables:
+  CDP_DEFINITION_BUILD_COUNT: $[counter('', 0)]
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+extends:
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@templates
   parameters:
-    runPublish: false
+    globalSdl:
+      asyncSdl:
+        enabled: false
+      tsa:
+        enabled: true
+        breakOnFailure: true
+      credscan:
+        suppressionsFile: $(Build.SourcesDirectory)/.Pipelines/credscan-exclusion.json
+      policheck:
+        break: true
+      codeql:
+        compiled:
+          enabled: false
+        interpretedLanguages: python
+        tsaEnabled: true
+    featureFlags:
+      EnableCDPxPAT: false
 
-- stage: Benchmark
-  displayName: 'Run benchmarks'
-  dependsOn: E2ETests
-  # Only run on post-merge pushes to dev — not on PRs or scheduled runs.
-  condition: |
-    and(
-      succeeded('E2ETests'),
-      eq(variables['Build.SourceBranch'], 'refs/heads/dev'),
-      or(
-        eq(variables['Build.Reason'], 'IndividualCI'),
-        eq(variables['Build.Reason'], 'BatchedCI'),
-        eq(variables['Build.Reason'], 'Manual')
-      )
-    )
-  jobs:
-  - job: Benchmark
-    displayName: 'Performance benchmarks (Python 3.9)'
-    pool:
-      vmImage: ubuntu-latest
-    steps:
-    - task: UsePythonVersion@0
-      inputs:
-        versionSpec: '3.9'
-      displayName: 'Set up Python 3.9'
+    stages:
+    - template: .Pipelines/template-pipeline-stages.yml
+      parameters:
+        runPublish: false
 
-    - script: |
-        python -m pip install --upgrade pip
-        pip install pytest -r requirements.txt
-      displayName: 'Install dependencies'
-
-    - task: Cache@2
-      displayName: 'Restore performance baseline cache'
-      inputs:
-        key: 'perf-baseline | "$(Agent.OS)" | tests/test_benchmark.py'
-        path: .perf.baseline
-
-    - bash: |
-        pytest --benchmark-only --benchmark-json benchmark.json --log-cli-level INFO tests/test_benchmark.py
+    - stage: Benchmark
       displayName: 'Run benchmarks'
+      dependsOn: E2ETests
+      # Only run on post-merge pushes to dev - not on PRs or scheduled runs.
+      condition: |
+        and(
+          succeeded('E2ETests'),
+          eq(variables['Build.SourceBranch'], 'refs/heads/dev'),
+          or(
+            eq(variables['Build.Reason'], 'IndividualCI'),
+            eq(variables['Build.Reason'], 'BatchedCI'),
+            eq(variables['Build.Reason'], 'Manual')
+          )
+        )
+      jobs:
+      - job: Benchmark
+        displayName: 'Performance benchmarks (Python 3.9)'
+        pool:
+          type: linux
+          isCustom: true
+          vmImage: 'ubuntu-latest'
+        variables:
+          ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+        steps:
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: '3.9'
+          displayName: 'Set up Python 3.9'
 
-    - bash: |
-        [ -f benchmark.json ] && echo "##vso[task.setvariable variable=benchmarkFileExists]true"
-      displayName: 'Check benchmark output exists'
-      condition: succeededOrFailed()
+        - script: |
+            python -m pip install --upgrade pip
+            pip install pytest -r requirements.txt
+          displayName: 'Install dependencies'
 
-    - task: PublishPipelineArtifact@1
-      displayName: 'Publish benchmark results'
-      condition: and(succeededOrFailed(), eq(variables['benchmarkFileExists'], 'true'))
-      inputs:
-        targetPath: 'benchmark.json'
-        artifact: 'benchmark-results'
+        - task: Cache@2
+          displayName: 'Restore performance baseline cache'
+          inputs:
+            key: 'perf-baseline | "$(Agent.OS)" | tests/test_benchmark.py'
+            path: .perf.baseline
+
+        - bash: |
+            pytest --benchmark-only --benchmark-json benchmark.json --log-cli-level INFO tests/test_benchmark.py
+          displayName: 'Run benchmarks'
+
+        - bash: |
+            [ -f benchmark.json ] && echo "##vso[task.setvariable variable=benchmarkFileExists]true"
+          displayName: 'Check benchmark output exists'
+          condition: succeededOrFailed()
+
+        - task: PublishPipelineArtifact@1
+          displayName: 'Publish benchmark results'
+          condition: and(succeededOrFailed(), eq(variables['benchmarkFileExists'], 'true'))
+          inputs:
+            targetPath: 'benchmark.json'
+            artifact: 'benchmark-results'
