@@ -119,7 +119,7 @@ extends:
           eq('${{ parameters.publishTarget }}', 'test.pypi.org (Preview / RC)')
         )
       jobs:
-      - deployment: DeployMSALPython
+      - job: DeployMSALPython
         displayName: 'Upload to test.pypi.org'
         pool:
           type: linux
@@ -127,42 +127,38 @@ extends:
           vmImage: 'ubuntu-latest'
         variables:
           ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
-        environment: MSAL-Python
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-              - task: DownloadPipelineArtifact@2
-                displayName: 'Download python-dist artifact'
-                inputs:
-                  artifactName: drop_Build_BuildDist
-                  targetPath: $(Pipeline.Workspace)/python-dist
+        steps:
+        - task: DownloadPipelineArtifact@2
+          displayName: 'Download build artifact'
+          inputs:
+            artifactName: drop_Build_BuildDist
+            targetPath: $(Pipeline.Workspace)/python-dist
 
-              - task: UsePythonVersion@0
-                inputs:
-                  versionSpec: '3.12'
-                displayName: 'Use Python 3.12'
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: '3.12'
+          displayName: 'Use Python 3.12'
 
-              - script: |
-                  python -m pip install --upgrade pip twine
-                displayName: 'Install twine'
+        - script: |
+            python -m pip install --upgrade pip twine
+          displayName: 'Install twine'
 
-              # TODO: create MSAL-Test-Python-Upload SC with test.pypi.org API token, then uncomment:
-              # - task: TwineAuthenticate@1
-              #   displayName: 'Authenticate with MSAL-Test-Python-Upload'
-              #   inputs:
-              #     pythonUploadServiceConnection: MSAL-Test-Python-Upload
+        # TODO: create MSAL-Test-Python-Upload SC with test.pypi.org API token, then uncomment:
+        # - task: TwineAuthenticate@1
+        #   displayName: 'Authenticate with MSAL-Test-Python-Upload'
+        #   inputs:
+        #     pythonUploadServiceConnection: MSAL-Test-Python-Upload
 
-              # - script: |
-              #     python -m twine upload \
-              #       -r "MSAL-Test-Python-Upload" \
-              #       --config-file $(PYPIRC_PATH) \
-              #       --skip-existing \
-              #       $(Pipeline.Workspace)/python-dist/*
-              #   displayName: 'Upload to test.pypi.org'
+        # - script: |
+        #     python -m twine upload \
+        #       -r "MSAL-Test-Python-Upload" \
+        #       --config-file $(PYPIRC_PATH) \
+        #       --skip-existing \
+        #       $(Pipeline.Workspace)/python-dist/*
+        #   displayName: 'Upload to test.pypi.org'
 
-              - script: echo "Publish to test.pypi.org skipped - MSAL-Test-Python-Upload SC not yet created."
-                displayName: 'Skip upload (SC pending)'
+        - script: echo "Publish to test.pypi.org skipped - MSAL-Test-Python-Upload SC not yet created."
+          displayName: 'Skip upload (SC pending)'
 
     # ========================================================================
     # Stage 5b - Approval gate for production PyPI release
