@@ -15,7 +15,7 @@ parameters:
 - name: packageVersion
   displayName: 'Package version to publish (must match msal/sku.py, e.g. 1.36.0 or 1.36.0rc1)'
   type: string
-  default: ' '
+  default: ''
 
 - name: publishTarget
   displayName: 'Publish target'
