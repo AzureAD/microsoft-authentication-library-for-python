@@ -42,6 +42,8 @@ stages:
     displayName: 'Check version matches source'
     pool:
       type: linux
+      isCustom: true
+      vmImage: 'ubuntu-latest'
     variables:
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
     steps:
@@ -85,6 +87,8 @@ stages:
     displayName: 'pytest'
     pool:
       type: linux
+      isCustom: true
+      vmImage: 'ubuntu-latest'
     timeoutInMinutes: 30
     variables:
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
@@ -186,6 +190,8 @@ stages:
     displayName: 'pytest'
     pool:
       type: linux
+      isCustom: true
+      vmImage: 'ubuntu-latest'
     timeoutInMinutes: 60
     variables:
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
