@@ -170,6 +170,14 @@ stages:
         failTaskOnFailedTests: false
         testRunTitle: 'Cryptography ceiling check $(python.version)'
 
+    - task: PostAnalysis@2
+      displayName: 'Guardian Break'
+      inputs:
+        GdnBreakFast: false
+        GdnBreakAllTools: false
+        GdnBreakGdnToolPoliCheck: true
+        GdnBreakGdnToolPoliCheckSeverity: Error
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 3 - E2ETests - runs only if unit tests pass. Fetches the MSID Lab
 #           certificate from Key Vault.
