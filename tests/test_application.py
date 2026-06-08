@@ -1141,6 +1141,44 @@ class TestBrokerFallbackWithDifferentAuthorities(unittest.TestCase):
             self.assertEqual(result.get("error"), "broker_error")
 
 
+@patch("sys.platform", new="darwin")  # Pretend running on Mac.
+@patch("msal.authority.tenant_discovery", new=Mock(return_value={
+    "authorization_endpoint": "https://contoso.com/placeholder",
+    "token_endpoint": "https://contoso.com/placeholder",
+    "issuer": "https://contoso.com/placeholder",
+    }))
+@patch("msal.application._init_broker", new=Mock())  # Pretend pymsalruntime installed and working
+class TestBrokerDisabledOnIntelMac(unittest.TestCase):
+    """Broker is disabled on Intel-based Macs regardless of opt-in."""
+
+    @patch("msal.application.platform.machine", new=Mock(return_value="arm64"))
+    def test_broker_should_be_enabled_on_apple_silicon_mac(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertTrue(app._enable_broker)
+
+    @patch("msal.application.platform.machine", new=Mock(return_value="x86_64"))
+    def test_broker_should_be_disabled_on_x86_64_mac(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+    @patch("msal.application.platform.machine", new=Mock(return_value="i386"))
+    def test_broker_should_be_disabled_on_i386_mac(self):
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
+
 class MismatchingScopeTestCase(unittest.TestCase):
     """Test cache behavior when HTTP response scope differs from requested scope"""
 

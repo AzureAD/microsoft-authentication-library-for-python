@@ -2,6 +2,7 @@ import functools
 import json
 import time
 import logging
+import platform
 import sys
 import warnings
 from threading import Lock
@@ -763,6 +764,18 @@ class ClientApplication(object):
             and not self.authority.is_adfs
             and not self.authority._is_b2c
         )
+        if (
+            self._enable_broker
+            and sys.platform == "darwin"
+            and platform.machine() in ("x86_64", "i386")
+        ):
+            # Broker on macOS is supported only on Apple Silicon (arm64).
+            # Intel Macs are excluded by product policy, regardless of whether
+            # a broker is actually installed on the device.
+            self._enable_broker = False
+            logger.warning(
+                "Broker is not supported on Intel-based Macs. "
+                "We will fallback to non-broker.")
         if self._enable_broker:
             try:
                 _init_broker(enable_pii_log)
