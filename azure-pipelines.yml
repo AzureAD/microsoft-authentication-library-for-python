@@ -80,7 +80,7 @@ extends:
         pool:
           type: linux
           isCustom: true
-          vmImage: 'ubuntu-latest'
+          vmImage: 'ubuntu-22.04'
         variables:
           ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
         steps:

@@ -43,7 +43,7 @@ stages:
     pool:
       type: linux
       isCustom: true
-      vmImage: 'ubuntu-latest'
+      vmImage: 'ubuntu-22.04'
     variables:
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
     steps:
@@ -88,7 +88,7 @@ stages:
     pool:
       type: linux
       isCustom: true
-      vmImage: 'ubuntu-latest'
+      vmImage: 'ubuntu-22.04'
     timeoutInMinutes: 30
     variables:
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
@@ -191,7 +191,7 @@ stages:
     pool:
       type: linux
       isCustom: true
-      vmImage: 'ubuntu-latest'
+      vmImage: 'ubuntu-22.04'
     timeoutInMinutes: 60
     variables:
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'

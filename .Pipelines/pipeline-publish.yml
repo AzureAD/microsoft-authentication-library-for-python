@@ -15,7 +15,7 @@ parameters:
 - name: packageVersion
   displayName: 'Package version to publish (must match msal/sku.py, e.g. 1.36.0 or 1.36.0rc1)'
   type: string
-  default: '1.37.0'
+  default: ' '
 
 - name: publishTarget
   displayName: 'Publish target'
@@ -80,7 +80,7 @@ extends:
         pool:
           type: linux
           isCustom: true
-          vmImage: 'ubuntu-latest'
+          vmImage: 'ubuntu-22.04'
         variables:
           ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
         steps:
@@ -122,7 +122,7 @@ extends:
         pool:
           type: linux
           isCustom: true
-          vmImage: 'ubuntu-latest'
+          vmImage: 'ubuntu-22.04'
         variables:
           ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
         steps:
