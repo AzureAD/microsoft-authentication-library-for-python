@@ -107,9 +107,7 @@ extends:
           displayName: 'Check benchmark output exists'
           condition: succeededOrFailed()
 
-        - task: PublishPipelineArtifact@1
-          displayName: 'Publish benchmark results'
+        - bash: |
+            [ -f benchmark.json ] && cp benchmark.json $(ob_outputDirectory)/
+          displayName: 'Copy benchmark results to output'
           condition: and(succeededOrFailed(), eq(variables['benchmarkFileExists'], 'true'))
-          inputs:
-            targetPath: 'benchmark.json'
-            artifact: 'drop_Benchmark_Benchmark'

@@ -99,11 +99,9 @@ extends:
             python -m twine check dist/*
           displayName: 'Verify distribution (twine check)'
 
-        - task: PublishPipelineArtifact@1
-          displayName: 'Publish dist/ as pipeline artifact'
-          inputs:
-            targetPath: dist/
-            artifact: drop_Build_BuildDist
+        - script: |
+            cp -r dist/* $(ob_outputDirectory)/
+          displayName: 'Copy dist to output directory'
 
     # ========================================================================
     # Stage 5a - Publish to test.pypi.org (Preview / RC)
