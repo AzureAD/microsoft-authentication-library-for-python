@@ -25,11 +25,17 @@ parameters:
   - 'test.pypi.org (Preview / RC)'
   - 'pypi.org (ESRP Production)'
 
+- name: debug
+  displayName: 'Enable debug output (system.debug)'
+  type: boolean
+  default: false
+
 trigger: none    # manual runs only - no automatic branch or tag triggers
 pr: none
 
 variables:
   CDP_DEFINITION_BUILD_COUNT: $[counter('', 0)]
+  system.debug: ${{ parameters.debug }}
 
 resources:
   repositories:

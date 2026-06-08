@@ -24,8 +24,15 @@ schedules:
     - dev
   always: false  # only run when there are new changes
 
+parameters:
+- name: debug
+  displayName: 'Enable debug output (system.debug)'
+  type: boolean
+  default: false
+
 variables:
   CDP_DEFINITION_BUILD_COUNT: $[counter('', 0)]
+  system.debug: ${{ parameters.debug }}
 
 resources:
   repositories:
