@@ -79,8 +79,6 @@ extends:
         displayName: 'Performance benchmarks (Python 3.9)'
         pool:
           type: linux
-          isCustom: true
-          vmImage: 'ubuntu-latest'
         variables:
           ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
         steps:
