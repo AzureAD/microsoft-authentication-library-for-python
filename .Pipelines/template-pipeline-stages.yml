@@ -128,6 +128,10 @@ stages:
           --deselect tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography \
           2>&1 | tee test-results/pytest-unit.log
       displayName: 'Run pytest (unit)'
+      # Python 3.14 intermittently stalls during test execution (likely due to
+      # missing pre-built wheels forcing source compilation or runtime changes).
+      # Cap at 5 minutes to fail fast instead of consuming the full 30-min job timeout.
+      timeoutInMinutes: 5
       env:
         # Force unbuffered stdout so ADO logs stream in real time through the tee pipe.
         PYTHONUNBUFFERED: '1'
