@@ -105,9 +105,10 @@ extends:
           displayName: 'Restore performance baseline cache'
           inputs:
             key: 'perf-baseline | "$(Agent.OS)" | tests/test_benchmark.py'
-            path: .perf.baseline
+            path: $(System.DefaultWorkingDirectory)/.perf-baseline
 
         - bash: |
+            mkdir -p .perf-baseline
             pytest --benchmark-only --benchmark-json benchmark.json --log-cli-level INFO tests/test_benchmark.py
           displayName: 'Run benchmarks'
 

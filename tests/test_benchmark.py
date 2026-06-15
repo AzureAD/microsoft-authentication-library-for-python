@@ -2,7 +2,7 @@ from tests.simulator import ClientCredentialGrantSimulator as CcaTester
 from perf_baseline import Baseline
 
 
-baseline = Baseline(".perf.baseline", threshold=1.5)  # Up to 1.5x slower than baseline
+baseline = Baseline(".perf-baseline/data", threshold=1.5)  # Up to 1.5x slower than baseline
 
 # Here come benchmark test cases, powered by pytest-benchmark
 # Func names will become diag names.

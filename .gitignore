@@ -61,7 +61,7 @@ tests/config.json
 msal_cache.bin
 
 .env
-.perf.baseline
+.perf-baseline/
 
 *.pfx
 .vscode/settings.json
