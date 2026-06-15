@@ -2,6 +2,8 @@ from tests.simulator import ClientCredentialGrantSimulator as CcaTester
 from perf_baseline import Baseline
 
 
+import os
+os.makedirs(".perf-baseline", exist_ok=True)
 baseline = Baseline(".perf-baseline/data", threshold=1.5)  # Up to 1.5x slower than baseline
 
 # Here come benchmark test cases, powered by pytest-benchmark

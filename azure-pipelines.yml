@@ -113,7 +113,7 @@ extends:
             path: $(System.DefaultWorkingDirectory)/.perf-baseline
 
         - bash: |
-            mkdir -p .perf-baseline
+            mkdir -p $(System.DefaultWorkingDirectory)/.perf-baseline
             pytest --benchmark-only --benchmark-json benchmark.json --log-cli-level INFO tests/test_benchmark.py
           displayName: 'Run benchmarks'
 
