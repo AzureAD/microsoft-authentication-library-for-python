@@ -1,0 +1,14 @@
+{
+    "codebaseName": "MSAL Python AUTH SDK",
+    "notificationAliases": [
+        "IdentityDevExPython@microsoft.com"
+    ],
+    "codebaseAdmins": [
+        "EUROPE\\aadidagt"
+    ],
+    "instanceUrl": "https://identitydivision.visualstudio.com",
+    "projectName": "Engineering",
+    "areaPath": "Engineering\\Auth Client\\Libraries\\Client-SDKs\\MSAL",
+    "iterationPath": "Engineering\\Unscheduled",
+    "allTools": true
+}
