@@ -70,7 +70,7 @@ extends:
     - stage: Benchmark
       displayName: 'Run benchmarks'
       dependsOn: E2ETests
-      # Only run on post-merge pushes to dev - not on PRs or scheduled runs.
+      # Run on post-merge pushes to dev, or manually when forceBenchmarks=true.
       condition: |
         and(
           succeeded('E2ETests'),
