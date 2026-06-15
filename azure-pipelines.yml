@@ -74,11 +74,16 @@ extends:
       condition: |
         and(
           succeeded('E2ETests'),
-          eq(variables['Build.SourceBranch'], 'refs/heads/dev'),
           or(
-            eq(variables['Build.Reason'], 'IndividualCI'),
-            eq(variables['Build.Reason'], 'BatchedCI'),
-            eq(variables['Build.Reason'], 'Manual')
+            eq(variables['forceBenchmarks'], 'true'),
+            and(
+              eq(variables['Build.SourceBranch'], 'refs/heads/dev'),
+              or(
+                eq(variables['Build.Reason'], 'IndividualCI'),
+                eq(variables['Build.Reason'], 'BatchedCI'),
+                eq(variables['Build.Reason'], 'Manual')
+              )
+            )
           )
         )
       jobs:
