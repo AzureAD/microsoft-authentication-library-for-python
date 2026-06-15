@@ -70,12 +70,15 @@ extends:
     - stage: Benchmark
       displayName: 'Run benchmarks'
       dependsOn: E2ETests
-      # Run on post-merge pushes to dev, or manually when forceBenchmarks=true.
+      # Run on post-merge pushes to dev, or on manual builds when forceBenchmarks=true.
       condition: |
         and(
           succeeded('E2ETests'),
           or(
-            eq(variables['forceBenchmarks'], 'true'),
+            and(
+              eq(variables['Build.Reason'], 'Manual'),
+              in(variables['forceBenchmarks'], 'true', 'True')
+            ),
             and(
               eq(variables['Build.SourceBranch'], 'refs/heads/dev'),
               or(
