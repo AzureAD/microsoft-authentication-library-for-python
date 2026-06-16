@@ -70,15 +70,23 @@ extends:
     - stage: Benchmark
       displayName: 'Run benchmarks'
       dependsOn: E2ETests
-      # Only run on post-merge pushes to dev - not on PRs or scheduled runs.
+      # Run on post-merge pushes to dev, or on manual builds when forceBenchmarks=true.
       condition: |
         and(
           succeeded('E2ETests'),
-          eq(variables['Build.SourceBranch'], 'refs/heads/dev'),
           or(
-            eq(variables['Build.Reason'], 'IndividualCI'),
-            eq(variables['Build.Reason'], 'BatchedCI'),
-            eq(variables['Build.Reason'], 'Manual')
+            and(
+              eq(variables['Build.Reason'], 'Manual'),
+              in(variables['forceBenchmarks'], 'true', 'True')
+            ),
+            and(
+              eq(variables['Build.SourceBranch'], 'refs/heads/dev'),
+              or(
+                eq(variables['Build.Reason'], 'IndividualCI'),
+                eq(variables['Build.Reason'], 'BatchedCI'),
+                eq(variables['Build.Reason'], 'Manual')
+              )
+            )
           )
         )
       jobs:
@@ -105,9 +113,10 @@ extends:
           displayName: 'Restore performance baseline cache'
           inputs:
             key: 'perf-baseline | "$(Agent.OS)" | tests/test_benchmark.py'
-            path: .perf.baseline
+            path: $(System.DefaultWorkingDirectory)/.perf-baseline
 
         - bash: |
+            mkdir -p $(System.DefaultWorkingDirectory)/.perf-baseline
             pytest --benchmark-only --benchmark-json benchmark.json --log-cli-level INFO tests/test_benchmark.py
           displayName: 'Run benchmarks'
 
