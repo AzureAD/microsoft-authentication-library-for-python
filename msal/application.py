@@ -22,7 +22,7 @@ from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
 from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER, _compute_ext_cache_key
 import msal.telemetry
-from .region import _detect_region
+from .region import _detect_region, _validate_region
 from .throttled_http_client import ThrottledHttpClient
 from .cloudshell import _is_running_in_cloud_shell
 from .sku import SKU, __version__
@@ -821,6 +821,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             self._region_detected
             if self._region_configured == self.ATTEMPT_REGION_DISCOVERY
             else self._region_configured)  # It will retain the None i.e. opted out
+        if isinstance(region_to_use, str):
+            region_to_use = _validate_region(
+                region_to_use, source="azure_region parameter")
         logger.debug('Region to be used: {}'.format(repr(region_to_use)))
         if region_to_use:
             regional_host = ("{}.login.microsoft.com".format(region_to_use)

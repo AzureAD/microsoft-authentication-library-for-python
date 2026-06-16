@@ -1,13 +1,28 @@
 import os
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+_VALID_REGION_RE = re.compile(r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _validate_region(region, source="unknown"):
+    """Return *region* unchanged if it looks like a valid Azure region name,
+    otherwise log a warning and return ``None``."""
+    if region and _VALID_REGION_RE.match(region):
+        return region
+    if region:
+        logger.warning(
+            "Region from %s was discarded because it contains "
+            "invalid characters: %r", source, region)
+    return None
 
 
 def _detect_region(http_client=None):
     region = os.environ.get("REGION_NAME", "").replace(" ", "").lower()  # e.g. westus2
     if region:
-        return region
+        return _validate_region(region, source="REGION_NAME env variable")
     if http_client:
         return _detect_region_of_azure_vm(http_client)  # It could hang for minutes
     return None
@@ -41,5 +56,5 @@ def _detect_region_of_azure_vm(http_client):
             "IMDS {} unavailable. Perhaps not running in Azure VM?".format(url))
         return None
     else:
-        return resp.text.strip()
+        return _validate_region(resp.text.strip(), source="IMDS endpoint")
 
