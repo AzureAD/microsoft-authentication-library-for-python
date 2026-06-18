@@ -7,6 +7,10 @@ logger = logging.getLogger(__name__)
 
 _VALID_REGION_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
+# IMDS compute metadata API version used for region auto-discovery.
+# Bump this single constant when moving to a newer IMDS API version.
+_IMDS_API_VERSION = "2021-02-01"
+
 
 def _validate_region(region, source="unknown"):
     """Return *region* unchanged if it looks like a valid Azure region name,
@@ -35,7 +39,7 @@ def _detect_region_of_azure_vm(http_client):
 
         # The region is read from the "location" field of the compute metadata.
         # https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service?tabs=linux#response-1
-        "?api-version=2021-02-01"
+        "?api-version=" + _IMDS_API_VERSION
         )
     logger.info(
         "Connecting to IMDS {}. "
