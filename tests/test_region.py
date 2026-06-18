@@ -2,7 +2,30 @@ import os
 import unittest
 from unittest.mock import patch
 
-from msal.region import _detect_region, _validate_region
+from msal.region import (
+    _detect_region, _detect_region_of_azure_vm, _validate_region)
+
+from tests.http_client import MinimalResponse
+
+
+class _StubHttpClient(object):
+    """Records the requested URL/headers and returns a preconfigured response.
+
+    If *response* is an exception instance, it is raised from ``get`` to
+    simulate a network failure (e.g. not running in an Azure VM)."""
+
+    def __init__(self, response):
+        self._response = response
+        self.url = None
+        self.headers = None
+
+    def get(self, url, params=None, headers=None, **kwargs):
+        self.url = url
+        self.headers = headers
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
+
 
 
 class TestValidateRegion(unittest.TestCase):
@@ -53,6 +76,49 @@ class TestDetectRegion(unittest.TestCase):
     @patch.dict(os.environ, {"REGION_NAME": ""})
     def test_empty_env_returns_none(self):
         self.assertIsNone(_detect_region())
+
+
+class TestDetectRegionOfAzureVm(unittest.TestCase):
+
+    def test_valid_location_is_returned(self):
+        client = _StubHttpClient(
+            MinimalResponse(status_code=200, text='{"location": "westus2"}'))
+        self.assertEqual(_detect_region_of_azure_vm(client), "westus2")
+
+    def test_request_uses_compute_json_endpoint(self):
+        client = _StubHttpClient(
+            MinimalResponse(status_code=200, text='{"location": "westus2"}'))
+        _detect_region_of_azure_vm(client)
+        self.assertEqual(
+            client.url,
+            "http://169.254.169.254/metadata/instance/compute"
+            "?api-version=2021-02-01")
+        self.assertNotIn("/location", client.url)
+        self.assertNotIn("format=text", client.url)
+        self.assertEqual(client.headers, {"Metadata": "true"})
+
+    def test_missing_location_returns_none(self):
+        client = _StubHttpClient(MinimalResponse(status_code=200, text="{}"))
+        self.assertIsNone(_detect_region_of_azure_vm(client))
+
+    def test_null_location_returns_none(self):
+        client = _StubHttpClient(
+            MinimalResponse(status_code=200, text='{"location": null}'))
+        self.assertIsNone(_detect_region_of_azure_vm(client))
+
+    def test_malformed_json_returns_none(self):
+        client = _StubHttpClient(
+            MinimalResponse(status_code=200, text="not json"))
+        self.assertIsNone(_detect_region_of_azure_vm(client))
+
+    def test_invalid_location_value_returns_none(self):
+        client = _StubHttpClient(
+            MinimalResponse(status_code=200, text='{"location": "evil.com/hijack"}'))
+        self.assertIsNone(_detect_region_of_azure_vm(client))
+
+    def test_network_failure_returns_none(self):
+        client = _StubHttpClient(IOError("IMDS unreachable"))
+        self.assertIsNone(_detect_region_of_azure_vm(client))
 
 
 if __name__ == "__main__":

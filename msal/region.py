@@ -1,3 +1,4 @@
+import json
 import os
 import logging
 import re
@@ -30,15 +31,11 @@ def _detect_region(http_client=None):
 
 def _detect_region_of_azure_vm(http_client):
     url = (
-        "http://169.254.169.254/metadata/instance"
+        "http://169.254.169.254/metadata/instance/compute"
 
-        # Utilize the "route parameters" feature to obtain region as a string
-        # https://docs.microsoft.com/en-us/azure/virtual-machines/windows/instance-metadata-service?tabs=linux#route-parameters
-        "/compute/location?format=text"
-
-        # Location info is available since API version 2017-04-02
-        # https://docs.microsoft.com/en-us/azure/virtual-machines/windows/instance-metadata-service?tabs=linux#response-1
-        "&api-version=2021-01-01"
+        # The region is read from the "location" field of the compute metadata.
+        # https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service?tabs=linux#response-1
+        "?api-version=2021-02-01"
         )
     logger.info(
         "Connecting to IMDS {}. "
@@ -56,5 +53,10 @@ def _detect_region_of_azure_vm(http_client):
             "IMDS {} unavailable. Perhaps not running in Azure VM?".format(url))
         return None
     else:
-        return _validate_region(resp.text.strip(), source="IMDS endpoint")
+        try:
+            location = json.loads(resp.text).get("location")
+        except (ValueError, AttributeError):
+            logger.info("IMDS {} returned a malformed response.".format(url))
+            return None
+        return _validate_region(location, source="IMDS endpoint")
 
