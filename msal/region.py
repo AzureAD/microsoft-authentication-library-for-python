@@ -55,8 +55,14 @@ def _detect_region_of_azure_vm(http_client):
     else:
         try:
             location = json.loads(resp.text).get("location")
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, TypeError):
+            # ValueError: body is not valid JSON;
+            # AttributeError: body is valid JSON but not a JSON object;
+            # TypeError: resp.text is not a string (e.g. a custom http_client).
             logger.info("IMDS {} returned a malformed response.".format(url))
+            return None
+        if location is not None and not isinstance(location, str):
+            logger.info("IMDS {} returned a non-string location.".format(url))
             return None
         return _validate_region(location, source="IMDS endpoint")
 

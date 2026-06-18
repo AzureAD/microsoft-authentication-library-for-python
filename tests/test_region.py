@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from msal.region import (
@@ -114,6 +115,17 @@ class TestDetectRegionOfAzureVm(unittest.TestCase):
     def test_invalid_location_value_returns_none(self):
         client = _StubHttpClient(
             MinimalResponse(status_code=200, text='{"location": "evil.com/hijack"}'))
+        self.assertIsNone(_detect_region_of_azure_vm(client))
+
+    def test_non_string_location_returns_none(self):
+        client = _StubHttpClient(
+            MinimalResponse(status_code=200, text='{"location": 123}'))
+        self.assertIsNone(_detect_region_of_azure_vm(client))
+
+    def test_non_string_response_text_returns_none(self):
+        # A custom http_client could yield a non-string resp.text; json.loads
+        # would raise TypeError, which must be treated as a malformed response.
+        client = _StubHttpClient(SimpleNamespace(status_code=200, text=None))
         self.assertIsNone(_detect_region_of_azure_vm(client))
 
     def test_network_failure_returns_none(self):
