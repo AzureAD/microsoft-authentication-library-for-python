@@ -84,10 +84,12 @@ def main():
 
     token_type = result.get("token_type", "unknown")
     expires_in = result.get("expires_in", 0)
+    thumbprint = result.get("cert_thumbprint_sha256", "")
 
     print("Token acquired successfully!")
-    print(f"  token_type: {token_type}")
-    print(f"  expires_in: {expires_in} seconds")
+    print(f"  token_type:  {token_type}")
+    print(f"  expires_in:  {expires_in} seconds")
+    print(f"  thumbprint:  {thumbprint[:16]}..." if thumbprint else "  thumbprint:  (none)")
 
     if token_type != "mtls_pop":
         print(f"WARNING: Expected token_type='mtls_pop' but got '{token_type}'.")
@@ -97,7 +99,7 @@ def main():
     cert_pem = result.get("cert_pem", "")
     if cert_pem:
         bound = verify_cnf_binding(result["access_token"], cert_pem)
-        logger.info("  cnf binding: %s", "VERIFIED" if bound else "FAILED")
+        print(f"  cnf binding: {'VERIFIED' if bound else 'FAILED'}")
         if not bound:
             logger.error("Token is NOT bound to the certificate!")
             sys.exit(1)
@@ -106,26 +108,25 @@ def main():
     if resource_url:
         logger.info("Calling resource: %s", resource_url)
 
-        # Note: mTLS resource calls require presenting the same cert.
-        # The cert + private key are bound via KeyGuard; a real mTLS call
-        # would use WinHTTP/SChannel. This demonstrates the auth header.
-        access_token = result["access_token"]
+        # Note: mTLS resource calls require presenting the same cert via
+        # WinHTTP/SChannel. The requests library cannot present a KeyGuard-
+        # bound cert. This demonstrates the auth header format only.
         headers = {
-            "Authorization": f"{token_type} {access_token}",
+            "Authorization": f"{token_type} {result['access_token']}",
             "Accept": "application/json",
         }
 
         try:
             resp = http_session.get(resource_url, headers=headers)
-            logger.info("  Status: %d", resp.status_code)
+            print(f"  Response: HTTP {resp.status_code}")
             if not resp.ok:
                 logger.warning("  Request failed with status %d",
                                resp.status_code)
         except Exception as exc:
             logger.warning("  Resource call failed: %s", type(exc).__name__)
-            logger.info(
-                "Note: mTLS resource calls may require WinHTTP/SChannel; "
-                "the requests library may not present the mTLS cert.")
+            print(
+                "  Note: mTLS resource calls require WinHTTP/SChannel; "
+                "the requests library cannot present the mTLS cert.")
 
     logger.info("=" * 60)
     logger.info("Done!")

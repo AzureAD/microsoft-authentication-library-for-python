@@ -82,6 +82,7 @@ _KEY_NAME_ENVVAR = "MSAL_MSI_V2_KEY_NAME"
 _NTE_BAD_KEYSET = 0x80090016
 _NTE_NO_KEY = 0x8009000D
 _NTE_NOT_FOUND = 0x80090011
+_NTE_KEY_DOES_NOT_EXIST = 0x8009003A  # KeyGuard/VBS provider uses this
 _NTE_EXISTS = 0x8009000F
 
 # Lazy-loaded Win32 API cache
@@ -119,15 +120,15 @@ _CERT_CACHE_LOCK = threading.Lock()
 _CERT_CACHE: Dict[str, _CertCacheEntry] = {}
 
 
-def _cert_cache_key(managed_identity: Optional[Dict[str, Any]],
+def _cert_cache_key(managed_identity: Optional[Any],
                     attested: bool) -> str:
     """Build a cache key from managed identity + identifier type + attestation flag."""
     mi_id_type = "SYSTEM_ASSIGNED"
     mi_id = "SYSTEM_ASSIGNED"
-    if isinstance(managed_identity, dict):
-        mi_id_type = str(
-            managed_identity.get("ManagedIdentityIdType") or "SYSTEM_ASSIGNED")
-        mi_id = str(managed_identity.get("Id") or "SYSTEM_ASSIGNED")
+    getter = getattr(managed_identity, "get", None)
+    if callable(getter):
+        mi_id_type = str(getter("ManagedIdentityIdType") or "SYSTEM_ASSIGNED")
+        mi_id = str(getter("Id") or "SYSTEM_ASSIGNED")
     tag = "#att=1" if attested else "#att=0"
     return mi_id_type + ":" + mi_id + tag
 
@@ -237,7 +238,7 @@ def _der_to_pem(der_bytes: bytes) -> str:
 def _try_parse_cert_not_after(der_bytes: bytes) -> float:
     """
     Best-effort extraction of notAfter from a DER X.509 certificate.
-    Returns epoch seconds.  Falls back to now + 8 hours on any failure.
+    Returns epoch seconds. Falls back to now + 8 hours on any failure.
     """
     try:
         from cryptography import x509
@@ -259,7 +260,11 @@ def _try_parse_cert_not_after(der_bytes: bytes) -> float:
 # ---------------------------------------------------------------------------
 
 def _imds_base() -> str:
-    return os.getenv(_IMDS_BASE_ENVVAR, _IMDS_DEFAULT_BASE).strip().rstrip("/")
+    base = os.getenv(_IMDS_BASE_ENVVAR)
+    if base is None:
+        return _IMDS_DEFAULT_BASE.rstrip("/")
+    base = base.strip().rstrip("/")
+    return base or _IMDS_DEFAULT_BASE.rstrip("/")
 
 
 def _new_correlation_id() -> str:
@@ -326,14 +331,15 @@ def _get_first(obj: Dict[str, Any], *names: str) -> Optional[str]:
 
 
 def _mi_query_params(
-    managed_identity: Optional[Dict[str, Any]],
+    managed_identity: Optional[Any],
 ) -> Dict[str, str]:
     """Build IMDS query params: cred-api-version=2.0 + optional UAMI selector."""
     params: Dict[str, str] = {_API_VERSION_QUERY_PARAM: _IMDS_V2_API_VERSION}
-    if not isinstance(managed_identity, dict):
+    getter = getattr(managed_identity, "get", None)
+    if not callable(getter):
         return params
-    id_type = managed_identity.get("ManagedIdentityIdType")
-    identifier = managed_identity.get("Id")
+    id_type = getter("ManagedIdentityIdType")
+    identifier = getter("Id")
     mapping = {"ClientId": "client_id", "ObjectId": "object_id",
                "ResourceId": "msi_res_id"}
     wire = mapping.get(id_type)
@@ -503,6 +509,32 @@ def _load_win32() -> Dict[str, Any]:
     crypt32.CertFreeCertificateContext.argtypes = [PCCERT_CONTEXT]
     crypt32.CertFreeCertificateContext.restype = wintypes.BOOL
 
+    # Crypt32 — certificate store APIs (for WindowsCertificate.from_store)
+    crypt32.CertOpenStore.argtypes = [
+        ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p,
+        wintypes.DWORD, ctypes.c_void_p]
+    crypt32.CertOpenStore.restype = ctypes.c_void_p
+
+    crypt32.CertCloseStore.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    crypt32.CertCloseStore.restype = wintypes.BOOL
+
+    crypt32.CertFindCertificateInStore.argtypes = [
+        ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+        wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p]
+    crypt32.CertFindCertificateInStore.restype = PCCERT_CONTEXT
+
+    crypt32.CryptAcquireCertificatePrivateKey.argtypes = [
+        PCCERT_CONTEXT, wintypes.DWORD, ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_ulong),
+        ctypes.POINTER(ctypes.c_int)]
+    crypt32.CryptAcquireCertificatePrivateKey.restype = wintypes.BOOL
+
+    class CRYPT_HASH_BLOB(ctypes.Structure):
+        _fields_ = [
+            ("cbData", wintypes.DWORD),
+            ("pbData", ctypes.c_void_p),
+        ]
+
     # WinHTTP prototypes
     winhttp.WinHttpOpen.argtypes = [
         ctypes.c_wchar_p, wintypes.DWORD, ctypes.c_wchar_p,
@@ -524,7 +556,7 @@ def _load_win32() -> Dict[str, Any]:
 
     winhttp.WinHttpSendRequest.argtypes = [
         ctypes.c_void_p, ctypes.c_wchar_p, wintypes.DWORD, ctypes.c_void_p,
-        wintypes.DWORD, wintypes.DWORD, ctypes.c_ulonglong]
+        wintypes.DWORD, wintypes.DWORD, ctypes.c_size_t]
     winhttp.WinHttpSendRequest.restype = wintypes.BOOL
 
     winhttp.WinHttpReceiveResponse.argtypes = [
@@ -557,6 +589,7 @@ def _load_win32() -> Dict[str, Any]:
         "CERT_CONTEXT": CERT_CONTEXT,
         "PCCERT_CONTEXT": PCCERT_CONTEXT,
         "BCRYPT_PSS_PADDING_INFO": BCRYPT_PSS_PADDING_INFO,
+        "CRYPT_HASH_BLOB": CRYPT_HASH_BLOB,
         "ERROR_SUCCESS": 0,
         "NCRYPT_OVERWRITE_KEY_FLAG": 0x00000080,
         "NCRYPT_LENGTH_PROPERTY": "Length",
@@ -613,7 +646,8 @@ def _status_u32(status: int) -> int:
 
 
 def _is_key_not_found(status: int) -> bool:
-    return _status_u32(status) in (_NTE_BAD_KEYSET, _NTE_NO_KEY, _NTE_NOT_FOUND)
+    return _status_u32(status) in (
+        _NTE_BAD_KEYSET, _NTE_NO_KEY, _NTE_NOT_FOUND, _NTE_KEY_DOES_NOT_EXIST)
 
 
 # ---------------------------------------------------------------------------
@@ -1286,9 +1320,11 @@ def obtain_token(
     params = _mi_query_params(managed_identity)
     corr = _new_correlation_id()
 
-    # Check certificate cache first
-    cache_key = _cert_cache_key(
-        managed_identity, attestation_token_provider is not None)
+    # Check certificate cache first. The cache key must reflect the
+    # effective attestation mode so a non-attested certificate is never
+    # reused as if it were attested (or vice versa).
+    attested = attestation_enabled and attestation_token_provider is not None
+    cache_key = _cert_cache_key(managed_identity, attested)
     cached = _cert_cache_get(cache_key)
 
     prov = None
@@ -1402,16 +1438,42 @@ def obtain_token(
             cert_pem = _der_to_pem(cert_der)
             cert_thumbprint = get_cert_thumbprint_sha256(cert_pem)
 
-            return {
-                "access_token": token_json["access_token"],
+            token_type = token_json.get("token_type") or "mtls_pop"
+            access_token = token_json["access_token"]
+
+            result = {
+                "access_token": access_token,
                 "expires_in": int(token_json["expires_in"]),
-                "token_type": token_json.get("token_type") or "mtls_pop",
+                "token_type": token_type,
                 "resource": token_json.get("resource"),
+                # Legacy fields (kept for backward compat)
                 "cert_pem": cert_pem,
                 "cert_der_b64": base64.b64encode(
                     cert_der).decode("ascii"),
                 "cert_thumbprint_sha256": cert_thumbprint,
             }
+
+            # binding_certificate is only present for mTLS PoP tokens
+            # on Windows. For non-mTLS or non-Windows flows it is None.
+            if (sys.platform == "win32"
+                    and token_type.lower() in ("mtls_pop", "pop")):
+                from .windows_certificate import WindowsCertificate
+
+                # Create WindowsCertificate — transfers key/prov ownership
+                binding_cert = WindowsCertificate._from_handles(
+                    win32, cert_der, key, prov, key_name)
+                # Ownership transferred — don't free in finally
+                key = None
+                prov = None
+
+                result["binding_certificate"] = binding_cert
+                result["binding_certificate_metadata"] = (
+                    binding_cert.to_metadata_dict())
+            else:
+                result["binding_certificate"] = None
+                result["binding_certificate_metadata"] = None
+
+            return result
         return token_json
 
     except Exception:
@@ -1425,6 +1487,7 @@ def obtain_token(
                 crypt32.CertFreeCertificateContext(cert_ctx)
         except Exception:
             pass
+        # Only free if ownership was NOT transferred to WindowsCertificate
         try:
             if key:
                 ncrypt.NCryptFreeObject(key)

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "msal-schannel-transport"
+version = "0.1.0"
+description = "Windows SChannel/WinHTTP HTTP transport for mTLS with non-exportable keys"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "Microsoft", email = "opencode@microsoft.com"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Internet :: WWW/HTTP",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/AzureAD/microsoft-authentication-library-for-python"
+Issues = "https://github.com/AzureAD/microsoft-authentication-library-for-python/issues"
+
+[tool.setuptools.packages.find]
+include = ["msal_schannel_transport*"]

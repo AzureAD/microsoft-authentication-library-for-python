@@ -75,14 +75,19 @@ def _truthy_env(name: str, default: str = "1") -> bool:
 
 
 def _maybe_add_dll_dirs():
-    """Make DLL resolution more reliable (especially for packaged apps)."""
+    """Make DLL resolution more reliable (especially for packaged apps).
+
+    Only adds the Python executable directory and the package directory.
+    Does NOT add os.getcwd() to avoid DLL preloading/hijacking risk.
+    Use ATTESTATION_CLIENTLIB_PATH env var for custom locations.
+    """
     if sys.platform != "win32":
         return
     add_dir = getattr(os, "add_dll_directory", None)
     if not add_dir:
         return
     for p in (os.path.dirname(sys.executable),
-              os.getcwd(), os.path.dirname(__file__)):
+              os.path.dirname(__file__)):
         try:
             if p and os.path.isdir(p):
                 add_dir(p)
@@ -105,11 +110,17 @@ def _load_lib():
     try:
         if explicit:
             return ctypes.CDLL(explicit)
+        # Try bundled DLL next to this module first
+        bundled = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "AttestationClientLib.dll")
+        if os.path.isfile(bundled):
+            return ctypes.CDLL(bundled)
         return ctypes.CDLL("AttestationClientLib.dll")
     except OSError as exc:
         raise RuntimeError(
             "[msal_key_attestation] Unable to load AttestationClientLib.dll. "
-            "Place it next to the app/exe or set ATTESTATION_CLIENTLIB_PATH."
+            "Install msal-key-attestation package or set ATTESTATION_CLIENTLIB_PATH."
         ) from exc
 
 

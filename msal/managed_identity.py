@@ -336,11 +336,11 @@ class ManagedIdentityClient(object):
             try:
                 from msal_key_attestation import create_attestation_provider
                 attestation_token_provider = create_attestation_provider()
-            except ImportError:
+            except ImportError as exc:
                 raise MsiV2Error(
                     "[msi_v2] with_attestation_support=True requires the "
                     "msal-key-attestation package. "
-                    "Install it with: pip install msal-key-attestation")
+                    "Install it with: pip install msal-key-attestation") from exc
 
             from .msi_v2 import obtain_token as _obtain_token_v2
             try:

@@ -490,5 +490,72 @@ class TestDerHelpers(unittest.TestCase):
             cert2.public_bytes(serialization.Encoding.DER), cert_der)
 
 
+# ---------------------------------------------------------------------------
+# Tests with real ManagedIdentity objects (not plain dicts)
+# ---------------------------------------------------------------------------
+
+class TestRealManagedIdentityObjects(unittest.TestCase):
+    """Verify that helpers work with actual ManagedIdentity (UserDict) instances,
+    not just plain dicts — fixing the isinstance(dict) bug."""
+
+    def test_mi_query_params_system_assigned_obj(self):
+        mi = msal.SystemAssignedManagedIdentity()
+        p = _mi_query_params(mi)
+        self.assertEqual(p["cred-api-version"], "2.0")
+        self.assertNotIn("client_id", p)
+        self.assertNotIn("object_id", p)
+        self.assertNotIn("msi_res_id", p)
+
+    def test_mi_query_params_client_id_obj(self):
+        mi = msal.UserAssignedManagedIdentity(client_id="abc-123")
+        p = _mi_query_params(mi)
+        self.assertEqual(p["client_id"], "abc-123")
+        self.assertNotIn("object_id", p)
+        self.assertNotIn("msi_res_id", p)
+
+    def test_mi_query_params_object_id_obj(self):
+        mi = msal.UserAssignedManagedIdentity(object_id="oid-456")
+        p = _mi_query_params(mi)
+        self.assertEqual(p["object_id"], "oid-456")
+        self.assertNotIn("client_id", p)
+        self.assertNotIn("msi_res_id", p)
+
+    def test_mi_query_params_resource_id_obj(self):
+        mi = msal.UserAssignedManagedIdentity(
+            resource_id="/subscriptions/sub/resourceGroups/rg/providers/...")
+        p = _mi_query_params(mi)
+        self.assertEqual(
+            p["msi_res_id"],
+            "/subscriptions/sub/resourceGroups/rg/providers/...")
+        self.assertNotIn("client_id", p)
+        self.assertNotIn("object_id", p)
+
+    def test_cert_cache_key_system_assigned_obj(self):
+        mi = msal.SystemAssignedManagedIdentity()
+        key = _cert_cache_key(mi, attested=True)
+        self.assertIn("SYSTEM_ASSIGNED", key)
+        self.assertIn("#att=1", key)
+
+    def test_cert_cache_key_client_id_obj(self):
+        mi = msal.UserAssignedManagedIdentity(client_id="abc-123")
+        key = _cert_cache_key(mi, attested=False)
+        self.assertIn("ClientId", key)
+        self.assertIn("abc-123", key)
+        self.assertIn("#att=0", key)
+
+    def test_cert_cache_key_object_id_obj(self):
+        mi = msal.UserAssignedManagedIdentity(object_id="oid-456")
+        key = _cert_cache_key(mi, attested=True)
+        self.assertIn("ObjectId", key)
+        self.assertIn("oid-456", key)
+        self.assertIn("#att=1", key)
+
+    def test_cert_cache_key_attested_vs_nonattested_differ(self):
+        mi = msal.SystemAssignedManagedIdentity()
+        key_att = _cert_cache_key(mi, attested=True)
+        key_noatt = _cert_cache_key(mi, attested=False)
+        self.assertNotEqual(key_att, key_noatt)
+
+
 if __name__ == "__main__":
     unittest.main()
