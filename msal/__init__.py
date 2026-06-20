@@ -39,11 +39,12 @@ from .managed_identity import (
     SystemAssignedManagedIdentity, UserAssignedManagedIdentity,
     ManagedIdentityClient,
     ManagedIdentityError,
+    MsiV2Error,
     ArcPlatformNotSupportedError,
     )
+from .windows_certificate import WindowsCertificate
 
 # Putting module-level exceptions into the package namespace, to make them
 # 1. officially part of the MSAL public API, and
 # 2. can still be caught by the user code even if we change the module structure.
 from .oauth2cli.oauth2 import BrowserInteractionTimeoutError
-
