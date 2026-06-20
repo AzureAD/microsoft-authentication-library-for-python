@@ -26,6 +26,11 @@ class ManagedIdentityError(ValueError):
     pass
 
 
+class MsiV2Error(ManagedIdentityError):
+    """Raised when MSI v2 (mTLS PoP) flow fails."""
+    pass
+
+
 class ManagedIdentity(UserDict):
     """Feed an instance of this class to :class:`msal.ManagedIdentityClient`
     to acquire token for the specified managed identity.
@@ -261,6 +266,8 @@ class ManagedIdentityClient(object):
         *,
         resource: str,  # If/when we support scope, resource will become optional
         claims_challenge: Optional[str] = None,
+        mtls_proof_of_possession: bool = False,
+        with_attestation_support: bool = False,
     ):
         """Acquire token for the managed identity.
 
@@ -280,6 +287,25 @@ class ManagedIdentityClient(object):
             even if the app developer did not opt in for the "CP1" client capability.
             Upon receiving a `claims_challenge`, MSAL will attempt to acquire a new token.
 
+        :param bool mtls_proof_of_possession: (optional)
+            When True **and** ``with_attestation_support`` is also True,
+            use the MSI v2 (mTLS Proof-of-Possession) flow to acquire an
+            ``mtls_pop`` token bound to a short-lived mTLS certificate issued
+            by the IMDS ``/issuecredential`` endpoint.
+
+            Requires Windows with Credential Guard / KeyGuard active.
+            Without ``with_attestation_support``, this flag alone falls
+            through to the legacy IMDS v1 flow.  Defaults to False.
+
+        :param bool with_attestation_support: (optional)
+            When True (and ``mtls_proof_of_possession`` is also True),
+            perform KeyGuard / platform attestation before credential
+            issuance.  This requires the **msal-key-attestation** package
+            (``pip install msal-key-attestation``).
+
+            Setting this to True without ``mtls_proof_of_possession``
+            raises :class:`ManagedIdentityError`.  Defaults to False.
+
         .. note::
 
             Known issue: When an Azure VM has only one user-assigned managed identity,
@@ -294,6 +320,46 @@ class ManagedIdentityClient(object):
         client_id_in_cache = self._managed_identity.get(
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
         now = time.time()
+
+        # --- MSI v2 gate ---
+        # MSI v2 is opt-in: both mtls_proof_of_possession AND
+        # with_attestation_support must be True.
+        # No auto-fallback: if v2 fails, MsiV2Error is raised.
+        use_msi_v2 = bool(mtls_proof_of_possession and with_attestation_support)
+
+        if with_attestation_support and not mtls_proof_of_possession:
+            raise ManagedIdentityError(
+                "attestation_requires_pop: with_attestation_support=True "
+                "requires mtls_proof_of_possession=True (mTLS PoP).")
+
+        if use_msi_v2:
+            # Auto-discover attestation provider from msal-key-attestation
+            attestation_token_provider = None
+            try:
+                from msal_key_attestation import create_attestation_provider
+                attestation_token_provider = create_attestation_provider()
+            except ImportError as exc:
+                raise MsiV2Error(
+                    "[msi_v2] with_attestation_support=True requires the "
+                    "msal-key-attestation package. "
+                    "Install it with: pip install msal-key-attestation") from exc
+
+            from .msi_v2 import obtain_token as _obtain_token_v2
+            try:
+                result = _obtain_token_v2(
+                    self._http_client, self._managed_identity, resource,
+                    attestation_enabled=True,
+                    attestation_token_provider=attestation_token_provider,
+                )
+            except MsiV2Error:
+                raise
+            except Exception as exc:
+                raise MsiV2Error(
+                    f"[msi_v2] Unexpected failure: {exc}") from exc
+            if "access_token" in result and "error" not in result:
+                result[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
+            return result
+
         if True:  # Attempt cache search even if receiving claims_challenge,
                   # because we want to locate the existing token (if any) and refresh it
             matches = self._token_cache.search(
