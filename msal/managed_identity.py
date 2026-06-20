@@ -294,6 +294,46 @@ class ManagedIdentityClient(object):
         client_id_in_cache = self._managed_identity.get(
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
         now = time.time()
+
+        # --- MSI v2 gate ---
+        # MSI v2 is opt-in: both mtls_proof_of_possession AND
+        # with_attestation_support must be True.
+        # No auto-fallback: if v2 fails, MsiV2Error is raised.
+        use_msi_v2 = bool(mtls_proof_of_possession and with_attestation_support)
+
+        if with_attestation_support and not mtls_proof_of_possession:
+            raise ManagedIdentityError(
+                "attestation_requires_pop: with_attestation_support=True "
+                "requires mtls_proof_of_possession=True (mTLS PoP).")
+
+        if use_msi_v2:
+            # Auto-discover attestation provider from msal-key-attestation
+            attestation_token_provider = None
+            try:
+                from msal_key_attestation import create_attestation_provider
+                attestation_token_provider = create_attestation_provider()
+            except ImportError as exc:
+                raise MsiV2Error(
+                    "[msi_v2] with_attestation_support=True requires the "
+                    "msal-key-attestation package. "
+                    "Install it with: pip install msal-key-attestation") from exc
+
+            from .msi_v2 import obtain_token as _obtain_token_v2
+            try:
+                result = _obtain_token_v2(
+                    self._http_client, self._managed_identity, resource,
+                    attestation_enabled=True,
+                    attestation_token_provider=attestation_token_provider,
+                )
+            except MsiV2Error:
+                raise
+            except Exception as exc:
+                raise MsiV2Error(
+                    f"[msi_v2] Unexpected failure: {exc}") from exc
+            if "access_token" in result and "error" not in result:
+                result[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
+            return result
+
         if True:  # Attempt cache search even if receiving claims_challenge,
                   # because we want to locate the existing token (if any) and refresh it
             matches = self._token_cache.search(
