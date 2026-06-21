@@ -1,0 +1,22 @@
+Metadata-Version: 2.4
+Name: msal-schannel-transport
+Version: 0.1.0
+Summary: Windows SChannel/WinHTTP HTTP transport for mTLS with non-exportable keys
+Author-email: Microsoft <opencode@microsoft.com>
+License: MIT
+Project-URL: Homepage, https://github.com/AzureAD/microsoft-authentication-library-for-python
+Project-URL: Issues, https://github.com/AzureAD/microsoft-authentication-library-for-python/issues
+Classifier: Development Status :: 3 - Alpha
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Security
+Classifier: Topic :: Internet :: WWW/HTTP
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: msal>=1.31.0

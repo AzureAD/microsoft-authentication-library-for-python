@@ -1,0 +1,8 @@
+pyproject.toml
+msal_schannel_transport/__init__.py
+msal_schannel_transport/session.py
+msal_schannel_transport.egg-info/PKG-INFO
+msal_schannel_transport.egg-info/SOURCES.txt
+msal_schannel_transport.egg-info/dependency_links.txt
+msal_schannel_transport.egg-info/requires.txt
+msal_schannel_transport.egg-info/top_level.txt
