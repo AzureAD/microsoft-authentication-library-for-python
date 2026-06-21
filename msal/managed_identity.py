@@ -26,6 +26,16 @@ class ManagedIdentityError(ValueError):
     pass
 
 
+class MsiV2Error(ManagedIdentityError):
+    """Raised when the MSI v2 (mTLS PoP) flow fails.
+
+    This error is never silently swallowed — if the caller requested
+    ``mtls_proof_of_possession=True``, a failure raises this exception
+    rather than falling back to MSI v1.
+    """
+    pass
+
+
 class ManagedIdentity(UserDict):
     """Feed an instance of this class to :class:`msal.ManagedIdentityClient`
     to acquire token for the specified managed identity.
@@ -261,6 +271,8 @@ class ManagedIdentityClient(object):
         *,
         resource: str,  # If/when we support scope, resource will become optional
         claims_challenge: Optional[str] = None,
+        mtls_proof_of_possession: bool = False,
+        with_attestation_support: bool = False,
     ):
         """Acquire token for the managed identity.
 

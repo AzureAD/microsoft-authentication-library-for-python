@@ -24,7 +24,10 @@ Usage:
     with SchannelSession(client_certificate=cert) as session:
         response = session.get(
             "https://my-vault.vault.azure.net/secrets/foo?api-version=7.5",
-            headers={"Authorization": result["authorization_header"]},
+            headers={
+                "Authorization": f"{result['token_type']} {result['access_token']}",
+                "x-ms-tokenboundauth": "true",
+            },
         )
         print(response.status_code, response.json())
 """

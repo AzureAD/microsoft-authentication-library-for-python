@@ -98,8 +98,8 @@ class _CertCacheEntry:
     __slots__ = ("cert_der", "cert_pem", "token_endpoint", "client_id",
                  "not_after", "created_at")
 
-    # Minimum remaining cert lifetime to cache (24 hours)
-    MIN_REMAINING_LIFETIME_SEC = 24 * 3600
+    # Minimum remaining cert lifetime to cache (1 hour)
+    MIN_REMAINING_LIFETIME_SEC = 1 * 3600
 
     def __init__(self, cert_der: bytes, cert_pem: str,
                  token_endpoint: str, client_id: str,

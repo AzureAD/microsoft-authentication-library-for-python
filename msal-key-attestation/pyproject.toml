@@ -7,8 +7,8 @@ name = "msal-key-attestation"
 dynamic = ["version"]
 description = "KeyGuard attestation support for MSAL Python MSI v2 (mTLS PoP). Provides Python bindings for AttestationClientLib.dll (Windows Credential Guard key attestation)."
 readme = "README.md"
-license = "MIT"
-requires-python = ">=3.8"
+license = {text = "MIT"}
+requires-python = ">=3.9"
 authors = [
     {name = "Microsoft Corporation", email = "nugetaad@microsoft.com"},
 ]
@@ -16,7 +16,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

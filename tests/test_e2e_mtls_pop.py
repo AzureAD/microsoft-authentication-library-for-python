@@ -8,7 +8,6 @@ E2E test: Acquire mTLS PoP token via MSAL → call Azure Key Vault over mTLS.
 This test demonstrates the correct architecture:
   1. MSAL acquires the token and returns:
      - access_token + token_type
-     - authorization_header (ready to use)
      - binding_certificate (WindowsCertificate — platform key handle)
   2. App developer uses a SEPARATE mTLS transport (SchannelSession)
      to call the downstream API with the binding_certificate.
@@ -20,7 +19,7 @@ Requirements:
   - msal-schannel-transport package installed (for downstream call)
 
 Usage:
-    python -m pytest tests/test_e2e_mtls_pop.py -v --run-e2e
+    RUN_E2E_TESTS=1 python -m pytest tests/test_e2e_mtls_pop.py -v
     OR
     python tests/test_e2e_mtls_pop.py  (standalone)
 """
@@ -205,7 +204,7 @@ class TestMtlsPopE2E(unittest.TestCase):
 
             # Pad base64url
             payload_b64 = parts[1]
-            payload_b64 += "=" * (4 - len(payload_b64) % 4)
+            payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
             payload = json.loads(base64.urlsafe_b64decode(payload_b64))
 
             # Check cnf claim

@@ -10,7 +10,7 @@ cryptographically bound to a per-boot hardware-isolated key.
 
 - Windows Azure VM with Credential Guard / KeyGuard enabled
 - `AttestationClientLib.dll` available on the system
-- Python 3.8+
+- Python 3.9+
 
 ## Installation
 
@@ -55,8 +55,9 @@ On success, returns a dict:
     "access_token": "eyJ0eXAi...",        # The mTLS-bound access token
     "expires_in": 3599,                    # Token lifetime in seconds
     "token_type": "mtls_pop",             # Always "mtls_pop" for this flow
-    "cert_pem": "-----BEGIN CERT...",     # PEM certificate (for downstream mTLS)
+    "binding_certificate": WindowsCertificate(...),  # Use with SchannelSession
     "cert_der_b64": "MIIC...",            # Base64-encoded DER certificate
+    "cert_pem": "-----BEGIN CERT...",     # PEM-encoded public certificate only
     "cert_thumbprint_sha256": "buc7x...", # Base64url SHA-256 thumbprint
 }
 ```
@@ -194,6 +195,6 @@ The provider is automatically discovered by MSAL when
 ## Caching
 
 - **Certificate cache**: In-memory, process-local. Evicts when remaining
-  lifetime < 24 hours. Keyed by managed identity + attestation mode.
+  lifetime < 1 hour. Keyed by managed identity + attestation mode.
 - **MAA token cache** (in `msal-key-attestation`): Refreshes at 90% of
   JWT lifetime, 10-second absolute guard before expiry.

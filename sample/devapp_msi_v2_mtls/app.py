@@ -139,7 +139,7 @@ def main():
     # Verify token binding (cnf.x5t#S256 matches cert)
     try:
         parts = access_token.split(".")
-        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        payload_b64 = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
         cnf = payload.get("cnf", {})
         token_x5t = cnf.get("x5t#S256", "NOT FOUND")
