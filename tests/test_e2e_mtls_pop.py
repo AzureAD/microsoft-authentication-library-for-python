@@ -137,7 +137,10 @@ class TestMtlsPopE2E(unittest.TestCase):
 
             response = session.get(
                 url,
-                headers={"Authorization": auth_header},
+                headers={
+                    "Authorization": auth_header,
+                    "x-ms-tokenboundauth": "true",
+                },
             )
 
             # 5. Verify response

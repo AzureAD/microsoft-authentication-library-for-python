@@ -54,7 +54,13 @@ From David von Oheimb (OpenSSL project):
 
 Source: https://mta.openssl.org/pipermail/openssl-users/2021-July/013944.html
 
-**No one has built this provider.** Not RTI, not Microsoft, not the OpenSSL community.
+**No Microsoft-supported, production-validated OpenSSL 3 CNG provider path exists today
+for CPython ssl/requests with KeyGuard-backed non-exportable keys.** A third-party
+OpenSSL 3 CNG provider exists that claims it can retrieve Windows-store certificates
+and sign with CNG so non-exportable private keys can be used. However, it is not
+sufficient by itself because Python's public SSL APIs (`ssl.SSLContext.load_cert_chain()`)
+still expect file/PEM-based certificate and private key loading — there is no way to
+load a provider-backed opaque key through the standard Python API.
 
 ## Our Solution: WinHTTP/SChannel via `msal-schannel-transport`
 

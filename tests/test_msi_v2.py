@@ -378,18 +378,23 @@ class TestManagedIdentityClientStrictGating(unittest.TestCase):
 
     @patch("msal.msi_v2.obtain_token")
     @patch("msal.managed_identity._obtain_token")
-    def test_pop_without_attestation_does_not_call_v2(
+    def test_pop_without_attestation_calls_v2_non_attested(
             self, mock_v1, mock_v2):
-        mock_v1.return_value = {
-            "access_token": "V1", "expires_in": 3600, "token_type": "Bearer"}
+        """mtls_proof_of_possession=True without attestation uses v2 (software tier)."""
+        mock_v2.return_value = {
+            "access_token": "V2-SW", "expires_in": 3600,
+            "token_type": "mtls_pop"}
         client = self._make_client()
         res = client.acquire_token_for_client(
             resource="R",
             mtls_proof_of_possession=True,
             with_attestation_support=False)
-        self.assertEqual(res["token_type"], "Bearer")
-        mock_v2.assert_not_called()
-        mock_v1.assert_called_once()
+        self.assertEqual(res["token_type"], "mtls_pop")
+        mock_v2.assert_called_once()
+        mock_v1.assert_not_called()
+        # Verify attestation is disabled
+        _, kwargs = mock_v2.call_args
+        self.assertFalse(kwargs["attestation_enabled"])
 
     @patch("msal.managed_identity.create_attestation_provider",
            create=True)

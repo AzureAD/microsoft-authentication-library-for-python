@@ -280,6 +280,29 @@ class ManagedIdentityClient(object):
             even if the app developer did not opt in for the "CP1" client capability.
             Upon receiving a `claims_challenge`, MSAL will attempt to acquire a new token.
 
+        :param bool mtls_proof_of_possession: (optional)
+            When True, use the MSI v2 (mTLS Proof-of-Possession) flow to
+            acquire an ``mtls_pop`` token bound to a short-lived mTLS
+            certificate issued by the IMDS ``/issuecredential`` endpoint.
+
+            Requires Windows with Credential Guard / KeyGuard active.
+            If the host does not support MSI v2, raises :class:`MsiV2Error`
+            (no silent fallback to legacy IMDS v1).  Defaults to False.
+
+        :param bool with_attestation_support: (optional)
+            When True (and ``mtls_proof_of_possession`` is also True),
+            perform KeyGuard / platform attestation before credential
+            issuance (KeyGuard binding strength tier).  This requires
+            the **msal-key-attestation** package
+            (``pip install msal-key-attestation``).
+
+            When False and ``mtls_proof_of_possession`` is True, the MSI v2
+            flow proceeds without attestation (Software binding strength
+            tier).  The token is still mTLS-bound, but not attested.
+
+            Setting this to True without ``mtls_proof_of_possession``
+            raises :class:`ManagedIdentityError`.  Defaults to False.
+
         .. note::
 
             Known issue: When an Azure VM has only one user-assigned managed identity,
@@ -296,10 +319,10 @@ class ManagedIdentityClient(object):
         now = time.time()
 
         # --- MSI v2 gate ---
-        # MSI v2 is opt-in: both mtls_proof_of_possession AND
-        # with_attestation_support must be True.
-        # No auto-fallback: if v2 fails, MsiV2Error is raised.
-        use_msi_v2 = bool(mtls_proof_of_possession and with_attestation_support)
+        # mtls_proof_of_possession=True always routes to MSI v2.
+        # No fallback to v1: if v2 fails, MsiV2Error is raised.
+        # Matches MSAL .NET behavior (MtlsPopTokenNotSupportedinImdsV1).
+        use_msi_v2 = bool(mtls_proof_of_possession)
 
         if with_attestation_support and not mtls_proof_of_possession:
             raise ManagedIdentityError(
@@ -307,22 +330,28 @@ class ManagedIdentityClient(object):
                 "requires mtls_proof_of_possession=True (mTLS PoP).")
 
         if use_msi_v2:
-            # Auto-discover attestation provider from msal-key-attestation
+            # Attestation is optional — determines binding strength tier:
+            #   with_attestation_support=True  → KeyGuard tier (attested)
+            #   with_attestation_support=False → Software tier (non-attested)
             attestation_token_provider = None
-            try:
-                from msal_key_attestation import create_attestation_provider
-                attestation_token_provider = create_attestation_provider()
-            except ImportError as exc:
-                raise MsiV2Error(
-                    "[msi_v2] with_attestation_support=True requires the "
-                    "msal-key-attestation package. "
-                    "Install it with: pip install msal-key-attestation") from exc
+            attestation_enabled = False
+
+            if with_attestation_support:
+                try:
+                    from msal_key_attestation import create_attestation_provider
+                    attestation_token_provider = create_attestation_provider()
+                    attestation_enabled = True
+                except ImportError as exc:
+                    raise MsiV2Error(
+                        "[msi_v2] with_attestation_support=True requires the "
+                        "msal-key-attestation package. "
+                        "Install it with: pip install msal-key-attestation") from exc
 
             from .msi_v2 import obtain_token as _obtain_token_v2
             try:
                 result = _obtain_token_v2(
                     self._http_client, self._managed_identity, resource,
-                    attestation_enabled=True,
+                    attestation_enabled=attestation_enabled,
                     attestation_token_provider=attestation_token_provider,
                 )
             except MsiV2Error:
