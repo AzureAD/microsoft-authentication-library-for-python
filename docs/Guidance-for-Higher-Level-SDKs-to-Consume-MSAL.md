@@ -1,0 +1,351 @@
+# SDK Integration Guide — Building on MSAL Python mTLS PoP
+
+## Purpose
+
+This document explains how higher-level SDKs (e.g., `azure-identity`, `azure-sdk-for-python`)
+can consume MSAL Python's MSI v2 mTLS Proof-of-Possession API to provide seamless mTLS
+token-bound authentication to end users.
+
+## What MSAL Python PR #931 Exposes
+
+### Public API Surface
+
+```python
+import msal
+import requests
+
+# 1. Create ManagedIdentityClient (existing API)
+client = msal.ManagedIdentityClient(
+    msal.SystemAssignedManagedIdentity(),
+    http_client=requests.Session(),
+)
+
+# 2. Acquire mTLS-bound token (new parameters)
+result = client.acquire_token_for_client(
+    resource="https://vault.azure.net",
+    mtls_proof_of_possession=True,
+    with_attestation_support=True,
+)
+```
+
+### Return Value Contract
+
+```python
+{
+    "access_token": "eyJ0eXAi...",                    # mTLS-bound PoP token
+    "token_type": "mtls_pop",                         # Token type (use in auth header)
+    "expires_in": 86399,                              # Seconds until expiry
+    "binding_certificate": WindowsCertificate(...),   # Opaque cert+key handle
+    "cert_thumbprint_sha256": "buc7x...",             # Base64url SHA-256 thumbprint
+    "cert_pem": "-----BEGIN CERTIFICATE-----\n...",   # Public cert (PEM)
+    "cert_der_b64": "MIIC...",                        # Public cert (Base64 DER)
+}
+```
+
+### Key Objects
+
+#### `WindowsCertificate`
+
+Python equivalent of .NET's `X509Certificate2`. Wraps a non-exportable private key
+(NCRYPT_KEY_HANDLE) and the associated X.509 certificate.
+
+```python
+from msal import WindowsCertificate
+
+cert: WindowsCertificate = result["binding_certificate"]
+
+# Properties
+cert.thumbprint_sha256  # str: base64url SHA-256 thumbprint
+cert.pem               # str: PEM-encoded public certificate
+cert.subject           # str: certificate subject
+
+# Methods
+cert.create_cert_context()  # -> PCCERT_CONTEXT (for WinHTTP/SChannel)
+cert.close()               # Free native handles (or use as context manager)
+```
+
+#### `MsiV2Error`
+
+```python
+from msal import MsiV2Error
+
+try:
+    result = client.acquire_token_for_client(...)
+except MsiV2Error as e:
+    # MSI v2 specific error (attestation failure, IMDS error, etc.)
+    pass
+```
+
+---
+
+## Integration Pattern for Azure SDK
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Your SDK (e.g., azure-identity)                             │
+│                                                              │
+│  ManagedIdentityCredential                                   │
+│    ├── calls MSAL acquire_token_for_client(mtls_pop=True)    │
+│    ├── receives binding_certificate + access_token           │
+│    └── returns AccessToken + metadata to pipeline            │
+├──────────────────────────────────────────────────────────────┤
+│  Transport Layer (e.g., azure-core)                          │
+│                                                              │
+│  MtlsTransport (new, SChannel-based)                         │
+│    ├── receives WindowsCertificate from credential           │
+│    ├── calls cert.create_cert_context() for TLS handshake    │
+│    └── presents cert during client-auth in mTLS              │
+├──────────────────────────────────────────────────────────────┤
+│  Resource SDK (e.g., azure-keyvault-secrets)                 │
+│    └── unaware of mTLS — just uses credential + transport    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Step-by-Step Integration
+
+#### Step 1: Token Acquisition (in your Credential class)
+
+```python
+# Inside azure-identity ManagedIdentityCredential
+import msal
+
+class ManagedIdentityCredential:
+    def __init__(self, *, mtls_pop: bool = False, **kwargs):
+        self._mtls_pop = mtls_pop
+        self._msal_client = msal.ManagedIdentityClient(
+            msal.SystemAssignedManagedIdentity(),
+            http_client=self._http_client,
+        )
+        self._binding_certificate = None
+
+    def get_token(self, *scopes, **kwargs) -> AccessToken:
+        if self._mtls_pop:
+            result = self._msal_client.acquire_token_for_client(
+                resource=scopes[0].rstrip("/.default"),
+                mtls_proof_of_possession=True,
+                with_attestation_support=True,
+            )
+            # Store the binding certificate for the transport layer
+            self._binding_certificate = result["binding_certificate"]
+            
+            return AccessToken(
+                token=result["access_token"],
+                expires_on=int(time.time()) + result["expires_in"],
+                token_type=result["token_type"],  # "mtls_pop"
+            )
+        else:
+            # Standard MSI v1 path
+            ...
+```
+
+#### Step 2: Authorization Header Construction
+
+The token type dictates the auth header format:
+
+```python
+# In your BearerTokenPolicy or equivalent:
+def on_request(self, request):
+    token = self._credential.get_token(self._scopes)
+    
+    # token_type comes from MSAL — use it directly
+    request.headers["Authorization"] = f"{token.token_type} {token.token}"
+    
+    # For mTLS PoP to token-binding-aware services:
+    if token.token_type == "mtls_pop":
+        request.headers["x-ms-tokenboundauth"] = "true"
+```
+
+#### Step 3: mTLS Transport (presenting the certificate)
+
+Standard Python `requests` **cannot** use non-exportable keys. You need a
+SChannel/WinHTTP transport:
+
+```python
+# Option A: Use msal-schannel-transport directly
+from msal_schannel_transport import SchannelSession
+
+session = SchannelSession()
+response = session.get(
+    url,
+    headers=headers,
+    client_certificate=credential._binding_certificate,
+)
+```
+
+```python
+# Option B: Build your own azure-core HttpTransport
+from azure.core.pipeline.transport import HttpTransport
+
+class SchannelTransport(HttpTransport):
+    """WinHTTP/SChannel transport for mTLS with non-exportable keys."""
+    
+    def __init__(self):
+        self._winhttp = None  # Lazy-load WinHTTP bindings
+    
+    def send(self, request, *, binding_certificate=None, **kwargs):
+        if binding_certificate:
+            # Use WinHTTP with the certificate's CERT_CONTEXT
+            cert_ctx = binding_certificate.create_cert_context()
+            # ... WinHTTP call with WINHTTP_OPTION_CLIENT_CERT_CONTEXT ...
+        else:
+            # Fall back to standard requests transport
+            ...
+```
+
+#### Step 4: End-User Experience (the goal)
+
+```python
+from azure.identity import ManagedIdentityCredential
+from azure.keyvault.secrets import SecretClient
+
+# One line to enable mTLS PoP
+credential = ManagedIdentityCredential(mtls_pop=True)
+
+# Standard SDK usage — no mTLS awareness needed by the developer
+client = SecretClient(
+    vault_url="https://tokenbinding.vault.azure.net",
+    credential=credential,
+)
+secret = client.get_secret("boundsecret")
+print(secret.value)  # "secretme"
+```
+
+---
+
+## Key Design Decisions
+
+### 1. MSAL Only Acquires Tokens
+
+MSAL never makes downstream API calls. It returns the `binding_certificate` object
+and the access token. The higher-level SDK is responsible for:
+- Constructing the authorization header
+- Presenting the certificate during TLS handshake
+- Managing the transport layer
+
+### 2. `WindowsCertificate` is the Bridge
+
+The `WindowsCertificate` object is the contract between MSAL (token acquisition)
+and the transport layer (mTLS presentation). It:
+- Holds the live NCRYPT_KEY_HANDLE (non-exportable private key)
+- Creates thread-safe CERT_CONTEXT instances for concurrent requests
+- Manages handle lifecycle (reference counting, cleanup)
+
+### 3. Transport is Pluggable
+
+Higher-level SDKs can choose:
+- **`msal-schannel-transport`** — ready-to-use WinHTTP session (ships with this PR)
+- **Custom transport** — build your own using `cert.create_cert_context()`
+- **Future: OpenSSL provider** — when available, standard `requests` will work
+
+### 4. Certificate Lifecycle
+
+```python
+# WindowsCertificate is valid for the lifetime of the issued certificate
+# (typically 8 hours for IMDS-issued certs). MSAL caches internally.
+
+# Pattern: acquire once, reuse for multiple requests
+result = client.acquire_token_for_client(...)
+cert = result["binding_certificate"]
+
+# Make many requests with the same cert
+for url in urls:
+    session.get(url, client_certificate=cert)
+
+# When done (optional — GC handles this too):
+cert.close()
+```
+
+---
+
+## Why Standard `requests` Doesn't Work
+
+```python
+# This FAILS with non-exportable keys:
+requests.get(url, cert=("cert.pem", "key.pem"))
+#                                    ^^^^^^^^
+#                  KeyGuard/TPM keys cannot be exported to a file!
+```
+
+Python's `ssl` module → OpenSSL → requires raw private key bytes.
+KeyGuard/VBS keys are hardware-isolated and never leave the security boundary.
+
+**Solution:** Use WinHTTP/SChannel which integrates natively with Windows
+certificate stores and NCRYPT_KEY_HANDLEs.
+
+---
+
+## Comparison with .NET
+
+| Concept | .NET | Python (this PR) |
+|---------|------|-------------------|
+| Token acquisition | `MsalMtlsPopProvider.GetTokenAsync()` | `client.acquire_token_for_client(mtls_pop=True)` |
+| Certificate object | `X509Certificate2` | `WindowsCertificate` |
+| Downstream mTLS | `HttpClientHandler.ClientCertificates` | `SchannelSession` or custom transport |
+| Key isolation | Automatic (SChannel) | Automatic (WinHTTP/SChannel) |
+| Auth header | `$"{tokenType} {token}"` | `f"{result['token_type']} {result['access_token']}"` |
+
+---
+
+## Minimum Integration Example
+
+For SDK authors who want the fastest path to integration:
+
+```python
+"""Minimal integration — 20 lines to full mTLS PoP."""
+import msal
+from msal_schannel_transport import SchannelSession
+
+# Acquire token
+client = msal.ManagedIdentityClient(
+    msal.SystemAssignedManagedIdentity(),
+    http_client=__import__("requests").Session(),
+)
+result = client.acquire_token_for_client(
+    resource="https://vault.azure.net",
+    mtls_proof_of_possession=True,
+    with_attestation_support=True,
+)
+
+# Downstream call
+session = SchannelSession()
+response = session.get(
+    "https://tokenbinding.vault.azure.net/secrets/boundsecret/?api-version=2015-06-01",
+    headers={
+        "Authorization": f"{result['token_type']} {result['access_token']}",
+        "x-ms-tokenboundauth": "true",
+    },
+    client_certificate=result["binding_certificate"],
+)
+print(response.status_code, response.text)
+```
+
+---
+
+## Package Dependencies
+
+| Package | Role | Required? |
+|---------|------|-----------|
+| `msal` (with PR #931) | Token acquisition + `WindowsCertificate` | Yes |
+| `msal-key-attestation` | MAA attestation (KeyGuard proof) | Yes for `with_attestation_support=True` |
+| `msal-schannel-transport` | WinHTTP-based downstream mTLS | Yes (or build your own) |
+| `requests` | HTTP client for MSAL's IMDS calls | Yes |
+
+---
+
+## Future: OpenSSL 3 CNG Provider (Strategic Path)
+
+When a Microsoft-supported OpenSSL 3 CNG Provider becomes available, the
+transport layer simplifies to:
+
+```python
+from azure_identity_mtls import create_mtls_context
+import requests
+
+ctx = create_mtls_context(thumbprint=result["cert_thumbprint_sha256"])
+response = requests.get(url, headers=headers)  # standard requests, no WinHTTP needed
+```
+
+This is a future investment. The current WinHTTP approach is production-ready
+and provides identical security guarantees.
