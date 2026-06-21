@@ -1,5 +1,14 @@
 # Guidance for Higher-Level SDKs to Consume MSAL mTLS PoP
 
+> **Prerequisites:** This document describes the API surface introduced by
+> [PR #931](https://github.com/AzureAD/microsoft-authentication-library-for-python/pull/931).
+> The types and parameters referenced below (`WindowsCertificate`, `MsiV2Error`,
+> `mtls_proof_of_possession`, `with_attestation_support`, and the extended return
+> value contract) are available once that PR is merged.
+>
+> This file is standalone design guidance for SDK authors and is not part of the
+> Sphinx-rendered documentation site (`source_suffix = '.rst'`).
+
 ## Purpose
 
 This document explains how higher-level SDKs (e.g., `azure-identity`, `azure-sdk-for-python`)
@@ -128,17 +137,18 @@ class ManagedIdentityCredential:
     def get_token(self, *scopes, **kwargs) -> AccessToken:
         if self._mtls_pop:
             result = self._msal_client.acquire_token_for_client(
-                resource=scopes[0].rstrip("/.default"),
+                resource=scopes[0].removesuffix("/.default"),
                 mtls_proof_of_possession=True,
                 with_attestation_support=True,
             )
             # Store the binding certificate for the transport layer
             self._binding_certificate = result["binding_certificate"]
+            # Store token_type for the auth policy (AccessToken has no token_type field)
+            self._token_type = result["token_type"]  # "mtls_pop"
 
             return AccessToken(
                 token=result["access_token"],
                 expires_on=int(time.time()) + result["expires_in"],
-                token_type=result["token_type"],  # "mtls_pop"
             )
         else:
             # Standard MSI v1 path
@@ -152,18 +162,20 @@ class ManagedIdentityCredential:
 
 #### Step 2: Authorization Header Construction
 
-The token type dictates the auth header format:
+The token type dictates the auth header format. Since `azure-core`'s `AccessToken`
+does not carry a `token_type` field, read it from the credential:
 
 ```python
 # In your BearerTokenPolicy or equivalent:
 def on_request(self, request):
     token = self._credential.get_token(self._scopes)
 
-    # token_type comes from MSAL — use it directly
-    request.headers["Authorization"] = f"{token.token_type} {token.token}"
+    # Read token_type from credential (not from AccessToken which lacks it)
+    token_type = getattr(self._credential, "_token_type", "Bearer")
+    request.headers["Authorization"] = f"{token_type} {token.token}"
 
     # For mTLS PoP to token-binding-aware services:
-    if token.token_type == "mtls_pop":
+    if token_type == "mtls_pop":
         request.headers["x-ms-tokenboundauth"] = "true"
 ```
 
