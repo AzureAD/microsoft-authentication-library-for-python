@@ -121,16 +121,15 @@ stages:
           --benchmark-skip \
           --timeout=120 \
           --junitxml=test-results/junit-unit.xml \
+          --log-file=test-results/pytest-unit.log \
           --ignore=tests/test_e2e.py \
           --ignore=tests/test_e2e_manual.py \
           --ignore=tests/test_fmi_e2e.py \
           --deselect tests/test_cryptography.py::CryptographyTestCase::test_ceiling_should_be_latest_cryptography_version_plus_three \
-          --deselect tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography \
-          2>&1 | tee test-results/pytest-unit.log
+          --deselect tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography
       displayName: 'Run pytest (unit)'
       timeoutInMinutes: 5
       env:
-        # Force unbuffered stdout so ADO logs stream in real time through the tee pipe.
         PYTHONUNBUFFERED: '1'
 
     # Run cryptography version-gating tests separately as a warning-only check.

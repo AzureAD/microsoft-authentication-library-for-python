@@ -26,7 +26,7 @@
 #------------------------------------------------------------------------------
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 from .mex import Mex
@@ -76,7 +76,7 @@ def wsu_time_format(datetime_obj):
 
 
 def _build_rst(username, password, cloud_audience_urn, endpoint_address, soap_action):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     return """<s:Envelope xmlns:s='{s}' xmlns:wsa='{wsa}' xmlns:wsu='{wsu}'>
         <s:Header>
             <wsa:Action s:mustUnderstand='1'>{soap_action}</wsa:Action>
