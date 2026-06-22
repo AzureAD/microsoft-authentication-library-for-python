@@ -111,7 +111,7 @@ stages:
         set -euo pipefail
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-azurepipelines pytest-timeout
+        pip install pytest pytest-timeout
       displayName: 'Install Python dependencies'
 
     - bash: |
@@ -246,7 +246,7 @@ stages:
         set -euo pipefail
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-azurepipelines pytest-timeout
+        pip install pytest pytest-timeout
       displayName: 'Install Python dependencies'
 
     - bash: |
