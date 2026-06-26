@@ -20,7 +20,7 @@ from .authority import (
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
-from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER, _compute_ext_cache_key
+from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER, _compute_ext_cache_key, _parse_claims_or_raise, _merge_claims
 import msal.telemetry
 from .region import _detect_region, _validate_region
 from .throttled_http_client import ThrottledHttpClient
@@ -2494,7 +2494,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
     except that ``allow_broker`` parameter shall remain ``None``.
     """
 
-    def acquire_token_for_client(self, scopes, claims_challenge=None, fmi_path=None, **kwargs):
+    def acquire_token_for_client(self, scopes, claims_challenge=None, fmi_path=None, client_claims=None, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
 
         Since MSAL Python 1.23, it will automatically look for token from cache,
@@ -2518,6 +2518,18 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     scopes=["api://resource/.default"],
                     fmi_path="SomeFmiPath/FmiCredentialPath",
                 )
+        :param str client_claims:
+            Optional. A JSON string containing *client-originated* claims to
+            include in the token request (for example a network security
+            perimeter ``xms_az_nwperimid`` claim).
+
+            Unlike ``claims_challenge`` (which carries *server-issued* claims
+            challenges and bypasses the cache), tokens acquired with
+            ``client_claims`` **are cached**, and the cache entry is keyed on the
+            claims value. Different ``client_claims`` values produce separate
+            cache entries, so use stable, non-dynamic values to avoid unbounded
+            cache growth. The value is merged into the standard OAuth ``claims``
+            request parameter sent on the wire.
         :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
@@ -2533,6 +2545,18 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     "fmi_path must be a string, got {}".format(type(fmi_path).__name__))
             kwargs["data"] = kwargs.get("data", {})
             kwargs["data"]["fmi_path"] = fmi_path
+        if client_claims is not None:
+            if not isinstance(client_claims, str):
+                raise ValueError(
+                    "client_claims must be a string, got {}".format(
+                        type(client_claims).__name__))
+            _parse_claims_or_raise(client_claims)  # Fail fast on malformed JSON
+            # Carry it in the request data so it contributes to the extended
+            # cache key (different claims => separate cache entries). It is
+            # merged into the "claims" body parameter in _acquire_token_for_client
+            # and stripped from the wire body by the oauth2 layer.
+            kwargs["data"] = kwargs.get("data", {})
+            kwargs["data"]["client_claims"] = client_claims
         return _clean_up(self._acquire_token_silent_with_error(
             scopes, None, claims_challenge=claims_challenge, **kwargs))
 
@@ -2552,13 +2576,20 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_FOR_CLIENT_ID, refresh_reason=refresh_reason)
         client = self._regional_client or self.client
+        request_data = kwargs.pop("data", {})
+        claims = _merge_claims_challenge_and_capabilities(
+            self._client_capabilities, claims_challenge)
+        # Client-originated claims (set via client_claims=) are merged into the
+        # same OAuth "claims" parameter and sent on the wire. The raw
+        # "client_claims" entry stays in request_data so it keys the cache; the
+        # oauth2 layer drops it from the actual request body.
+        client_claims = request_data.get("client_claims")
+        if client_claims:
+            claims = _merge_claims(claims, client_claims)
         response = client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers=telemetry_context.generate_headers(),
-            data=dict(
-                kwargs.pop("data", {}),
-                claims=_merge_claims_challenge_and_capabilities(
-                    self._client_capabilities, claims_challenge)),
+            data=dict(request_data, claims=claims),
             **kwargs)
         telemetry_context.update_telemetry(response)
         return response

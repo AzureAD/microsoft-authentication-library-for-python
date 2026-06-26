@@ -102,6 +102,57 @@ def _compute_ext_cache_key(data):
     return base64.urlsafe_b64encode(hash_bytes).rstrip(b"=").decode("ascii").lower()
 
 
+def _parse_claims_or_raise(claims):
+    """Parse a claims JSON string into a dict, or raise a friendly ``ValueError``.
+
+    The raw claims value is never included in the error message because it may
+    contain sensitive data. Mirrors MSAL .NET's ``ClaimsHelper.ParseClaimsOrThrow``.
+    """
+    try:
+        parsed = json.loads(claims)
+    except ValueError as ex:  # json.JSONDecodeError is a subclass of ValueError
+        raise ValueError(
+            "The claims value is not valid JSON. "
+            "See https://openid.net/specs/openid-connect-core-1_0.html#ClaimsParameter."
+        ) from ex
+    if not isinstance(parsed, dict):
+        # A valid JSON array, scalar, or the literal "null" is not a claims object.
+        raise ValueError(
+            "The claims value is not a valid JSON object. "
+            "See https://openid.net/specs/openid-connect-core-1_0.html#ClaimsParameter.")
+    return parsed
+
+
+def _deep_merge_dict(base, overlay):
+    """Recursively merge ``overlay`` into ``base``, returning a new dict.
+
+    Nested dicts are merged; for any other value type, ``overlay`` wins.
+    """
+    result = dict(base)
+    for key, value in overlay.items():
+        if (key in result
+                and isinstance(result[key], dict) and isinstance(value, dict)):
+            result[key] = _deep_merge_dict(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _merge_claims(claims_a, claims_b):
+    """Merge two claims JSON strings into a single JSON string.
+
+    If either side is empty/None, the other is returned as-is. Mirrors MSAL
+    .NET's ``ClaimsHelper.MergeClaimsObjects``.
+    """
+    if not claims_a:
+        return claims_b
+    if not claims_b:
+        return claims_a
+    merged = _deep_merge_dict(
+        _parse_claims_or_raise(claims_a), _parse_claims_or_raise(claims_b))
+    return json.dumps(merged)
+
+
 def is_subdict_of(small, big):
     return dict(big, **small) == big
 

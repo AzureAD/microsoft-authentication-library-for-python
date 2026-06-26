@@ -12,7 +12,7 @@ import uuid
 from urllib.parse import urlparse  # Python 3+
 from collections import UserDict  # Python 3+
 from typing import List, Optional, Union  # Needed in Python 3.7 & 3.8
-from .token_cache import TokenCache
+from .token_cache import TokenCache, _compute_ext_cache_key, _parse_claims_or_raise
 from .individual_cache import _IndividualCache as IndividualCache
 from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
 from .cloudshell import _is_running_in_cloud_shell
@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 
 class ManagedIdentityError(ValueError):
     pass
+
+
+_XMS_AZ_NWPERIMID = "xms_az_nwperimid"
+
+_CLIENT_CLAIMS_UNSUPPORTED_SOURCE = (
+    "client_claims is only supported for the IMDS (Azure VM) managed identity "
+    "source. The detected source ({source}) does not support forwarding "
+    "client-originated claims.")
 
 
 class ManagedIdentity(UserDict):
@@ -261,6 +269,7 @@ class ManagedIdentityClient(object):
         *,
         resource: str,  # If/when we support scope, resource will become optional
         claims_challenge: Optional[str] = None,
+        client_claims: Optional[str] = None,
     ):
         """Acquire token for the managed identity.
 
@@ -280,6 +289,22 @@ class ManagedIdentityClient(object):
             even if the app developer did not opt in for the "CP1" client capability.
             Upon receiving a `claims_challenge`, MSAL will attempt to acquire a new token.
 
+        :param client_claims:
+            Optional.
+            A string representation of a JSON object containing
+            *client-originated* claims to forward to the identity endpoint
+            (for example a network security perimeter ``xms_az_nwperimid`` claim).
+
+            Unlike ``claims_challenge`` (server-issued, which bypasses the cache),
+            tokens acquired with ``client_claims`` **are cached**, and the cache
+            entry is keyed on the claims value. Different ``client_claims`` values
+            produce separate cache entries, so use stable, non-dynamic values to
+            avoid unbounded cache growth.
+
+            Only the IMDS (Azure VM) managed identity source supports this
+            parameter; other sources raise an error. On IMDS v1, the claims JSON
+            may contain only the ``xms_az_nwperimid`` key.
+
         .. note::
 
             Known issue: When an Azure VM has only one user-assigned managed identity,
@@ -294,6 +319,13 @@ class ManagedIdentityClient(object):
         client_id_in_cache = self._managed_identity.get(
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
         now = time.time()
+        if client_claims is not None:
+            _parse_claims_or_raise(client_claims)  # Fail fast on malformed JSON
+        # Client-originated claims isolate the cache: a distinct claims value gets
+        # a distinct cache entry. (Server-issued claims_challenge, by contrast,
+        # bypasses the cache and is keyed normally.)
+        ext_cache_key = _compute_ext_cache_key(
+            {"client_claims": client_claims}) if client_claims else None
         if True:  # Attempt cache search even if receiving claims_challenge,
                   # because we want to locate the existing token (if any) and refresh it
             matches = self._token_cache.search(
@@ -304,6 +336,7 @@ class ManagedIdentityClient(object):
                     environment=self.__instance,
                     realm=self._tenant,
                     home_account_id=None,
+                    **({"ext_cache_key": ext_cache_key} if ext_cache_key else {}),
                 ),
             )
             for entry in matches:
@@ -334,6 +367,7 @@ class ManagedIdentityClient(object):
                     access_token_to_refresh.encode("utf-8")).hexdigest()
                     if access_token_to_refresh else None,
                 client_capabilities=self._client_capabilities,
+                client_claims=client_claims,
             )
             if "access_token" in result:
                 expires_in = result.get("expires_in", 3600)
@@ -346,7 +380,7 @@ class ManagedIdentityClient(object):
                         self.__instance, self._tenant),
                     response=result,
                     params={},
-                    data={},
+                    data={"client_claims": client_claims} if client_claims else {},
                 ))
                 if "refresh_in" in result:
                     result["refresh_on"] = int(now + result["refresh_in"])
@@ -414,10 +448,14 @@ def _obtain_token(
     *,
     access_token_sha256_to_refresh: Optional[str] = None,
     client_capabilities: Optional[List[str]] = None,
+    client_claims: Optional[str] = None,
 ):
     if ("IDENTITY_ENDPOINT" in os.environ and "IDENTITY_HEADER" in os.environ
             and "IDENTITY_SERVER_THUMBPRINT" in os.environ
     ):
+        if client_claims:
+            raise ManagedIdentityError(
+                _CLIENT_CLAIMS_UNSUPPORTED_SOURCE.format(source="Service Fabric"))
         if managed_identity:
             logger.debug(
                 "Ignoring managed_identity parameter. "
@@ -434,6 +472,9 @@ def _obtain_token(
             client_capabilities=client_capabilities,
         )
     if "IDENTITY_ENDPOINT" in os.environ and "IDENTITY_HEADER" in os.environ:
+        if client_claims:
+            raise ManagedIdentityError(
+                _CLIENT_CLAIMS_UNSUPPORTED_SOURCE.format(source="App Service"))
         return _obtain_token_on_app_service(
             http_client,
             os.environ["IDENTITY_ENDPOINT"],
@@ -442,6 +483,9 @@ def _obtain_token(
             resource,
         )
     if "MSI_ENDPOINT" in os.environ and "MSI_SECRET" in os.environ:
+        if client_claims:
+            raise ManagedIdentityError(
+                _CLIENT_CLAIMS_UNSUPPORTED_SOURCE.format(source="Machine Learning"))
         # Back ported from https://github.com/Azure/azure-sdk-for-python/blob/azure-identity_1.15.0/sdk/identity/azure-identity/azure/identity/_credentials/azure_ml.py
         return _obtain_token_on_machine_learning(
             http_client,
@@ -452,6 +496,9 @@ def _obtain_token(
         )
     arc_endpoint = _get_arc_endpoint()
     if arc_endpoint:
+        if client_claims:
+            raise ManagedIdentityError(
+                _CLIENT_CLAIMS_UNSUPPORTED_SOURCE.format(source="Azure Arc"))
         if ManagedIdentity.is_user_assigned(managed_identity):
             raise ManagedIdentityError(  # Note: Azure Identity for Python raised exception too
                 "Invalid managed_identity parameter. "
@@ -459,7 +506,8 @@ def _obtain_token(
                 "See also "
                 "https://learn.microsoft.com/en-us/azure/service-fabric/configure-existing-cluster-enable-managed-identity-token-service")
         return _obtain_token_on_arc(http_client, arc_endpoint, resource)
-    return _obtain_token_on_azure_vm(http_client, managed_identity, resource)
+    return _obtain_token_on_azure_vm(
+        http_client, managed_identity, resource, client_claims=client_claims)
 
 
 def _adjust_param(params, managed_identity, types_mapping=None):
@@ -469,7 +517,24 @@ def _adjust_param(params, managed_identity, types_mapping=None):
     if id_name:
         params[id_name] = managed_identity[ManagedIdentity.ID]
 
-def _obtain_token_on_azure_vm(http_client, managed_identity, resource):
+def _validate_msiv1_claims(client_claims):
+    """MSIv1 (IMDS v1) only supports the single ``xms_az_nwperimid`` custom claim.
+
+    Any other top-level key makes IMDS return HTTP 400 with no useful diagnostic,
+    so validate early and raise a clear error. Mirrors MSAL .NET's
+    ``AbstractManagedIdentity.ValidateMsiv1Claims``.
+    """
+    parsed = _parse_claims_or_raise(client_claims)
+    for key in parsed:
+        if key != _XMS_AZ_NWPERIMID:
+            raise ManagedIdentityError(
+                "MSIv1 (IMDS v1) only supports the `{expected}` custom claim. "
+                "The claims JSON contained the unsupported key `{actual}`. "
+                "Remove all keys other than `{expected}` when using client_claims "
+                "with MSIv1.".format(expected=_XMS_AZ_NWPERIMID, actual=key))
+
+
+def _obtain_token_on_azure_vm(http_client, managed_identity, resource, client_claims=None):
     # Based on https://docs.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/how-to-use-vm-token#get-a-token-using-http
     logger.debug("Obtaining token via managed identity on Azure VM")
     params = {
@@ -477,6 +542,10 @@ def _obtain_token_on_azure_vm(http_client, managed_identity, resource):
         "resource": resource,
         }
     _adjust_param(params, managed_identity)
+    if client_claims:
+        # IMDS v1 (MSIv1) only supports the single xms_az_nwperimid claim.
+        _validate_msiv1_claims(client_claims)
+        params["claims"] = client_claims  # http_client.get url-encodes query params
     resp = http_client.get(
         os.getenv(
             "AZURE_POD_IDENTITY_AUTHORITY_HOST", "http://169.254.169.254"

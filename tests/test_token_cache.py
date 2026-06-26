@@ -4,7 +4,10 @@ import json
 import time
 import warnings
 
-from msal.token_cache import TokenCache, SerializableTokenCache, _compute_ext_cache_key
+from msal.token_cache import (
+    TokenCache, SerializableTokenCache, _compute_ext_cache_key,
+    _parse_claims_or_raise, _merge_claims,
+)
 from tests import unittest
 
 
@@ -360,6 +363,72 @@ class TestComputeExtCacheKey(unittest.TestCase):
         h1 = _compute_ext_cache_key({"fmi_path": "path/a"})
         h2 = _compute_ext_cache_key({"fmi_path": "path/a", "custom_param": "val"})
         self.assertNotEqual(h1, h2, "Non-excluded fields should change the hash")
+
+
+class TestClientClaimsCacheKey(unittest.TestCase):
+    """client_claims must drive the extended cache key; server-issued claims must not."""
+
+    def test_client_claims_produces_non_empty_hash(self):
+        result = _compute_ext_cache_key({"client_claims": '{"a": 1}'})
+        self.assertNotEqual("", result)
+        self.assertIsInstance(result, str)
+
+    def test_claims_is_excluded_but_client_claims_is_not(self):
+        # Server-issued "claims" (claims_challenge) must not affect the key, because
+        # it bypasses the cache. Client-originated "client_claims" must affect it.
+        self.assertEqual("", _compute_ext_cache_key({"claims": '{"a": 1}'}))
+        self.assertNotEqual("", _compute_ext_cache_key({"client_claims": '{"a": 1}'}))
+
+    def test_same_client_claims_produce_same_hash(self):
+        self.assertEqual(
+            _compute_ext_cache_key({"client_claims": '{"a": 1}'}),
+            _compute_ext_cache_key({"client_claims": '{"a": 1}'}))
+
+    def test_different_client_claims_produce_different_hashes(self):
+        self.assertNotEqual(
+            _compute_ext_cache_key({"client_claims": '{"a": 1}'}),
+            _compute_ext_cache_key({"client_claims": '{"a": 2}'}))
+
+    def test_empty_client_claims_value_is_ignored(self):
+        self.assertEqual("", _compute_ext_cache_key({"client_claims": ""}))
+
+
+class TestClaimsHelpers(unittest.TestCase):
+    """Tests for the shared _parse_claims_or_raise / _merge_claims helpers."""
+
+    def test_parse_valid_object(self):
+        self.assertEqual({"a": 1}, _parse_claims_or_raise('{"a": 1}'))
+
+    def test_parse_rejects_non_object_and_malformed(self):
+        for bad in ["not json", "[1, 2]", "null", "123", '"a string"', "true"]:
+            with self.assertRaises(ValueError, msg="{!r} should raise".format(bad)):
+                _parse_claims_or_raise(bad)
+
+    def test_parse_error_does_not_leak_raw_claims(self):
+        # A malformed payload that contains a secret-looking value
+        secret = '{"super": "secret-value-123"'  # missing closing brace
+        with self.assertRaises(ValueError) as ctx:
+            _parse_claims_or_raise(secret)
+        self.assertNotIn("secret-value-123", str(ctx.exception),
+            "Error message must never echo the raw claims content")
+
+    def test_merge_returns_other_when_one_side_is_empty(self):
+        self.assertEqual({"a": 1}, json.loads(_merge_claims(None, '{"a": 1}')))
+        self.assertEqual({"a": 1}, json.loads(_merge_claims('{"a": 1}', None)))
+        self.assertEqual({"a": 1}, json.loads(_merge_claims("", '{"a": 1}')))
+        self.assertEqual({"a": 1}, json.loads(_merge_claims('{"a": 1}', "")))
+
+    def test_merge_of_two_empties_is_falsy(self):
+        self.assertFalse(_merge_claims(None, None))
+        self.assertFalse(_merge_claims("", ""))
+
+    def test_merge_deep_merges_objects(self):
+        merged = json.loads(_merge_claims(
+            '{"access_token": {"xms_cc": {"values": ["cp1"]}}}',
+            '{"access_token": {"xms_az_nwperimid": {"essential": true}}}'))
+        self.assertEqual(
+            {"xms_cc": {"values": ["cp1"]}, "xms_az_nwperimid": {"essential": True}},
+            merged["access_token"])
 
 
 class TestExtCacheKeyIsolation(unittest.TestCase):
