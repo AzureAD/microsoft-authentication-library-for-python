@@ -404,6 +404,15 @@ class TestClaimsHelpers(unittest.TestCase):
             with self.assertRaises(ValueError, msg="{!r} should raise".format(bad)):
                 _parse_claims_or_raise(bad)
 
+    def test_parse_rejects_non_string_types(self):
+        # Non-str/bytes inputs make json.loads raise TypeError; the helper must
+        # surface the same friendly ValueError so callers behave consistently
+        # regardless of the bad input's type.
+        for bad in [123, None, 1.5, True, ["a"], {"a": 1}]:
+            with self.assertRaises(
+                    ValueError, msg="{!r} should raise ValueError".format(bad)):
+                _parse_claims_or_raise(bad)
+
     def test_parse_error_does_not_leak_raw_claims(self):
         # A malformed payload that contains a secret-looking value
         secret = '{"super": "secret-value-123"'  # missing closing brace

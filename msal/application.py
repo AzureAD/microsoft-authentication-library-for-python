@@ -448,6 +448,15 @@ class ClientApplication(object):
                     "jti": a_random_uuid
                 }
 
+            .. note::
+
+                This *constructor* ``client_claims`` (a ``dict`` signed into the
+                client-assertion JWT) is distinct from the per-request
+                ``client_claims`` parameter (a JSON string of client-originated
+                claims forwarded in the token request) accepted by
+                ``acquire_token_for_client``, ``acquire_token_on_behalf_of``,
+                ``acquire_token_silent``, and the other token-acquisition methods.
+
         :param str authority:
             A URL that identifies a token authority. It should be of the format
             ``https://login.microsoftonline.com/your_tenant``
@@ -1301,6 +1310,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             non-dynamic values. The value is merged into the standard OAuth
             ``claims`` request parameter sent on the wire.
 
+            This per-request ``client_claims`` (a JSON string) is distinct from
+            the ``client_claims`` *constructor* parameter, which is a ``dict``
+            of extra claims signed into the client-assertion JWT.
+
         :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
@@ -1580,6 +1593,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             when a cached token is missing and a network request is made. Tokens
             are **cached** and keyed on the claims value (different values yield
             separate cache entries), so use stable, non-dynamic values.
+
+            This per-request ``client_claims`` (a JSON string) is distinct from
+            the ``client_claims`` *constructor* parameter, which is a ``dict``
+            of extra claims signed into the client-assertion JWT.
         :param object auth_scheme:
             You can provide an ``msal.auth_scheme.PopAuthScheme`` object
             so that MSAL will get a Proof-of-Possession (POP) token for you.
@@ -2586,6 +2603,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             cache entries, so use stable, non-dynamic values to avoid unbounded
             cache growth. The value is merged into the standard OAuth ``claims``
             request parameter sent on the wire.
+
+            This per-request ``client_claims`` (a JSON string) is distinct from
+            the ``client_claims`` *constructor* parameter, which is a ``dict``
+            of extra claims signed into the client-assertion JWT.
         :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
@@ -2602,17 +2623,12 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             kwargs["data"] = kwargs.get("data", {})
             kwargs["data"]["fmi_path"] = fmi_path
         if client_claims is not None:
-            if not isinstance(client_claims, str):
-                raise ValueError(
-                    "client_claims must be a string, got {}".format(
-                        type(client_claims).__name__))
-            _parse_claims_or_raise(client_claims)  # Fail fast on malformed JSON
             # Carry it in the request data so it contributes to the extended
             # cache key (different claims => separate cache entries). It is
             # merged into the "claims" body parameter in _acquire_token_for_client
             # and stripped from the wire body by the oauth2 layer.
             kwargs["data"] = kwargs.get("data", {})
-            kwargs["data"]["client_claims"] = client_claims
+            _stash_client_claims(client_claims, kwargs["data"])
         return _clean_up(self._acquire_token_silent_with_error(
             scopes, None, claims_challenge=claims_challenge, **kwargs))
 
@@ -2693,6 +2709,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             non-dynamic values. The value is merged into the standard OAuth
             ``claims`` request parameter sent on the wire.
 
+            This per-request ``client_claims`` (a JSON string) is distinct from
+            the ``client_claims`` *constructor* parameter, which is a ``dict``
+            of extra claims signed into the client-assertion JWT.
+
         :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
@@ -2760,6 +2780,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             **are cached** and keyed on the claims value, so use stable,
             non-dynamic values. The value is merged into the standard OAuth
             ``claims`` request parameter sent on the wire.
+
+            This per-request ``client_claims`` (a JSON string) is distinct from
+            the ``client_claims`` *constructor* parameter, which is a ``dict``
+            of extra claims signed into the client-assertion JWT.
 
         :return: A dict representing the json response from Microsoft Entra:
 

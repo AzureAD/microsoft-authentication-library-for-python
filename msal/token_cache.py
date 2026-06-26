@@ -110,7 +110,11 @@ def _parse_claims_or_raise(claims):
     """
     try:
         parsed = json.loads(claims)
-    except ValueError as ex:  # json.JSONDecodeError is a subclass of ValueError
+    except (ValueError, TypeError) as ex:
+        # json.JSONDecodeError (malformed JSON) is a subclass of ValueError;
+        # TypeError is raised when *claims* is not a str/bytes/bytearray. Both
+        # are surfaced as the same friendly ValueError so every caller behaves
+        # consistently regardless of the bad input's type.
         raise ValueError(
             "The claims value is not valid JSON. "
             "See https://openid.net/specs/openid-connect-core-1_0.html#ClaimsParameter."

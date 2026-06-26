@@ -299,6 +299,15 @@ class VmClientClaimsTestCase(ClientTestCase):
             with self.assertRaises(ValueError, msg="{!r} should raise".format(bad)):
                 self.app.acquire_token_for_client(resource="R", client_claims=bad)
 
+    def test_non_string_client_claims_raises_value_error(self):
+        # A non-str client_claims (int, bytes, dict, ...) must raise a friendly
+        # ValueError rather than leaking a raw TypeError from json.loads or
+        # hashing inconsistently into the extended cache key.
+        for bad in [123, b'{"xms_az_nwperimid": {}}', {"xms_az_nwperimid": {}}]:
+            with self.assertRaises(
+                    ValueError, msg="{!r} should raise ValueError".format(bad)):
+                self.app.acquire_token_for_client(resource="R", client_claims=bad)
+
     def test_same_client_claims_hits_cache(self):
         with self._mock_get("AT1") as mock_get:
             r1 = self.app.acquire_token_for_client(

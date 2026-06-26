@@ -320,6 +320,10 @@ class ManagedIdentityClient(object):
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
         now = time.time()
         if client_claims is not None:
+            if not isinstance(client_claims, str):
+                raise ValueError(
+                    "client_claims must be a string, got {}".format(
+                        type(client_claims).__name__))
             _parse_claims_or_raise(client_claims)  # Fail fast on malformed JSON
         # Client-originated claims isolate the cache: a distinct claims value gets
         # a distinct cache entry. (Server-issued claims_challenge, by contrast,
