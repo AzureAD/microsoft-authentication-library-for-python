@@ -1098,6 +1098,265 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
             "A plain request must not return a client_claims-cached token")
 
 
+def _build_user_token_response(
+        access_token="user_at", uid="user_oid", utid="my_tenant",
+        client_id="client_id", refresh_token=None):
+    """A mock user-token response (AT + id_token + client_info), optionally with
+    a refresh token, so that an account is created and silent retrieval works."""
+    extra = {"id_token": build_id_token(
+        aud=client_id, oid=uid, tid=utid, preferred_username="user@contoso.com")}
+    if refresh_token:
+        extra["refresh_token"] = refresh_token
+    return json.dumps(build_response(
+        uid=uid, utid=utid, access_token=access_token, **extra))
+
+
+_CLIENT_CLAIMS = '{"access_token": {"xms_az_nwperimid": {"essential": true}}}'
+_OTHER_CLIENT_CLAIMS = '{"access_token": {"xms_az_nwperimid": {"values": ["other"]}}}'
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestAcquireTokenOnBehalfOfWithClientClaims(unittest.TestCase):
+    """acquire_token_on_behalf_of(client_claims=...) forwards client-originated
+    claims via the OAuth "claims" parameter and isolates the cached token."""
+
+    def _build_app(self, **kwargs):
+        return ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant", **kwargs)
+
+    def test_client_claims_rejects_invalid_values(self):
+        app = self._build_app()
+        for bad_value in [123, True, ["claims"], b"bytes", "not json", "null", "[1,2]"]:
+            with self.assertRaises(ValueError,
+                    msg="client_claims={!r} should raise".format(bad_value)):
+                app.acquire_token_on_behalf_of(
+                    "assertion", ["s"], client_claims=bad_value)
+
+    def test_client_claims_sent_as_claims_on_the_wire(self):
+        app = self._build_app()
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "an AT", "expires_in": 3600}))
+
+        app.acquire_token_on_behalf_of(
+            "assertion", ["s"], client_claims=_CLIENT_CLAIMS, post=mock_post)
+        self.assertIn("claims", captured_data)
+        self.assertEqual(
+            {"access_token": {"xms_az_nwperimid": {"essential": True}}},
+            json.loads(captured_data["claims"]))
+        self.assertNotIn("client_claims", captured_data,
+            "client_claims must not be sent in the HTTP request body")
+
+    def test_client_claims_merged_with_client_capabilities(self):
+        app = self._build_app(client_capabilities=["CP1"])
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "an AT", "expires_in": 3600}))
+
+        app.acquire_token_on_behalf_of(
+            "assertion", ["s"], client_claims=_CLIENT_CLAIMS, post=mock_post)
+        self.assertEqual(
+            {
+                "xms_cc": {"values": ["CP1"]},
+                "xms_az_nwperimid": {"essential": True},
+            },
+            json.loads(captured_data["claims"])["access_token"])
+
+    def test_cached_token_is_isolated_by_client_claims(self):
+        app = self._build_app()
+        app.acquire_token_on_behalf_of(
+            "assertion", ["s"], client_claims=_CLIENT_CLAIMS,
+            post=lambda *a, **k: MinimalResponse(status_code=200,
+                text=_build_user_token_response(access_token="obo_at")))
+        accounts = app.get_accounts()
+        self.assertTrue(accounts, "OBO response should create an account")
+        hit = app.acquire_token_silent(
+            ["s"], accounts[0], client_claims=_CLIENT_CLAIMS)
+        self.assertIsNotNone(hit)
+        self.assertEqual("obo_at", hit["access_token"])
+        self.assertEqual(hit[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
+        self.assertIsNone(
+            app.acquire_token_silent(
+                ["s"], accounts[0], client_claims=_OTHER_CLIENT_CLAIMS),
+            "Different client_claims must not read the cached token")
+        self.assertIsNone(
+            app.acquire_token_silent(["s"], accounts[0]),
+            "A plain silent call must not read a client_claims token")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestAcquireTokenByAuthorizationCodeWithClientClaims(unittest.TestCase):
+    """acquire_token_by_authorization_code(client_claims=...) forwards
+    client-originated claims and isolates the cached token."""
+
+    def _build_app(self, **kwargs):
+        return ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant", **kwargs)
+
+    def test_client_claims_rejects_invalid_values(self):
+        app = self._build_app()
+        for bad_value in [123, ["claims"], b"bytes", "not json", "null"]:
+            with self.assertRaises(ValueError,
+                    msg="client_claims={!r} should raise".format(bad_value)):
+                app.acquire_token_by_authorization_code(
+                    "code", ["s"], client_claims=bad_value)
+
+    def test_client_claims_sent_as_claims_on_the_wire(self):
+        app = self._build_app()
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "an AT", "expires_in": 3600}))
+
+        app.acquire_token_by_authorization_code(
+            "code", ["s"], client_claims=_CLIENT_CLAIMS, post=mock_post)
+        self.assertIn("claims", captured_data)
+        self.assertEqual(
+            {"access_token": {"xms_az_nwperimid": {"essential": True}}},
+            json.loads(captured_data["claims"]))
+        self.assertNotIn("client_claims", captured_data,
+            "client_claims must not be sent in the HTTP request body")
+
+    def test_cached_token_is_isolated_by_client_claims(self):
+        app = self._build_app()
+        app.acquire_token_by_authorization_code(
+            "code", ["s"], client_claims=_CLIENT_CLAIMS,
+            post=lambda *a, **k: MinimalResponse(status_code=200,
+                text=_build_user_token_response(access_token="authcode_at")))
+        accounts = app.get_accounts()
+        self.assertTrue(accounts)
+        hit = app.acquire_token_silent(
+            ["s"], accounts[0], client_claims=_CLIENT_CLAIMS)
+        self.assertIsNotNone(hit)
+        self.assertEqual("authcode_at", hit["access_token"])
+        self.assertEqual(hit[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
+        self.assertIsNone(
+            app.acquire_token_silent(["s"], accounts[0]),
+            "A plain silent call must not read a client_claims token")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestUserFicWithClientClaims(unittest.TestCase):
+    """acquire_token_by_user_federated_identity_credential(client_claims=...)
+    forwards client-originated claims and isolates the cached token."""
+
+    def _build_app(self, **kwargs):
+        return ConfidentialClientApplication(
+            "agent_app_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant", **kwargs)
+
+    def test_client_claims_rejects_invalid_values(self):
+        app = self._build_app()
+        for bad_value in [123, ["claims"], b"bytes", "not json", "null"]:
+            with self.assertRaises(ValueError,
+                    msg="client_claims={!r} should raise".format(bad_value)):
+                app.acquire_token_by_user_federated_identity_credential(
+                    ["s"], assertion="t2", username="user@contoso.com",
+                    client_claims=bad_value)
+
+    def test_client_claims_sent_as_claims_on_the_wire(self):
+        app = self._build_app()
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=_build_user_token_response(
+                client_id="agent_app_id"))
+
+        app.acquire_token_by_user_federated_identity_credential(
+            ["s"], assertion="t2", username="user@contoso.com",
+            client_claims=_CLIENT_CLAIMS, post=mock_post)
+        self.assertIn("claims", captured_data)
+        self.assertEqual(
+            {"access_token": {"xms_az_nwperimid": {"essential": True}}},
+            json.loads(captured_data["claims"]))
+        self.assertNotIn("client_claims", captured_data,
+            "client_claims must not be sent in the HTTP request body")
+
+    def test_cached_token_is_isolated_by_client_claims(self):
+        app = self._build_app()
+        app.acquire_token_by_user_federated_identity_credential(
+            ["s"], assertion="t2", username="user@contoso.com",
+            client_claims=_CLIENT_CLAIMS,
+            post=lambda *a, **k: MinimalResponse(status_code=200,
+                text=_build_user_token_response(
+                    access_token="fic_at", client_id="agent_app_id")))
+        accounts = app.get_accounts()
+        self.assertTrue(accounts)
+        hit = app.acquire_token_silent(
+            ["s"], accounts[0], client_claims=_CLIENT_CLAIMS)
+        self.assertIsNotNone(hit)
+        self.assertEqual("fic_at", hit["access_token"])
+        self.assertEqual(hit[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
+        self.assertIsNone(
+            app.acquire_token_silent(["s"], accounts[0]),
+            "A plain silent call must not read a client_claims token")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestAcquireTokenSilentWithClientClaims(unittest.TestCase):
+    """acquire_token_silent(client_claims=...) isolates cache reads and merges
+    the claims into the refresh-token request sent on the wire."""
+
+    def _build_app(self, **kwargs):
+        return ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant", **kwargs)
+
+    def _seed_account_with_rt(self, app):
+        app.acquire_token_on_behalf_of(
+            "assertion", ["s"],
+            post=lambda *a, **k: MinimalResponse(status_code=200,
+                text=_build_user_token_response(
+                    access_token="seed_at", refresh_token="seed_rt")))
+        accounts = app.get_accounts()
+        self.assertTrue(accounts)
+        return accounts[0]
+
+    def test_client_claims_merged_into_refresh_request(self):
+        app = self._build_app()
+        account = self._seed_account_with_rt(app)
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=_build_user_token_response(
+                access_token="refreshed_at", refresh_token="seed_rt"))
+
+        result = app.acquire_token_silent(
+            ["s"], account, force_refresh=True,
+            client_claims=_CLIENT_CLAIMS, post=mock_post)
+        self.assertIsNotNone(result)
+        self.assertEqual("refresh_token", captured_data.get("grant_type"))
+        self.assertIn("claims", captured_data)
+        self.assertEqual(
+            {"access_token": {"xms_az_nwperimid": {"essential": True}}},
+            json.loads(captured_data["claims"]))
+        self.assertNotIn("client_claims", captured_data,
+            "client_claims must not leak onto the refresh request body")
+
+    def test_both_silent_entry_points_validate_client_claims(self):
+        app = self._build_app()
+        account = self._seed_account_with_rt(app)
+        for bad_value in [123, ["claims"], "not json", "null"]:
+            with self.assertRaises(ValueError):
+                app.acquire_token_silent(
+                    ["s"], account, client_claims=bad_value)
+            with self.assertRaises(ValueError):
+                app.acquire_token_silent_with_error(
+                    ["s"], account, client_claims=bad_value)
+
+
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestRemoveTokensForClient(unittest.TestCase):
     def test_remove_tokens_for_client_should_remove_client_tokens_only(self):
