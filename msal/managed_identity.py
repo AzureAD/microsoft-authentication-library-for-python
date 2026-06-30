@@ -29,7 +29,7 @@ class ManagedIdentityError(ValueError):
 _XMS_AZ_NWPERIMID = "xms_az_nwperimid"
 
 _CLIENT_CLAIMS_UNSUPPORTED_SOURCE = (
-    "client_claims is only supported for the IMDS (Azure VM) managed identity "
+    "forwarded_client_claims is only supported for the IMDS (Azure VM) managed identity "
     "source. The detected source ({source}) does not support forwarding "
     "client-originated claims.")
 
@@ -269,7 +269,7 @@ class ManagedIdentityClient(object):
         *,
         resource: str,  # If/when we support scope, resource will become optional
         claims_challenge: Optional[str] = None,
-        client_claims: Optional[str] = None,
+        forwarded_client_claims: Optional[str] = None,
     ):
         """Acquire token for the managed identity.
 
@@ -289,15 +289,15 @@ class ManagedIdentityClient(object):
             even if the app developer did not opt in for the "CP1" client capability.
             Upon receiving a `claims_challenge`, MSAL will attempt to acquire a new token.
 
-        :param client_claims:
+        :param forwarded_client_claims:
             Optional.
             A string representation of a JSON object containing
             *client-originated* claims to forward to the identity endpoint
             (for example a network security perimeter ``xms_az_nwperimid`` claim).
 
             Unlike ``claims_challenge`` (server-issued, which bypasses the cache),
-            tokens acquired with ``client_claims`` **are cached**, and the cache
-            entry is keyed on the claims value. Different ``client_claims`` values
+            tokens acquired with ``forwarded_client_claims`` **are cached**, and the cache
+            entry is keyed on the claims value. Different ``forwarded_client_claims`` values
             produce separate cache entries, so use stable, non-dynamic values to
             avoid unbounded cache growth.
 
@@ -319,17 +319,17 @@ class ManagedIdentityClient(object):
         client_id_in_cache = self._managed_identity.get(
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
         now = time.time()
-        if client_claims is not None:
-            if not isinstance(client_claims, str):
+        if forwarded_client_claims is not None:
+            if not isinstance(forwarded_client_claims, str):
                 raise ValueError(
-                    "client_claims must be a string, got {}".format(
-                        type(client_claims).__name__))
-            _parse_claims_or_raise(client_claims)  # Fail fast on malformed JSON
+                    "forwarded_client_claims must be a string, got {}".format(
+                        type(forwarded_client_claims).__name__))
+            _parse_claims_or_raise(forwarded_client_claims)  # Fail fast on malformed JSON
         # Client-originated claims isolate the cache: a distinct claims value gets
         # a distinct cache entry. (Server-issued claims_challenge, by contrast,
         # bypasses the cache and is keyed normally.)
         ext_cache_key = _compute_ext_cache_key(
-            {"client_claims": client_claims}) if client_claims else None
+            {"client_claims": forwarded_client_claims}) if forwarded_client_claims else None
         if True:  # Attempt cache search even if receiving claims_challenge,
                   # because we want to locate the existing token (if any) and refresh it
             matches = self._token_cache.search(
@@ -371,7 +371,7 @@ class ManagedIdentityClient(object):
                     access_token_to_refresh.encode("utf-8")).hexdigest()
                     if access_token_to_refresh else None,
                 client_capabilities=self._client_capabilities,
-                client_claims=client_claims,
+                client_claims=forwarded_client_claims,
             )
             if "access_token" in result:
                 expires_in = result.get("expires_in", 3600)
@@ -384,7 +384,7 @@ class ManagedIdentityClient(object):
                         self.__instance, self._tenant),
                     response=result,
                     params={},
-                    data={"client_claims": client_claims} if client_claims else {},
+                    data={"client_claims": forwarded_client_claims} if forwarded_client_claims else {},
                 ))
                 if "refresh_in" in result:
                     result["refresh_on"] = int(now + result["refresh_in"])
@@ -534,7 +534,7 @@ def _validate_msiv1_claims(client_claims):
             raise ManagedIdentityError(
                 "MSIv1 (IMDS v1) only supports the `{expected}` custom claim. "
                 "The claims JSON contained the unsupported key `{actual}`. "
-                "Remove all keys other than `{expected}` when using client_claims "
+                "Remove all keys other than `{expected}` when using forwarded_client_claims "
                 "with MSIv1.".format(expected=_XMS_AZ_NWPERIMID, actual=key))
 
 

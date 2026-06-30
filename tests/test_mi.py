@@ -277,7 +277,7 @@ class VmClientClaimsTestCase(ClientTestCase):
     def test_client_claims_sent_as_claims_query_param(self):
         with self._mock_get() as mock_get:
             result = self.app.acquire_token_for_client(
-                resource="R", client_claims=self._CLAIMS)
+                resource="R", forwarded_client_claims=self._CLAIMS)
             self.assertIn("access_token", result)
             self.assertEqual(
                 self._CLAIMS, mock_get.call_args.kwargs["params"].get("claims"),
@@ -292,12 +292,12 @@ class VmClientClaimsTestCase(ClientTestCase):
         with self.assertRaises(ManagedIdentityError):
             self.app.acquire_token_for_client(
                 resource="R",
-                client_claims='{"some_other_claim": {"essential": true}}')
+                forwarded_client_claims='{"some_other_claim": {"essential": true}}')
 
     def test_invalid_json_claims_raises(self):
         for bad in ["not json", "[1, 2]", "null"]:
             with self.assertRaises(ValueError, msg="{!r} should raise".format(bad)):
-                self.app.acquire_token_for_client(resource="R", client_claims=bad)
+                self.app.acquire_token_for_client(resource="R", forwarded_client_claims=bad)
 
     def test_non_string_client_claims_raises_value_error(self):
         # A non-str client_claims (int, bytes, dict, ...) must raise a friendly
@@ -306,15 +306,15 @@ class VmClientClaimsTestCase(ClientTestCase):
         for bad in [123, b'{"xms_az_nwperimid": {}}', {"xms_az_nwperimid": {}}]:
             with self.assertRaises(
                     ValueError, msg="{!r} should raise ValueError".format(bad)):
-                self.app.acquire_token_for_client(resource="R", client_claims=bad)
+                self.app.acquire_token_for_client(resource="R", forwarded_client_claims=bad)
 
     def test_same_client_claims_hits_cache(self):
         with self._mock_get("AT1") as mock_get:
             r1 = self.app.acquire_token_for_client(
-                resource="R", client_claims=self._CLAIMS)
+                resource="R", forwarded_client_claims=self._CLAIMS)
             self.assertEqual("identity_provider", r1["token_source"])
             r2 = self.app.acquire_token_for_client(
-                resource="R", client_claims=self._CLAIMS)
+                resource="R", forwarded_client_claims=self._CLAIMS)
             self.assertEqual("cache", r2["token_source"], "Should hit cache")
             self.assertEqual(1, mock_get.call_count, "Second call must not hit IMDS")
 
@@ -323,24 +323,24 @@ class VmClientClaimsTestCase(ClientTestCase):
         claims_b = '{"xms_az_nwperimid": {"values": ["B"]}}'
         with self._mock_get("AT_A"):
             ra = self.app.acquire_token_for_client(
-                resource="R", client_claims=claims_a)
+                resource="R", forwarded_client_claims=claims_a)
             self.assertEqual("AT_A", ra["access_token"])
         with self._mock_get("AT_B"):
             rb = self.app.acquire_token_for_client(
-                resource="R", client_claims=claims_b)
+                resource="R", forwarded_client_claims=claims_b)
             self.assertEqual("AT_B", rb["access_token"])
             self.assertEqual("identity_provider", rb["token_source"],
                 "Different client_claims must NOT share a cache entry")
         with self._mock_get("unused"):
             ra2 = self.app.acquire_token_for_client(
-                resource="R", client_claims=claims_a)
+                resource="R", forwarded_client_claims=claims_a)
             self.assertEqual("AT_A", ra2["access_token"])
             self.assertEqual("cache", ra2["token_source"])
 
     def test_plain_request_does_not_return_client_claims_token(self):
         with self._mock_get("claims_AT"):
             self.app.acquire_token_for_client(
-                resource="R", client_claims=self._CLAIMS)
+                resource="R", forwarded_client_claims=self._CLAIMS)
         with self._mock_get("plain_AT"):
             result = self.app.acquire_token_for_client(resource="R")
             self.assertEqual("plain_AT", result["access_token"])
@@ -391,7 +391,7 @@ class AppServiceTestCase(ClientTestCase):
     def test_client_claims_not_supported_on_app_service(self):
         with self.assertRaises(ManagedIdentityError):
             self.app.acquire_token_for_client(
-                resource="R", client_claims='{"xms_az_nwperimid": {"essential": true}}')
+                resource="R", forwarded_client_claims='{"xms_az_nwperimid": {"essential": true}}')
 
 
 @patch.dict(os.environ, {"MSI_ENDPOINT": "http://localhost", "MSI_SECRET": "foo"})
@@ -421,7 +421,7 @@ class MachineLearningTestCase(ClientTestCase):
     def test_client_claims_not_supported_on_machine_learning(self):
         with self.assertRaises(ManagedIdentityError):
             self.app.acquire_token_for_client(
-                resource="R", client_claims='{"xms_az_nwperimid": {"essential": true}}')
+                resource="R", forwarded_client_claims='{"xms_az_nwperimid": {"essential": true}}')
 
 
 @patch.dict(os.environ, {
@@ -497,7 +497,7 @@ class ServiceFabricTestCase(ClientTestCase):
     def test_client_claims_not_supported_on_service_fabric(self):
         with self.assertRaises(ManagedIdentityError):
             self.app.acquire_token_for_client(
-                resource="R", client_claims='{"xms_az_nwperimid": {"essential": true}}')
+                resource="R", forwarded_client_claims='{"xms_az_nwperimid": {"essential": true}}')
 
 
 @patch.dict(os.environ, {
@@ -555,7 +555,7 @@ class ArcTestCase(ClientTestCase):
     def test_client_claims_not_supported_on_arc(self, mocked_stat):
         with self.assertRaises(ManagedIdentityError):
             self.app.acquire_token_for_client(
-                resource="R", client_claims='{"xms_az_nwperimid": {"essential": true}}')
+                resource="R", forwarded_client_claims='{"xms_az_nwperimid": {"essential": true}}')
 
 
 class GetManagedIdentitySourceTestCase(unittest.TestCase):

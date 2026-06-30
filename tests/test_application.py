@@ -968,7 +968,7 @@ class TestAcquireTokenForClientWithFmiPath(unittest.TestCase):
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
-    """acquire_token_for_client(client_claims=...) forwards client-originated claims
+    """acquire_token_for_client(forwarded_client_claims=...) forwards client-originated claims
     via the OAuth "claims" body parameter, caches the result, and keys the cache
     entry on the claims value."""
 
@@ -984,15 +984,15 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
         app = self._build_app()
         for bad_value in [123, True, ["claims"], {"a": "b"}, b"bytes"]:
             with self.assertRaises(ValueError,
-                    msg="client_claims={!r} should raise".format(bad_value)):
-                app.acquire_token_for_client(["scope"], client_claims=bad_value)
+                    msg="forwarded_client_claims={!r} should raise".format(bad_value)):
+                app.acquire_token_for_client(["scope"], forwarded_client_claims=bad_value)
 
     def test_client_claims_rejects_invalid_json(self):
         app = self._build_app()
         for bad_value in ["not json", "[1, 2]", "null", "123"]:
             with self.assertRaises(ValueError,
-                    msg="client_claims={!r} should raise".format(bad_value)):
-                app.acquire_token_for_client(["scope"], client_claims=bad_value)
+                    msg="forwarded_client_claims={!r} should raise".format(bad_value)):
+                app.acquire_token_for_client(["scope"], forwarded_client_claims=bad_value)
 
     def test_client_claims_sent_as_claims_on_the_wire(self):
         app = self._build_app()
@@ -1004,7 +1004,7 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
                 "access_token": "an AT", "expires_in": 3600}))
 
         result = app.acquire_token_for_client(
-            ["scope"], client_claims=self._CLIENT_CLAIMS, post=mock_post)
+            ["scope"], forwarded_client_claims=self._CLIENT_CLAIMS, post=mock_post)
         self.assertIn("access_token", result)
         # The client claims are forwarded via the standard OAuth "claims" parameter
         self.assertIn("claims", captured_data)
@@ -1025,7 +1025,7 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
                 "access_token": "an AT", "expires_in": 3600}))
 
         app.acquire_token_for_client(
-            ["scope"], client_claims=self._CLIENT_CLAIMS, post=mock_post)
+            ["scope"], forwarded_client_claims=self._CLIENT_CLAIMS, post=mock_post)
         merged = json.loads(captured_data["claims"])
         self.assertEqual(
             {
@@ -1034,6 +1034,33 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
             },
             merged["access_token"],
             "client_claims must merge with capability-derived claims")
+        self.assertNotIn("client_claims", captured_data)
+
+    def test_forwarded_client_claims_merged_with_claims_challenge(self):
+        # All three claim sources -- the server-issued claims_challenge, client
+        # capabilities, and forwarded_client_claims -- must combine into the
+        # single OAuth "claims" parameter that is sent on the wire.
+        app = self._build_app(client_capabilities=["CP1"])
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "an AT", "expires_in": 3600}))
+
+        challenge = '{"access_token": {"nbf": {"essential": true, "value": "1601000000"}}}'
+        app.acquire_token_for_client(
+            ["scope"], claims_challenge=challenge,
+            forwarded_client_claims=self._CLIENT_CLAIMS, post=mock_post)
+        merged = json.loads(captured_data["claims"])
+        self.assertEqual(
+            {
+                "nbf": {"essential": True, "value": "1601000000"},
+                "xms_cc": {"values": ["CP1"]},
+                "xms_az_nwperimid": {"essential": True},
+            },
+            merged["access_token"],
+            "claims_challenge, capabilities, and forwarded_client_claims must all merge")
         self.assertNotIn("client_claims", captured_data)
 
     def test_same_client_claims_returns_cached_token(self):
@@ -1046,10 +1073,10 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
                 "access_token": "an AT", "expires_in": 3600}))
 
         result1 = app.acquire_token_for_client(
-            ["scope"], client_claims=self._CLIENT_CLAIMS, post=mock_post)
+            ["scope"], forwarded_client_claims=self._CLIENT_CLAIMS, post=mock_post)
         self.assertEqual(result1[app._TOKEN_SOURCE], app._TOKEN_SOURCE_IDP)
         result2 = app.acquire_token_for_client(
-            ["scope"], client_claims=self._CLIENT_CLAIMS, post=mock_post)
+            ["scope"], forwarded_client_claims=self._CLIENT_CLAIMS, post=mock_post)
         self.assertEqual(result2[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE,
             "Same client_claims should return token from cache")
         self.assertEqual(1, call_count[0], "Second call should not hit the IdP")
@@ -1067,24 +1094,24 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
         claims_b = '{"access_token": {"xms_az_nwperimid": {"values": ["B"]}}}'
 
         result_a = app.acquire_token_for_client(
-            ["scope"], client_claims=claims_a, post=mock_post_factory("AT_A"))
+            ["scope"], forwarded_client_claims=claims_a, post=mock_post_factory("AT_A"))
         self.assertEqual("AT_A", result_a["access_token"])
 
         result_b = app.acquire_token_for_client(
-            ["scope"], client_claims=claims_b, post=mock_post_factory("AT_B"))
+            ["scope"], forwarded_client_claims=claims_b, post=mock_post_factory("AT_B"))
         self.assertEqual("AT_B", result_b["access_token"])
         self.assertEqual(result_b[app._TOKEN_SOURCE], app._TOKEN_SOURCE_IDP,
             "Different client_claims must NOT share a cache entry")
 
         result_a2 = app.acquire_token_for_client(
-            ["scope"], client_claims=claims_a, post=mock_post_factory("unused"))
+            ["scope"], forwarded_client_claims=claims_a, post=mock_post_factory("unused"))
         self.assertEqual("AT_A", result_a2["access_token"])
         self.assertEqual(result_a2[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
 
     def test_client_claims_token_does_not_interfere_with_plain_token(self):
         app = self._build_app()
         app.acquire_token_for_client(
-            ["scope"], client_claims=self._CLIENT_CLAIMS,
+            ["scope"], forwarded_client_claims=self._CLIENT_CLAIMS,
             post=lambda url, **kwargs: MinimalResponse(
                 status_code=200, text=json.dumps({
                     "access_token": "claims_AT", "expires_in": 3600})))
@@ -1117,7 +1144,7 @@ _OTHER_CLIENT_CLAIMS = '{"access_token": {"xms_az_nwperimid": {"values": ["other
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestAcquireTokenOnBehalfOfWithClientClaims(unittest.TestCase):
-    """acquire_token_on_behalf_of(client_claims=...) forwards client-originated
+    """acquire_token_on_behalf_of(forwarded_client_claims=...) forwards client-originated
     claims via the OAuth "claims" parameter and isolates the cached token."""
 
     def _build_app(self, **kwargs):
@@ -1129,9 +1156,9 @@ class TestAcquireTokenOnBehalfOfWithClientClaims(unittest.TestCase):
         app = self._build_app()
         for bad_value in [123, True, ["claims"], b"bytes", "not json", "null", "[1,2]"]:
             with self.assertRaises(ValueError,
-                    msg="client_claims={!r} should raise".format(bad_value)):
+                    msg="forwarded_client_claims={!r} should raise".format(bad_value)):
                 app.acquire_token_on_behalf_of(
-                    "assertion", ["s"], client_claims=bad_value)
+                    "assertion", ["s"], forwarded_client_claims=bad_value)
 
     def test_client_claims_sent_as_claims_on_the_wire(self):
         app = self._build_app()
@@ -1143,7 +1170,7 @@ class TestAcquireTokenOnBehalfOfWithClientClaims(unittest.TestCase):
                 "access_token": "an AT", "expires_in": 3600}))
 
         app.acquire_token_on_behalf_of(
-            "assertion", ["s"], client_claims=_CLIENT_CLAIMS, post=mock_post)
+            "assertion", ["s"], forwarded_client_claims=_CLIENT_CLAIMS, post=mock_post)
         self.assertIn("claims", captured_data)
         self.assertEqual(
             {"access_token": {"xms_az_nwperimid": {"essential": True}}},
@@ -1161,7 +1188,7 @@ class TestAcquireTokenOnBehalfOfWithClientClaims(unittest.TestCase):
                 "access_token": "an AT", "expires_in": 3600}))
 
         app.acquire_token_on_behalf_of(
-            "assertion", ["s"], client_claims=_CLIENT_CLAIMS, post=mock_post)
+            "assertion", ["s"], forwarded_client_claims=_CLIENT_CLAIMS, post=mock_post)
         self.assertEqual(
             {
                 "xms_cc": {"values": ["CP1"]},
@@ -1172,19 +1199,19 @@ class TestAcquireTokenOnBehalfOfWithClientClaims(unittest.TestCase):
     def test_cached_token_is_isolated_by_client_claims(self):
         app = self._build_app()
         app.acquire_token_on_behalf_of(
-            "assertion", ["s"], client_claims=_CLIENT_CLAIMS,
+            "assertion", ["s"], forwarded_client_claims=_CLIENT_CLAIMS,
             post=lambda *a, **k: MinimalResponse(status_code=200,
                 text=_build_user_token_response(access_token="obo_at")))
         accounts = app.get_accounts()
         self.assertTrue(accounts, "OBO response should create an account")
         hit = app.acquire_token_silent(
-            ["s"], accounts[0], client_claims=_CLIENT_CLAIMS)
+            ["s"], accounts[0], forwarded_client_claims=_CLIENT_CLAIMS)
         self.assertIsNotNone(hit)
         self.assertEqual("obo_at", hit["access_token"])
         self.assertEqual(hit[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
         self.assertIsNone(
             app.acquire_token_silent(
-                ["s"], accounts[0], client_claims=_OTHER_CLIENT_CLAIMS),
+                ["s"], accounts[0], forwarded_client_claims=_OTHER_CLIENT_CLAIMS),
             "Different client_claims must not read the cached token")
         self.assertIsNone(
             app.acquire_token_silent(["s"], accounts[0]),
@@ -1193,7 +1220,7 @@ class TestAcquireTokenOnBehalfOfWithClientClaims(unittest.TestCase):
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestAcquireTokenByAuthorizationCodeWithClientClaims(unittest.TestCase):
-    """acquire_token_by_authorization_code(client_claims=...) forwards
+    """acquire_token_by_authorization_code(forwarded_client_claims=...) forwards
     client-originated claims and isolates the cached token."""
 
     def _build_app(self, **kwargs):
@@ -1205,9 +1232,9 @@ class TestAcquireTokenByAuthorizationCodeWithClientClaims(unittest.TestCase):
         app = self._build_app()
         for bad_value in [123, ["claims"], b"bytes", "not json", "null"]:
             with self.assertRaises(ValueError,
-                    msg="client_claims={!r} should raise".format(bad_value)):
+                    msg="forwarded_client_claims={!r} should raise".format(bad_value)):
                 app.acquire_token_by_authorization_code(
-                    "code", ["s"], client_claims=bad_value)
+                    "code", ["s"], forwarded_client_claims=bad_value)
 
     def test_client_claims_sent_as_claims_on_the_wire(self):
         app = self._build_app()
@@ -1219,7 +1246,7 @@ class TestAcquireTokenByAuthorizationCodeWithClientClaims(unittest.TestCase):
                 "access_token": "an AT", "expires_in": 3600}))
 
         app.acquire_token_by_authorization_code(
-            "code", ["s"], client_claims=_CLIENT_CLAIMS, post=mock_post)
+            "code", ["s"], forwarded_client_claims=_CLIENT_CLAIMS, post=mock_post)
         self.assertIn("claims", captured_data)
         self.assertEqual(
             {"access_token": {"xms_az_nwperimid": {"essential": True}}},
@@ -1230,13 +1257,13 @@ class TestAcquireTokenByAuthorizationCodeWithClientClaims(unittest.TestCase):
     def test_cached_token_is_isolated_by_client_claims(self):
         app = self._build_app()
         app.acquire_token_by_authorization_code(
-            "code", ["s"], client_claims=_CLIENT_CLAIMS,
+            "code", ["s"], forwarded_client_claims=_CLIENT_CLAIMS,
             post=lambda *a, **k: MinimalResponse(status_code=200,
                 text=_build_user_token_response(access_token="authcode_at")))
         accounts = app.get_accounts()
         self.assertTrue(accounts)
         hit = app.acquire_token_silent(
-            ["s"], accounts[0], client_claims=_CLIENT_CLAIMS)
+            ["s"], accounts[0], forwarded_client_claims=_CLIENT_CLAIMS)
         self.assertIsNotNone(hit)
         self.assertEqual("authcode_at", hit["access_token"])
         self.assertEqual(hit[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
@@ -1247,7 +1274,7 @@ class TestAcquireTokenByAuthorizationCodeWithClientClaims(unittest.TestCase):
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestUserFicWithClientClaims(unittest.TestCase):
-    """acquire_token_by_user_federated_identity_credential(client_claims=...)
+    """acquire_token_by_user_federated_identity_credential(forwarded_client_claims=...)
     forwards client-originated claims and isolates the cached token."""
 
     def _build_app(self, **kwargs):
@@ -1259,10 +1286,10 @@ class TestUserFicWithClientClaims(unittest.TestCase):
         app = self._build_app()
         for bad_value in [123, ["claims"], b"bytes", "not json", "null"]:
             with self.assertRaises(ValueError,
-                    msg="client_claims={!r} should raise".format(bad_value)):
+                    msg="forwarded_client_claims={!r} should raise".format(bad_value)):
                 app.acquire_token_by_user_federated_identity_credential(
                     ["s"], assertion="t2", username="user@contoso.com",
-                    client_claims=bad_value)
+                    forwarded_client_claims=bad_value)
 
     def test_client_claims_sent_as_claims_on_the_wire(self):
         app = self._build_app()
@@ -1275,7 +1302,7 @@ class TestUserFicWithClientClaims(unittest.TestCase):
 
         app.acquire_token_by_user_federated_identity_credential(
             ["s"], assertion="t2", username="user@contoso.com",
-            client_claims=_CLIENT_CLAIMS, post=mock_post)
+            forwarded_client_claims=_CLIENT_CLAIMS, post=mock_post)
         self.assertIn("claims", captured_data)
         self.assertEqual(
             {"access_token": {"xms_az_nwperimid": {"essential": True}}},
@@ -1287,14 +1314,14 @@ class TestUserFicWithClientClaims(unittest.TestCase):
         app = self._build_app()
         app.acquire_token_by_user_federated_identity_credential(
             ["s"], assertion="t2", username="user@contoso.com",
-            client_claims=_CLIENT_CLAIMS,
+            forwarded_client_claims=_CLIENT_CLAIMS,
             post=lambda *a, **k: MinimalResponse(status_code=200,
                 text=_build_user_token_response(
                     access_token="fic_at", client_id="agent_app_id")))
         accounts = app.get_accounts()
         self.assertTrue(accounts)
         hit = app.acquire_token_silent(
-            ["s"], accounts[0], client_claims=_CLIENT_CLAIMS)
+            ["s"], accounts[0], forwarded_client_claims=_CLIENT_CLAIMS)
         self.assertIsNotNone(hit)
         self.assertEqual("fic_at", hit["access_token"])
         self.assertEqual(hit[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
@@ -1305,7 +1332,7 @@ class TestUserFicWithClientClaims(unittest.TestCase):
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestAcquireTokenSilentWithClientClaims(unittest.TestCase):
-    """acquire_token_silent(client_claims=...) isolates cache reads and merges
+    """acquire_token_silent(forwarded_client_claims=...) isolates cache reads and merges
     the claims into the refresh-token request sent on the wire."""
 
     def _build_app(self, **kwargs):
@@ -1335,7 +1362,7 @@ class TestAcquireTokenSilentWithClientClaims(unittest.TestCase):
 
         result = app.acquire_token_silent(
             ["s"], account, force_refresh=True,
-            client_claims=_CLIENT_CLAIMS, post=mock_post)
+            forwarded_client_claims=_CLIENT_CLAIMS, post=mock_post)
         self.assertIsNotNone(result)
         self.assertEqual("refresh_token", captured_data.get("grant_type"))
         self.assertIn("claims", captured_data)
@@ -1351,10 +1378,10 @@ class TestAcquireTokenSilentWithClientClaims(unittest.TestCase):
         for bad_value in [123, ["claims"], "not json", "null"]:
             with self.assertRaises(ValueError):
                 app.acquire_token_silent(
-                    ["s"], account, client_claims=bad_value)
+                    ["s"], account, forwarded_client_claims=bad_value)
             with self.assertRaises(ValueError):
                 app.acquire_token_silent_with_error(
-                    ["s"], account, client_claims=bad_value)
+                    ["s"], account, forwarded_client_claims=bad_value)
 
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
