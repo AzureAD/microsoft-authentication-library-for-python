@@ -152,7 +152,10 @@ class TokenCache(object):
                         realm=None, target=None,
                         ext_cache_key=None,
                         # Note: New field(s) can be added here
-                        #key_id=None,
+                        key_id=None,  # So ATs bound to different keys/certs can
+                            # coexist (e.g. an mtls_pop AT vs a Bearer AT for the
+                            # same app+scope). key_id is absent for Bearer, which
+                            # keeps the Bearer cache key byte-for-byte unchanged.
                         **ignored_payload_from_a_real_token:
                     "-".join([  # Note: Could use a hash here to shorten key length
                         home_account_id or "",
@@ -163,9 +166,12 @@ class TokenCache(object):
                         client_id or "",
                         realm or "",
                         target or "",
-                        #key_id or "",  # So ATs of different key_id can coexist
                         ] + ([ext_cache_key] if ext_cache_key else [])
-                        ).lower(),
+                        ).lower()
+                        # key_id is a base64url x5t#S256 and is case-sensitive,
+                        # so it is appended AFTER lower-casing the rest, to keep
+                        # ATs bound to different keys/certs isolated.
+                        + ("-" + key_id if key_id else ""),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         realm=None, **ignored_payload_from_a_real_token:
@@ -194,6 +200,7 @@ class TokenCache(object):
         self,
         home_account_id, environment, client_id, realm, target,  # Together they form a compound key
         ext_cache_key=None,
+        key_id=None,
         default=None,
     ):  # O(1)
         return self._get(
@@ -205,6 +212,7 @@ class TokenCache(object):
                 realm=realm,
                 target=" ".join(target),
                 ext_cache_key=ext_cache_key,
+                key_id=key_id,
                 ),
             default=default)
 
@@ -251,7 +259,8 @@ class TokenCache(object):
             preferred_result = self._get_access_token(
                 query["home_account_id"], query["environment"],
                 query["client_id"], query["realm"], target,
-                ext_cache_key=query.get("ext_cache_key"))
+                ext_cache_key=query.get("ext_cache_key"),
+                key_id=query.get("key_id"))
             if preferred_result and self._is_matching(
                 preferred_result, query,
                 # Needs no target_set here because it is satisfied by dict key
@@ -282,6 +291,14 @@ class TokenCache(object):
                     if (credential_type == self.CredentialType.ACCESS_TOKEN
                         and "ext_cache_key" in entry
                         and "ext_cache_key" not in (query or {})
+                    ):
+                        continue
+                    # Cache isolation for key-bound tokens (e.g. mtls_pop, SSH-cert).
+                    # An entry bound to a key_id must not satisfy a query without
+                    # one, so a Bearer lookup never returns a PoP/mtls_pop token.
+                    if (credential_type == self.CredentialType.ACCESS_TOKEN
+                        and "key_id" in entry
+                        and "key_id" not in (query or {})
                     ):
                         continue
                     yield entry

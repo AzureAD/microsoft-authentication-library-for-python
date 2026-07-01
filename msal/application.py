@@ -4,6 +4,7 @@ import time
 import logging
 import sys
 import warnings
+import base64
 from threading import Lock
 from typing import Optional  # Needed in Python 3.7 & 3.8
 from urllib.parse import urlparse
@@ -24,6 +25,7 @@ from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER, _compute
 import msal.telemetry
 from .region import _detect_region, _validate_region
 from .throttled_http_client import ThrottledHttpClient
+from . import mtls
 from .cloudshell import _is_running_in_cloud_shell
 from .sku import SKU, __version__
 from .oauth2cli.authcode import is_wsl
@@ -85,7 +87,7 @@ def _extract_cert_and_thumbprints(cert):
     # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-object - Requires cryptography 0.7+
     sha256_thumbprint = cert.fingerprint(hashes.SHA256()).hex() 
     sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # CodeQL [SM02167] for legacy support such as ADFS
-    return sha256_thumbprint, sha1_thumbprint, x5c
+    return sha256_thumbprint, sha1_thumbprint, x5c, cert_pem
 
 def _parse_pfx(pfx_path, passphrase_bytes):
     # Cert concepts https://security.stackexchange.com/a/226758/125264
@@ -96,8 +98,8 @@ def _parse_pfx(pfx_path, passphrase_bytes):
             f.read(), passphrase_bytes)
     if not (private_key and cert):
         raise ValueError("Your PFX file shall contain both private key and cert")
-    sha256_thumbprint, sha1_thumbprint, x5c = _extract_cert_and_thumbprints(cert)
-    return private_key, sha256_thumbprint, sha1_thumbprint, x5c
+    sha256_thumbprint, sha1_thumbprint, x5c, cert_pem = _extract_cert_and_thumbprints(cert)
+    return private_key, sha256_thumbprint, sha1_thumbprint, x5c, cert_pem
 
 
 def _load_private_key_from_pem_str(private_key_pem_str, passphrase_bytes):
@@ -108,6 +110,75 @@ def _load_private_key_from_pem_str(private_key_pem_str, passphrase_bytes):
         passphrase_bytes,
         backend=default_backend(),  # It was a required param until 2020
         )
+
+
+def _private_key_to_unencrypted_pem(private_key, passphrase_bytes=None):
+    """Normalize a private key to unencrypted PKCS8 PEM bytes.
+
+    ``private_key`` may be a ``cryptography`` private-key object (as returned by
+    ``_parse_pfx``) or a PEM string/bytes (the raw ``private_key`` credential).
+    The result is suitable for ``ssl.SSLContext.load_cert_chain`` via a temp file.
+    """
+    from cryptography.hazmat.primitives import serialization
+    if isinstance(private_key, (str, bytes)):
+        key_obj = serialization.load_pem_private_key(
+            _str2bytes(private_key) if isinstance(private_key, str) else private_key,
+            passphrase_bytes)
+    else:  # Already a cryptography private-key object
+        key_obj = private_key
+    return key_obj.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption())
+
+
+def _load_mtls_cert_material(cert_credential):
+    """Load client-cert material for an mTLS PoP handshake from a cert credential.
+
+    ``cert_credential`` is the app's main ``client_credential`` (vanilla SN/I),
+    a certificate credential dict. Returns a dict with the unencrypted-PEM private key,
+    the leaf cert PEM, ``x5c``, the SHA-256 thumbprint (hex), and ``key_id``
+    (base64url ``x5t#S256``, used for cache binding). Raises ``ValueError`` when
+    the credential cannot yield mTLS-capable certificate material.
+    """
+    passphrase_bytes = _str2bytes(
+        cert_credential["passphrase"]
+        ) if cert_credential.get("passphrase") else None
+    if cert_credential.get("private_key_pfx_path"):
+        private_key, sha256_thumbprint, _, x5c, cert_pem = _parse_pfx(
+            cert_credential["private_key_pfx_path"], passphrase_bytes)
+    elif cert_credential.get("private_key"):
+        public_cert = cert_credential.get("public_certificate")
+        if not isinstance(public_cert, str):
+            raise ValueError(
+                "mTLS Proof-of-Possession requires the certificate's public part. "
+                "Provide 'public_certificate' (PEM) alongside 'private_key', "
+                "or use 'private_key_pfx_path'.")
+        from cryptography import x509
+        cert = x509.load_pem_x509_certificate(_str2bytes(public_cert))
+        sha256_thumbprint, _, x5c, cert_pem = _extract_cert_and_thumbprints(cert)
+        private_key = (
+            _load_private_key_from_pem_str(
+                cert_credential['private_key'], passphrase_bytes)
+            if passphrase_bytes
+            else cert_credential['private_key'])
+    else:
+        raise ValueError(
+            "mTLS Proof-of-Possession requires a certificate credential "
+            "(a 'private_key_pfx_path', or a 'private_key' plus 'public_certificate').")
+    if not sha256_thumbprint:
+        raise ValueError(
+            "mTLS Proof-of-Possession requires a SHA-256 certificate thumbprint.")
+    key_id = base64.urlsafe_b64encode(
+        bytes.fromhex(sha256_thumbprint)).rstrip(b"=").decode("ascii")
+    return {
+        "private_key_pem": _private_key_to_unencrypted_pem(
+            private_key, passphrase_bytes),
+        "cert_pem": cert_pem if isinstance(cert_pem, bytes) else _str2bytes(cert_pem),
+        "x5c": x5c,
+        "sha256_thumbprint": sha256_thumbprint,
+        "key_id": key_id,
+        }
 
 
 def _pii_less_home_account_id(home_account_id):
@@ -208,6 +279,35 @@ class _ClientWithCcsRoutingInfo(Client):
         headers["X-AnchorMailbox"] = "upn:{}".format(username)
         return super(_ClientWithCcsRoutingInfo, self).obtain_token_by_username_password(
             username, password, headers=headers, **kwargs)
+
+
+class _MtlsClient(_ClientWithCcsRoutingInfo):
+    """A confidential-client OAuth2 client whose token request presents a
+    client certificate over mutual-TLS (mTLS Proof-of-Possession).
+
+    An mtls_pop access token is bound to the certificate, so the cache isolates
+    it via ``key_id`` (the certificate's base64url ``x5t#S256``). That ``key_id``
+    must reach the token cache (for both storage and lookup), but it must NOT be
+    sent to ESTS on the wire - ESTS derives the binding from the TLS-presented
+    certificate itself. This override therefore pops ``key_id`` out of the HTTP
+    request body and re-injects it into the token-obtaining event so the cache
+    still records it against the certificate.
+    """
+    def obtain_token_for_client(self, scope=None, **kwargs):
+        data = kwargs.pop("data", {})
+        key_id = data.pop("key_id", None)  # Keep key_id OFF the wire
+        if key_id:
+            outer = kwargs.pop("on_obtaining_tokens", None)
+
+            def _reinject_key_id(event):
+                # Re-attach key_id to the event's data so token_cache.add()
+                # binds the stored mtls_pop AT to the certificate.
+                event["data"] = dict(event.get("data", {}), key_id=key_id)
+                (outer or self.on_obtaining_tokens)(event)
+
+            kwargs["on_obtaining_tokens"] = _reinject_key_id
+        return super(_MtlsClient, self).obtain_token_for_client(
+            scope=scope, data=data, **kwargs)
 
 
 def _msal_extension_check():
@@ -648,6 +748,14 @@ class ClientApplication(object):
                 'Invalid exclude_scopes={}. You can not opt out "openid" scope'.format(
                 repr(exclude_scopes)))
 
+        # Retained for the mTLS PoP transport, which needs its own dedicated
+        # requests.Session carrying the client certificate (see msal/mtls.py).
+        # A user-supplied http_client cannot perform the mTLS handshake, so
+        # requesting mtls_proof_of_possession=True with one fails fast.
+        self._http_client_is_custom = bool(http_client)
+        self._http_client_config = {
+            "verify": verify, "proxies": proxies, "timeout": timeout}
+        self._http_cache = http_cache  # Reused by the lazily-built mTLS client
         if http_client:
             self.http_client = http_client
         else:
@@ -716,6 +824,24 @@ class ClientApplication(object):
         self._region_detected = None
         self.client, self._regional_client = self._build_client(
             client_credential, self.authority)
+
+        # mTLS Proof-of-Possession state. The certificate material and the
+        # dedicated mTLS client(s) are parsed/built lazily on the first
+        # mtls_proof_of_possession request (see _get_mtls_pop_cert /
+        # _get_mtls_client), so Bearer-only cert apps pay nothing and the
+        # sovereign/tenanted guardrails fire at request time.
+        self._mtls_pop_cert_material = None  # Cached parse of the cert below
+        self._mtls_client = None  # Lazily built global mTLS client
+        self._mtls_regional_client = None  # Lazily built regional mTLS client
+        self._mtls_lock = Lock()
+        if isinstance(client_credential, dict) and not client_credential.get(
+                "client_assertion") and (
+                    client_credential.get("private_key_pfx_path")
+                    or client_credential.get("private_key")):  # Vanilla SN/I cert
+            self._mtls_cert_credential = client_credential
+        else:  # No certificate available to present over mTLS
+            self._mtls_cert_credential = None
+
         # Warn if using a static string/bytes client_assertion (discouraged for long-running apps)
         if isinstance(client_credential, dict) and isinstance(
                 client_credential.get("client_assertion"), (str, bytes)):
@@ -801,12 +927,21 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         return list(decorated)
 
     def _build_telemetry_context(
-            self, api_id, correlation_id=None, refresh_reason=None):
+            self, api_id, correlation_id=None, refresh_reason=None,
+            token_type=None):
         return msal.telemetry._TelemetryContext(
             self._telemetry_buffer, self._telemetry_lock, api_id,
-            correlation_id=correlation_id, refresh_reason=refresh_reason)
+            correlation_id=correlation_id, refresh_reason=refresh_reason,
+            token_type=token_type)
 
-    def _get_regional_authority(self, central_authority) -> Optional[Authority]:
+    def _compute_region_to_use(self) -> Optional[str]:
+        """Resolve the effective Azure region (or None), honoring the
+        ``azure_region`` config, ``MSAL_FORCE_REGION``, and auto-detection.
+
+        Factored out of :func:`_get_regional_authority` so the mTLS PoP client
+        (which builds a ``{region}.mtlsauth.*`` endpoint) can reuse the exact
+        same region resolution.
+        """
         if self._region_configured is False:  # User opts out of ESTS-R
             return None  # Short circuit to completely bypass region detection
         if self._region_configured is None:  # User did not make an ESTS-R choice
@@ -825,6 +960,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             region_to_use = _validate_region(
                 region_to_use, source="azure_region parameter")
         logger.debug('Region to be used: {}'.format(repr(region_to_use)))
+        return region_to_use
+
+    def _get_regional_authority(self, central_authority) -> Optional[Authority]:
+        region_to_use = self._compute_region_to_use()
         if region_to_use:
             regional_host = ("{}.login.microsoft.com".format(region_to_use)
                 if central_authority.instance in (
@@ -842,6 +981,98 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 instance_discovery=False,
                 )
         return None
+
+    def _default_client_headers(self):
+        default_headers = {
+            "x-client-sku": SKU, "x-client-ver": __version__,
+            "x-client-os": sys.platform,
+            "x-ms-lib-capability": "retry-after, h429",
+        }
+        if self.app_name:
+            default_headers['x-app-name'] = self.app_name
+        if self.app_version:
+            default_headers['x-app-ver'] = self.app_version
+        return default_headers
+
+    def _get_mtls_pop_cert(self):
+        """Lazily parse and cache the client certificate material used as the
+        TLS client certificate for mTLS PoP. Raises ``ValueError`` when no
+        suitable certificate credential is configured."""
+        if self._mtls_cert_credential is None:
+            raise ValueError(
+                "mtls_proof_of_possession=True requires this confidential client "
+                "to be configured with a certificate credential (a "
+                "'private_key_pfx_path', or a 'private_key' plus "
+                "'public_certificate').")
+        with self._mtls_lock:
+            if self._mtls_pop_cert_material is None:
+                self._mtls_pop_cert_material = _load_mtls_cert_material(
+                    self._mtls_cert_credential)
+            return self._mtls_pop_cert_material
+
+    def _get_mtls_client(self, central_authority):
+        """Lazily build (and cache) the mTLS PoP client for ``central_authority``.
+
+        The token endpoint host is transformed ``login.* -> [region.]mtlsauth.*``
+        (region honored when configured, global otherwise), and the client
+        presents the configured certificate over mutual-TLS.
+        """
+        if self._http_client_is_custom:
+            raise ValueError(
+                "mtls_proof_of_possession=True is not supported with a custom "
+                "http_client, because MSAL must own the TLS transport to present "
+                "the client certificate in the mutual-TLS handshake. Omit the "
+                "http_client argument to use MSAL's built-in mTLS transport.")
+        region = self._compute_region_to_use()
+        with self._mtls_lock:
+            cached = self._mtls_regional_client if region else self._mtls_client
+        if cached is not None:
+            return cached
+        cert = self._get_mtls_pop_cert()  # May raise ValueError (no cert configured)
+        token_endpoint = mtls.transform_token_endpoint(  # login.* -> mtlsauth.*
+            central_authority.token_endpoint, central_authority.instance, region)
+        logger.debug("mTLS PoP token endpoint: %s", token_endpoint)
+        configuration = {
+            "authorization_endpoint": central_authority.authorization_endpoint,
+            "token_endpoint": token_endpoint,
+            "device_authorization_endpoint":
+                central_authority.device_authorization_endpoint,
+            }
+        http_client = ThrottledHttpClient(
+            mtls._MtlsHttpClient(
+                cert["cert_pem"], cert["private_key_pem"],
+                **self._http_client_config),
+            http_cache=self._http_cache,
+            default_throttle_time=5,
+            )
+        # Vanilla SN/I: the TLS certificate alone authenticates the client.
+        client = _MtlsClient(
+            configuration,
+            self.client_id,
+            http_client=http_client,
+            default_headers=self._default_client_headers(),
+            default_body={"client_info": 1},
+            # Cache under the ORIGINAL login.* host, never the mtlsauth.* host,
+            # so mtls_pop ATs share the environment with the rest of the app.
+            on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                event, environment=central_authority.instance)),
+            on_removing_rt=self.token_cache.remove_rt,
+            on_updating_rt=self.token_cache.update_rt)
+        with self._mtls_lock:
+            # Double-check under the lock: another thread may have built and
+            # cached a client while we were building ours (we released the lock
+            # to build). If so, keep the already-cached instance and let ours be
+            # discarded, so every caller shares one client instead of orphaning
+            # a redundant build.
+            if region:
+                if self._mtls_regional_client is None:
+                    self._mtls_regional_client = client
+                client = self._mtls_regional_client
+            else:
+                if self._mtls_client is None:
+                    self._mtls_client = client
+                client = self._mtls_client
+        return client
 
     def _build_client(self, client_credential, authority, skip_regional_client=False):
         client_assertion = None
@@ -869,7 +1100,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     client_credential["passphrase"]
                     ) if client_credential.get("passphrase") else None
                 if client_credential.get("private_key_pfx_path"):
-                    private_key, sha256_thumbprint, sha1_thumbprint, x5c = _parse_pfx(
+                    private_key, sha256_thumbprint, sha1_thumbprint, x5c, _ = _parse_pfx(
                         client_credential["private_key_pfx_path"],
                         passphrase_bytes)
                     if client_credential.get("public_certificate") is True and x5c:
@@ -892,7 +1123,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                         from cryptography import x509
                         cert = x509.load_pem_x509_certificate(
                             _str2bytes(client_credential['public_certificate']))
-                        sha256_thumbprint, sha1_thumbprint, headers["x5c"] = (
+                        sha256_thumbprint, sha1_thumbprint, headers["x5c"], _ = (
                             _extract_cert_and_thumbprints(cert))
                     else:
                         raise ValueError(
@@ -2494,7 +2725,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
     except that ``allow_broker`` parameter shall remain ``None``.
     """
 
-    def acquire_token_for_client(self, scopes, claims_challenge=None, fmi_path=None, **kwargs):
+    def acquire_token_for_client(
+            self, scopes, claims_challenge=None, fmi_path=None,
+            mtls_proof_of_possession=False, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
 
         Since MSAL Python 1.23, it will automatically look for token from cache,
@@ -2518,6 +2751,38 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     scopes=["api://resource/.default"],
                     fmi_path="SomeFmiPath/FmiCredentialPath",
                 )
+        :param bool mtls_proof_of_possession:
+            Optional. Defaults to ``False``. When ``True``, MSAL presents this
+            confidential client's certificate as the client certificate in a
+            mutual-TLS (mTLS) handshake to Microsoft Entra, and requests an
+            mTLS-bound Proof-of-Possession (PoP) access token
+            (``token_type == "mtls_pop"``) rather than a Bearer token. The same
+            Subject Name + Issuer (SN/I) certificate that would otherwise sign a
+            client assertion is instead used as the TLS client certificate, and
+            the returned token is cryptographically bound to it
+            (``cnf``/``x5t#S256``).
+
+            Requirements: the app must be configured with a certificate
+            credential (``private_key_pfx_path``, or ``private_key`` +
+            ``public_certificate``); the ``authority`` must be tenanted (not
+            ``/common`` or ``/organizations``); and MSAL's built-in HTTP
+            transport must be in use (a custom ``http_client`` cannot perform
+            the mTLS handshake). Any of these unmet raises ``ValueError``.
+
+            On success the result also contains a ``binding_certificate`` dict
+            with the **public** binding material only (never the private key)::
+
+                result["binding_certificate"] == {
+                    "x5c": ["<base64-DER leaf>", ...],
+                    "thumbprint_sha256": "<base64url x5t#S256>",
+                }
+
+            Example usage::
+
+                result = cca.acquire_token_for_client(
+                    ["https://graph.microsoft.com/.default"],
+                    mtls_proof_of_possession=True,
+                )
         :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
@@ -2533,8 +2798,65 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     "fmi_path must be a string, got {}".format(type(fmi_path).__name__))
             kwargs["data"] = kwargs.get("data", {})
             kwargs["data"]["fmi_path"] = fmi_path
-        return _clean_up(self._acquire_token_silent_with_error(
+        if mtls_proof_of_possession:
+
+            # An mTLS transport is required to present the certificate for a
+
+            # cert-bound PoP request.
+
+            if self._http_client_is_custom:
+
+                raise ValueError(
+
+                    "mtls_proof_of_possession=True is not supported with a "
+
+                    "custom http_client, because MSAL must own the TLS transport "
+
+                    "to present the client certificate in the mutual-TLS "
+
+                    "handshake. Omit the http_client argument to use MSAL's "
+
+                    "built-in mTLS transport.")
+
+            if self.authority.tenant.lower() in ("common", "organizations"):
+
+                raise ValueError(
+
+                    "mtls_proof_of_possession=True requires a tenanted authority. "
+
+                    "Use a specific tenant id or domain instead of /common or "
+
+                    "/organizations.")
+
+            # Parse/validate the certificate now (fail fast).
+
+            mtls_cert = self._get_mtls_pop_cert()
+
+            # Cert-bound PoP: request an mtls_pop token and bind its cache
+
+            # entry to the cert via key_id (base64url x5t#S256). token_type
+
+            # also routes _acquire_token_for_client() to the mTLS client.
+
+            data = dict(kwargs.get("data") or {})
+
+            data["token_type"] = "mtls_pop"
+
+            data["key_id"] = mtls_cert["key_id"]
+
+            kwargs["data"] = data
+
+        result = _clean_up(self._acquire_token_silent_with_error(
             scopes, None, claims_challenge=claims_challenge, **kwargs))
+        if mtls_proof_of_possession and result and "access_token" in result:
+            # Surface the PUBLIC binding certificate (never the private key), so
+            # callers can correlate the token to its cert. Survives _clean_up
+            # (the key has no "_" prefix).
+            result["binding_certificate"] = {
+                "x5c": mtls_cert["x5c"],
+                "thumbprint_sha256": mtls_cert["key_id"],  # base64url x5t#S256
+                }
+        return result
 
     def _acquire_token_for_client(
         self,
@@ -2548,10 +2870,18 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 "Using /common or /organizations authority "
                 "in acquire_token_for_client() is unreliable. "
                 "Please use a specific tenant instead.", DeprecationWarning)
-        self._validate_ssh_cert_input_data(kwargs.get("data", {}))
+        data = kwargs.get("data", {})
+        self._validate_ssh_cert_input_data(data)
+        is_mtls_pop = data.get("token_type") == "mtls_pop"
         telemetry_context = self._build_telemetry_context(
-            self.ACQUIRE_TOKEN_FOR_CLIENT_ID, refresh_reason=refresh_reason)
-        client = self._regional_client or self.client
+            self.ACQUIRE_TOKEN_FOR_CLIENT_ID, refresh_reason=refresh_reason,
+            token_type=data.get("token_type"))
+        if is_mtls_pop:
+            # Present the certificate over mTLS to obtain a cert-bound
+            # (mtls_pop) token.
+            client = self._get_mtls_client(self.authority)
+        else:
+            client = self._regional_client or self.client
         response = client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers=telemetry_context.generate_headers(),

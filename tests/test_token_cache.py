@@ -246,8 +246,53 @@ class TokenCacheTestCase(unittest.TestCase):
         self._test_data_should_be_saved_and_searchable_in_access_token({"key_id": "2"})
         self.assertEqual(
             len(self.cache._cache["AccessToken"]),
-            1, """Historically, tokens are not keyed by key_id,
-so a new token overwrites the old one, and we would end up with 1 token in cache""")
+            2, """Access tokens are now isolated by key_id, so that a key-bound
+token (SSH-cert or mTLS PoP) never overwrites another one bound to a different
+key, nor a plain Bearer token for the same scope. We therefore keep 2 tokens.""")
+        # Each key-bound token remains independently searchable by its own key_id
+        for key_id in ("1", "2"):
+            self.assertFoundAccessToken(
+                scopes=["s1", "s2", "s3"], now=1000, query=dict(
+                    key_id=key_id,
+                    client_id="my_client_id",
+                    environment="login.example.com",
+                    realm="contoso",
+                    home_account_id="uid.utid",
+                ))
+
+    def test_bearer_and_mtls_pop_tokens_coexist_and_isolate(self):
+        # The crux of mTLS PoP cache isolation (plan C6): a Bearer token and an
+        # mtls_pop token for the SAME app/scope/tenant must coexist, and an
+        # unkeyed (Bearer) lookup must never return the key-bound mtls_pop token.
+        scopes = ["s2", "s1", "s3"]
+        now = 1000
+        common = dict(
+            client_id="my_client_id", scope=scopes,
+            token_endpoint="https://login.example.com/contoso/v2/token")
+        # 1) Store a plain Bearer AT (no key_id)
+        self.cache.add(dict(common, data={}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="bearer_at", token_type="Bearer")), now=now)
+        # 2) Store an mtls_pop AT bound to a cert key_id, same scope
+        self.cache.add(dict(common, data={"key_id": "THUMB"}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="mtls_at", token_type="mtls_pop")), now=now)
+        self.assertEqual(
+            2, len(self.cache._cache["AccessToken"]),
+            "Bearer and mtls_pop ATs for the same scope must be separate entries")
+        base_query = dict(
+            client_id="my_client_id", environment="login.example.com",
+            realm="contoso", home_account_id="uid.utid")
+        # A Bearer lookup (no key_id) must return ONLY the Bearer token
+        bearer = self.assertFoundAccessToken(
+            scopes=scopes, now=now, query=dict(base_query))
+        self.assertEqual("bearer_at", bearer["secret"])
+        self.assertEqual("Bearer", bearer["token_type"])
+        # A keyed lookup must return the mtls_pop token
+        pop = self.assertFoundAccessToken(
+            scopes=scopes, now=now, query=dict(base_query, key_id="THUMB"))
+        self.assertEqual("mtls_at", pop["secret"])
+        self.assertEqual("mtls_pop", pop["token_type"])
 
     def test_refresh_in_should_be_recorded_as_refresh_on(self):  # Sounds weird. Yep.
         scopes = ["s2", "s1", "s3"]  # Not in particular order

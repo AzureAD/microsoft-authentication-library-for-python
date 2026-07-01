@@ -441,6 +441,69 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
+    # ── SN/I certificate over mTLS Proof-of-Possession ─────────────────────────
+    # These reuse the same lab SN/I cert as test_subject_name_issuer_authentication
+    # (it is not CNG-backed, so it works as a TLS client cert on the CI agents).
+    # NOTE: MSAL must own the TLS transport for mTLS, so unlike the tests above we
+    # do NOT pass http_client=MinimalHttpClient() here.
+    # ESTS gates mTLS PoP on the final resource audience (must be allow-listed,
+    # e.g. MS Graph), not on the client app, so we target Microsoft Graph.
+    _MTLS_POP_SCOPE = ["https://graph.microsoft.com/.default"]
+
+    def _assert_pop_cache_hit(self, app, scope):
+        # A second mTLS-PoP call for the same scope must be served from cache.
+        # (assertCacheWorksForApp cannot be reused: its follow-up call omits the
+        # flag and would look up a Bearer entry, missing the mtls_pop token.)
+        again = app.acquire_token_for_client(scope, mtls_proof_of_possession=True)
+        self.assertIsNotNone(again)
+        self.assertEqual(app._TOKEN_SOURCE_CACHE, again[app._TOKEN_SOURCE])
+
+    @staticmethod
+    def _cnf_x5t_s256(access_token):
+        # Best-effort decode of an mtls_pop JWT's cnf.x5t#S256 binding claim.
+        try:
+            payload = json.loads(decode_part(access_token.split(".")[1]))
+            return payload.get("cnf", {}).get("x5t#S256")
+        except Exception:  # Opaque/non-JWT token - skip the offline binding check
+            return None
+
+    def test_sni_mtls_pop_for_client(self):
+        from tests.lab_config import get_client_certificate
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
+        self.app = msal.ConfidentialClientApplication(
+            LAB_APP_CLIENT_ID,
+            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
+            client_credential=get_client_certificate())
+        result = self.app.acquire_token_for_client(
+            self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
+        self.assertIn("access_token", result, "mTLS PoP request failed: %s" % result)
+        self.assertEqual("mtls_pop", result.get("token_type"))
+        binding = result.get("binding_certificate")
+        self.assertTrue(binding and binding.get("x5c") and binding.get("thumbprint_sha256"))
+        self.assertNotIn("private", json.dumps(binding).lower())
+        cnf = self._cnf_x5t_s256(result["access_token"])
+        if cnf:  # When the AT is a decodable JWT, its cnf must match our cert
+            self.assertEqual(binding["thumbprint_sha256"], cnf)
+        self._assert_pop_cache_hit(self.app, self._MTLS_POP_SCOPE)
+
+    def test_sni_mtls_pop_for_client_regional(self):
+        from tests.lab_config import get_client_certificate
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
+        self.app = msal.ConfidentialClientApplication(
+            LAB_APP_CLIENT_ID,
+            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
+            client_credential=get_client_certificate(),
+            azure_region="westus3")
+        result = self.app.acquire_token_for_client(
+            self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
+        if result.get("error") in ("invalid_request", "temporarily_unavailable"):
+            self.skipTest("Regional mTLS endpoint not reachable: %s" % result)
+        self.assertIn("access_token", result, "Regional mTLS PoP failed: %s" % result)
+        self.assertEqual("mtls_pop", result.get("token_type"))
+
+
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
     @classmethod
     def setUpClass(cls):
