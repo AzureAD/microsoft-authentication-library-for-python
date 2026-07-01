@@ -83,8 +83,15 @@ def _compute_ext_cache_key(data):
 
     Returns an empty string when *data* has no hashable fields.
 
-    The algorithm matches the Go MSAL implementation (CacheExtKeyGenerator):
-    sorted key+value pairs are concatenated and SHA256 hashed, then base64url encoded.
+    The algorithm matches the Go MSAL implementation (CacheExtKeyGenerator,
+    post-collision-fix): length-prefixed key/value pairs (sorted by key) are
+    concatenated and SHA256 hashed, then base64url encoded. The length prefixes
+    make the encoding injective, so two distinct component sets can never collide
+    onto the same cache key. (MSAL .NET's ``ComputeAccessTokenExtCacheKey`` still
+    uses an unprefixed concatenation, so the hash is intentionally not
+    byte-identical to current .NET; the cache *key format* still matches both.
+    Caches are not shared across languages, so this only affects within-process
+    isolation, where injectivity is what matters.)
     """
     if not data:
         return ""
@@ -94,9 +101,16 @@ def _compute_ext_cache_key(data):
     }
     if not cache_components:
         return ""
-    # Sort keys for consistent hashing (matches Go implementation)
+    # Concatenate length-prefixed key/value pairs so component boundaries are
+    # unambiguous (matches Go's CacheExtKeyGenerator). A plain key+value
+    # concatenation with no separators can collide when one value happens to
+    # contain another component's key or value -- and client_claims is arbitrary
+    # caller-supplied JSON that may embed e.g. "fmi_path" at a boundary -- mapping
+    # two distinct component sets onto the same hash and returning the wrong
+    # cached token. Length prefixes make the encoding injective.
     key_str = "".join(
-        k + cache_components[k] for k in sorted(cache_components.keys())
+        "{}:{}{}:{}".format(len(k), k, len(v), v)
+        for k, v in sorted(cache_components.items())
     )
     hash_bytes = hashlib.sha256(key_str.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(hash_bytes).rstrip(b"=").decode("ascii").lower()

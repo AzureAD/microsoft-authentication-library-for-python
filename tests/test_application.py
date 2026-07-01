@@ -1063,7 +1063,32 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
             "claims_challenge, capabilities, and forwarded_client_claims must all merge")
         self.assertNotIn("client_claims", captured_data)
 
-    def test_same_client_claims_returns_cached_token(self):
+    def test_forwarded_client_claims_win_on_leaf_conflict_with_challenge(self):
+        # If the server-issued claims_challenge and forwarded_client_claims set
+        # the SAME claim, the client-originated value wins (it is merged in last),
+        # while disjoint claims from the challenge are preserved. Documents the
+        # conflict-resolution behavior the other MSAL reviewers asked about.
+        app = self._build_app()
+        captured_data = {}
+
+        def mock_post(url, headers=None, data=None, *args, **kwargs):
+            captured_data.update(data or {})
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "an AT", "expires_in": 3600}))
+
+        challenge = ('{"access_token": {"acrs": {"values": ["server"]},'
+                     ' "nbf": {"essential": true}}}')
+        client = '{"access_token": {"acrs": {"values": ["client"]}}}'
+        app.acquire_token_for_client(
+            ["scope"], claims_challenge=challenge,
+            forwarded_client_claims=client, post=mock_post)
+        merged = json.loads(captured_data["claims"])["access_token"]
+        self.assertEqual(
+            {"values": ["client"]}, merged["acrs"],
+            "forwarded_client_claims must win a direct leaf conflict")
+        self.assertEqual(
+            {"essential": True}, merged["nbf"],
+            "Disjoint claims from the challenge must be preserved")
         app = self._build_app()
         call_count = [0]
 

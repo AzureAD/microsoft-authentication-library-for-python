@@ -288,11 +288,18 @@ class VmClientClaimsTestCase(ClientTestCase):
             self.app.acquire_token_for_client(resource="R")
             self.assertNotIn("claims", mock_get.call_args.kwargs["params"])
 
-    def test_msiv1_rejects_non_nwperimid_claim(self):
-        with self.assertRaises(ManagedIdentityError):
-            self.app.acquire_token_for_client(
-                resource="R",
-                forwarded_client_claims='{"some_other_claim": {"essential": true}}')
+    def test_non_nwperimid_claim_is_forwarded_not_rejected(self):
+        # MSAL no longer enforces a client-side allow-list (matching the other
+        # MSALs); any JSON-object claims value is forwarded as-is and IMDS decides
+        # which keys it accepts.
+        other = '{"some_other_claim": {"essential": true}}'
+        with self._mock_get() as mock_get:
+            result = self.app.acquire_token_for_client(
+                resource="R", forwarded_client_claims=other)
+            self.assertIn("access_token", result)
+            self.assertEqual(
+                other, mock_get.call_args.kwargs["params"].get("claims"),
+                "Non-nwperimid claims must be forwarded, not rejected")
 
     def test_invalid_json_claims_raises(self):
         for bad in ["not json", "[1, 2]", "null"]:

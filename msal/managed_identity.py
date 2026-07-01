@@ -26,8 +26,6 @@ class ManagedIdentityError(ValueError):
     pass
 
 
-_XMS_AZ_NWPERIMID = "xms_az_nwperimid"
-
 _CLIENT_CLAIMS_UNSUPPORTED_SOURCE = (
     "forwarded_client_claims is only supported for the IMDS (Azure VM) managed identity "
     "source. The detected source ({source}) does not support forwarding "
@@ -292,18 +290,17 @@ class ManagedIdentityClient(object):
         :param forwarded_client_claims:
             Optional.
             A string representation of a JSON object containing
-            *client-originated* claims to forward to the identity endpoint
-            (for example a network security perimeter ``xms_az_nwperimid`` claim).
+            *client-originated* claims to forward to the identity endpoint.
 
             Unlike ``claims_challenge`` (server-issued, which bypasses the cache),
             tokens acquired with ``forwarded_client_claims`` **are cached**, and the cache
-            entry is keyed on the claims value. Different ``forwarded_client_claims`` values
-            produce separate cache entries, so use stable, non-dynamic values to
-            avoid unbounded cache growth.
+            entry is keyed on the claims value. Send the *same* value on every
+            request that should share the cached token; different values produce
+            separate cache entries, so use stable, non-dynamic values to avoid
+            unbounded cache growth.
 
             Only the IMDS (Azure VM) managed identity source supports this
-            parameter; other sources raise an error. On IMDS v1, the claims JSON
-            may contain only the ``xms_az_nwperimid`` key.
+            parameter; other sources raise an error.
 
         .. note::
 
@@ -325,6 +322,9 @@ class ManagedIdentityClient(object):
                     "forwarded_client_claims must be a string, got {}".format(
                         type(forwarded_client_claims).__name__))
             _parse_claims_or_raise(forwarded_client_claims)  # Fail fast on malformed JSON
+            # Reject unsupported sources before any cache read, so an unsupported
+            # source never returns a cached client-claims token.
+            _raise_if_claims_unsupported_source()
         # Client-originated claims isolate the cache: a distinct claims value gets
         # a distinct cache entry. (Server-issued claims_challenge, by contrast,
         # bypasses the cache and is keyed normally.)
@@ -447,6 +447,29 @@ def get_managed_identity_source():
     return DEFAULT_TO_VM
 
 
+# Managed-identity sources that cannot forward client-originated claims. Keep in
+# sync with the per-source guards inside _obtain_token (the backstop). Cloud Shell
+# is intentionally absent: it falls through to the Azure VM / IMDS path, which
+# does support claims.
+_CLIENT_CLAIMS_UNSUPPORTED_SOURCES = {
+    SERVICE_FABRIC: "Service Fabric",
+    APP_SERVICE: "App Service",
+    MACHINE_LEARNING: "Machine Learning",
+    AZURE_ARC: "Azure Arc",
+}
+
+
+def _raise_if_claims_unsupported_source():
+    """Fail fast -- before any cache read -- when the detected managed-identity
+    source cannot forward client-originated claims. ``_obtain_token`` enforces the
+    same rule per source as a backstop, but validating up front avoids a cache
+    lookup (and returning a cached token) for an unsupported source."""
+    name = _CLIENT_CLAIMS_UNSUPPORTED_SOURCES.get(get_managed_identity_source())
+    if name:
+        raise ManagedIdentityError(
+            _CLIENT_CLAIMS_UNSUPPORTED_SOURCE.format(source=name))
+
+
 def _obtain_token(
     http_client, managed_identity, resource,
     *,
@@ -521,22 +544,6 @@ def _adjust_param(params, managed_identity, types_mapping=None):
     if id_name:
         params[id_name] = managed_identity[ManagedIdentity.ID]
 
-def _validate_msiv1_claims(client_claims):
-    """MSIv1 (IMDS v1) only supports the single ``xms_az_nwperimid`` custom claim.
-
-    Any other top-level key makes IMDS return HTTP 400 with no useful diagnostic,
-    so validate early and raise a clear error. Mirrors MSAL .NET's
-    ``AbstractManagedIdentity.ValidateMsiv1Claims``.
-    """
-    parsed = _parse_claims_or_raise(client_claims)
-    for key in parsed:
-        if key != _XMS_AZ_NWPERIMID:
-            raise ManagedIdentityError(
-                "MSIv1 (IMDS v1) only supports the `{expected}` custom claim. "
-                "The claims JSON contained the unsupported key `{actual}`. "
-                "Remove all keys other than `{expected}` when using forwarded_client_claims "
-                "with MSIv1.".format(expected=_XMS_AZ_NWPERIMID, actual=key))
-
 
 def _obtain_token_on_azure_vm(http_client, managed_identity, resource, client_claims=None):
     # Based on https://docs.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/how-to-use-vm-token#get-a-token-using-http
@@ -547,8 +554,8 @@ def _obtain_token_on_azure_vm(http_client, managed_identity, resource, client_cl
         }
     _adjust_param(params, managed_identity)
     if client_claims:
-        # IMDS v1 (MSIv1) only supports the single xms_az_nwperimid claim.
-        _validate_msiv1_claims(client_claims)
+        # Forward client-originated claims as-is; IMDS decides which keys it
+        # accepts (no client-side allow-list, matching the other MSALs).
         params["claims"] = client_claims  # http_client.get url-encodes query params
     resp = http_client.get(
         os.getenv(
