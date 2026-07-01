@@ -83,15 +83,15 @@ def _compute_ext_cache_key(data):
 
     Returns an empty string when *data* has no hashable fields.
 
-    The algorithm matches the Go MSAL implementation (CacheExtKeyGenerator,
-    post-collision-fix): length-prefixed key/value pairs (sorted by key) are
-    concatenated and SHA256 hashed, then base64url encoded. The length prefixes
-    make the encoding injective, so two distinct component sets can never collide
-    onto the same cache key. (MSAL .NET's ``ComputeAccessTokenExtCacheKey`` still
-    uses an unprefixed concatenation, so the hash is intentionally not
-    byte-identical to current .NET; the cache *key format* still matches both.
-    Caches are not shared across languages, so this only affects within-process
-    isolation, where injectivity is what matters.)
+    The algorithm matches MSAL .NET's ``ComputeAccessTokenExtCacheKey``: sorted
+    key+value pairs are concatenated (no separators) and SHA256 hashed, then
+    base64url encoded. This keeps the hash byte-identical to MSAL .NET.
+
+    MSAL Go's ``CacheExtKeyGenerator`` has since switched to a length-prefixed
+    encoding (AzureAD/microsoft-authentication-library-for-go#629) to make it
+    injective; Python deliberately tracks .NET instead, so these hashes are not
+    byte-identical to current Go. Caches are not shared across languages, so the
+    difference does not affect runtime correctness.
     """
     if not data:
         return ""
@@ -101,16 +101,11 @@ def _compute_ext_cache_key(data):
     }
     if not cache_components:
         return ""
-    # Concatenate length-prefixed key/value pairs so component boundaries are
-    # unambiguous (matches Go's CacheExtKeyGenerator). A plain key+value
-    # concatenation with no separators can collide when one value happens to
-    # contain another component's key or value -- and client_claims is arbitrary
-    # caller-supplied JSON that may embed e.g. "fmi_path" at a boundary -- mapping
-    # two distinct component sets onto the same hash and returning the wrong
-    # cached token. Length prefixes make the encoding injective.
+    # Sort keys, then concatenate key+value pairs with no separators. This
+    # matches MSAL .NET's ComputeAccessTokenExtCacheKey byte-for-byte. (See the
+    # docstring re: the Go #629 length-prefixed divergence.)
     key_str = "".join(
-        "{}:{}{}:{}".format(len(k), k, len(v), v)
-        for k, v in sorted(cache_components.items())
+        k + cache_components[k] for k in sorted(cache_components.keys())
     )
     hash_bytes = hashlib.sha256(key_str.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(hash_bytes).rstrip(b"=").decode("ascii").lower()

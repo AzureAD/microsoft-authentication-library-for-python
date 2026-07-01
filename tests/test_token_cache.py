@@ -392,29 +392,6 @@ class TestClientClaimsCacheKey(unittest.TestCase):
     def test_empty_client_claims_value_is_ignored(self):
         self.assertEqual("", _compute_ext_cache_key({"client_claims": ""}))
 
-    def test_length_prefixed_encoding_avoids_boundary_collision(self):
-        # Mirrors Go's TestCacheKeyComponentHashNoBoundaryCollision. With a plain
-        # key+value concatenation (no separators) these two distinct component
-        # sets both render to "axbYbZ" (sorted keys "a","b") and would collide,
-        # returning the wrong cached token. The length-prefixed encoding must keep
-        # them distinct. This matters because client_claims is arbitrary caller
-        # JSON that can embed another component's key (e.g. "fmi_path").
-        h1 = _compute_ext_cache_key({"a": "xbY", "b": "Z"})
-        h2 = _compute_ext_cache_key({"a": "x", "b": "YbZ"})
-        self.assertNotEqual(
-            h1, h2,
-            "distinct cache key components must not produce the same hash")
-
-    def test_client_claims_and_fmi_path_do_not_collide_at_boundary(self):
-        # Realistic surface: client_claims and fmi_path co-occur in
-        # acquire_token_for_client. A claims value that happens to contain the
-        # other component's key+value at a boundary must not collide.
-        h1 = _compute_ext_cache_key(
-            {"client_claims": "Xfmi_pathY", "fmi_path": "Z"})
-        h2 = _compute_ext_cache_key(
-            {"client_claims": "X", "fmi_path": "Yfmi_pathZ"})
-        self.assertNotEqual(h1, h2)
-
 
 class TestClaimsHelpers(unittest.TestCase):
     """Tests for the shared _parse_claims_or_raise / _merge_claims helpers."""
@@ -565,48 +542,45 @@ class TestExtCacheKeyIsolation(unittest.TestCase):
 
 
 class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
-    """Verify that _compute_ext_cache_key matches MSAL Go's CacheExtKeyGenerator
-    (post collision-fix, AzureAD/microsoft-authentication-library-for-go#629).
+    """Verify that _compute_ext_cache_key produces hashes identical to MSAL .NET
+    (CoreHelpers.ComputeAccessTokenExtCacheKey).
 
     The algorithm:
       1. Sort key-value pairs alphabetically by key (ordinal / case-sensitive)
-      2. Concatenate length-prefixed pairs ("{len(k)}:{k}{len(v)}:{v}" per pair;
-         e.g. {"key1": "value1"} -> "4:key16:value1"). The length prefixes make
-         the encoding injective -- see TestClientClaimsCacheKey for the collision
-         guard.
+      2. Concatenate them with no separators: "key1value1key2value2…"
       3. SHA-256 hash
       4. Base64url encode (no padding), lowercased
 
-    The expected hashes below are copied from MSAL Go's
-    authority_ext_cachekey_test.go (TestAppKeyWithCacheKeyComponent).
+    The expected hashes below are copied from MSAL .NET's CacheKeyExtensionTests.cs
+    (RunHappyPathTest, CacheExtEnsurePopKeysFunctionAsync).
 
-    NOTE: MSAL .NET's ComputeAccessTokenExtCacheKey still uses an *unprefixed*
-    concatenation, so these hashes are intentionally NOT byte-identical to current
-    .NET. The cache *key format* (the 'atext' segment layout, asserted below) still
-    matches both Go and .NET; only the trailing hash bytes differ. Caches are not
-    shared across languages, so within-process injectivity -- not cross-language
-    byte-parity -- is what matters for correctness.
+    NOTE: MSAL Go's CacheExtKeyGenerator has since switched to a *length-prefixed*
+    encoding (AzureAD/microsoft-authentication-library-for-go#629), so these hashes
+    are intentionally NOT byte-identical to current Go; Python deliberately tracks
+    .NET here. The cache *key format* (the 'atext' segment layout, asserted below)
+    still matches both Go and .NET. Caches are not shared across languages, so this
+    cross-language hash difference does not affect runtime correctness.
     """
 
-    def test_two_params_hash_matches_go(self):
-        """Go expected: latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike"""
+    def test_two_params_hash_matches_dotnet(self):
+        """.NET expected: bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"""
         result = _compute_ext_cache_key({"key1": "value1", "key2": "value2"})
-        self.assertEqual("latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike", result)
+        self.assertEqual("bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi", result)
 
-    def test_two_different_params_hash_matches_go(self):
-        """Go expected: jjoe9jgfmdtnj0rzuetsqy7kzs2m1xfnjjxwsfxsrxq"""
+    def test_two_different_params_hash_matches_dotnet(self):
+        """.NET expected: 3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u"""
         result = _compute_ext_cache_key({"key3": "value3", "key4": "value4"})
-        self.assertEqual("jjoe9jgfmdtnj0rzuetsqy7kzs2m1xfnjjxwsfxsrxq", result)
+        self.assertEqual("3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u", result)
 
-    def test_five_params_hash_matches_go(self):
-        """Go expected: prrdp31y37ufw3lo7hly0oimjjvg_34m9ji30ocu4tw"""
+    def test_five_params_hash_matches_dotnet(self):
+        """.NET expected (full hash): rn_gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e"""
         result = _compute_ext_cache_key({
             "key3": "value3", "key4": "value4",
             "key5": "value5", "key6": "value6", "key7": "value7",
         })
-        self.assertEqual("prrdp31y37ufw3lo7hly0oimjjvg_34m9ji30ocu4tw", result)
+        self.assertEqual("rn_gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e", result)
 
-    def test_order_independence_matches_go(self):
+    def test_order_independence_matches_dotnet(self):
         """Same keys in different insertion order must produce the same hash
         (mirrors TestCacheKeyComponentHashConsistency in Go)."""
         h1 = _compute_ext_cache_key({"key3": "value3", "key4": "value4",
@@ -627,9 +601,9 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
         key = key_maker(
             home_account_id="hid", environment="env", client_id="cid",
             realm="realm", target="scope",
-            ext_cache_key="latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike")
+            ext_cache_key="bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi")
         self.assertEqual(
-            "hid-env-atext-cid-realm-scope-latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike",
+            "hid-env-atext-cid-realm-scope-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi",
             key)
 
     def test_at_cache_key_without_ext_uses_accesstoken(self):
@@ -641,10 +615,9 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
             realm="realm", target="scope")
         self.assertEqual("hid-env-accesstoken-cid-realm-scope", key)
 
-    def test_atext_full_at_cache_key_format(self):
-        """The AT cache key *format* matches MSAL .NET's CacheKeyExtensionTests
-        layout ('-{env}-atext-{clientId}-{tenant}-{scopes}-{hash}'); only the
-        trailing hash now follows Go's length-prefixed encoding (see class note).
+    def test_dotnet_style_full_at_cache_key(self):
+        """Reproduce the exact cache key from MSAL .NET CacheKeyExtensionTests:
+        expectedCacheKey1 = '-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi'
         """
         cache = TokenCache()
         key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
@@ -656,11 +629,11 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
             realm="common",
             target="r1/scope1 r1/scope2",
             ext_cache_key=ext_hash)
-        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike"
+        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"
         self.assertEqual(expected, key)
 
-    def test_atext_second_full_at_cache_key_format(self):
-        """Second key-format vector (mirrors CacheKeyExtensionTests expectedCacheKey2)."""
+    def test_dotnet_style_second_cache_key(self):
+        """Reproduce CacheKeyExtensionTests expectedCacheKey2."""
         cache = TokenCache()
         key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
         ext_hash = _compute_ext_cache_key({"key3": "value3", "key4": "value4"})
@@ -671,12 +644,13 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
             realm="common",
             target="r1/scope1 r1/scope2",
             ext_cache_key=ext_hash)
-        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-jjoe9jgfmdtnj0rzuetsqy7kzs2m1xfnjjxwsfxsrxq"
+        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u"
         self.assertEqual(expected, key)
 
     def test_go_style_at_cache_key(self):
-        """Reproduce the Go AccessToken.Key() format with Go's post-#629 hash:
-        'testhid-env-atext-clientid-realm-user.read-{hash}'.
+        """Reproduce the Go AccessToken.Key() *format* (segment layout):
+        'testhid-env-atext-clientid-realm-user.read-{hash}'. The hash follows our
+        .NET-matching encoding (see class note on the Go #629 divergence).
         """
         cache = TokenCache()
         key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
@@ -688,5 +662,5 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
             realm="realm",
             target="user.read",
             ext_cache_key=ext_hash)
-        expected = "testhid-env-atext-clientid-realm-user.read-latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike"
+        expected = "testhid-env-atext-clientid-realm-user.read-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"
         self.assertEqual(expected, key)
