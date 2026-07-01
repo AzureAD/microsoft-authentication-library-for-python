@@ -1546,7 +1546,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if not account:
             return None  # A backward-compatible NO-OP to drop the account=None usage
         if forwarded_client_claims is not None:
-            kwargs["data"] = kwargs.get("data") or {}
+            kwargs["data"] = kwargs.get("data", {})
             _stash_client_claims(forwarded_client_claims, kwargs["data"])
         result = _clean_up(self._acquire_token_silent_with_error(
             scopes, account, authority=authority, force_refresh=force_refresh,
@@ -1613,7 +1613,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if not account:
             return None  # A backward-compatible NO-OP to drop the account=None usage
         if forwarded_client_claims is not None:
-            kwargs["data"] = kwargs.get("data") or {}
+            kwargs["data"] = kwargs.get("data", {})
             _stash_client_claims(forwarded_client_claims, kwargs["data"])
         return _clean_up(self._acquire_token_silent_with_error(
             scopes, account, authority=authority, force_refresh=force_refresh,
