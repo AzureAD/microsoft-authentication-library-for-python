@@ -58,6 +58,25 @@ class TokenCacheTestCase(unittest.TestCase):
         self.at_key_maker = self.cache.key_makers[
             TokenCache.CredentialType.ACCESS_TOKEN]
 
+    def test_add_redacts_client_claims_in_debug_log(self):
+        # forwarded_client_claims (and the merged "claims") are kept in
+        # event["data"] only so they contribute to ext_cache_key. They may carry
+        # sensitive values, so TokenCache.add()'s DEBUG log must redact them.
+        secret = '{"access_token": {"nbf": {"essential": "SENSITIVE"}}}'
+        with self.assertLogs("msal.token_cache", level="DEBUG") as cm:
+            self.cache.add({
+                "client_id": "my_client_id",
+                "scope": ["s1"],
+                "data": {"client_claims": secret, "claims": secret},
+                "token_endpoint": "https://login.example.com/contoso/v2/token",
+                "response": build_response(
+                    uid="uid", utid="utid",
+                    expires_in=3600, access_token="an access token"),
+                }, now=1000)
+        logged = "\n".join(cm.output)
+        self.assertNotIn("SENSITIVE", logged)
+        self.assertIn("********", logged)
+
     def testAddByAad(self):
         client_id = "my_client_id"
         id_token = build_id_token(

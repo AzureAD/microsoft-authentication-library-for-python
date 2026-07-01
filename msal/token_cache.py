@@ -371,6 +371,11 @@ class TokenCache(object):
             data=make_clean_copy(event.get("data", {}), (
                 "password", "client_secret", "refresh_token", "assertion",
                 "user_federated_identity_credential",
+                # Client-originated claims may carry sensitive values; they are
+                # kept in data only for ext_cache_key computation, so redact them
+                # from the debug log (both the cache-key pseudo-param and the
+                # merged wire parameter).
+                "client_claims", "claims",
             )),
             response=make_clean_copy(event.get("response", {}), (
                 "id_token_claims",  # Provided by broker
