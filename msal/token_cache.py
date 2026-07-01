@@ -81,6 +81,11 @@ def _compute_ext_cache_key(data):
     This ensures tokens acquired with different parameter values
     (e.g., different FMI paths) are cached separately.
 
+    The hash may also intentionally include cache-key-only pseudo-parameters
+    such as ``client_claims`` -- these are stripped from the wire body by the
+    oauth2 layer but are retained in *data* precisely so that different
+    client-originated claims route to separate cache entries.
+
     Returns an empty string when *data* has no hashable fields.
 
     The algorithm matches MSAL .NET's ``ComputeAccessTokenExtCacheKey``: sorted
