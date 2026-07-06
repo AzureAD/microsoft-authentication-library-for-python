@@ -4,6 +4,9 @@ Subject Name + Issuer (SN/I) certificate as the client TLS certificate in a
 mutual-TLS (mTLS) handshake to Microsoft Entra, and obtains an mTLS-bound
 Proof-of-Possession (PoP) access token (``token_type == "mtls_pop"``).
 
+It also shows the optional two-leg Federated Identity Credential (FIC) exchange
+over mTLS PoP.
+
 Prerequisites
 -------------
 * A confidential-client app registration configured with a certificate.
@@ -95,6 +98,55 @@ def vanilla_sni_mtls_pop():
     return result
 
 
+def fic_two_leg_over_mtls_pop():
+    """Optional: two-leg Federated Identity Credential (FIC) exchange over mTLS PoP.
+
+    Leg 1: the SN/I confidential client acquires a cert-bound mtls_pop token for
+           the token-exchange audience.
+    Leg 2: a second confidential client presents that token as a ``jwt-pop``
+           client assertion, over an mTLS connection bound by the SAME cert, to
+           obtain the final token (Bearer or mtls_pop).
+    """
+    cert = _build_cert_credential()
+
+    # --- Leg 1: acquire the federated (cert-bound) assertion ---------------
+    leg1_app = msal.ConfidentialClientApplication(
+        os.environ["CLIENT_ID"],
+        authority=os.environ["AUTHORITY"],
+        client_credential=cert,
+        azure_region=os.getenv("AZURE_REGION"),
+    )
+    # The exchange audience is caller-supplied, not hard-coded by MSAL.
+    exchange_scope = os.getenv(
+        "FIC_EXCHANGE_SCOPE", "api://AzureADTokenExchange/.default")
+    leg1 = leg1_app.acquire_token_for_client(
+        [exchange_scope], mtls_proof_of_possession=True)
+    if "access_token" not in leg1:
+        _print_result_summary(leg1, "FIC leg 1 result:")
+        return leg1
+
+    # --- Leg 2: exchange the leg-1 token for the final token ---------------
+    leg2_app = msal.ConfidentialClientApplication(
+        os.getenv("LEG2_CLIENT_ID", os.environ["CLIENT_ID"]),
+        authority=os.environ["AUTHORITY"],
+        client_credential={
+            "client_assertion": leg1["access_token"],   # the leg-1 mtls_pop token
+            "mtls_binding_certificate": cert,            # binds the leg-2 TLS handshake
+        },
+        azure_region=os.getenv("AZURE_REGION"),
+    )
+
+    # Final token as mTLS PoP (drop mtls_proof_of_possession for Bearer-over-mTLS):
+    leg2 = leg2_app.acquire_token_for_client(
+        os.environ["SCOPE"].split(), mtls_proof_of_possession=True)
+    _print_result_summary(leg2, "FIC leg 2 result:")
+    return leg2
+
+
 if __name__ == "__main__":
     print("=== Vanilla SN/I -> mTLS PoP ===")
     vanilla_sni_mtls_pop()
+
+    if os.getenv("RUN_FIC_SAMPLE"):
+        print("\n=== FIC two-leg over mTLS PoP ===")
+        fic_two_leg_over_mtls_pop()

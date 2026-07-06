@@ -202,6 +202,10 @@ Notes and requirements:
   certificate can be used either as an assertion signer (Bearer) or as the TLS
   client certificate (mtls_pop).
 * mTLS PoP currently targets the public and Azure Government (Arlington) clouds.
+* For a Federated Identity Credential (FIC) exchange, configure the leg-2 client
+  with both a ``client_assertion`` (the leg-1 token) and an
+  ``mtls_binding_certificate`` sub-key; the leg-1 assertion is then sent as a
+  ``jwt-pop`` client assertion over the same mTLS connection.
 
 
 Exceptions

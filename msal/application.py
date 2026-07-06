@@ -143,8 +143,9 @@ def _private_key_to_unencrypted_pem(private_key, passphrase_bytes=None):
 def _load_mtls_cert_material(cert_credential):
     """Load client-cert material for an mTLS PoP handshake from a cert credential.
 
-    ``cert_credential`` is the app's main ``client_credential`` (vanilla SN/I),
-    a certificate credential dict. Returns a dict with the unencrypted-PEM private key,
+    ``cert_credential`` is a certificate credential dict - either the app's main
+    ``client_credential`` (vanilla SN/I) or the ``mtls_binding_certificate``
+    sub-dict (FIC leg 2). Returns a dict with the unencrypted-PEM private key,
     the leaf cert PEM, ``x5c``, the SHA-256 thumbprint (hex), and ``key_id``
     (base64url ``x5t#S256``, used for cache binding). Raises ``ValueError`` when
     the credential cannot yield mTLS-capable certificate material.
@@ -497,6 +498,30 @@ class ClientApplication(object):
                     still supported for backward compatibility but is discouraged
                     because the assertion will eventually expire.
 
+            .. admonition:: Binding an assertion to an mTLS certificate (FIC leg 2)
+
+                *Added in version 1.38.0*:
+                For a Federated Identity Credential (FIC) exchange over mutual-TLS
+                Proof-of-Possession, the ``client_assertion`` container may also
+                carry an ``mtls_binding_certificate`` sub-key -- a certificate
+                credential (same shape as the top-level cert credential) that is
+                presented as the client TLS certificate during the token request::
+
+                    {
+                        "client_assertion": leg1_result["access_token"],  # the leg-1 mtls_pop token
+                        "mtls_binding_certificate": {
+                            "private_key_pfx_path": "/path/to/your.pfx",
+                            "public_certificate": True,
+                        },
+                    }
+
+                When ``mtls_binding_certificate`` is present, MSAL sends the
+                assertion with ``client_assertion_type`` set to the ``jwt-pop``
+                type and routes the request over mTLS using that binding
+                certificate. See
+                :func:`~msal.ConfidentialClientApplication.acquire_token_for_client`'s
+                ``mtls_proof_of_possession`` parameter for the full two-leg flow.
+
             .. admonition:: Supporting reading client certificates from PFX files
 
                 This usage will automatically use SHA-256 thumbprint of the certificate.
@@ -848,13 +873,25 @@ class ClientApplication(object):
         self._mtls_client = None  # Lazily built global mTLS client
         self._mtls_regional_client = None  # Lazily built regional mTLS client
         self._mtls_lock = Lock()
-        if isinstance(client_credential, dict) and not client_credential.get(
+        if isinstance(client_credential, dict) and client_credential.get(
+                "mtls_binding_certificate"):  # FIC leg 2 (assertion + binding cert)
+            if not client_credential.get("client_assertion"):
+                raise ValueError(
+                    "mtls_binding_certificate (FIC leg 2) also requires a "
+                    "client_assertion (the leg-1 mtls_pop token) in the same "
+                    "client_credential; the binding certificate is presented "
+                    "to carry that assertion.")
+            self._mtls_cert_credential = client_credential["mtls_binding_certificate"]
+            self._mtls_is_fic_leg2 = True
+        elif isinstance(client_credential, dict) and not client_credential.get(
                 "client_assertion") and (
                     client_credential.get("private_key_pfx_path")
                     or client_credential.get("private_key")):  # Vanilla SN/I cert
             self._mtls_cert_credential = client_credential
+            self._mtls_is_fic_leg2 = False
         else:  # No certificate available to present over mTLS
             self._mtls_cert_credential = None
+            self._mtls_is_fic_leg2 = False
 
         # Warn if using a static string/bytes client_assertion (discouraged for long-running apps)
         if isinstance(client_credential, dict) and isinstance(
@@ -1014,10 +1051,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         suitable certificate credential is configured."""
         if self._mtls_cert_credential is None:
             raise ValueError(
-                "mtls_proof_of_possession=True requires this confidential client "
+                "mTLS Proof-of-Possession requires this confidential client "
                 "to be configured with a certificate credential (a "
                 "'private_key_pfx_path', or a 'private_key' plus "
-                "'public_certificate').")
+                "'public_certificate'); or, for a Federated Identity Credential "
+                "exchange, a 'client_assertion' plus an 'mtls_binding_certificate'.")
         with self._mtls_lock:
             if self._mtls_pop_cert_material is None:
                 self._mtls_pop_cert_material = _load_mtls_cert_material(
@@ -1029,13 +1067,17 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
 
         The token endpoint host is transformed ``login.* -> [region.]mtlsauth.*``
         (region honored when configured, global otherwise), and the client
-        presents the configured certificate over mutual-TLS.
+        presents the configured certificate over mutual-TLS. For a FIC leg-2
+        credential (``client_assertion`` + ``mtls_binding_certificate``) the
+        assertion is sent with ``client_assertion_type = ...:jwt-pop``.
         """
         if self._http_client_is_custom:
             raise ValueError(
-                "mtls_proof_of_possession=True is not supported with a custom "
-                "http_client, because MSAL must own the TLS transport to present "
-                "the client certificate in the mutual-TLS handshake. Omit the "
+                "mTLS is not supported with a custom http_client, because MSAL "
+                "must own the TLS transport to present the client certificate in "
+                "the mutual-TLS handshake. mTLS is engaged when you pass "
+                "mtls_proof_of_possession=True, or when the client_credential "
+                "carries mtls_binding_certificate (FIC leg 2). Omit the "
                 "http_client argument to use MSAL's built-in mTLS transport.")
         region = self._compute_region_to_use()
         with self._mtls_lock:
@@ -1059,13 +1101,20 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             http_cache=self._http_cache,
             default_throttle_time=5,
             )
-        # Vanilla SN/I: the TLS certificate alone authenticates the client.
+        if self._mtls_is_fic_leg2:  # FIC leg 2: assertion carried as jwt-pop
+            client_assertion = self.client_credential["client_assertion"]
+            client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT_POP
+        else:  # Vanilla SN/I: the TLS certificate alone authenticates the client
+            client_assertion = None
+            client_assertion_type = None
         client = _MtlsClient(
             configuration,
             self.client_id,
             http_client=http_client,
             default_headers=self._default_client_headers(),
             default_body={"client_info": 1},
+            client_assertion=client_assertion,
+            client_assertion_type=client_assertion_type,
             # Cache under the ORIGINAL login.* host, never the mtlsauth.* host,
             # so mtls_pop ATs share the environment with the rest of the app.
             on_obtaining_tokens=lambda event: self.token_cache.add(dict(
@@ -2779,7 +2828,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
             Requirements: the app must be configured with a certificate
             credential (``private_key_pfx_path``, or ``private_key`` +
-            ``public_certificate``); the ``authority`` must be tenanted (not
+            ``public_certificate``) - or, for a Federated Identity Credential
+            (FIC) exchange, a ``client_assertion`` plus an
+            ``mtls_binding_certificate``; the ``authority`` must be tenanted (not
             ``/common`` or ``/organizations``); and MSAL's built-in HTTP
             transport must be in use (a custom ``http_client`` cannot perform
             the mTLS handshake). Any of these unmet raises ``ValueError``.
@@ -2813,31 +2864,41 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     "fmi_path must be a string, got {}".format(type(fmi_path).__name__))
             kwargs["data"] = kwargs.get("data", {})
             kwargs["data"]["fmi_path"] = fmi_path
-        if mtls_proof_of_possession:
-            # An mTLS transport is required to present the certificate for a
-            # cert-bound PoP request.
+        if mtls_proof_of_possession or self._mtls_is_fic_leg2:
+            # An mTLS transport is required whenever we present the certificate:
+            # for a cert-bound PoP request (mtls_proof_of_possession=True) and
+            # for every FIC leg-2 request - there the leg-1 assertion is itself
+            # bound to the certificate, so even a Bearer final token must travel
+            # over the same mTLS connection ("implicit Bearer-over-mTLS").
             if self._http_client_is_custom:
                 raise ValueError(
-                    "mtls_proof_of_possession=True is not supported with a "
-                    "custom http_client, because MSAL must own the TLS transport "
-                    "to present the client certificate in the mutual-TLS "
-                    "handshake. Omit the http_client argument to use MSAL's "
+                    "mTLS is not supported with a custom http_client, because "
+                    "MSAL must own the TLS transport to present the client "
+                    "certificate in the mutual-TLS handshake. mTLS is engaged "
+                    "when you pass mtls_proof_of_possession=True, or when the "
+                    "client_credential carries mtls_binding_certificate (FIC "
+                    "leg 2). Omit the http_client argument to use MSAL's "
                     "built-in mTLS transport.")
             if self.authority.tenant.lower() in ("common", "organizations"):
                 raise ValueError(
-                    "mtls_proof_of_possession=True requires a tenanted authority. "
-                    "Use a specific tenant id or domain instead of /common or "
-                    "/organizations.")
+                    "mTLS Proof-of-Possession requires a tenanted authority. It "
+                    "is engaged when you pass mtls_proof_of_possession=True, or "
+                    "when the client_credential carries mtls_binding_certificate "
+                    "(FIC leg 2). Use a specific tenant id or domain instead of "
+                    "/common or /organizations.")
             # Parse/validate the certificate now (fail fast).
             mtls_cert = self._get_mtls_pop_cert()
-            # Cert-bound PoP: request an mtls_pop token and bind its cache
-            # entry to the cert via key_id (base64url x5t#S256). token_type
-            # also routes _acquire_token_for_client() to the mTLS client.
             data = dict(kwargs.get("data") or {})
-            data["token_type"] = "mtls_pop"
-            data["key_id"] = mtls_cert["key_id"]
+            if mtls_proof_of_possession:
+                # Cert-bound PoP: request an mtls_pop token and bind its cache
+                # entry to the cert via key_id (base64url x5t#S256). token_type
+                # also routes _acquire_token_for_client() to the mTLS client.
+                data["token_type"] = "mtls_pop"
+                data["key_id"] = mtls_cert["key_id"]
+            # else: FIC leg-2 without the flag -> Bearer-over-mTLS. No token_type
+            # / key_id, so the final Bearer token caches normally; the mTLS
+            # client is still selected because self._mtls_is_fic_leg2 is True.
             kwargs["data"] = data
-
         result = _clean_up(self._acquire_token_silent_with_error(
             scopes, None, claims_challenge=claims_challenge, **kwargs))
         if mtls_proof_of_possession and result and "access_token" in result:
@@ -2856,8 +2917,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                         "certificate-bound.".format(result.get("token_type"))),
                     }
             # Surface the PUBLIC binding certificate (never the private key), so
-            # callers can correlate the token to its cert. Survives _clean_up
-            # (the key has no "_" prefix).
+            # callers - including FIC leg-2 / cross-app hand-off - can correlate
+            # the token to its cert. Survives _clean_up (key has no "_" prefix).
             result["binding_certificate"] = {
                 "x5c": mtls_cert["x5c"],
                 "thumbprint_sha256": mtls_cert["key_id"],  # base64url x5t#S256
@@ -2882,9 +2943,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_FOR_CLIENT_ID, refresh_reason=refresh_reason,
             token_type=data.get("token_type"))
-        if is_mtls_pop:
-            # Present the certificate over mTLS to obtain a cert-bound
-            # (mtls_pop) token.
+        if is_mtls_pop or self._mtls_is_fic_leg2:
+            # Present the certificate over mTLS to obtain a cert-bound token
+            # (mtls_pop), or to carry a cert-bound FIC leg-1 assertion as jwt-pop
+            # (Bearer-over-mTLS when the flag is absent).
             client = self._get_mtls_client(self.authority)
         else:
             client = self._regional_client or self.client

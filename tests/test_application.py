@@ -1602,6 +1602,7 @@ _MTLS_OIDC_MOCK = Mock(return_value={
     "issuer": "https://login.microsoftonline.com/my_tenant/v2.0",
 })
 _JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+_JWT_POP = "urn:ietf:params:oauth:client-assertion-type:jwt-pop"
 
 
 @patch(_OIDC_DISCOVERY, new=_MTLS_OIDC_MOCK)
@@ -1701,9 +1702,60 @@ class TestMtlsProofOfPossession(unittest.TestCase):
             captured[0]["url"],
             "https://westus3.mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
 
+    def test_fic_leg2_pop_sends_jwt_pop_over_mtls(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY,
+            client_credential={
+                "client_assertion": "LEG1_TOKEN",
+                "mtls_binding_certificate": _MTLS_CERT_CRED})
+        captured = []
+        result = app.acquire_token_for_client(
+            ["s1"], mtls_proof_of_possession=True, post=self._capturing_post(captured))
+        req = captured[0]
+        self.assertTrue(req["url"].startswith("https://mtlsauth.microsoft.com/"))
+        self.assertEqual("LEG1_TOKEN", req["data"].get("client_assertion"))
+        self.assertEqual(_JWT_POP, req["data"].get("client_assertion_type"))
+        self.assertEqual("mtls_pop", req["data"].get("token_type"))
+        self.assertEqual("mtls_pop", result.get("token_type"))
+
+    def test_fic_leg2_bearer_still_travels_over_mtls(self):
+        # No flag -> Bearer final token, but the cert-bound leg-1 assertion still
+        # requires the mTLS endpoint and jwt-pop ("implicit Bearer-over-mTLS").
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY,
+            client_credential={
+                "client_assertion": "LEG1_TOKEN",
+                "mtls_binding_certificate": _MTLS_CERT_CRED})
+        captured = []
+        result = app.acquire_token_for_client(
+            ["s1"], post=self._capturing_post(captured, token_type="Bearer"))
+        req = captured[0]
+        self.assertTrue(req["url"].startswith("https://mtlsauth.microsoft.com/"))
+        self.assertEqual(_JWT_POP, req["data"].get("client_assertion_type"))
+        self.assertNotIn("token_type", req["data"])
+        self.assertEqual("4|730,2|", req["headers"].get(CLIENT_CURRENT_TELEMETRY))
+        self.assertEqual("Bearer", result.get("token_type"))
+        self.assertNotIn("binding_certificate", result)
+
+    def test_binding_cert_without_client_assertion_raises(self):
+        # FIC leg 2 needs the binding cert AND the leg-1 assertion. A binding
+        # cert with no client_assertion must fail fast at construction with a
+        # clear ValueError, not a later KeyError when the request is built.
+        with self.assertRaises(ValueError):
+            ConfidentialClientApplication(
+                "cid", authority=self._AUTHORITY,
+                client_credential={"mtls_binding_certificate": _MTLS_CERT_CRED})
+
     def test_secret_credential_with_flag_raises(self):
         app = ConfidentialClientApplication(
             "cid", client_credential="a_secret", authority=self._AUTHORITY)
+        with self.assertRaises(ValueError):
+            app.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
+
+    def test_string_assertion_without_binding_cert_with_flag_raises(self):
+        app = ConfidentialClientApplication(
+            "cid", client_credential={"client_assertion": "just_a_string"},
+            authority=self._AUTHORITY)
         with self.assertRaises(ValueError):
             app.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
 
