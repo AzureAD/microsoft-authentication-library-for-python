@@ -296,9 +296,10 @@ key, nor a plain Bearer token for the same scope. We therefore keep 2 tokens."""
 
     def test_broad_search_without_target_enumerates_key_bound_tokens(self):
         # Removal paths (e.g. ClientApplication._sign_out) enumerate ATs by
-        # account with no target and no key_id. Such a broad search must still
-        # surface key-bound (mtls_pop) ATs; otherwise sign-out / remove_account
-        # would leave them behind. Regression guard for the key_id isolation gate.
+        # account with no target and no key_id, opting in via for_removal=True.
+        # Such a removal search must still surface key-bound (mtls_pop) ATs;
+        # otherwise sign-out / remove_account would leave them behind. Regression
+        # guard for the key_id isolation gate.
         scopes = ["s2", "s1", "s3"]
         now = 1000
         common = dict(
@@ -313,12 +314,42 @@ key, nor a plain Bearer token for the same scope. We therefore keep 2 tokens."""
         owned_by_account = dict(
             client_id="my_client_id", environment="login.example.com",
             realm="contoso", home_account_id="uid.utid")
-        # Broad search: no target/scopes and no key_id -> BOTH ATs, incl. mtls_pop
+        # Removal search opts in with for_removal=True -> BOTH ATs, incl. mtls_pop
         found = list(self.cache.search(
-            TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_account, now=now))
+            TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_account, now=now,
+            for_removal=True))
         secrets = {at["secret"] for at in found}
         self.assertIn("mtls_at", secrets,
-            "A target-less search must enumerate key-bound ATs so they can be removed")
+            "A for_removal search must enumerate key-bound ATs so they can be removed")
+        self.assertIn("bearer_at", secrets)
+
+    def test_empty_scopes_for_use_lookup_does_not_leak_key_bound_token(self):
+        # A for-use lookup with EMPTY scopes is also target-less, but unlike a
+        # removal enumeration (for_removal=True) it must NOT receive a key-bound
+        # (mtls_pop) token it did not ask for. Isolation is unconditional for
+        # for-use lookups, mirroring MSAL .NET (token-type isolation is never
+        # gated on scope state). Regression for the empty-scopes bypass.
+        scopes = ["s2", "s1", "s3"]
+        now = 1000
+        common = dict(
+            client_id="my_client_id", scope=scopes,
+            token_endpoint="https://login.example.com/contoso/v2/token")
+        self.cache.add(dict(common, data={}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="bearer_at", token_type="Bearer")), now=now)
+        self.cache.add(dict(common, data={"key_id": "THUMB"}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="mtls_at", token_type="mtls_pop")), now=now)
+        base_query = dict(
+            client_id="my_client_id", environment="login.example.com",
+            realm="contoso", home_account_id="uid.utid")
+        # Empty scopes (target=[]) + no key_id + no for_removal -> only the unkeyed AT
+        found = list(self.cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, target=[],
+            query=base_query, now=now))
+        secrets = {at["secret"] for at in found}
+        self.assertNotIn("mtls_at", secrets,
+            "Empty-scope for-use lookup must not leak the key-bound mtls_pop token")
         self.assertIn("bearer_at", secrets)
 
     def test_refresh_in_should_be_recorded_as_refresh_on(self):  # Sounds weird. Yep.
@@ -513,6 +544,27 @@ class TestExtCacheKeyIsolation(unittest.TestCase):
                    "realm": "tenant", "home_account_id": None}))
         self.assertEqual(1, len(at_entries))
         self.assertEqual("regular_token", at_entries[0]["secret"])
+
+    def test_empty_scopes_lookup_does_not_leak_ext_bound_token(self):
+        # A for-use lookup with EMPTY scopes is target-less, but must NOT receive
+        # an ext_cache_key-bound (FMI) token it did not ask for. Isolation is
+        # unconditional for for-use lookups (for_removal defaults False).
+        cache = TokenCache()
+        cache.add(self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "fmi_token", data={"fmi_path": "some/path"}))
+        cache.add(self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "regular_token"))
+        # Empty scopes + no ext_cache_key + no for_removal -> only the regular token
+        at_entries = list(cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, target=[],
+            query={"client_id": "cid", "environment": "login.example.com",
+                   "realm": "tenant", "home_account_id": None}))
+        secrets = {at["secret"] for at in at_entries}
+        self.assertNotIn("fmi_token", secrets,
+            "Empty-scope for-use lookup must not leak the ext-bound FMI token")
+        self.assertIn("regular_token", secrets)
 
 
 class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):

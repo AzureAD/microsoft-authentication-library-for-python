@@ -241,11 +241,17 @@ class TokenCache(object):
             target_set <= set(entry.get("target", "").split())
             if target_set else True)
 
-    def search(self, credential_type, target=None, query=None, *, now=None):  # O(n) generator
+    def search(self, credential_type, target=None, query=None, *, now=None, for_removal=False):  # O(n) generator
         """Returns a generator of matching entries.
 
         It is O(1) for AT hits, and O(n) for other types.
         Note that it holds a lock during the entire search.
+
+        ``for_removal=True`` (used only by sign-out / remove_tokens_for_client)
+        disables the key_id/ext_cache_key isolation filters so those broad
+        cleanups can enumerate and delete key-bound and FMI-bound ATs. For-use
+        lookups must leave it False so a Bearer request never receives a
+        key-bound (e.g. mtls_pop) or ext-bound token, even with empty scopes.
         """
         target = sorted(target or [])  # Match the order sorted by add()
         assert isinstance(target, list), "Invalid parameter type"
@@ -288,10 +294,11 @@ class TokenCache(object):
                 ):
                     # Cache isolation for extended cache keys (e.g., FMI path).
                     # Entries with ext_cache_key must not match queries without one.
-                    # Gated on target so broad target-less searches (sign-out /
-                    # account removal) still enumerate these ATs and can delete them.
+                    # Unconditional for for-use lookups; only removal callers
+                    # (sign-out / remove_tokens_for_client) pass for_removal=True
+                    # to enumerate these ATs and delete them.
                     if (credential_type == self.CredentialType.ACCESS_TOKEN
-                        and target
+                        and not for_removal
                         and "ext_cache_key" in entry
                         and "ext_cache_key" not in (query or {})
                     ):
@@ -299,10 +306,11 @@ class TokenCache(object):
                     # Cache isolation for key-bound tokens (e.g. mtls_pop, SSH-cert).
                     # An entry bound to a key_id must not satisfy a query without
                     # one, so a Bearer lookup never returns a PoP/mtls_pop token.
-                    # Gated on target so broad target-less searches (sign-out /
-                    # account removal) still enumerate key-bound ATs and can delete them.
+                    # Unconditional for for-use lookups; only removal callers
+                    # (sign-out / remove_tokens_for_client) pass for_removal=True
+                    # to enumerate these key-bound ATs and delete them.
                     if (credential_type == self.CredentialType.ACCESS_TOKEN
-                        and target
+                        and not for_removal
                         and "key_id" in entry
                         and "key_id" not in (query or {})
                     ):

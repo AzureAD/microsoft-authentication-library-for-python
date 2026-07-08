@@ -1662,6 +1662,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 # to avoid changing self.token_cache while it is being iterated
             TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_home_account,
             # Regardless of realm, b/c we've removed realm-independent RTs anyway
+            for_removal=True,  # Enumerate key-bound (mtls_pop) / FMI ATs so sign-out removes them
         )):
             # To avoid the complexity of locating sibling family app's AT,
             # we skip AT's app ownership check.
@@ -2900,7 +2901,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 "client_id": self.client_id,
                 "environment": env,
                 "home_account_id": None,  # These are mostly app-only tokens
-            })):
+            }, for_removal=True)):  # Enumerate key-bound (mtls_pop) ATs so they are removed
                 self.token_cache.remove_at(at)
         # acquire_token_for_client() obtains no RTs, so we have no RT to remove
 

@@ -113,7 +113,11 @@ class _MtlsHttpClient(object):
         # unencrypted private key (the caller normalizes it).
         self._cert_pem = cert_pem
         self._key_pem = key_pem
-        self._verify = verify
+        # Normalize None to True. Our custom ssl_context fully owns server
+        # verification, but requests treats session.verify=None as "no verify"
+        # and would force CERT_NONE onto a verifying context (ValueError). None
+        # means "default", which for a security library is verify (via certifi).
+        self._verify = True if verify is None else verify
         self._proxies = proxies
         self._timeout = timeout
         self._session = None
