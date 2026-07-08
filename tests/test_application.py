@@ -1670,6 +1670,26 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertEqual("Bearer", result.get("token_type"))
         self.assertNotIn("binding_certificate", result)
 
+    def test_token_type_downgrade_fails_closed(self):
+        # ESTS returns a non-cert-bound token (a Bearer downgrade) for an
+        # mtls_pop request. MSAL must fail closed: an error result, no
+        # binding_certificate, and nothing cached as a bound (key_id) token.
+        app = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
+        result = app.acquire_token_for_client(
+            ["s1"], mtls_proof_of_possession=True,
+            post=self._capturing_post([], token_type="Bearer"))
+        self.assertEqual("token_type_mismatch", result.get("error"))
+        self.assertNotIn("access_token", result)
+        self.assertNotIn("binding_certificate", result)
+        bound = [
+            at for at in app.token_cache.search(
+                msal.TokenCache.CredentialType.ACCESS_TOKEN)
+            if at.get("key_id")
+            or (at.get("token_type") or "").lower() == "mtls_pop"]
+        self.assertEqual(
+            [], bound, "A downgraded token must never be cached as bound")
+
     def test_regional_mtls_endpoint(self):
         app = ConfidentialClientApplication(
             "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY,

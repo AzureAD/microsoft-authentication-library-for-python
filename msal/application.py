@@ -300,9 +300,15 @@ class _MtlsClient(_ClientWithCcsRoutingInfo):
             outer = kwargs.pop("on_obtaining_tokens", None)
 
             def _reinject_key_id(event):
-                # Re-attach key_id to the event's data so token_cache.add()
-                # binds the stored mtls_pop AT to the certificate.
-                event["data"] = dict(event.get("data", {}), key_id=key_id)
+                # Bind the stored AT to the certificate (via key_id) only when
+                # ESTS actually returned a cert-bound token. On a token_type
+                # downgrade (e.g. a Bearer response) leave key_id off, so the
+                # token is never cached as a bound mtls_pop token - it caches as
+                # an ordinary Bearer, and the fail-closed check in
+                # acquire_token_for_client returns token_type_mismatch.
+                response = event.get("response") or {}
+                if (response.get("token_type") or "").lower() == "mtls_pop":
+                    event["data"] = dict(event.get("data", {}), key_id=key_id)
                 (outer or self.on_obtaining_tokens)(event)
 
             kwargs["on_obtaining_tokens"] = _reinject_key_id
@@ -2799,56 +2805,47 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             kwargs["data"] = kwargs.get("data", {})
             kwargs["data"]["fmi_path"] = fmi_path
         if mtls_proof_of_possession:
-
             # An mTLS transport is required to present the certificate for a
-
             # cert-bound PoP request.
-
             if self._http_client_is_custom:
-
                 raise ValueError(
-
                     "mtls_proof_of_possession=True is not supported with a "
-
                     "custom http_client, because MSAL must own the TLS transport "
-
                     "to present the client certificate in the mutual-TLS "
-
                     "handshake. Omit the http_client argument to use MSAL's "
-
                     "built-in mTLS transport.")
-
             if self.authority.tenant.lower() in ("common", "organizations"):
-
                 raise ValueError(
-
                     "mtls_proof_of_possession=True requires a tenanted authority. "
-
                     "Use a specific tenant id or domain instead of /common or "
-
                     "/organizations.")
-
             # Parse/validate the certificate now (fail fast).
-
             mtls_cert = self._get_mtls_pop_cert()
-
             # Cert-bound PoP: request an mtls_pop token and bind its cache
-
             # entry to the cert via key_id (base64url x5t#S256). token_type
-
             # also routes _acquire_token_for_client() to the mTLS client.
-
             data = dict(kwargs.get("data") or {})
-
             data["token_type"] = "mtls_pop"
-
             data["key_id"] = mtls_cert["key_id"]
-
             kwargs["data"] = data
 
         result = _clean_up(self._acquire_token_silent_with_error(
             scopes, None, claims_challenge=claims_challenge, **kwargs))
         if mtls_proof_of_possession and result and "access_token" in result:
+            # Fail closed on a token_type downgrade: if ESTS returned a
+            # non-cert-bound token (e.g. a Bearer downgrade) for our mtls_pop
+            # request, do not surface it as bound. The cache side is handled in
+            # _MtlsClient (key_id binds the entry only when the response is
+            # mtls_pop), so a downgraded token is never stored as bound either.
+            # Mirrors the fail-closed behavior of MSAL .NET and MSAL Go.
+            if (result.get("token_type") or "").lower() != "mtls_pop":
+                return {
+                    "error": "token_type_mismatch",
+                    "error_description": (
+                        "The identity provider returned token_type {!r} instead "
+                        "of 'mtls_pop'; the access token is not "
+                        "certificate-bound.".format(result.get("token_type"))),
+                    }
             # Surface the PUBLIC binding certificate (never the private key), so
             # callers can correlate the token to its cert. Survives _clean_up
             # (the key has no "_" prefix).

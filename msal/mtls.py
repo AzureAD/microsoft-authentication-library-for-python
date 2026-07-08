@@ -12,6 +12,7 @@ The wire contract and host mapping mirror the shipped MSAL.NET
 ``RegionAndMtlsDiscoveryProvider`` so MSAL Python stays cross-SDK consistent.
 """
 import logging
+import threading
 try:
     from urllib.parse import urlparse, urlunparse
 except ImportError:  # Python 2
@@ -116,18 +117,25 @@ class _MtlsHttpClient(object):
         self._proxies = proxies
         self._timeout = timeout
         self._session = None
+        self._session_lock = threading.Lock()
 
     def _ensure_session(self):
+        # Double-checked locking: confidential clients are typically
+        # multi-threaded servers, and a cold-start burst must not build N
+        # sessions (each writing the private key to a temp file N times) and
+        # orphan all but one. Mirrors the client-level lock in application.py.
         if self._session is None:
-            import requests  # Lazy import, same as the rest of MSAL
-            session = requests.Session()
-            session.verify = self._verify
-            if self._proxies:
-                session.proxies = self._proxies
-            adapter = _make_mtls_adapter(
-                _create_ssl_context(self._cert_pem, self._key_pem))
-            session.mount("https://", adapter)
-            self._session = session
+            with self._session_lock:
+                if self._session is None:
+                    import requests  # Lazy import, same as the rest of MSAL
+                    session = requests.Session()
+                    session.verify = self._verify
+                    if self._proxies:
+                        session.proxies = self._proxies
+                    adapter = _make_mtls_adapter(_create_ssl_context(
+                        self._cert_pem, self._key_pem, self._verify))
+                    session.mount("https://", adapter)
+                    self._session = session
         return self._session
 
     def post(self, url, **kwargs):
@@ -166,7 +174,33 @@ def _make_mtls_adapter(ssl_context):
     return _MtlsHTTPAdapter(ssl_context)
 
 
-def _create_ssl_context(cert_pem, key_pem):
+def _new_verifying_context(verify):
+    """Build an ssl context whose server verification matches ``verify`` (the
+    same semantics as ``requests``). A custom ssl_context otherwise bypasses
+    ``requests``' own ``verify`` handling, so we honor it here: ``True`` uses
+    certifi (as the rest of MSAL does), a filesystem path uses that CA file/dir,
+    and ``False`` disables verification (instead of the cryptic ValueError that
+    ``requests`` would raise when it tries to set CERT_NONE on this context).
+    """
+    import ssl
+    import os
+    if verify is False:
+        context = ssl.create_default_context()
+        context.check_hostname = False  # Must be cleared before CERT_NONE
+        context.verify_mode = ssl.CERT_NONE
+        return context
+    if isinstance(verify, str):
+        return (ssl.create_default_context(capath=verify)
+                if os.path.isdir(verify)
+                else ssl.create_default_context(cafile=verify))
+    try:  # Default: match requests' trust store (certifi), not the system one
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:  # pragma: no cover
+        return ssl.create_default_context()
+
+
+def _create_ssl_context(cert_pem, key_pem, verify=True):
     """Build a client ``ssl.SSLContext`` that presents ``cert_pem``/``key_pem``.
 
     ``ssl.SSLContext.load_cert_chain`` requires a file path, but our key is
@@ -174,10 +208,9 @@ def _create_ssl_context(cert_pem, key_pem):
     load it, then unlink it immediately - the context keeps the material in
     memory, so nothing sensitive lingers on disk.
     """
-    import ssl
     import os
     import tempfile
-    context = ssl.create_default_context()  # Verifies the server (ESTS) as usual
+    context = _new_verifying_context(verify)  # Verifies the server (ESTS)
     fd, path = tempfile.mkstemp(suffix=".pem")  # Owner-only (0600) by default
     try:
         # os.fdopen() takes ownership of fd and guarantees it is closed even if
