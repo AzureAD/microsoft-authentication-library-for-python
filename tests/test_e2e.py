@@ -449,6 +449,11 @@ class PublicCloudScenariosTestCase(E2eTestCase):
     # ESTS gates mTLS PoP on the final resource audience (must be allow-listed,
     # e.g. MS Graph), not on the client app, so we target Microsoft Graph.
     _MTLS_POP_SCOPE = ["https://graph.microsoft.com/.default"]
+    # SN/I app + tenant that ESTS allow-lists for mTLS PoP. The generic
+    # LAB_APP_CLIENT_ID + microsoft.onmicrosoft.com works for Bearer SN/I but is
+    # rejected for mTLS PoP with AADSTS700025. Mirrors the MSAL .NET/Java e2e config.
+    _SNI_ALLOWLISTED_CLIENT_ID = "163ffef9-a313-45b4-ab2f-c7e2f5e0e23e"
+    _SNI_ALLOWLISTED_AUTHORITY = "https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c"
 
     def _assert_pop_cache_hit(self, app, scope):
         # A second mTLS-PoP call for the same scope must be served from cache.
@@ -472,8 +477,8 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
             self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         self.app = msal.ConfidentialClientApplication(
-            LAB_APP_CLIENT_ID,
-            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
+            self._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=self._SNI_ALLOWLISTED_AUTHORITY,
             client_credential=get_client_certificate())
         result = self.app.acquire_token_for_client(
             self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
@@ -492,8 +497,8 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
             self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         self.app = msal.ConfidentialClientApplication(
-            LAB_APP_CLIENT_ID,
-            authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
+            self._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=self._SNI_ALLOWLISTED_AUTHORITY,
             client_credential=get_client_certificate(),
             azure_region="westus3")
         result = self.app.acquire_token_for_client(
