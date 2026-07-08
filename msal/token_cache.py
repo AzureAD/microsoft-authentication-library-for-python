@@ -288,7 +288,10 @@ class TokenCache(object):
                 ):
                     # Cache isolation for extended cache keys (e.g., FMI path).
                     # Entries with ext_cache_key must not match queries without one.
+                    # Gated on target so broad target-less searches (sign-out /
+                    # account removal) still enumerate these ATs and can delete them.
                     if (credential_type == self.CredentialType.ACCESS_TOKEN
+                        and target
                         and "ext_cache_key" in entry
                         and "ext_cache_key" not in (query or {})
                     ):
@@ -296,7 +299,10 @@ class TokenCache(object):
                     # Cache isolation for key-bound tokens (e.g. mtls_pop, SSH-cert).
                     # An entry bound to a key_id must not satisfy a query without
                     # one, so a Bearer lookup never returns a PoP/mtls_pop token.
+                    # Gated on target so broad target-less searches (sign-out /
+                    # account removal) still enumerate key-bound ATs and can delete them.
                     if (credential_type == self.CredentialType.ACCESS_TOKEN
+                        and target
                         and "key_id" in entry
                         and "key_id" not in (query or {})
                     ):

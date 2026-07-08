@@ -294,6 +294,33 @@ key, nor a plain Bearer token for the same scope. We therefore keep 2 tokens."""
         self.assertEqual("mtls_at", pop["secret"])
         self.assertEqual("mtls_pop", pop["token_type"])
 
+    def test_broad_search_without_target_enumerates_key_bound_tokens(self):
+        # Removal paths (e.g. ClientApplication._sign_out) enumerate ATs by
+        # account with no target and no key_id. Such a broad search must still
+        # surface key-bound (mtls_pop) ATs; otherwise sign-out / remove_account
+        # would leave them behind. Regression guard for the key_id isolation gate.
+        scopes = ["s2", "s1", "s3"]
+        now = 1000
+        common = dict(
+            client_id="my_client_id", scope=scopes,
+            token_endpoint="https://login.example.com/contoso/v2/token")
+        self.cache.add(dict(common, data={}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="bearer_at", token_type="Bearer")), now=now)
+        self.cache.add(dict(common, data={"key_id": "THUMB"}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="mtls_at", token_type="mtls_pop")), now=now)
+        owned_by_account = dict(
+            client_id="my_client_id", environment="login.example.com",
+            realm="contoso", home_account_id="uid.utid")
+        # Broad search: no target/scopes and no key_id -> BOTH ATs, incl. mtls_pop
+        found = list(self.cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_account, now=now))
+        secrets = {at["secret"] for at in found}
+        self.assertIn("mtls_at", secrets,
+            "A target-less search must enumerate key-bound ATs so they can be removed")
+        self.assertIn("bearer_at", secrets)
+
     def test_refresh_in_should_be_recorded_as_refresh_on(self):  # Sounds weird. Yep.
         scopes = ["s2", "s1", "s3"]  # Not in particular order
         self.cache.add({
