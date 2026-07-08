@@ -3,7 +3,8 @@ import ssl
 import unittest
 
 from msal import mtls
-from msal.application import _load_mtls_cert_material
+from msal.application import (
+    _load_mtls_cert_material, _private_key_to_unencrypted_pem)
 
 
 class TestMtlsEndpointTransform(unittest.TestCase):
@@ -140,6 +141,39 @@ class TestMtlsSslContext(unittest.TestCase):
         # The https adapter is our mTLS adapter (cert-bearing), not the default
         self.assertIn("https://", session.adapters)
         client.close()
+
+
+class TestUnencryptedPemLoading(unittest.TestCase):
+    """_private_key_to_unencrypted_pem pins the cryptography backend and turns
+    low-level load failures into a clear, actionable ValueError."""
+
+    @staticmethod
+    def _encrypted_pem(passphrase=b"secret"):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.backends import default_backend
+        key = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048, backend=default_backend())
+        return key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.BestAvailableEncryption(passphrase))
+
+    def test_encrypted_key_without_passphrase_raises_clear_error(self):
+        with self.assertRaises(ValueError) as cm:
+            _private_key_to_unencrypted_pem(self._encrypted_pem(), None)
+        self.assertIn("passphrase", str(cm.exception))
+
+    def test_garbage_key_raises_clear_error(self):
+        with self.assertRaises(ValueError) as cm:
+            _private_key_to_unencrypted_pem(b"not a real pem", None)
+        self.assertIn("private key for mTLS", str(cm.exception))
+
+    def test_encrypted_key_with_passphrase_round_trips_to_unencrypted_pem(self):
+        pem = _private_key_to_unencrypted_pem(
+            self._encrypted_pem(b"secret"), b"secret")
+        self.assertIn(b"PRIVATE KEY", pem)
+        self.assertNotIn(b"ENCRYPTED", pem)
 
 
 if __name__ == "__main__":

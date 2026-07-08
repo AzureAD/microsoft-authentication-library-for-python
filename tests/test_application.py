@@ -3,6 +3,7 @@
 import base64
 import json
 import logging
+import os
 import sys
 import time
 import warnings
@@ -1589,8 +1590,7 @@ class TestAssertionCallbackContext(unittest.TestCase):
             "not receive a context dict")
 
 
-import os as _os
-_MTLS_PFX = _os.path.join(_os.path.dirname(__file__), "certificate-with-password.pfx")
+_MTLS_PFX = os.path.join(os.path.dirname(__file__), "certificate-with-password.pfx")
 _MTLS_CERT_CRED = {
     "private_key_pfx_path": _MTLS_PFX,
     "passphrase": "password",

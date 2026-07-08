@@ -120,10 +120,18 @@ def _private_key_to_unencrypted_pem(private_key, passphrase_bytes=None):
     The result is suitable for ``ssl.SSLContext.load_cert_chain`` via a temp file.
     """
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.backends import default_backend
     if isinstance(private_key, (str, bytes)):
-        key_obj = serialization.load_pem_private_key(
-            _str2bytes(private_key) if isinstance(private_key, str) else private_key,
-            passphrase_bytes)
+        try:
+            key_obj = serialization.load_pem_private_key(
+                _str2bytes(private_key) if isinstance(private_key, str) else private_key,
+                passphrase_bytes,
+                backend=default_backend(),  # Required param until cryptography 3.1
+                )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Could not load the private key for mTLS Proof-of-Possession. "
+                "If the key is encrypted, provide its 'passphrase'.") from exc
     else:  # Already a cryptography private-key object
         key_obj = private_key
     return key_obj.private_bytes(

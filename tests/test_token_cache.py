@@ -4,7 +4,8 @@ import json
 import time
 import warnings
 
-from msal.token_cache import TokenCache, SerializableTokenCache, _compute_ext_cache_key
+from msal.token_cache import (
+    TokenCache, SerializableTokenCache, _compute_ext_cache_key, _key_id_to_str)
 from tests import unittest
 
 
@@ -259,6 +260,19 @@ key, nor a plain Bearer token for the same scope. We therefore keep 2 tokens."""
                     realm="contoso",
                     home_account_id="uid.utid",
                 ))
+
+    def test_key_id_is_coerced_to_str_for_cache_key(self):
+        # A bytes (or otherwise non-str) key_id must not raise a TypeError while
+        # building the AT cache key (the "-" + key_id concatenation once assumed
+        # str). This is defensive: current callers already pass an ASCII str.
+        self.assertEqual("THUMB", _key_id_to_str(b"THUMB"))
+        self.assertEqual("THUMB", _key_id_to_str("THUMB"))
+        self.assertEqual("123", _key_id_to_str(123))  # Any other type -> str()
+        # Adding + searching an AT with a bytes key_id no longer raises; the
+        # helper below stores and then finds it by that same key_id.
+        self._test_data_should_be_saved_and_searchable_in_access_token(
+            {"key_id": b"THUMB"})
+        self.assertEqual(1, len(self.cache._cache["AccessToken"]))
 
     def test_bearer_and_mtls_pop_tokens_coexist_and_isolate(self):
         # The crux of mTLS PoP cache isolation (plan C6): a Bearer token and an

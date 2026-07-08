@@ -14,6 +14,17 @@ from .oauth2cli.oauth2 import Client
 logger = logging.getLogger(__name__)
 _GRANT_TYPE_BROKER = "broker"
 
+
+def _key_id_to_str(key_id):
+    """Coerce a key_id (base64url x5t#S256) into a str for the AT cache key.
+
+    It is normally an ASCII str, but tolerate bytes (decoded as ASCII) or any
+    other type so that building the cache key never raises ``TypeError``.
+    """
+    if isinstance(key_id, bytes):
+        return key_id.decode("ascii")
+    return key_id if isinstance(key_id, str) else str(key_id)
+
 # Fields in the request data dict that should NOT be included in the extended
 # cache key hash. Everything else in data IS included, because those are extra
 # body parameters going on the wire and must differentiate cached tokens.
@@ -170,8 +181,9 @@ class TokenCache(object):
                         ).lower()
                         # key_id is a base64url x5t#S256 and is case-sensitive,
                         # so it is appended AFTER lower-casing the rest, to keep
-                        # ATs bound to different keys/certs isolated.
-                        + ("-" + key_id if key_id else ""),
+                        # ATs bound to different keys/certs isolated. Coerce it to
+                        # a str first so a non-str key_id never breaks caching.
+                        + ("-" + _key_id_to_str(key_id) if key_id else ""),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         realm=None, **ignored_payload_from_a_real_token:
