@@ -1137,6 +1137,22 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 client = self._mtls_client
         return client
 
+    def _reject_if_mtls_binding_cert(self, api_name):
+        # A FIC leg-2 credential (client_assertion + mtls_binding_certificate)
+        # is bound to the certificate: the leg-1 assertion is only valid when
+        # presented over the mTLS connection that acquire_token_for_client()
+        # establishes. Any other flow would send that cert-bound assertion as
+        # an ordinary jwt-bearer over a non-mTLS connection, which ESTS rejects.
+        # Fail fast with a clear message instead of a confusing server error.
+        if getattr(self, "_mtls_is_fic_leg2", False):
+            raise ValueError(
+                "This application is configured for a Federated Identity "
+                "Credential (FIC) leg-2 exchange (a 'client_assertion' plus an "
+                "'mtls_binding_certificate'). That credential can only be "
+                "presented over mutual-TLS, so {}() is not supported on this "
+                "application - use acquire_token_for_client() instead.".format(
+                    api_name))
+
     def _build_client(self, client_credential, authority, skip_regional_client=False):
         client_assertion = None
         client_assertion_type = None
@@ -1502,6 +1518,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                         pass  # Simply ignore them
                     return redirect(url_for("index"))
         """
+        self._reject_if_mtls_binding_cert("acquire_token_by_auth_code_flow")
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)
@@ -1567,6 +1584,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
+        self._reject_if_mtls_binding_cert("acquire_token_by_authorization_code")
         # If scope is absent on the wire, STS will give you a token associated
         # to the FIRST scope sent during the authorization request.
         # So in theory, you can omit scope here when you were working with only
@@ -2179,6 +2197,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             * A dict contains "error" and some other keys, when error happened.
             * A dict contains no "error" key means migration was successful.
         """
+        self._reject_if_mtls_binding_cert("acquire_token_by_refresh_token")
         self._validate_ssh_cert_input_data(kwargs.get("data", {}))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_REFRESH_TOKEN,
@@ -2233,6 +2252,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         Migration guide: https://aka.ms/msal-ropc-migration
 
         """
+        self._reject_if_mtls_binding_cert("acquire_token_by_username_password")
         is_confidential_app = self.client_credential or isinstance(
             self, ConfidentialClientApplication)
         if not is_confidential_app:
@@ -3001,6 +3021,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
+        self._reject_if_mtls_binding_cert("acquire_token_on_behalf_of")
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID)
         # The implementation is NOT based on Token Exchange (RFC 8693)
@@ -3057,6 +3078,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             - A successful response would contain "access_token" key,
             - an error response would contain "error" and usually "error_description".
         """
+        self._reject_if_mtls_binding_cert("acquire_token_by_user_federated_identity_credential")
         # Input validation
         if not assertion:
             raise ValueError("assertion is required and must be non-empty")

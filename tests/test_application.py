@@ -1746,6 +1746,30 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                 "cid", authority=self._AUTHORITY,
                 client_credential={"mtls_binding_certificate": _MTLS_CERT_CRED})
 
+    def test_fic_leg2_app_rejects_non_client_credential_flows(self):
+        # A FIC leg-2 app (client_assertion + mtls_binding_certificate) is only
+        # valid via acquire_token_for_client over mTLS. Any other flow would put
+        # the cert-bound leg-1 assertion on a non-mTLS jwt-bearer request, so it
+        # must fail fast with a clear ValueError rather than a confusing 4xx.
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY,
+            client_credential={
+                "client_assertion": "LEG1_TOKEN",
+                "mtls_binding_certificate": _MTLS_CERT_CRED})
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_authorization_code("code", ["s1"])
+        with self.assertRaises(ValueError):
+            app.acquire_token_on_behalf_of("user_token", ["s1"])
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_refresh_token("refresh_token", ["s1"])
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_username_password("user", "password", ["s1"])
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_auth_code_flow({}, {})
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_user_federated_identity_credential(
+                ["s1"], "assertion_token", username="user@contoso.com")
+
     def test_secret_credential_with_flag_raises(self):
         app = ConfidentialClientApplication(
             "cid", client_credential="a_secret", authority=self._AUTHORITY)
