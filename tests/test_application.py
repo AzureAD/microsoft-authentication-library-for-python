@@ -1769,6 +1769,16 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.acquire_token_by_user_federated_identity_credential(
                 ["s1"], "assertion_token", username="user@contoso.com")
+        # Silent flows are also unsupported: a shared cache could hold user RTs
+        # whose redemption would put the cert-bound assertion on a non-mTLS
+        # jwt-bearer request. Guard both silent entry points (they call the
+        # private _acquire_token_silent_with_error directly, not each other).
+        account = {"home_account_id": "uid.utid",
+                   "environment": "login.microsoftonline.com", "username": "u"}
+        with self.assertRaises(ValueError):
+            app.acquire_token_silent(["s1"], account)
+        with self.assertRaises(ValueError):
+            app.acquire_token_silent_with_error(["s1"], account)
 
     def test_secret_credential_with_flag_raises(self):
         app = ConfidentialClientApplication(

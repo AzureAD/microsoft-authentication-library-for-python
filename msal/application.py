@@ -1804,6 +1804,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
               if cache lookup succeeded.
             - None when cache lookup does not yield a token.
         """
+        self._reject_if_mtls_binding_cert("acquire_token_silent")
         if not account:
             return None  # A backward-compatible NO-OP to drop the account=None usage
         result = _clean_up(self._acquire_token_silent_with_error(
@@ -1858,6 +1859,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             - None when there is simply no token in the cache.
             - A dict containing an "error" key, when token refresh failed.
         """
+        self._reject_if_mtls_binding_cert("acquire_token_silent_with_error")
         if not account:
             return None  # A backward-compatible NO-OP to drop the account=None usage
         return _clean_up(self._acquire_token_silent_with_error(
