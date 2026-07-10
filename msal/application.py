@@ -67,9 +67,9 @@ def _merge_claims_challenge_and_capabilities(capabilities, claims_challenge):
 def _stash_client_claims(forwarded_client_claims, data):
     """Validate ``forwarded_client_claims`` and stash it into the request ``data``.
 
-    ``forwarded_client_claims`` carries *client-originated* claims supplied by the
-    caller. The raw value is
-    stored in ``data`` (under the internal ``client_claims`` key) so that it
+    ``forwarded_client_claims`` carries *client-originated* claims supplied by
+    the caller. The raw value is stored in ``data`` (under the internal
+    ``client_claims`` key) so that it
     (a) contributes to the extended cache key -- isolating cache entries by
     claims value -- and (b) is stripped from the request body by the oauth2
     layer (it reaches the wire only after being merged into the standard OAuth

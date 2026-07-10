@@ -1089,6 +1089,11 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
         self.assertEqual(
             {"essential": True}, merged["nbf"],
             "Disjoint claims from the challenge must be preserved")
+
+    def test_same_forwarded_client_claims_hits_cache(self):
+        # The same forwarded_client_claims value on a second request must return
+        # the cached token, because the value participates in the extended cache
+        # key. (Different values are covered by the sibling isolation test.)
         app = self._build_app()
         call_count = [0]
 
@@ -1103,7 +1108,7 @@ class TestAcquireTokenForClientWithClientClaims(unittest.TestCase):
         result2 = app.acquire_token_for_client(
             ["scope"], forwarded_client_claims=self._CLIENT_CLAIMS, post=mock_post)
         self.assertEqual(result2[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE,
-            "Same client_claims should return token from cache")
+            "Same forwarded_client_claims should return token from cache")
         self.assertEqual(1, call_count[0], "Second call should not hit the IdP")
 
     def test_different_client_claims_are_cached_separately(self):
