@@ -304,9 +304,9 @@ class AppServiceTestCase(ClientTestCase):
 
     def test_past_expires_on_should_not_be_cached_long(self):
         # Regression test: a Managed Identity endpoint returning a PAST "expires_on"
-        # timestamp must NOT result in a long-lived (or any) cached token. MSAL Python
-        # computes expires_in = expires_on - now, so a past timestamp yields a
-        # non-positive (already-expired) lifetime and the token is not served from cache.
+        # timestamp must NOT result in a long-lived cached token. MSAL Python computes
+        # expires_in = expires_on - now; a past timestamp yields a non-positive lifetime,
+        # so any cached entry is immediately treated as expired and not served from cache.
         past_expires_on = int(time.time()) - 3600  # 1 hour in the past
         with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
             status_code=200,
