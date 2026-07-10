@@ -74,8 +74,8 @@ kept in sync with this policy:
 1. **`setup.cfg`** — `python_requires`, the `Programming Language ::
    Python :: 3.x` trove classifiers, and any `python_version`
    environment markers on optional dependencies (e.g. `pymsalruntime`).
-2. **`.github/workflows/python-package.yml`** — the `python-version`
-   matrix used by the `pytest` test job.
+2. **`azure-pipelines.yml`** and **`.Pipelines/template-pipeline-stages.yml`**
+   — the `python-version` matrix used by the PR-gate unit and E2E test stages.
 3. **`tests/test_cryptography.py`** — the N+3 ceiling test that enforces
    tracking the latest `cryptography` release. Newer `cryptography`
    versions routinely drop EOL Python versions, which is the most common
