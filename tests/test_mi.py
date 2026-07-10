@@ -318,8 +318,8 @@ class AppServiceTestCase(ClientTestCase):
             self.assertLessEqual(
                 first["expires_in"], 0,
                 "A past expires_on must yield a non-positive expires_in, not an inflated lifetime")
-            # A subsequent acquisition must re-hit the endpoint (cache miss), proving
-            # the past-dated token was neither cached nor served.
+            # A subsequent acquisition must re-hit the endpoint, proving the past-dated
+            # token is treated as already expired and is not served from the cache.
             second = self.app.acquire_token_for_client(resource="R")
             self.assertEqual(
                 "identity_provider", second["token_source"],
