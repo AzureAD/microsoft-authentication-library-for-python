@@ -74,14 +74,43 @@ class IdTokenAudienceError(IdTokenError):
 class IdTokenNonceError(IdTokenError):
     pass
 
-def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None):
-    """Decodes and validates an id_token and returns its claims as a dictionary.
+def _decode_id_token_claims(id_token):
+    """Decode an id_token and return its claims as a dictionary, WITHOUT validation.
+
+    MSAL does not validate the ID token. Per OpenID Connect, an ID token that is
+    obtained via direct communication between the client and the token endpoint
+    (which is how MSAL retrieves tokens) does not need to be validated by the
+    client. Validation, if needed, is the responsibility of the application,
+    which can perform it at the appropriate time (see the issue below).
+    https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/911
 
     ID token claims would at least contain: "iss", "sub", "aud", "exp", "iat",
     per `specs <https://openid.net/specs/openid-connect-core-1_0.html#IDToken>`_
     and it may contain other optional content such as "preferred_username",
     `maybe more <https://openid.net/specs/openid-connect-core-1_0.html#Claims>`_
     """
+    return json.loads(decode_part(id_token.split('.')[1]))
+
+
+def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None):
+    """Decodes and validates an id_token and returns its claims as a dictionary.
+
+    .. deprecated:: 1.38.0
+        MSAL no longer validates the ID token, because the SDK should not
+        perform any ID token validation
+        (`issue #911 <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/911>`_).
+        To simply decode an ID token's claims, use the ``id_token_claims`` that
+        MSAL already returns alongside each token, or decode the token yourself.
+
+    ID token claims would at least contain: "iss", "sub", "aud", "exp", "iat",
+    per `specs <https://openid.net/specs/openid-connect-core-1_0.html#IDToken>`_
+    and it may contain other optional content such as "preferred_username",
+    `maybe more <https://openid.net/specs/openid-connect-core-1_0.html#Claims>`_
+    """
+    warnings.warn(
+        "decode_id_token() is deprecated. MSAL does not validate the ID token. "
+        "Use the id_token_claims returned alongside the token instead.",
+        DeprecationWarning)
     decoded = json.loads(decode_part(id_token.split('.')[1]))
     # Based on https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
     _now = int(now or time.time())
@@ -157,18 +186,25 @@ class Client(oauth2.Client):
     """
 
     def decode_id_token(self, id_token, nonce=None):
-        """See :func:`~decode_id_token`."""
+        """See :func:`~decode_id_token`.
+
+        .. deprecated:: 1.38.0
+            MSAL no longer validates the ID token. See :func:`~decode_id_token`.
+        """
         return decode_id_token(
             id_token, nonce=nonce,
             client_id=self.client_id, issuer=self.configuration.get("issuer"))
 
     def _obtain_token(self, grant_type, *args, **kwargs):
         """The result will also contain one more key "id_token_claims",
-        whose value will be a dictionary returned by :func:`~decode_id_token`.
+        whose value is a dictionary of the (non-validated) ID token claims.
         """
         ret = super(Client, self)._obtain_token(grant_type, *args, **kwargs)
         if "id_token" in ret:
-            ret["id_token_claims"] = self.decode_id_token(ret["id_token"])
+            # MSAL does not validate the ID token. It only decodes the claims,
+            # so that downstream components can build accounts, etc.
+            # https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/911
+            ret["id_token_claims"] = _decode_id_token_claims(ret["id_token"])
         return ret
 
     def build_auth_request_uri(self, response_type, nonce=None, **kwargs):

@@ -7,7 +7,7 @@ import logging
 import warnings
 
 from .authority import canonicalize
-from .oauth2cli.oidc import decode_part, decode_id_token
+from .oauth2cli.oidc import decode_part, _decode_id_token_claims
 from .oauth2cli.oauth2 import Client
 
 
@@ -349,8 +349,9 @@ class TokenCache(object):
         refresh_token = response.get("refresh_token")
         id_token = response.get("id_token")
         id_token_claims = response.get("id_token_claims") or (  # Prefer the claims from broker
-            # Only use decode_id_token() when necessary, it contains time-sensitive validation
-            decode_id_token(id_token, client_id=event["client_id"]) if id_token else {})
+            # MSAL does not validate the ID token; it only decodes the claims.
+            # https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/911
+            _decode_id_token_claims(id_token) if id_token else {})
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
         target = ' '.join(sorted(event.get("scope") or []))  # Schema should have required sorting
