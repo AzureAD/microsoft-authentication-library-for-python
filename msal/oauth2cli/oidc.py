@@ -96,11 +96,13 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     """Decodes and validates an id_token and returns its claims as a dictionary.
 
     .. deprecated:: 1.38.0
-        MSAL no longer validates the ID token, because the SDK should not
-        perform any ID token validation
+        MSAL's token acquisition no longer validates the ID token, because the
+        SDK should not perform any ID token validation
         (`issue #911 <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/911>`_).
-        To simply decode an ID token's claims, use the ``id_token_claims`` that
-        MSAL already returns alongside each token, or decode the token yourself.
+        This standalone helper is kept only for backward compatibility and it
+        still performs the legacy validations described below. Prefer the
+        ``id_token_claims`` that MSAL already returns alongside each token, or
+        decode the token yourself, and perform any validation your app requires.
 
     ID token claims would at least contain: "iss", "sub", "aud", "exp", "iat",
     per `specs <https://openid.net/specs/openid-connect-core-1_0.html#IDToken>`_
@@ -108,9 +110,11 @@ def decode_id_token(id_token, client_id=None, issuer=None, nonce=None, now=None)
     `maybe more <https://openid.net/specs/openid-connect-core-1_0.html#Claims>`_
     """
     warnings.warn(
-        "decode_id_token() is deprecated. MSAL does not validate the ID token. "
-        "Use the id_token_claims returned alongside the token instead.",
-        DeprecationWarning)
+        "decode_id_token() is deprecated. MSAL's token acquisition no longer "
+        "validates the ID token; validation is the application's "
+        "responsibility. This legacy helper still performs some validation. "
+        "Prefer the id_token_claims returned alongside the token.",
+        DeprecationWarning, stacklevel=2)
     decoded = json.loads(decode_part(id_token.split('.')[1]))
     # Based on https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
     _now = int(now or time.time())
@@ -189,7 +193,9 @@ class Client(oauth2.Client):
         """See :func:`~decode_id_token`.
 
         .. deprecated:: 1.38.0
-            MSAL no longer validates the ID token. See :func:`~decode_id_token`.
+            MSAL's token acquisition no longer validates the ID token. This
+            method is kept for backward compatibility and still performs the
+            legacy validations. See :func:`~decode_id_token`.
         """
         return decode_id_token(
             id_token, nonce=nonce,
