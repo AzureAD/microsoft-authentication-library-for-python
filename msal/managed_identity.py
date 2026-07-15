@@ -452,13 +452,8 @@ def _obtain_token(
         )
     arc_endpoint = _get_arc_endpoint()
     if arc_endpoint:
-        if ManagedIdentity.is_user_assigned(managed_identity):
-            raise ManagedIdentityError(  # Note: Azure Identity for Python raised exception too
-                "Invalid managed_identity parameter. "
-                "Azure Arc supports only system-assigned managed identity, "
-                "See also "
-                "https://learn.microsoft.com/en-us/azure/service-fabric/configure-existing-cluster-enable-managed-identity-token-service")
-        return _obtain_token_on_arc(http_client, arc_endpoint, resource)
+        return _obtain_token_on_arc(
+            http_client, arc_endpoint, resource, managed_identity)
     return _obtain_token_on_azure_vm(http_client, managed_identity, resource)
 
 
@@ -643,12 +638,19 @@ _supported_arc_platforms_and_their_prefixes = {
 class ArcPlatformNotSupportedError(ManagedIdentityError):
     pass
 
-def _obtain_token_on_arc(http_client, endpoint, resource):
+def _obtain_token_on_arc(http_client, endpoint, resource, managed_identity=None):
     # https://learn.microsoft.com/en-us/azure/azure-arc/servers/managed-identity-authentication
     logger.debug("Obtaining token via managed identity on Azure Arc")
+    params = {"api-version": "2020-06-01", "resource": resource}
+    if managed_identity:
+        _adjust_param(params, managed_identity, types_mapping={
+            ManagedIdentity.CLIENT_ID: "client_id",
+            ManagedIdentity.RESOURCE_ID: "mi_res_id",
+            ManagedIdentity.OBJECT_ID: "object_id",
+        })
     resp = http_client.get(
         endpoint,
-        params={"api-version": "2020-06-01", "resource": resource},
+        params=params.copy(),
         headers={"Metadata": "true"},
         )
     www_auth = "www-authenticate"  # Header in lower case
@@ -674,7 +676,7 @@ def _obtain_token_on_arc(http_client, endpoint, resource):
         secret = f.read()
     response = http_client.get(
         endpoint,
-        params={"api-version": "2020-06-01", "resource": resource},
+        params=params.copy(),
         headers={"Metadata": "true", "Authorization": "Basic {}".format(secret)},
         )
     try:
