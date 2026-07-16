@@ -66,8 +66,6 @@ extends:
     featureFlags:
       EnableCDPxPAT: false
       WindowsHostVersion: '1ESWindows2022'
-      networkisolation:
-        policy: Permissive
 
     stages:
 
@@ -95,10 +93,7 @@ extends:
         - script: python --version
           displayName: 'Check Python version'
 
-        - script: python -m pip install --upgrade pip build
-          displayName: 'Install build toolchain'
-
-        - script: python -m build
+        - script: python setup.py sdist bdist_wheel
           displayName: 'Build sdist and wheel'
 
         - task: CopyFiles@2
