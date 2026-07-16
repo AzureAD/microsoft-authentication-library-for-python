@@ -117,7 +117,7 @@ extends:
           displayName: 'Publish build artifacts'
           inputs:
             targetPath: '$(ob_outputDirectory)'
-            artifactName: 'drop_build_builddist'
+            artifactName: 'drop_Build_BuildDist'
 
     # ========================================================================
     # Stage 5a - Publish to test.pypi.org (Preview / RC)
@@ -144,7 +144,7 @@ extends:
           displayName: 'Download build artifact'
           inputs:
             buildType: 'current'
-            artifactName: 'drop_build_builddist'
+            artifactName: 'drop_Build_BuildDist'
             targetPath: $(Pipeline.Workspace)/python-dist
 
         - task: UsePythonVersion@0
@@ -221,7 +221,7 @@ extends:
           displayName: 'Download python-dist artifact'
           inputs:
             buildType: 'current'
-            artifactName: 'drop_build_builddist'
+            artifactName: 'drop_Build_BuildDist'
             targetPath: $(Pipeline.Workspace)/python-dist
 
         - task: EsrpRelease@12
