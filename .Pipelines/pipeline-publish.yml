@@ -113,6 +113,12 @@ extends:
             cp -r dist/* $(ob_outputDirectory)/
           displayName: 'Copy dist to output directory'
 
+        - task: PublishPipelineArtifact@1
+          displayName: 'Publish build artifacts'
+          inputs:
+            targetPath: '$(ob_outputDirectory)'
+            artifactName: 'drop_build_builddist'
+
     # ========================================================================
     # Stage 5a - Publish to test.pypi.org (Preview / RC)
     # ========================================================================
@@ -138,7 +144,7 @@ extends:
           displayName: 'Download build artifact'
           inputs:
             buildType: 'current'
-            itemPattern: '**/drop_build_builddist/*'
+            artifactName: 'drop_build_builddist'
             targetPath: $(Pipeline.Workspace)/python-dist
 
         - task: UsePythonVersion@0
@@ -215,7 +221,7 @@ extends:
           displayName: 'Download python-dist artifact'
           inputs:
             buildType: 'current'
-            itemPattern: '**/drop_build_builddist/*'
+            artifactName: 'drop_build_builddist'
             targetPath: $(Pipeline.Workspace)/python-dist
 
         - task: EsrpRelease@12
@@ -229,7 +235,7 @@ extends:
             intent: 'PackageDistribution'
             contenttype: 'PyPi'
             contentsource: 'Folder'
-            folderlocation: '$(Pipeline.Workspace)/python-dist/drop_build_builddist'
+            folderlocation: '$(Pipeline.Workspace)/python-dist'
             waitforreleasecompletion: true
             owners: 'ryauld@microsoft.com,avdunn@microsoft.com'
             approvers: 'avdunn@microsoft.com,bogavril@microsoft.com'
