@@ -223,7 +223,7 @@ extends:
             contentsource: 'Folder'
             folderlocation: '$(Pipeline.Workspace)\python-dist'
             waitforreleasecompletion: true
-            owners: 'ryauld@microsoft.com,avdunn@microsoft.com'
+            owners: 'avdunn@microsoft.com,bogavril@microsoft.com'
             approvers: 'avdunn@microsoft.com,bogavril@microsoft.com'
             serviceendpointurl: 'https://api.esrp.microsoft.com'
             mainpublisher: 'ESRPRELPACMAN'
