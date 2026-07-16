@@ -59,9 +59,12 @@ class TokenCacheTestCase(unittest.TestCase):
             TokenCache.CredentialType.ACCESS_TOKEN]
 
     def test_add_redacts_client_claims_in_debug_log(self):
-        # forwarded_client_claims (and the merged "claims") are kept in
-        # event["data"] only so they contribute to ext_cache_key. They may carry
-        # sensitive values, so TokenCache.add()'s DEBUG log must redact them.
+        # Both fields live in event["data"] for different reasons: the
+        # cache-key-only "client_claims" pseudo-param contributes to
+        # ext_cache_key (it is excluded from the wire), while the merged "claims"
+        # is a real OAuth wire parameter that is excluded from ext_cache_key. Both
+        # may carry sensitive values, so TokenCache.add()'s DEBUG log must redact
+        # them regardless of whether they affect the hash.
         secret = '{"access_token": {"nbf": {"essential": "SENSITIVE"}}}'
         with self.assertLogs("msal.token_cache", level="DEBUG") as cm:
             self.cache.add({
