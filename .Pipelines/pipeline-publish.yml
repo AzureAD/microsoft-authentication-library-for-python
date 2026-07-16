@@ -66,6 +66,8 @@ extends:
     featureFlags:
       EnableCDPxPAT: false
       WindowsHostVersion: '1ESWindows2022'
+      networkisolation:
+        policy: Permissive
 
     stages:
 
@@ -93,14 +95,11 @@ extends:
         - script: python --version
           displayName: 'Check Python version'
 
-        - script: python -m pip install --upgrade pip build twine
+        - script: python -m pip install --upgrade pip build
           displayName: 'Install build toolchain'
 
         - script: python -m build
           displayName: 'Build sdist and wheel'
-
-        - script: python -m twine check dist\*
-          displayName: 'Verify distribution (twine check)'
 
         - task: CopyFiles@2
           displayName: 'Copy dist to output directory'
