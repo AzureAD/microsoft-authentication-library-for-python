@@ -453,10 +453,9 @@ class ClientApplication(object):
 
                 This *constructor* ``client_claims`` (a ``dict`` signed into the
                 client-assertion JWT) is distinct from the per-request
-                ``forwarded_client_claims`` parameter (a JSON string of client-originated
-                claims forwarded in the token request) accepted by
-                ``acquire_token_for_client``, ``acquire_token_on_behalf_of``,
-                ``acquire_token_silent``, and the other token-acquisition methods.
+                ``forwarded_client_claims`` parameter (a JSON string of
+                client-originated claims forwarded in the token request) accepted
+                by the token-acquisition methods.
 
         :param str authority:
             A URL that identifies a token authority. It should be of the format
@@ -1589,11 +1588,13 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
         :param str forwarded_client_claims:
-            Optional. A JSON string of *client-originated* claims to include when
-            a cached token is missing and a network request is made. Tokens are
-            **cached** and keyed on the claims value (different values yield
-            separate cache entries), so send the *same* value on every call that
-            should reuse the cached token, and use stable, non-dynamic values.
+            Optional. A JSON string of *client-originated* claims, applied only
+            when no cached token is found and a network request is made. Unlike
+            ``claims_challenge`` (server-issued, which bypasses the cache), tokens
+            acquired with ``forwarded_client_claims`` **are cached** and keyed on
+            the claims value. Send the *same* value on every call that should
+            reuse the cached token; different or omitted values route to separate
+            cache entries, so use stable, non-dynamic values.
 
             Not to be confused with the constructor ``client_claims`` parameter
             (a ``dict`` of extra claims signed into the client-assertion JWT).
@@ -2592,17 +2593,14 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     fmi_path="SomeFmiPath/FmiCredentialPath",
                 )
         :param str forwarded_client_claims:
-            Optional. A JSON string containing *client-originated* claims to
-            include in the token request.
-
-            Unlike ``claims_challenge`` (which carries *server-issued* claims
-            challenges and bypasses the cache), tokens acquired with
-            ``forwarded_client_claims`` **are cached**, and the cache entry is keyed on the
-            claims value. Send the *same* value on every request that should share
-            the cached token; different values produce separate cache entries, so
-            use stable, non-dynamic values to avoid unbounded cache growth. The
-            value is merged into the standard OAuth ``claims`` request parameter
-            sent on the wire.
+            Optional. A JSON string of *client-originated* claims to include in
+            the token request. Unlike ``claims_challenge`` (server-issued, which
+            bypasses the cache), tokens acquired with ``forwarded_client_claims``
+            **are cached** and keyed on the claims value. Send the *same* value on
+            every request that should share the cached token; omitting or changing
+            it routes to a different cache entry (a cache miss), so use stable,
+            non-dynamic values. The value is merged into the standard OAuth
+            ``claims`` request parameter sent on the wire.
 
             Not to be confused with the constructor ``client_claims`` parameter
             (a ``dict`` of extra claims signed into the client-assertion JWT).
