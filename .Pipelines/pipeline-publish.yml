@@ -84,32 +84,32 @@ extends:
       condition: eq(dependencies.E2ETests.result, 'Succeeded')
       jobs:
       - job: BuildDist
-        displayName: 'Build sdist + wheel (Python 3.12)'
+        displayName: 'Build sdist + wheel'
         pool:
-          type: linux
+          type: windows
         variables:
           ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
-          LinuxContainerImage: 'onebranch.azurecr.io/linux/ubuntu-2204:latest'
         steps:
-        - script: |
-            apt-get update && apt-get install -y python3 python3-pip python3-venv
-          displayName: 'Install Python 3'
+        - script: python --version
+          displayName: 'Check Python version'
 
-        - script: |
-            python3 -m pip install --upgrade pip build twine
+        - script: python -m pip install --upgrade pip build twine
           displayName: 'Install build toolchain'
 
-        - script: |
-            python3 -m build
+        - script: python -m build
           displayName: 'Build sdist and wheel'
 
-        - script: |
-            python3 -m twine check dist/*
+        - script: python -m twine check dist\*
           displayName: 'Verify distribution (twine check)'
 
-        - script: |
-            cp -r dist/* $(ob_outputDirectory)/
+        - task: CopyFiles@2
           displayName: 'Copy dist to output directory'
+          inputs:
+            SourceFolder: '$(Build.SourcesDirectory)\dist'
+            Contents: |
+              *.whl
+              *.tar.gz
+            TargetFolder: '$(ob_outputDirectory)'
 
     # ========================================================================
     # Stage 5a - Publish to test.pypi.org (Preview / RC)
@@ -136,8 +136,8 @@ extends:
           displayName: 'Download build artifact'
           inputs:
             buildType: 'current'
-            itemPattern: '**/drop_Build_BuildDist/*'
-            targetPath: $(Pipeline.Workspace)/python-dist
+            artifactName: 'drop_Build_BuildDist'
+            targetPath: $(Pipeline.Workspace)\python-dist
 
         - task: UsePythonVersion@0
           inputs:
@@ -213,8 +213,8 @@ extends:
           displayName: 'Download python-dist artifact'
           inputs:
             buildType: 'current'
-            itemPattern: '**/drop_Build_BuildDist/*'
-            targetPath: $(Pipeline.Workspace)/python-dist
+            artifactName: 'drop_Build_BuildDist'
+            targetPath: $(Pipeline.Workspace)\python-dist
 
         - task: EsrpRelease@12
           displayName: 'Publish to PyPI via ESRP'
@@ -227,7 +227,7 @@ extends:
             intent: 'PackageDistribution'
             contenttype: 'PyPi'
             contentsource: 'Folder'
-            folderlocation: '$(Pipeline.Workspace)/python-dist/drop_Build_BuildDist'
+            folderlocation: '$(Pipeline.Workspace)\python-dist'
             waitforreleasecompletion: true
             owners: 'ryauld@microsoft.com,avdunn@microsoft.com'
             approvers: 'avdunn@microsoft.com,bogavril@microsoft.com'
