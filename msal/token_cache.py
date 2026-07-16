@@ -81,10 +81,22 @@ def _compute_ext_cache_key(data):
     This ensures tokens acquired with different parameter values
     (e.g., different FMI paths) are cached separately.
 
+    The hash may also intentionally include cache-key-only pseudo-parameters
+    such as ``client_claims`` -- these are stripped from the wire body by the
+    oauth2 layer but are retained in *data* precisely so that different
+    client-originated claims route to separate cache entries.
+
     Returns an empty string when *data* has no hashable fields.
 
-    The algorithm matches the Go MSAL implementation (CacheExtKeyGenerator):
-    sorted key+value pairs are concatenated and SHA256 hashed, then base64url encoded.
+    The algorithm matches MSAL .NET's ``ComputeAccessTokenExtCacheKey``: sorted
+    key+value pairs are concatenated (no separators) and SHA256 hashed, then
+    base64url encoded. This keeps the hash byte-identical to MSAL .NET.
+
+    MSAL Go's ``CacheExtKeyGenerator`` has since switched to a length-prefixed
+    encoding (AzureAD/microsoft-authentication-library-for-go#629) to make it
+    injective; Python deliberately tracks .NET instead, so these hashes are not
+    byte-identical to current Go. Caches are not shared across languages, so the
+    difference does not affect runtime correctness.
     """
     if not data:
         return ""
@@ -94,12 +106,69 @@ def _compute_ext_cache_key(data):
     }
     if not cache_components:
         return ""
-    # Sort keys for consistent hashing (matches Go implementation)
+    # Sort keys, then concatenate key+value pairs with no separators. This
+    # matches MSAL .NET's ComputeAccessTokenExtCacheKey byte-for-byte. (See the
+    # docstring re: the Go #629 length-prefixed divergence.)
     key_str = "".join(
         k + cache_components[k] for k in sorted(cache_components.keys())
     )
     hash_bytes = hashlib.sha256(key_str.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(hash_bytes).rstrip(b"=").decode("ascii").lower()
+
+
+def _parse_claims_or_raise(claims):
+    """Parse a claims JSON string into a dict, or raise a friendly ``ValueError``.
+
+    The raw claims value is never included in the error message because it may
+    contain sensitive data. Mirrors MSAL .NET's ``ClaimsHelper.ParseClaimsOrThrow``.
+    """
+    try:
+        parsed = json.loads(claims)
+    except (ValueError, TypeError) as ex:
+        # json.JSONDecodeError (malformed JSON) is a subclass of ValueError;
+        # TypeError is raised when *claims* is not a str/bytes/bytearray. Both
+        # are surfaced as the same friendly ValueError so every caller behaves
+        # consistently regardless of the bad input's type.
+        raise ValueError(
+            "The claims value is not valid JSON. "
+            "See https://openid.net/specs/openid-connect-core-1_0.html#ClaimsParameter."
+        ) from ex
+    if not isinstance(parsed, dict):
+        # A valid JSON array, scalar, or the literal "null" is not a claims object.
+        raise ValueError(
+            "The claims value is not a valid JSON object. "
+            "See https://openid.net/specs/openid-connect-core-1_0.html#ClaimsParameter.")
+    return parsed
+
+
+def _deep_merge_dict(base, overlay):
+    """Recursively merge ``overlay`` into ``base``, returning a new dict.
+
+    Nested dicts are merged; for any other value type, ``overlay`` wins.
+    """
+    result = dict(base)
+    for key, value in overlay.items():
+        if (key in result
+                and isinstance(result[key], dict) and isinstance(value, dict)):
+            result[key] = _deep_merge_dict(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _merge_claims(claims_a, claims_b):
+    """Merge two claims JSON strings into a single JSON string.
+
+    If either side is empty/None, the other is returned as-is. Mirrors MSAL
+    .NET's ``ClaimsHelper.MergeClaimsObjects``.
+    """
+    if not claims_a:
+        return claims_b
+    if not claims_b:
+        return claims_a
+    merged = _deep_merge_dict(
+        _parse_claims_or_raise(claims_a), _parse_claims_or_raise(claims_b))
+    return json.dumps(merged)
 
 
 def is_subdict_of(small, big):
@@ -307,6 +376,11 @@ class TokenCache(object):
             data=make_clean_copy(event.get("data", {}), (
                 "password", "client_secret", "refresh_token", "assertion",
                 "user_federated_identity_credential",
+                # Client-originated claims may carry sensitive values; they are
+                # kept in data only for ext_cache_key computation, so redact them
+                # from the debug log (both the cache-key pseudo-param and the
+                # merged wire parameter).
+                "client_claims", "claims",
             )),
             response=make_clean_copy(event.get("response", {}), (
                 "id_token_claims",  # Provided by broker

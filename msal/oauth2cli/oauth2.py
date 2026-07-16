@@ -253,6 +253,14 @@ class BaseClient(object):
         _data.update(data or {})  # So the content in data param prevails
         _data = {k: v for k, v in _data.items() if v}  # Clean up None values
 
+        # "client_claims" is a cache-key-only pseudo-parameter: callers merge its
+        # value into the standard "claims" body parameter upstream, and it is kept
+        # in the request data solely so it contributes to the extended cache key.
+        # It must not be sent on the wire. Popping it here (from this method's own
+        # local copy) keeps the wire body clean while the caller's data dict — used
+        # for the cache-add event — still carries it.
+        _data.pop("client_claims", None)
+
         if _data.get('scope'):
             _data['scope'] = self._stringify(_data['scope'])
 

@@ -4,7 +4,10 @@ import json
 import time
 import warnings
 
-from msal.token_cache import TokenCache, SerializableTokenCache, _compute_ext_cache_key
+from msal.token_cache import (
+    TokenCache, SerializableTokenCache, _compute_ext_cache_key,
+    _parse_claims_or_raise, _merge_claims,
+)
 from tests import unittest
 
 
@@ -54,6 +57,28 @@ class TokenCacheTestCase(unittest.TestCase):
         self.cache = TokenCache()
         self.at_key_maker = self.cache.key_makers[
             TokenCache.CredentialType.ACCESS_TOKEN]
+
+    def test_add_redacts_client_claims_in_debug_log(self):
+        # Both fields live in event["data"] for different reasons: the
+        # cache-key-only "client_claims" pseudo-param contributes to
+        # ext_cache_key (it is excluded from the wire), while the merged "claims"
+        # is a real OAuth wire parameter that is excluded from ext_cache_key. Both
+        # may carry sensitive values, so TokenCache.add()'s DEBUG log must redact
+        # them regardless of whether they affect the hash.
+        secret = '{"access_token": {"nbf": {"essential": "SENSITIVE"}}}'
+        with self.assertLogs("msal.token_cache", level="DEBUG") as cm:
+            self.cache.add({
+                "client_id": "my_client_id",
+                "scope": ["s1"],
+                "data": {"client_claims": secret, "claims": secret},
+                "token_endpoint": "https://login.example.com/contoso/v2/token",
+                "response": build_response(
+                    uid="uid", utid="utid",
+                    expires_in=3600, access_token="an access token"),
+                }, now=1000)
+        logged = "\n".join(cm.output)
+        self.assertNotIn("SENSITIVE", logged)
+        self.assertIn("********", logged)
 
     def testAddByAad(self):
         client_id = "my_client_id"
@@ -362,6 +387,101 @@ class TestComputeExtCacheKey(unittest.TestCase):
         self.assertNotEqual(h1, h2, "Non-excluded fields should change the hash")
 
 
+class TestClientClaimsCacheKey(unittest.TestCase):
+    """client_claims must drive the extended cache key; server-issued claims must not."""
+
+    def test_client_claims_produces_non_empty_hash(self):
+        result = _compute_ext_cache_key({"client_claims": '{"a": 1}'})
+        self.assertNotEqual("", result)
+        self.assertIsInstance(result, str)
+
+    def test_claims_is_excluded_but_client_claims_is_not(self):
+        # Server-issued "claims" (claims_challenge) must not affect the key, because
+        # it bypasses the cache. Client-originated "client_claims" must affect it.
+        self.assertEqual("", _compute_ext_cache_key({"claims": '{"a": 1}'}))
+        self.assertNotEqual("", _compute_ext_cache_key({"client_claims": '{"a": 1}'}))
+
+    def test_same_client_claims_produce_same_hash(self):
+        self.assertEqual(
+            _compute_ext_cache_key({"client_claims": '{"a": 1}'}),
+            _compute_ext_cache_key({"client_claims": '{"a": 1}'}))
+
+    def test_different_client_claims_produce_different_hashes(self):
+        self.assertNotEqual(
+            _compute_ext_cache_key({"client_claims": '{"a": 1}'}),
+            _compute_ext_cache_key({"client_claims": '{"a": 2}'}))
+
+    def test_empty_client_claims_value_is_ignored(self):
+        self.assertEqual("", _compute_ext_cache_key({"client_claims": ""}))
+
+
+class TestClaimsHelpers(unittest.TestCase):
+    """Tests for the shared _parse_claims_or_raise / _merge_claims helpers."""
+
+    def test_parse_valid_object(self):
+        self.assertEqual({"a": 1}, _parse_claims_or_raise('{"a": 1}'))
+
+    def test_parse_rejects_non_object_and_malformed(self):
+        for bad in ["not json", "[1, 2]", "null", "123", '"a string"', "true"]:
+            with self.assertRaises(ValueError, msg="{!r} should raise".format(bad)):
+                _parse_claims_or_raise(bad)
+
+    def test_parse_rejects_non_string_types(self):
+        # Non-str/bytes inputs make json.loads raise TypeError; the helper must
+        # surface the same friendly ValueError so callers behave consistently
+        # regardless of the bad input's type.
+        for bad in [123, None, 1.5, True, ["a"], {"a": 1}]:
+            with self.assertRaises(
+                    ValueError, msg="{!r} should raise ValueError".format(bad)):
+                _parse_claims_or_raise(bad)
+
+    def test_parse_error_does_not_leak_raw_claims(self):
+        # A malformed payload that contains a secret-looking value
+        secret = '{"super": "secret-value-123"'  # missing closing brace
+        with self.assertRaises(ValueError) as ctx:
+            _parse_claims_or_raise(secret)
+        self.assertNotIn("secret-value-123", str(ctx.exception),
+            "Error message must never echo the raw claims content")
+
+    def test_merge_returns_other_when_one_side_is_empty(self):
+        self.assertEqual({"a": 1}, json.loads(_merge_claims(None, '{"a": 1}')))
+        self.assertEqual({"a": 1}, json.loads(_merge_claims('{"a": 1}', None)))
+        self.assertEqual({"a": 1}, json.loads(_merge_claims("", '{"a": 1}')))
+        self.assertEqual({"a": 1}, json.loads(_merge_claims('{"a": 1}', "")))
+
+    def test_merge_of_two_empties_is_falsy(self):
+        self.assertFalse(_merge_claims(None, None))
+        self.assertFalse(_merge_claims("", ""))
+
+    def test_merge_deep_merges_objects(self):
+        merged = json.loads(_merge_claims(
+            '{"access_token": {"xms_cc": {"values": ["cp1"]}}}',
+            '{"access_token": {"xms_az_nwperimid": {"essential": true}}}'))
+        self.assertEqual(
+            {"xms_cc": {"values": ["cp1"]}, "xms_az_nwperimid": {"essential": True}},
+            merged["access_token"])
+
+    def test_merge_leaf_conflict_second_arg_wins(self):
+        # When both sides set the SAME leaf to different values, the second
+        # argument (client-originated claims) wins. _acquire_token_for_client
+        # passes server-issued claims first and forwarded_client_claims second,
+        # so the caller's value takes precedence on a direct conflict.
+        merged = json.loads(_merge_claims(
+            '{"access_token": {"acrs": {"values": ["server"]}}}',
+            '{"access_token": {"acrs": {"values": ["client"]}}}'))
+        self.assertEqual({"values": ["client"]}, merged["access_token"]["acrs"])
+
+    def test_merge_nested_conflict_preserves_disjoint_siblings(self):
+        # A conflict on one nested key must not drop the other side's disjoint
+        # sibling keys at the same level.
+        merged = json.loads(_merge_claims(
+            '{"access_token": {"a": {"values": ["server"]}, "keep_server": 1}}',
+            '{"access_token": {"a": {"values": ["client"]}, "keep_client": 2}}'))
+        self.assertEqual(
+            {"a": {"values": ["client"]}, "keep_server": 1, "keep_client": 2},
+            merged["access_token"])
+
+
 class TestExtCacheKeyIsolation(unittest.TestCase):
     """Tests that ext_cache_key provides proper cache isolation in TokenCache."""
 
@@ -444,40 +564,45 @@ class TestExtCacheKeyIsolation(unittest.TestCase):
 
 
 class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
-    """Verify that _compute_ext_cache_key produces hashes identical to MSAL Go
-    (CacheExtKeyGenerator) and MSAL .NET (CoreHelpers.ComputeAccessTokenExtCacheKey).
+    """Verify that _compute_ext_cache_key produces hashes identical to MSAL .NET
+    (CoreHelpers.ComputeAccessTokenExtCacheKey).
 
-    All three libraries use the same algorithm:
+    The algorithm:
       1. Sort key-value pairs alphabetically by key (ordinal / case-sensitive)
-      2. Concatenate them: "key1value1key2value2…"
+      2. Concatenate them with no separators: "key1value1key2value2…"
       3. SHA-256 hash
       4. Base64url encode (no padding), lowercased
 
-    The expected hashes below are copied from:
-      - MSAL Go:   authority_ext_cachekey_test.go  (TestAppKeyWithCacheKeyComponent)
-      - MSAL .NET: CacheKeyExtensionTests.cs       (RunHappyPathTest, CacheExtEnsurePopKeysFunctionAsync)
+    The expected hashes below are copied from MSAL .NET's CacheKeyExtensionTests.cs
+    (RunHappyPathTest, CacheExtEnsurePopKeysFunctionAsync).
+
+    NOTE: MSAL Go's CacheExtKeyGenerator has since switched to a *length-prefixed*
+    encoding (AzureAD/microsoft-authentication-library-for-go#629), so these hashes
+    are intentionally NOT byte-identical to current Go; Python deliberately tracks
+    .NET here. The cache *key format* (the 'atext' segment layout, asserted below)
+    still matches both Go and .NET. Caches are not shared across languages, so this
+    cross-language hash difference does not affect runtime correctness.
     """
 
-    def test_two_params_hash_matches_go_and_dotnet(self):
-        """Go/dotnet expected: bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"""
+    def test_two_params_hash_matches_dotnet(self):
+        """.NET expected: bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"""
         result = _compute_ext_cache_key({"key1": "value1", "key2": "value2"})
         self.assertEqual("bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi", result)
 
-    def test_two_different_params_hash_matches_go_and_dotnet(self):
-        """Go/dotnet expected: 3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u"""
+    def test_two_different_params_hash_matches_dotnet(self):
+        """.NET expected: 3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u"""
         result = _compute_ext_cache_key({"key3": "value3", "key4": "value4"})
         self.assertEqual("3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u", result)
 
-    def test_five_params_hash_matches_go_and_dotnet(self):
-        """Go/dotnet expected (full hash): rn_gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e
-        Go test uses substring match 'gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e'."""
+    def test_five_params_hash_matches_dotnet(self):
+        """.NET expected (full hash): rn_gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e"""
         result = _compute_ext_cache_key({
             "key3": "value3", "key4": "value4",
             "key5": "value5", "key6": "value6", "key7": "value7",
         })
         self.assertEqual("rn_gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e", result)
 
-    def test_order_independence_matches_go_and_dotnet(self):
+    def test_order_independence_matches_dotnet(self):
         """Same keys in different insertion order must produce the same hash
         (mirrors TestCacheKeyComponentHashConsistency in Go)."""
         h1 = _compute_ext_cache_key({"key3": "value3", "key4": "value4",
@@ -545,8 +670,9 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
         self.assertEqual(expected, key)
 
     def test_go_style_at_cache_key(self):
-        """Reproduce the Go AccessToken.Key() format:
-        Go test: 'testhid-env-atext-clientid-realm-user.read-{hash}'
+        """Reproduce the Go AccessToken.Key() *format* (segment layout):
+        'testhid-env-atext-clientid-realm-user.read-{hash}'. The hash follows our
+        .NET-matching encoding (see class note on the Go #629 divergence).
         """
         cache = TokenCache()
         key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
