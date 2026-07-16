@@ -137,7 +137,8 @@ extends:
         - task: DownloadPipelineArtifact@2
           displayName: 'Download build artifact'
           inputs:
-            artifactName: drop_Build_BuildDist
+            buildType: 'current'
+            itemPattern: '**/drop_build_builddist/*'
             targetPath: $(Pipeline.Workspace)/python-dist
 
         - task: UsePythonVersion@0
@@ -213,7 +214,8 @@ extends:
         - task: DownloadPipelineArtifact@2
           displayName: 'Download python-dist artifact'
           inputs:
-            artifactName: drop_Build_BuildDist
+            buildType: 'current'
+            itemPattern: '**/drop_build_builddist/*'
             targetPath: $(Pipeline.Workspace)/python-dist
 
         - task: EsrpRelease@12
@@ -227,7 +229,7 @@ extends:
             intent: 'PackageDistribution'
             contenttype: 'PyPi'
             contentsource: 'Folder'
-            folderlocation: '$(Pipeline.Workspace)/python-dist'
+            folderlocation: '$(Pipeline.Workspace)/python-dist/drop_build_builddist'
             waitforreleasecompletion: true
             owners: 'ryauld@microsoft.com,avdunn@microsoft.com'
             approvers: 'avdunn@microsoft.com,bogavril@microsoft.com'
