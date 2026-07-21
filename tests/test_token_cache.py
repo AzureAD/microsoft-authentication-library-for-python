@@ -732,18 +732,21 @@ class TestExtCacheKeyCollisionResistance(unittest.TestCase):
         alphabet = ["", "0", "1", "9", ":", "|", "\\", "a", "ab",
                     u"\u00e9", u"\U0001F600", u"e\u0301"]
         seen = {}
-        count = 0
         for k1, v1 in itertools.product(alphabet, repeat=2):
             for k2, v2 in itertools.product(alphabet, repeat=2):
-                # Keys must be distinct and truthy to survive field-selection;
-                # empty keys/values are dropped, so skip combos that collapse.
-                comps = {k: v for k, v in ((k1, v1), (k2, v2)) if k and v}
+                # Keys must be truthy to survive field-selection, and distinct so
+                # the two pairs don't silently overwrite each other in a dict
+                # (which would collapse intended 2-entry cases). Values must be
+                # truthy too; empty values are dropped by field-selection.
+                pairs = [(k, v) for k, v in ((k1, v1), (k2, v2)) if k and v]
+                if len(pairs) == 2 and pairs[0][0] == pairs[1][0]:
+                    continue
+                comps = dict(pairs)
                 if not comps:
                     continue
                 # Canonicalize so logically-equal dicts compare equal.
                 canonical = tuple(sorted(comps.items()))
                 h = _compute_ext_cache_key(comps)
-                count += 1
                 if h in seen:
                     self.assertEqual(
                         seen[h], canonical,
@@ -751,7 +754,9 @@ class TestExtCacheKeyCollisionResistance(unittest.TestCase):
                             dict(seen[h]), comps, h))
                 else:
                     seen[h] = canonical
-        self.assertGreater(count, 100)
+        # seen holds one entry per *distinct* component set, so its size proves
+        # we exercised a meaningful number of unique inputs (not repeats).
+        self.assertGreater(len(seen), 100)
 
     def test_utf8_byte_length_not_codepoint_length(self):
         # 'é' as one 2-byte codepoint (U+00E9) vs 'e' + combining acute accent
