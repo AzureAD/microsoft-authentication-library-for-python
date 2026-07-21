@@ -564,45 +564,47 @@ class TestExtCacheKeyIsolation(unittest.TestCase):
 
 
 class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
-    """Verify that _compute_ext_cache_key produces hashes identical to MSAL .NET
-    (CoreHelpers.ComputeAccessTokenExtCacheKey).
+    """Verify that _compute_ext_cache_key produces hashes identical to the shared
+    MSAL length-prefix ("netstring") encoding used by MSAL Go's
+    CacheExtKeyGenerator (AzureAD/microsoft-authentication-library-for-go#629).
 
     The algorithm:
       1. Sort key-value pairs alphabetically by key (ordinal / case-sensitive)
-      2. Concatenate them with no separators: "key1value1key2value2…"
+      2. Length-prefix each part with its UTF-8 byte length and concatenate:
+         "<len(key)>:<key><len(value)>:<value>..."
       3. SHA-256 hash
       4. Base64url encode (no padding), lowercased
 
-    The expected hashes below are copied from MSAL .NET's CacheKeyExtensionTests.cs
-    (RunHappyPathTest, CacheExtEnsurePopKeysFunctionAsync).
+    The length prefixes make the serialization injective, so semantically
+    different component sets can never collide onto the same cache key.
 
-    NOTE: MSAL Go's CacheExtKeyGenerator has since switched to a *length-prefixed*
-    encoding (AzureAD/microsoft-authentication-library-for-go#629), so these hashes
-    are intentionally NOT byte-identical to current Go; Python deliberately tracks
-    .NET here. The cache *key format* (the 'atext' segment layout, asserted below)
-    still matches both Go and .NET. Caches are not shared across languages, so this
-    cross-language hash difference does not affect runtime correctness.
+    NOTE: This is the encoding the whole MSAL SDK family is converging on
+    (Go already merged it; .NET/Java/JS are landing the same change), so these
+    hashes are byte-identical across SDKs. The cache *key format* (the 'atext'
+    segment layout, asserted below) matches Go and .NET too. Caches are not
+    shared across languages, so cross-language parity is a convenience, not a
+    correctness requirement.
     """
 
-    def test_two_params_hash_matches_dotnet(self):
-        """.NET expected: bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"""
+    def test_two_params_hash_matches_shared_encoding(self):
+        """Shared length-prefix expected: latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike"""
         result = _compute_ext_cache_key({"key1": "value1", "key2": "value2"})
-        self.assertEqual("bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi", result)
+        self.assertEqual("latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike", result)
 
-    def test_two_different_params_hash_matches_dotnet(self):
-        """.NET expected: 3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u"""
+    def test_two_different_params_hash_matches_shared_encoding(self):
+        """Shared length-prefix expected: jjoe9jgfmdtnj0rzuetsqy7kzs2m1xfnjjxwsfxsrxq"""
         result = _compute_ext_cache_key({"key3": "value3", "key4": "value4"})
-        self.assertEqual("3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u", result)
+        self.assertEqual("jjoe9jgfmdtnj0rzuetsqy7kzs2m1xfnjjxwsfxsrxq", result)
 
-    def test_five_params_hash_matches_dotnet(self):
-        """.NET expected (full hash): rn_gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e"""
+    def test_five_params_hash_matches_shared_encoding(self):
+        """Shared length-prefix expected (full hash): prrdp31y37ufw3lo7hly0oimjjvg_34m9ji30ocu4tw"""
         result = _compute_ext_cache_key({
             "key3": "value3", "key4": "value4",
             "key5": "value5", "key6": "value6", "key7": "value7",
         })
-        self.assertEqual("rn_gkpxxkkqjxcqnvnmr2duvxg66xanvkz6qfqpwp2e", result)
+        self.assertEqual("prrdp31y37ufw3lo7hly0oimjjvg_34m9ji30ocu4tw", result)
 
-    def test_order_independence_matches_dotnet(self):
+    def test_order_independence_matches_shared_encoding(self):
         """Same keys in different insertion order must produce the same hash
         (mirrors TestCacheKeyComponentHashConsistency in Go)."""
         h1 = _compute_ext_cache_key({"key3": "value3", "key4": "value4",
@@ -623,9 +625,9 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
         key = key_maker(
             home_account_id="hid", environment="env", client_id="cid",
             realm="realm", target="scope",
-            ext_cache_key="bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi")
+            ext_cache_key="latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike")
         self.assertEqual(
-            "hid-env-atext-cid-realm-scope-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi",
+            "hid-env-atext-cid-realm-scope-latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike",
             key)
 
     def test_at_cache_key_without_ext_uses_accesstoken(self):
@@ -637,9 +639,10 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
             realm="realm", target="scope")
         self.assertEqual("hid-env-accesstoken-cid-realm-scope", key)
 
-    def test_dotnet_style_full_at_cache_key(self):
-        """Reproduce the exact cache key from MSAL .NET CacheKeyExtensionTests:
-        expectedCacheKey1 = '-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi'
+    def test_full_at_cache_key(self):
+        """Reproduce the full 'atext' cache key layout (mirrors MSAL .NET's
+        CacheKeyExtensionTests expectedCacheKey1 shape) with the shared
+        length-prefix hash for {key1:value1, key2:value2}.
         """
         cache = TokenCache()
         key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
@@ -651,11 +654,12 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
             realm="common",
             target="r1/scope1 r1/scope2",
             ext_cache_key=ext_hash)
-        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"
+        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike"
         self.assertEqual(expected, key)
 
-    def test_dotnet_style_second_cache_key(self):
-        """Reproduce CacheKeyExtensionTests expectedCacheKey2."""
+    def test_second_full_at_cache_key(self):
+        """Reproduce the 'atext' cache key layout (mirrors expectedCacheKey2 shape)
+        with the shared length-prefix hash for {key3:value3, key4:value4}."""
         cache = TokenCache()
         key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
         ext_hash = _compute_ext_cache_key({"key3": "value3", "key4": "value4"})
@@ -666,13 +670,13 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
             realm="common",
             target="r1/scope1 r1/scope2",
             ext_cache_key=ext_hash)
-        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-3-rg6_wyjx5bcy0c3cqq7gajtzgsqy3oxqpwj4y8k4u"
+        expected = "-login.windows.net-atext-d3adb33f-c0de-ed0c-c0de-deadb33fc0d3-common-r1/scope1 r1/scope2-jjoe9jgfmdtnj0rzuetsqy7kzs2m1xfnjjxwsfxsrxq"
         self.assertEqual(expected, key)
 
     def test_go_style_at_cache_key(self):
         """Reproduce the Go AccessToken.Key() *format* (segment layout):
-        'testhid-env-atext-clientid-realm-user.read-{hash}'. The hash follows our
-        .NET-matching encoding (see class note on the Go #629 divergence).
+        'testhid-env-atext-clientid-realm-user.read-{hash}'. The hash follows the
+        shared length-prefix encoding (byte-identical to MSAL Go).
         """
         cache = TokenCache()
         key_maker = cache.key_makers[TokenCache.CredentialType.ACCESS_TOKEN]
@@ -684,5 +688,114 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
             realm="realm",
             target="user.read",
             ext_cache_key=ext_hash)
-        expected = "testhid-env-atext-clientid-realm-user.read-bns2ytmx5hxkh4fnfixridmezpbbayhnmuh6t4bbghi"
+        expected = "testhid-env-atext-clientid-realm-user.read-latlwkpewb_a0rcsmjvkecqt0_huumkw4sflzociike"
         self.assertEqual(expected, key)
+
+
+class TestExtCacheKeyCollisionResistance(unittest.TestCase):
+    """The length-prefix ("netstring") serialization must be injective: no two
+    semantically different component sets may hash to the same cache key.
+
+    A plain ``key + value`` concatenation (the old scheme) is ambiguous and
+    caused cache-slot collisions -- one FMI/agent-identity token entry could
+    evict another, forcing redundant token re-fetches. These tests pin the
+    boundary cases that the old scheme got wrong.
+    """
+
+    def test_key_value_boundary_ambiguity(self):
+        # Old scheme: both -> "fmi_pathvalue".
+        self.assertNotEqual(
+            _compute_ext_cache_key({"fmi_path": "value"}),
+            _compute_ext_cache_key({"fmi_pat": "hvalue"}))
+
+    def test_multi_entry_boundary_ambiguity(self):
+        # Old scheme: both -> "abcde".
+        self.assertNotEqual(
+            _compute_ext_cache_key({"a": "b", "cd": "e"}),
+            _compute_ext_cache_key({"ab": "c", "d": "e"}))
+
+    def test_value_containing_encoding_delimiters(self):
+        # Values that themselves contain the "<len>:<data>" delimiters must not
+        # be able to forge a different component layout.
+        self.assertNotEqual(
+            _compute_ext_cache_key({"a": "5:hello"}),
+            _compute_ext_cache_key({"a5": "hello"}))
+        self.assertNotEqual(
+            _compute_ext_cache_key({"x": "1:y1:z"}),
+            _compute_ext_cache_key({"x": "1:y", "1": "z"}))
+
+    def test_injectivity_over_adversarial_alphabet(self):
+        # Build many distinct component dicts from an adversarial alphabet that
+        # stresses the length-prefix delimiters and UTF-8 boundaries, then assert
+        # no two *distinct* dicts share a hash (and identical dicts agree).
+        import itertools
+        alphabet = ["", "0", "1", "9", ":", "|", "\\", "a", "ab",
+                    u"\u00e9", u"\U0001F600", u"e\u0301"]
+        seen = {}
+        count = 0
+        for k1, v1 in itertools.product(alphabet, repeat=2):
+            for k2, v2 in itertools.product(alphabet, repeat=2):
+                # Keys must be distinct and truthy to survive field-selection;
+                # empty keys/values are dropped, so skip combos that collapse.
+                comps = {k: v for k, v in ((k1, v1), (k2, v2)) if k and v}
+                if not comps:
+                    continue
+                # Canonicalize so logically-equal dicts compare equal.
+                canonical = tuple(sorted(comps.items()))
+                h = _compute_ext_cache_key(comps)
+                count += 1
+                if h in seen:
+                    self.assertEqual(
+                        seen[h], canonical,
+                        "Hash collision between {!r} and {!r} -> {}".format(
+                            dict(seen[h]), comps, h))
+                else:
+                    seen[h] = canonical
+        self.assertGreater(count, 100)
+
+    def test_utf8_byte_length_not_codepoint_length(self):
+        # 'é' as one 2-byte codepoint (U+00E9) vs 'e' + combining acute accent
+        # (U+0065 U+0301, 3 bytes) render alike but are distinct. A code-point
+        # length prefix (len(str)) would risk a collision at some boundary; the
+        # UTF-8 byte-length prefix keeps them apart and matches MSAL Go.
+        precomposed = u"\u00e9"          # 1 code point, 2 UTF-8 bytes
+        decomposed = u"e\u0301"          # 2 code points, 3 UTF-8 bytes
+        self.assertNotEqual(
+            _compute_ext_cache_key({"k": precomposed}),
+            _compute_ext_cache_key({"k": decomposed}))
+        # A concrete boundary pair the two length schemes disagree on:
+        # code-point length would make these ambiguous, byte length does not.
+        self.assertNotEqual(
+            _compute_ext_cache_key({"k": u"\u00e9x"}),
+            _compute_ext_cache_key({"k": u"e\u0301"}))
+
+    def test_key_order_independence(self):
+        self.assertEqual(
+            _compute_ext_cache_key({"b": "2", "a": "1", "c": "3"}),
+            _compute_ext_cache_key({"c": "3", "a": "1", "b": "2"}))
+
+    def test_empty_and_single_entry_edges(self):
+        self.assertEqual("", _compute_ext_cache_key(None))
+        self.assertEqual("", _compute_ext_cache_key({}))
+        self.assertEqual("", _compute_ext_cache_key({"fmi_path": ""}))
+        single = _compute_ext_cache_key({"fmi_path": "p"})
+        self.assertTrue(single)
+        self.assertEqual(single, _compute_ext_cache_key({"fmi_path": "p"}))
+
+    def test_golden_vectors(self):
+        # Shared length-prefix golden vectors: byte-identical across the MSAL SDK
+        # family (Go/.NET/Java/JS). Output is already lowercased.
+        golden = {
+            u"a0ry_zl4gccsdp7gnw927x8s0mrmnodv6tyilt0u07m":
+                {"fmi_path": "agent-app-id"},
+            u"cybgactkrvlzlen1aiwzwl3ay5krkyixommrobc-ri4":
+                {"a": "b", "cd": "e"},
+            u"n_lucewkadzv_nybtg-2wtorgf2nrns6ihlfa7vbuzg":
+                {"fmi_path": "value"},
+            u"tjtm16m-suk2_bkniblr25lyuki40qyceco7knuyu0k":
+                {"fmi_pat": "hvalue"},
+            u"xskzaoz4ibr3mznftyxctvg1ptuh-0fuzpty7ndbfls":
+                {u"\u00e9": u"\u00e9"},
+        }
+        for expected, components in golden.items():
+            self.assertEqual(expected, _compute_ext_cache_key(components))
