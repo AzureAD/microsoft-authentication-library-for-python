@@ -95,13 +95,15 @@ def _compute_ext_cache_key(data):
     the parts concatenated, then SHA256 hashed and base64url (no padding)
     encoded and lowercased.
 
-    The length prefixes make the serialization injective, so semantically
-    different component sets can never collide onto the same cache key. (A plain
-    ``key + value`` concatenation is ambiguous: ``{fmi_path: "value"}`` and
-    ``{fmi_pat: "hvalue"}`` would both serialize to ``fmi_pathvalue``.) The byte
-    length (``len(s.encode("utf-8"))``), not the Unicode code-point count, is
-    used so the hash stays byte-identical across the MSAL SDK family
-    (Go/.NET/Java/JS) as they converge on this scheme.
+    The length prefixes make the *serialization* injective: distinct component
+    sets can never produce the same pre-hash string, so they cannot collide at
+    the serialization layer. (The final cache key is still a SHA-256 digest, so
+    only a cryptographically negligible hash collision remains possible.) A plain
+    ``key + value`` concatenation, by contrast, is ambiguous: ``{"fmi_path":
+    "value"}`` and ``{"fmi_pat": "hvalue"}`` would both serialize to
+    ``fmi_pathvalue``. The byte length (``len(s.encode("utf-8"))``), not the
+    Unicode code-point count, is used so the hash stays byte-identical across the
+    MSAL SDK family (Go/.NET/Java/JS) as they converge on this scheme.
     """
     if not data:
         return ""

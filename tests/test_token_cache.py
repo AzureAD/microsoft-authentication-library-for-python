@@ -575,8 +575,10 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
       3. SHA-256 hash
       4. Base64url encode (no padding), lowercased
 
-    The length prefixes make the serialization injective, so semantically
-    different component sets can never collide onto the same cache key.
+    The length prefixes make the *serialization* injective: distinct component
+    sets can never produce the same pre-hash string. (The final cache key is a
+    SHA-256 digest, so only a cryptographically negligible hash collision
+    remains possible.)
 
     NOTE: This is the encoding the whole MSAL SDK family is converging on
     (Go already merged it; .NET/Java/JS are landing the same change), so these
@@ -694,7 +696,10 @@ class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
 
 class TestExtCacheKeyCollisionResistance(unittest.TestCase):
     """The length-prefix ("netstring") serialization must be injective: no two
-    semantically different component sets may hash to the same cache key.
+    semantically different component sets may serialize to the same pre-hash
+    string. (The cache key itself is a SHA-256 digest, so the residual
+    collision risk is only the cryptographically negligible hash-layer one;
+    these tests pin the serialization layer that we control.)
 
     A plain ``key + value`` concatenation (the old scheme) is ambiguous and
     caused cache-slot collisions -- one FMI/agent-identity token entry could
