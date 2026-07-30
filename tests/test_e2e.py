@@ -483,7 +483,11 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         require HTTP 200. Acquiring the token is not enough - a resource only
         honors it when the binding certificate is on the TLS handshake and the
         auth scheme is ``mtls_pop``; a 401/403 means the binding was lost, i.e. a
-        real regression rather than a transient failure. Reused by the FIC e2e.
+        real regression rather than a transient failure.
+
+        Shared test infrastructure: the FIC two-leg e2e in PR #939 reuses this
+        as-is (please do not inline it), which is why it takes an explicit
+        ``cert_credential`` rather than reading ``self.app``'s certificate.
         """
         from msal.application import _load_mtls_cert_material
         from msal.mtls import _create_ssl_context, _make_mtls_adapter
