@@ -1059,7 +1059,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             http_cache=self._http_cache,
             default_throttle_time=5,
             )
-        # Vanilla SN/I: the TLS certificate alone authenticates the client.
+        # Vanilla SN/I: the TLS certificate alone authenticates the client, so
+        # this mTLS path sends NO signed client_assertion. (The classic, non-mTLS
+        # certificate path still signs a private_key_jwt client_assertion; only
+        # mTLS PoP replaces that assertion with the mutual-TLS handshake.)
         client = _MtlsClient(
             configuration,
             self.client_id,
