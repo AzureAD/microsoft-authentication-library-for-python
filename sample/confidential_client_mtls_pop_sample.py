@@ -53,11 +53,12 @@ def _build_cert_credential():
 def _print_result_summary(result, header):
     """Print a *log-safe* summary of an MSAL token ``result``.
 
-    We deliberately never log the ``result`` dict, nor any value read out of it,
-    because on success it carries an ``access_token`` (and, for mTLS PoP, binding
-    material). Logging token responses is exactly the habit a security library
-    should not model. Instead we surface only booleans derived via comparison,
-    which reveal the *shape* of the response without leaking its contents.
+    The sensitive part of ``result`` is the ``access_token`` (a PoP/bearer
+    secret) - that is what we must never log. The ``binding_certificate`` is the
+    certificate's PUBLIC material (x5c + thumbprint), not a secret, so it is safe
+    to inspect. We still avoid dumping the whole ``result`` dict and instead
+    surface only a few derived booleans/fields, to model the habit of not
+    routinely logging token responses.
 
     On success the interesting (non-sensitive) fields are::
 

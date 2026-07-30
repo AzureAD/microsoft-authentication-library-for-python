@@ -1104,7 +1104,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if self._mtls_is_fic_leg2:  # FIC leg 2: assertion carried as jwt-pop
             client_assertion = self.client_credential["client_assertion"]
             client_assertion_type = Client.CLIENT_ASSERTION_TYPE_JWT_POP
-        else:  # Vanilla SN/I: the TLS certificate alone authenticates the client
+        else:
+            # Vanilla SN/I: the TLS certificate alone authenticates the client, so
+            # this mTLS path sends NO signed client_assertion. (The classic, non-mTLS
+            # certificate path still signs a private_key_jwt client_assertion; only
+            # mTLS PoP replaces that assertion with the mutual-TLS handshake.)
             client_assertion = None
             client_assertion_type = None
         client = _MtlsClient(

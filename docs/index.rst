@@ -198,10 +198,16 @@ Notes and requirements:
 * The ``authority`` must be **tenanted** (not ``/common`` or ``/organizations``).
 * MSAL must own the TLS transport, so a custom ``http_client`` is not supported
   together with ``mtls_proof_of_possession=True``.
+* ``azure_region`` is **optional**: omit it to use the global mTLS endpoint
+  (``mtlsauth.microsoft.com``); set it (e.g. ``westus3``) only to pin a region.
 * The existing SN/I + Bearer (client-assertion) flow is unchanged; the same
   certificate can be used either as an assertion signer (Bearer) or as the TLS
   client certificate (mtls_pop).
 * mTLS PoP currently targets the public and Azure Government (Arlington) clouds.
+* Only the mTLS-PoP path drops the signed ``client_assertion``: the certificate
+  authenticates the client through the mutual-TLS handshake instead. The classic
+  (non-mTLS) certificate path is unchanged and still sends a signed
+  ``client_assertion`` (``private_key_jwt``) to obtain an ordinary token.
 * For a Federated Identity Credential (FIC) exchange, configure the leg-2 client
   with both a ``client_assertion`` (the leg-1 token) and an
   ``mtls_binding_certificate`` sub-key; the leg-1 assertion is then sent as a
