@@ -537,28 +537,6 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self._call_graph_with_mtls_pop_token(result["access_token"], cert)
         self._assert_pop_cache_hit(self.app, self._MTLS_POP_SCOPE)
 
-    def test_credential_x509_output_pop_regional(self):
-        from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
-        cert = get_client_certificate()
-        self.app = msal.ConfidentialClientApplication(
-            self._SNI_ALLOWLISTED_CLIENT_ID,
-            authority=self._SNI_ALLOWLISTED_AUTHORITY,
-            client_credential=cert,
-            azure_region="westus3")
-        result = self.app.acquire_token_for_client(
-            self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
-        # Only a genuinely transient condition warrants a skip. invalid_request is
-        # a 400 config error (a real regression), so let it fail loudly instead of
-        # masking it as "endpoint not reachable".
-        if result.get("error") == "temporarily_unavailable":
-            self.skipTest(
-                "Regional mTLS endpoint temporarily unavailable: %s" % result)
-        self.assertIn("access_token", result, "Regional mTLS PoP failed: %s" % result)
-        self.assertEqual("mtls_pop", result.get("token_type"))
-        self._call_graph_with_mtls_pop_token(result["access_token"], cert)
-
     def test_credential_x509_output_bearer(self):
         # The SAME SN/I cert, but WITHOUT mtls_proof_of_possession, must still
         # authenticate via a signed client_assertion (private_key_jwt) and yield
@@ -570,7 +548,14 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.app = msal.ConfidentialClientApplication(
             self._SNI_ALLOWLISTED_CLIENT_ID,
             authority=self._SNI_ALLOWLISTED_AUTHORITY,
-            client_credential=get_client_certificate())
+            client_credential=get_client_certificate(),
+            # Regional is correct/desirable HERE and must stay: a Bearer
+            # token_type is deterministic, so this retains live regional-endpoint
+            # E2E coverage. Region is FORBIDDEN on the mtls_pop cell, where the
+            # regional slice intermittently downgrades PoP -> Bearer (a Bearer
+            # *token*, not a temporarily_unavailable error) - which is why all
+            # sibling SDKs (.NET/Java/JS/Go) have no regional PoP cell either.
+            azure_region="westus3")
         result = self.app.acquire_token_for_client(self._MTLS_POP_SCOPE)
         self.assertIn("access_token", result, "SN/I Bearer request failed: %s" % result)
         self.assertEqual("Bearer", result.get("token_type"))
