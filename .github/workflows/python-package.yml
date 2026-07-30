@@ -1,15 +1,15 @@
-# Build verification + unit tests for the msal Python package.
+# Build verification for the msal Python package.
 #
 # This workflow runs on every PR (against any target branch) to give contributors
-# fast feedback that the package still builds and that the unit tests pass across
-# all supported Python versions.
+# fast feedback that the package still builds and that the distribution metadata
+# passes `twine check`.
 #
-# Post-merge validation on dev, E2E tests, benchmarks, SDL scans, and PyPI
-# publishing are NOT run here. Those run in the ADO pipelines:
-#   - azure-pipelines.yml             (PRs + pushes to dev: unit + E2E + SDL)
+# Unit tests, E2E tests, benchmarks, SDL scans, and PyPI publishing are NOT run
+# here. Those run in the IDDP/ADO pipelines:
+#   - azure-pipelines.yml             (PRs + pushes: unit + E2E + benchmarks + SDL)
 #   - .Pipelines/pipeline-publish.yml (manual release to TestPyPI / PyPI)
 
-name: Build and Unit Tests
+name: Build
 
 on:
   pull_request:
@@ -43,39 +43,3 @@ jobs:
         name: dist
         path: dist/
         retention-days: 7
-
-  ci:
-    name: Unit tests Python ${{ matrix.python-version }}
-    permissions:
-      contents: read
-
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
-
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      # It automatically takes care of pip cache, according to
-      # https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#about-caching-workflow-dependencies
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-    - name: Run unit tests
-      # Skip benchmarks and E2E tests — those require lab credentials and run in ADO.
-      run: |
-        pytest tests/ \
-          --benchmark-skip \
-          --ignore=tests/test_e2e.py \
-          --ignore=tests/test_e2e_manual.py \
-          --ignore=tests/test_fmi_e2e.py

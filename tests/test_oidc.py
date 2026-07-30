@@ -80,16 +80,30 @@ class TestCsprngUsage(unittest.TestCase):
 class TestIdToken(unittest.TestCase):
     EXPIRED_ID_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJpc3N1ZXIiLCJpYXQiOjE3MDY1NzA3MzIsImV4cCI6MTY3NDk0ODMzMiwiYXVkIjoiZm9vIiwic3ViIjoic3ViamVjdCJ9.wyWNFxnE35SMP6FpxnWZmWQAy4KD0No_Q1rUy5bNnLs"
 
-    def test_id_token_should_tolerate_time_error(self):
-        self.assertEqual(oauth2cli.oidc.decode_id_token(self.EXPIRED_ID_TOKEN), {
-            "iss": "issuer",
-            "iat": 1706570732,
-            "exp": 1674948332,  # 2023-1-28
-            "aud": "foo",
-            "sub": "subject",
-            }, "id_token is decoded correctly, without raising exception")
+    _EXPECTED_CLAIMS = {
+        "iss": "issuer",
+        "iat": 1706570732,
+        "exp": 1674948332,  # 2023-1-28
+        "aud": "foo",
+        "sub": "subject",
+        }
 
-    def test_id_token_should_error_out_on_client_id_error(self):
-        with self.assertRaises(msal.IdTokenError):
-            oauth2cli.oidc.decode_id_token(self.EXPIRED_ID_TOKEN, client_id="not foo")
+    def test_decode_id_token_is_deprecated_but_still_tolerates_time_error(self):
+        with self.assertWarns(DeprecationWarning):
+            claims = oauth2cli.oidc.decode_id_token(self.EXPIRED_ID_TOKEN)
+        self.assertEqual(claims, self._EXPECTED_CLAIMS,
+            "id_token is decoded correctly, without raising exception")
+
+    def test_deprecated_decode_id_token_should_error_out_on_client_id_error(self):
+        with self.assertWarns(DeprecationWarning):
+            with self.assertRaises(msal.IdTokenError):
+                oauth2cli.oidc.decode_id_token(
+                    self.EXPIRED_ID_TOKEN, client_id="not foo")
+
+    def test_internal_decoder_does_not_validate_the_id_token(self):
+        # https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/911
+        # The SDK must not perform any ID token validation on retrieval.
+        # This expired token, decoded via the internal helper, must not raise.
+        claims = oauth2cli.oidc._decode_id_token_claims(self.EXPIRED_ID_TOKEN)
+        self.assertEqual(claims, self._EXPECTED_CLAIMS)
 

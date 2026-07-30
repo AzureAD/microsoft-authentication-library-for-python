@@ -302,6 +302,32 @@ class AppServiceTestCase(ClientTestCase):
                 headers={'X-IDENTITY-HEADER': 'foo', 'Metadata': 'true'},
                 )
 
+    def test_past_expires_on_should_not_be_cached_long(self):
+        # Regression test: a Managed Identity endpoint returning a PAST "expires_on"
+        # timestamp must NOT result in a long-lived cached token. MSAL Python computes
+        # expires_in = expires_on - now; a past timestamp yields a non-positive lifetime,
+        # so any cached entry is immediately treated as expired and not served from cache.
+        past_expires_on = int(time.time()) - 3600  # 1 hour in the past
+        with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
+            status_code=200,
+            text='{"access_token": "AT", "expires_on": "%s", "resource": "R"}' % past_expires_on,
+        )) as mocked_method:
+            first = self.app.acquire_token_for_client(resource="R")
+            # Must not be inflated into a huge positive lifetime (a past absolute epoch
+            # value must never be treated as a relative "seconds from now").
+            self.assertLessEqual(
+                first["expires_in"], 0,
+                "A past expires_on must yield a non-positive expires_in, not an inflated lifetime")
+            # A subsequent acquisition must re-hit the endpoint, proving the past-dated
+            # token is treated as already expired and is not served from the cache.
+            second = self.app.acquire_token_for_client(resource="R")
+            self.assertEqual(
+                "identity_provider", second["token_source"],
+                "A token minted from a past expires_on must not be served from cache")
+            self.assertEqual(
+                2, mocked_method.call_count,
+                "Second acquisition should re-call the MI endpoint, not reuse a stale cache entry")
+
 
 @patch.dict(os.environ, {"MSI_ENDPOINT": "http://localhost", "MSI_SECRET": "foo"})
 class MachineLearningTestCase(ClientTestCase):
