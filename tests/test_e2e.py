@@ -570,7 +570,12 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         result = self.app.acquire_token_for_client(self._MTLS_POP_SCOPE)
         self.assertIn("access_token", result, "SN/I Bearer request failed: %s" % result)
         self.assertEqual("Bearer", result.get("token_type"))
+        # Prove the cert binding is genuinely ABSENT, not merely that we skipped
+        # the flag. MSAL Python adds binding_certificate ONLY on the mtls_pop
+        # path, so assert both the SDK-internal contract (key omitted entirely)
+        # and the caller-visible one (a lookup yields None) - no cert is bound.
         self.assertNotIn("binding_certificate", result)
+        self.assertIsNone(result.get("binding_certificate"))
         self.assertCacheWorksForApp(result, self._MTLS_POP_SCOPE)
 
 
