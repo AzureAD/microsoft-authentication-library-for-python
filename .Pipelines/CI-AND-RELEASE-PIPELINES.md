@@ -26,10 +26,10 @@ including what each pipeline does, when it runs, and how to trigger a release.
 | Push / merge | `dev` |
 | Scheduled | Daily at 11:45 PM Pacific, `dev` branch (only when there are new changes) |
 
-Fast unit-test feedback for PRs targeting **other** branches (e.g. `release-x.y.z`)
-is provided separately by the GitHub Actions workflow
+Package build verification for PRs targeting any branch is provided separately
+by the GitHub Actions workflow
 [`.github/workflows/python-package.yml`](../.github/workflows/python-package.yml),
-which runs the package build and unit tests on every PR.
+which builds the package and runs `twine check` on every PR.
 
 ### Stages
 
