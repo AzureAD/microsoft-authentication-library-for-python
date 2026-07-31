@@ -1225,6 +1225,17 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 client = self._mtls_bearer_client
         return client
 
+    def _client_for_confidential_request(self):
+        """Pick the OAuth2 client for a confidential-client user flow (OBO,
+        refresh-token, auth-code): the Bearer-over-mTLS client when the
+        app-level send_certificate_over_mtls flag is set, else the regular
+        client. (Client-credentials routing lives in _acquire_token_for_client,
+        which additionally honors a per-request mtls_pop that wins over the flag.)
+        """
+        if self._send_certificate_over_mtls:
+            return self._get_mtls_bearer_client(self.authority)
+        return self.client
+
     def _build_client(self, client_credential, authority, skip_regional_client=False):
         client_assertion = None
         client_assertion_type = None
@@ -1683,7 +1694,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)
             _data = kwargs.pop("data", {})
             _stash_client_claims(forwarded_client_claims, _data)
-            response = _clean_up(self.client.obtain_token_by_authorization_code(
+            response = _clean_up(self._client_for_confidential_request().obtain_token_by_authorization_code(
                 code, redirect_uri=redirect_uri,
                 scope=self._decorate_scope(scopes),
                 headers=telemetry_context.generate_headers(),
@@ -2312,7 +2323,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_BY_REFRESH_TOKEN,
             refresh_reason=msal.telemetry.FORCE_REFRESH)
-        response = _clean_up(self.client.obtain_token_by_refresh_token(
+        response = _clean_up(self._client_for_confidential_request().obtain_token_by_refresh_token(
             refresh_token,
             scope=self._decorate_scope(scopes),
             headers=telemetry_context.generate_headers(),
@@ -3166,7 +3177,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         _data = kwargs.pop("data", {})
         _stash_client_claims(forwarded_client_claims, _data)
         # The implementation is NOT based on Token Exchange (RFC 8693)
-        response = _clean_up(self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
+        response = _clean_up(self._client_for_confidential_request().obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
             self.client.GRANT_TYPE_JWT,  # IDTs and AAD ATs are all JWTs
             scope=self._decorate_scope(scopes),  # Decoration is used for:

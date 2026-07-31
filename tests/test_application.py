@@ -2303,3 +2303,84 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         self.assertNotIn("client_assertion", req["data"])
         self.assertEqual("mtls_pop", result.get("token_type"))
         self.assertTrue(result.get("binding_certificate"))
+
+    # --- C. User flows (OBO / refresh / auth-code) --------------------------
+    def _capturing_post_full(self, captured):
+        # A capturing post that returns a full user-token response (AT +
+        # id_token + client_info), needed by flows that create an account.
+        def mock_post(url, headers=None, data=None, *a, **k):
+            captured.append({
+                "url": url, "data": dict(data or {}), "headers": dict(headers or {})})
+            return MinimalResponse(status_code=200, text=_build_user_token_response())
+        return mock_post
+
+    def test_obo_flag_uses_global_mtls_and_obo_grant(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        captured = []
+        app.acquire_token_on_behalf_of(
+            "a_user_assertion", ["s1"], post=self._capturing_post(captured))
+        req = captured[0]
+        self.assertEqual(
+            req["url"],
+            "https://mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
+        self.assertEqual("on_behalf_of", req["data"].get("requested_token_use"))
+        self.assertTrue(req["data"].get("client_assertion"))
+        self.assertEqual(_JWT_BEARER, req["data"].get("client_assertion_type"))
+        self.assertNotEqual("mtls_pop", req["data"].get("token_type"))
+        self.assertNotIn("key_id", req["data"])
+
+    def test_obo_flag_with_region_uses_regional_mtls(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, azure_region="westus3",
+            client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        captured = []
+        app.acquire_token_on_behalf_of(
+            "a_user_assertion", ["s1"], post=self._capturing_post(captured))
+        self.assertEqual(
+            captured[0]["url"],
+            "https://westus3.mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
+
+    def test_refresh_flag_uses_global_mtls_and_refresh_grant(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        captured = []
+        app.acquire_token_by_refresh_token(
+            "a_rt", ["s1"], post=self._capturing_post(captured))
+        req = captured[0]
+        self.assertEqual(
+            req["url"],
+            "https://mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
+        self.assertEqual("refresh_token", req["data"].get("grant_type"))
+        self.assertTrue(req["data"].get("client_assertion"))
+        self.assertNotEqual("mtls_pop", req["data"].get("token_type"))
+
+    def test_auth_code_flag_uses_global_mtls_and_auth_code_grant(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        captured = []
+        app.acquire_token_by_authorization_code(
+            "a_code", ["s1"], post=self._capturing_post_full(captured))
+        req = captured[0]
+        self.assertEqual(
+            req["url"],
+            "https://mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
+        self.assertEqual("authorization_code", req["data"].get("grant_type"))
+        self.assertTrue(req["data"].get("client_assertion"))
+        self.assertNotEqual("mtls_pop", req["data"].get("token_type"))
+
+    def test_obo_without_flag_uses_regular_login_endpoint(self):
+        # Negative control: without the app-level flag, OBO stays on the
+        # regular login.* endpoint (no mTLS routing).
+        app = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
+        captured = []
+        app.acquire_token_on_behalf_of(
+            "a_user_assertion", ["s1"], post=self._capturing_post(captured))
+        self.assertEqual(
+            captured[0]["url"],
+            "https://login.microsoftonline.com/my_tenant/oauth2/v2.0/token")
