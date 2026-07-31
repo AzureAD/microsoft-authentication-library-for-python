@@ -2384,3 +2384,30 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         self.assertEqual(
             captured[0]["url"],
             "https://login.microsoftonline.com/my_tenant/oauth2/v2.0/token")
+
+    def test_cc_second_call_is_bearer_cache_hit(self):
+        # Regression (mirrors .NET MtlsBearerUserFlowTests' 2nd-call test,
+        # adapted to msal-python's cache seam): a 2nd Bearer-over-mTLS call is
+        # served from cache with no 2nd network round-trip and no crash on
+        # region/instance-metadata resolution. In .NET the crash arises because
+        # the AT is cached under the mtlsauth.* host and instance discovery
+        # rejects that host. msal-python decouples the cache/metadata authority
+        # (login.*, where this plain Bearer AT lives) from the transport
+        # endpoint (mtlsauth.*), so the 2nd lookup resolves login.* -- the
+        # normal, always-safe path -- and returns the cached plain Bearer AT
+        # (NOT cert-bound). Only client-credentials auto-serves from cache in
+        # msal-python (OBO/refresh/auth-code have no silent-first lookup), so CC
+        # is the flow that exercises this regression.
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        first = app.acquire_token_for_client(
+            ["s1"], post=self._capturing_post([]))
+        self.assertEqual("Bearer", first.get("token_type"))
+        second = []
+        result = app.acquire_token_for_client(
+            ["s1"], post=self._capturing_post(second))
+        self.assertEqual([], second, "Second call must be served from cache")
+        self.assertEqual(app._TOKEN_SOURCE_CACHE, result[app._TOKEN_SOURCE])
+        self.assertEqual("Bearer", result.get("token_type"))
+        self.assertNotIn("binding_certificate", result)
