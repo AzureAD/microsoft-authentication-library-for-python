@@ -545,6 +545,33 @@ class ClientApplication(object):
                 If your .pfx file contains both the private key and public cert,
                 you can opt in for Subject Name/Issuer Auth by setting "public_certificate" to ``True``.
 
+            .. admonition:: Sending the certificate over mTLS for a Bearer token
+
+                A certificate credential can additionally opt in to
+                **Bearer-over-mTLS**: MSAL presents the certificate as the client
+                certificate on the mutual-TLS (mTLS) handshake to Microsoft
+                Entra's mTLS endpoint, but requests an ordinary, *non-cert-bound*
+                Bearer access token (contrast ``mtls_proof_of_possession``, which
+                binds the token). Set ``send_certificate_over_mtls`` to ``True``
+                on the certificate credential dictionary::
+
+                    {
+                        "private_key_pfx_path": "/path/to/your.pfx",
+                        "public_certificate": True,
+                        "send_certificate_over_mtls": True,
+                    }
+
+                It applies to every confidential-client flow
+                (:func:`~acquire_token_for_client`,
+                :func:`~acquire_token_on_behalf_of`,
+                :func:`~acquire_token_by_authorization_code`, and
+                :func:`~acquire_token_by_refresh_token`), defaults to ``False``
+                (so leaving it unset changes no behavior), and requires a
+                certificate credential -- otherwise construction raises
+                ``ValueError``. A per-request ``mtls_proof_of_possession=True`` on
+                :func:`~acquire_token_for_client` always takes precedence, yielding
+                a cert-bound ``mtls_pop`` token instead of a Bearer one.
+
         :type client_credential: Union[dict, str, None]
 
         :param dict client_claims:
