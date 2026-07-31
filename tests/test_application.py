@@ -2175,3 +2175,131 @@ class TestMtlsProofOfPossessionUntenantedAuthority(unittest.TestCase):
             authority="https://login.microsoftonline.com/common")
         with self.assertRaises(ValueError):
             app.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
+
+
+_MTLS_CERT_CRED_NO_X5C = {  # A cert cred that does NOT opt into public_certificate
+    "private_key_pfx_path": _MTLS_PFX,
+    "passphrase": "password",
+}
+
+
+def _jwt_header_of(assertion):
+    """Decode the (unverified) JOSE header of a compact-serialized JWT."""
+    if isinstance(assertion, bytes):  # create_normal_assertion returns bytes
+        assertion = assertion.decode("ascii")
+    header_b64 = assertion.split(".")[0]
+    header_b64 += "=" * (-len(header_b64) % 4)  # Restore base64url padding
+    return json.loads(base64.urlsafe_b64decode(header_b64))
+
+
+@patch(_OIDC_DISCOVERY, new=_MTLS_OIDC_MOCK)
+class TestSendCertificateOverMtls(unittest.TestCase):
+    """Bearer-over-mTLS: present the SN/I cert as the client TLS cert on the
+    handshake to the mTLS endpoint, but receive a *plain Bearer* token (the
+    token is NOT cert-bound). Distinct from mtls_pop (which binds the token and
+    fences the cache entry by key_id) and from the classic private_key_jwt
+    Bearer path (which never puts the cert on the TLS handshake)."""
+
+    _AUTHORITY = "https://login.microsoftonline.com/my_tenant"
+
+    def _capturing_post(self, captured, token_type="Bearer"):
+        def mock_post(url, headers=None, data=None, *a, **k):
+            captured.append({
+                "url": url, "data": dict(data or {}), "headers": dict(headers or {})})
+            return MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "an_at", "expires_in": 3600, "token_type": token_type}))
+        return mock_post
+
+    # --- A. Config / builder -------------------------------------------------
+    def test_flag_defaults_false(self):
+        app = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
+        self.assertFalse(app._send_certificate_over_mtls)
+
+    def test_flag_stored_true_on_cert_credential(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        self.assertTrue(app._send_certificate_over_mtls)
+
+    def test_flag_with_non_cert_credential_raises_at_construction(self):
+        with self.assertRaises(ValueError) as ctx:
+            ConfidentialClientApplication(
+                "cid", authority=self._AUTHORITY,
+                client_credential={
+                    "client_assertion": "a.static.jwt",
+                    "send_certificate_over_mtls": True})
+        self.assertIn("send_certificate_over_mtls", str(ctx.exception))
+
+    # --- B. Client-credentials behavior -------------------------------------
+    def test_cc_flag_no_region_uses_global_mtls_and_returns_bearer(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        captured = []
+        result = app.acquire_token_for_client(
+            ["s1"], post=self._capturing_post(captured))
+        req = captured[0]
+        # Routed to the GLOBAL mtls host (login.* -> mtlsauth.*)
+        self.assertEqual(
+            req["url"],
+            "https://mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
+        # Body: signed private_key_jwt client_assertion is present ...
+        self.assertTrue(req["data"].get("client_assertion"))
+        self.assertEqual(_JWT_BEARER, req["data"].get("client_assertion_type"))
+        # ... but NONE of the PoP wire markers
+        self.assertNotEqual("mtls_pop", req["data"].get("token_type"))
+        self.assertNotIn("req_cnf", req["data"])
+        self.assertNotIn("key_id", req["data"])
+        # Result is a plain Bearer token, NOT cert-bound
+        self.assertEqual("Bearer", result.get("token_type"))
+        self.assertNotIn("binding_certificate", result)
+
+    def test_cc_x5c_is_forced_on_assertion(self):
+        # Bearer-over-mTLS forces the x5c chain onto the assertion header even
+        # when public_certificate was NOT opted into; the regular (no-flag)
+        # path with the same cred omits it. That contrast proves "forced".
+        forced = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED_NO_X5C, send_certificate_over_mtls=True))
+        captured = []
+        forced.acquire_token_for_client(["s1"], post=self._capturing_post(captured))
+        self.assertIn(
+            "x5c", _jwt_header_of(captured[0]["data"]["client_assertion"]),
+            "Bearer-over-mTLS must force x5c onto the assertion header")
+
+        plain = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED_NO_X5C, authority=self._AUTHORITY)
+        plain_captured = []
+        plain.acquire_token_for_client(["s1"], post=self._capturing_post(plain_captured))
+        self.assertNotIn(
+            "x5c", _jwt_header_of(plain_captured[0]["data"]["client_assertion"]),
+            "The no-flag path must NOT force x5c (contrast)")
+
+    def test_cc_flag_with_region_uses_regional_mtls(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, azure_region="westus3",
+            client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        captured = []
+        app.acquire_token_for_client(["s1"], post=self._capturing_post(captured))
+        self.assertEqual(
+            captured[0]["url"],
+            "https://westus3.mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
+
+    def test_cc_per_request_mtls_pop_wins_over_flag(self):
+        # Precedence: a per-request mtls_proof_of_possession=True ALWAYS wins
+        # over the app-level Bearer-over-mTLS flag.
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        captured = []
+        result = app.acquire_token_for_client(
+            ["s1"], mtls_proof_of_possession=True,
+            post=self._capturing_post(captured, token_type="mtls_pop"))
+        req = captured[0]
+        self.assertEqual("mtls_pop", req["data"].get("token_type"))
+        # The mtls_pop path is vanilla SN/I: no signed assertion on the wire
+        self.assertNotIn("client_assertion", req["data"])
+        self.assertEqual("mtls_pop", result.get("token_type"))
+        self.assertTrue(result.get("binding_certificate"))
