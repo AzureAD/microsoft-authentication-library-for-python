@@ -567,6 +567,105 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertIsNone(result.get("binding_certificate"))
         self.assertCacheWorksForApp(result, self._MTLS_POP_SCOPE)
 
+    # ── Bearer-over-mTLS (send_certificate_over_mtls) ──────────────────────────
+    # Present the SN/I cert as the client TLS certificate ON the handshake to the
+    # mTLS endpoint, but receive a *plain Bearer* token (the cert authenticates
+    # the transport; the token is NOT cert-bound). Opt-in via the app-level
+    # client_credential flag send_certificate_over_mtls=True. Distinct from the
+    # two cells above: mtls_pop BINDS the token; the classic X509 Bearer cell
+    # signs a private_key_jwt to the REGULAR login.* endpoint (cert never on the
+    # TLS handshake). Ports MSAL .NET CertificateOptions.SendCertificateOverMtls.
+    def test_credential_x509_send_certificate_over_mtls_output_bearer(self):
+        # LIVE client-credentials acquisition, allow-listed (mirrors the MSAL
+        # .NET live CC cell: westus3 + the Key Vault resource). Proves the cert
+        # goes on the TLS handshake to mtlsauth.* yet ESTS returns a plain Bearer.
+        from tests.lab_config import get_client_certificate
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
+        scope = ["https://vault.azure.net/.default"]
+        self.app = msal.ConfidentialClientApplication(
+            self._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=self._SNI_ALLOWLISTED_AUTHORITY,
+            azure_region="westus3",
+            client_credential=dict(
+                get_client_certificate(), send_certificate_over_mtls=True))
+        result = self.app.acquire_token_for_client(scope)
+        self.assertIn(
+            "access_token", result,
+            "Bearer-over-mTLS request failed: %s" % result)
+        # A PLAIN Bearer token, NOT cert-bound (contrast the mtls_pop cell).
+        self.assertEqual("Bearer", result.get("token_type"))
+        self.assertNotIn("binding_certificate", result)
+        self.assertIsNone(result.get("binding_certificate"))
+        # The AT is an ordinary Bearer entry (no key_id/thumbprint fence), so a
+        # normal flagless acquire_token_for_client lookup returns it from cache
+        # -- the caller-visible proof of the feature's goal. (mtls_pop needed the
+        # special _assert_pop_cache_hit because its AT is key-id-fenced; Bearer-
+        # over-mTLS deliberately is not.)
+        self.assertCacheWorksForApp(result, scope)
+
+    def test_send_certificate_over_mtls_user_flows_capture_request(self):
+        # The allow-listed app is entitled to Bearer-over-mTLS for
+        # client-credentials only; the OBO/refresh/auth-code apps are not
+        # mTLS-enabled server-side (AADSTS700027 / AADSTS392189), exactly as
+        # MSAL .NET [Ignore]s those live. So prove MSAL builds the correct wire
+        # request for every confidential user flow -- the mtlsauth endpoint + a
+        # private_key_jwt client_assertion + the flow's own grant, with none of
+        # the mtls_pop markers -- by capturing the outgoing POST over the REAL
+        # lab SN/I certificate, without needing those apps allow-listed.
+        from tests.lab_config import get_client_certificate
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
+        cred = dict(
+            get_client_certificate(), send_certificate_over_mtls=True)
+        def _capture(sink):
+            def post(url, headers=None, data=None, *a, **k):
+                sink.append({"url": url, "data": dict(data or {})})
+                return MinimalResponse(status_code=400, text=json.dumps({
+                    "error": "invalid_grant",
+                    "error_description": "request captured; live acquisition "
+                        "not required for this app"}))
+            return post
+        def _new_app():
+            return msal.ConfidentialClientApplication(
+                self._SNI_ALLOWLISTED_CLIENT_ID,
+                authority=self._SNI_ALLOWLISTED_AUTHORITY,
+                client_credential=cred)
+        scope = ["https://graph.microsoft.com/.default"]
+        def _assert_mtls(req, grant_key, grant_value):
+            self.assertTrue(
+                req["url"].startswith("https://mtlsauth.microsoft.com/"),
+                "Expected the mTLS endpoint, got %s" % req["url"])
+            self.assertEqual(grant_value, req["data"].get(grant_key))
+            self.assertTrue(req["data"].get("client_assertion"))
+            self.assertNotEqual("mtls_pop", req["data"].get("token_type"))
+            self.assertNotIn("key_id", req["data"])
+            self.assertNotIn("req_cnf", req["data"])
+        cap = []
+        _new_app().acquire_token_on_behalf_of(
+            "a_user_assertion", scope, post=_capture(cap))
+        _assert_mtls(cap[0], "requested_token_use", "on_behalf_of")
+        cap = []
+        _new_app().acquire_token_by_refresh_token(
+            "a_refresh_token", scope, post=_capture(cap))
+        _assert_mtls(cap[0], "grant_type", "refresh_token")
+        cap = []
+        _new_app().acquire_token_by_authorization_code(
+            "an_auth_code", scope, post=_capture(cap))
+        _assert_mtls(cap[0], "grant_type", "authorization_code")
+
+    def test_send_certificate_over_mtls_user_flows_live_acquire(self):
+        # Live OBO/refresh acquisition with Bearer-over-mTLS is pending the
+        # downstream apps being mTLS-enabled server-side; today ESTS rejects it
+        # (AADSTS700027 / AADSTS392189) -- the same class of block as the FIC
+        # leg-1 gate (AADSTS51000) and MSAL .NET's [Ignore]'d live user-flow
+        # cells. Kept as an explicit, self-documenting gate that flips to a real
+        # acquisition once the apps are enabled; the request shape is already
+        # proven by test_send_certificate_over_mtls_user_flows_capture_request.
+        self.skipTest(
+            "pending app mTLS-enablement for OBO/refresh Bearer-over-mTLS "
+            "(AADSTS700027 / AADSTS392189)")
+
 
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
     @classmethod
