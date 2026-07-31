@@ -2408,6 +2408,19 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         result = app.acquire_token_for_client(
             ["s1"], post=self._capturing_post(second))
         self.assertEqual([], second, "Second call must be served from cache")
+        # result1 == result2: the SAME cached AT is returned on the 2nd call.
+        self.assertEqual(first.get("access_token"), result.get("access_token"))
+        # Env-lock (hardens Option B, per the cross-SDK 2nd-call finding): the
+        # plain Bearer AT is cached under the ORIGINAL login.* host, NEVER the
+        # rewritten mtlsauth.* endpoint. This is the assertion that would fail if
+        # anyone re-cached under mtlsauth.* (Option A) -- which would silently
+        # break the login.*-keyed lookup that served the 2nd call above.
+        at_entries = list(app.token_cache.search(
+            msal.TokenCache.CredentialType.ACCESS_TOKEN, query={}))
+        self.assertEqual(1, len(at_entries), "exactly one plain Bearer AT cached")
+        cached_env = at_entries[0].get("environment")
+        self.assertEqual("login.microsoftonline.com", cached_env)
+        self.assertNotIn("mtlsauth", cached_env or "")
         self.assertEqual(app._TOKEN_SOURCE_CACHE, result[app._TOKEN_SOURCE])
         self.assertEqual("Bearer", result.get("token_type"))
         self.assertNotIn("binding_certificate", result)
