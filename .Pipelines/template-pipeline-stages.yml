@@ -124,6 +124,7 @@ stages:
           --ignore=tests/test_e2e.py \
           --ignore=tests/test_e2e_manual.py \
           --ignore=tests/test_fmi_e2e.py \
+          --ignore=tests/test_mi_e2e.py \
           --deselect tests/test_cryptography.py::CryptographyTestCase::test_ceiling_should_be_latest_cryptography_version_plus_three \
           --deselect tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography \
           2>&1 | tee test-results/pytest-unit.log
@@ -276,3 +277,121 @@ stages:
     - bash: rm -f "$(Agent.TempDirectory)/lab-auth.pfx"
       displayName: 'Remove lab certificate from agent'
       condition: always()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 4 - MI E2E (IMDS) - REAL managed identity token acquisition on an Azure VM.
+#           Runs on the self-hosted "MISEManagedIdentity" pool, a Windows Azure VM
+#           that has the lab system-assigned + user-assigned identities assigned.
+#           Mirrors the MSAL Go "MI E2E - IMDS" stage. Only the IMDS cases in
+#           tests/test_mi_e2e.py run here (gated on MSAL_TEST_MI_IMDS); the Arc case
+#           self-skips. No lab certificate is needed - the VM's own managed identity
+#           is used.
+#
+#           Pool assumptions (self-hosted): Python 3.x on PATH and outbound access to
+#           PyPI for "pip install". Adjust if the pool differs.
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: MIE2EImds
+  displayName: 'MI E2E - IMDS'
+  dependsOn: UnitTests
+  condition: eq(dependencies.UnitTests.result, 'Succeeded')
+  jobs:
+  - job: Pytest
+    displayName: 'Managed Identity E2E - VM / IMDS'
+    pool:
+      type: windows
+      isCustom: true
+      name: MISEManagedIdentity
+    timeoutInMinutes: 30
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Install Python dependencies'
+      inputs:
+        targetType: 'inline'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+        script: |
+          python --version
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest pytest-azurepipelines pytest-timeout
+
+    - task: PowerShell@2
+      displayName: 'Run pytest (MI E2E - IMDS)'
+      inputs:
+        targetType: 'inline'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+        script: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path test-results | Out-Null
+          python -m pytest -vv --timeout=300 --junitxml=test-results/junit-mi-e2e-imds.xml tests/test_mi_e2e.py
+      env:
+        PYTHONUNBUFFERED: '1'
+        MSAL_TEST_MI_IMDS: '1'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish MI E2E (IMDS) test results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results/junit-mi-e2e-imds.xml'
+        failTaskOnFailedTests: true
+        testRunTitle: 'MI E2E - IMDS'
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 5 - MI E2E (Azure Arc) - REAL managed identity token acquisition on an
+#           Azure Arc-enabled machine. Runs on the self-hosted "MISEAZUREARC" pool.
+#           Azure Arc supports the system-assigned identity only. Mirrors the MSAL Go
+#           "MI E2E - Azure Arc" stage. tests/test_mi_e2e.py's Arc case runs here; the
+#           IMDS cases self-skip (MSAL_TEST_MI_IMDS unset).
+#
+#           Pool note: as observed for MSAL Go, the Arc machine's egress inspection can
+#           reset TLS for package downloads. If "pip install" cannot reach PyPI, pre-provision
+#           the dependencies on the pool (or use an offline wheel cache) and drop the install step.
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: MIE2EAzureArc
+  displayName: 'MI E2E - Azure Arc'
+  dependsOn: UnitTests
+  condition: eq(dependencies.UnitTests.result, 'Succeeded')
+  jobs:
+  - job: Pytest
+    displayName: 'Managed Identity E2E - Azure Arc'
+    pool:
+      type: windows
+      isCustom: true
+      name: MISEAZUREARC
+    timeoutInMinutes: 30
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Install Python dependencies'
+      inputs:
+        targetType: 'inline'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+        script: |
+          python --version
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest pytest-azurepipelines pytest-timeout
+
+    - task: PowerShell@2
+      displayName: 'Run pytest (MI E2E - Azure Arc)'
+      inputs:
+        targetType: 'inline'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+        script: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path test-results | Out-Null
+          python -m pytest -vv --timeout=300 --junitxml=test-results/junit-mi-e2e-arc.xml tests/test_mi_e2e.py
+      env:
+        PYTHONUNBUFFERED: '1'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish MI E2E (Azure Arc) test results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results/junit-mi-e2e-arc.xml'
+        failTaskOnFailedTests: true
+        testRunTitle: 'MI E2E - Azure Arc'
