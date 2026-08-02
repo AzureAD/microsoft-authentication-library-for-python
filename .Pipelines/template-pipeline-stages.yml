@@ -305,17 +305,9 @@ stages:
     variables:
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
     steps:
-    - task: PowerShell@2
-      displayName: 'Install Python dependencies'
-      inputs:
-        targetType: 'inline'
-        workingDirectory: '$(System.DefaultWorkingDirectory)'
-        script: |
-          python --version
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pytest pytest-azurepipelines pytest-timeout
-
+    # msal + its dependencies (requests, cryptography, PyJWT) and pytest are PRE-PROVISIONED on the
+    # self-hosted pool (like the Go/.NET toolchains already are), so there is no runtime pip install.
+    # This also avoids the Arc pool's egress TLS inspection blocking files.pythonhosted.org.
     - task: PowerShell@2
       displayName: 'Run pytest (MI E2E - IMDS)'
       inputs:
@@ -323,8 +315,9 @@ stages:
         workingDirectory: '$(System.DefaultWorkingDirectory)'
         script: |
           $ErrorActionPreference = 'Stop'
+          python --version
           New-Item -ItemType Directory -Force -Path test-results | Out-Null
-          python -m pytest -vv --timeout=300 --junitxml=test-results/junit-mi-e2e-imds.xml tests/test_mi_e2e.py
+          python -m pytest -vv --junitxml=test-results/junit-mi-e2e-imds.xml tests/test_mi_e2e.py
       env:
         PYTHONUNBUFFERED: '1'
         MSAL_TEST_MI_IMDS: '1'
@@ -364,17 +357,9 @@ stages:
     variables:
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
     steps:
-    - task: PowerShell@2
-      displayName: 'Install Python dependencies'
-      inputs:
-        targetType: 'inline'
-        workingDirectory: '$(System.DefaultWorkingDirectory)'
-        script: |
-          python --version
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pytest pytest-azurepipelines pytest-timeout
-
+    # msal + its dependencies (requests, cryptography, PyJWT) and pytest are PRE-PROVISIONED on the
+    # self-hosted pool (like the Go/.NET toolchains already are), so there is no runtime pip install.
+    # This is required here because the Arc machine's egress TLS inspection blocks files.pythonhosted.org.
     - task: PowerShell@2
       displayName: 'Run pytest (MI E2E - Azure Arc)'
       inputs:
@@ -382,8 +367,9 @@ stages:
         workingDirectory: '$(System.DefaultWorkingDirectory)'
         script: |
           $ErrorActionPreference = 'Stop'
+          python --version
           New-Item -ItemType Directory -Force -Path test-results | Out-Null
-          python -m pytest -vv --timeout=300 --junitxml=test-results/junit-mi-e2e-arc.xml tests/test_mi_e2e.py
+          python -m pytest -vv --junitxml=test-results/junit-mi-e2e-arc.xml tests/test_mi_e2e.py
       env:
         PYTHONUNBUFFERED: '1'
 
