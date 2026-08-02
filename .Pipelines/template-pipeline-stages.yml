@@ -315,9 +315,16 @@ stages:
         workingDirectory: '$(System.DefaultWorkingDirectory)'
         script: |
           $ErrorActionPreference = 'Stop'
-          python --version
+          $py = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if (-not $py) {
+            $py = Get-ChildItem 'C:\Program Files\Python3*\python.exe','C:\Program Files (x86)\Python3*\python.exe','C:\Python3*\python.exe' -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $py) { throw 'Python not found on this agent. Install Python 3.x on the pool machine.' }
+          Write-Host "Using Python: $py"
+          & $py --version
           New-Item -ItemType Directory -Force -Path test-results | Out-Null
-          python -m pytest -vv --junitxml=test-results/junit-mi-e2e-imds.xml tests/test_mi_e2e.py
+          & $py -m pytest -vv --junitxml=test-results/junit-mi-e2e-imds.xml tests/test_mi_e2e.py
       env:
         PYTHONUNBUFFERED: '1'
         MSAL_TEST_MI_IMDS: '1'
@@ -367,9 +374,16 @@ stages:
         workingDirectory: '$(System.DefaultWorkingDirectory)'
         script: |
           $ErrorActionPreference = 'Stop'
-          python --version
+          $py = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if (-not $py) {
+            $py = Get-ChildItem 'C:\Program Files\Python3*\python.exe','C:\Program Files (x86)\Python3*\python.exe','C:\Python3*\python.exe' -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $py) { throw 'Python not found on this agent. Install Python 3.x on the pool machine.' }
+          Write-Host "Using Python: $py"
+          & $py --version
           New-Item -ItemType Directory -Force -Path test-results | Out-Null
-          python -m pytest -vv --junitxml=test-results/junit-mi-e2e-arc.xml tests/test_mi_e2e.py
+          & $py -m pytest -vv --junitxml=test-results/junit-mi-e2e-arc.xml tests/test_mi_e2e.py
       env:
         PYTHONUNBUFFERED: '1'
 
