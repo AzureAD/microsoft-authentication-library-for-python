@@ -293,7 +293,8 @@ stages:
 - stage: MIE2EImds
   displayName: 'MI E2E - IMDS'
   dependsOn: UnitTests
-  condition: eq(dependencies.UnitTests.result, 'Succeeded')
+  # Fork guard: never run untrusted forked-PR code on the self-hosted pool.
+  condition: and(eq(dependencies.UnitTests.result, 'Succeeded'), ne(variables['System.PullRequest.IsFork'], 'True'))
   jobs:
   - job: Pytest
     displayName: 'Managed Identity E2E - VM / IMDS'
@@ -352,7 +353,8 @@ stages:
 - stage: MIE2EAzureArc
   displayName: 'MI E2E - Azure Arc'
   dependsOn: UnitTests
-  condition: eq(dependencies.UnitTests.result, 'Succeeded')
+  # Fork guard: never run untrusted forked-PR code on the self-hosted pool.
+  condition: and(eq(dependencies.UnitTests.result, 'Succeeded'), ne(variables['System.PullRequest.IsFork'], 'True'))
   jobs:
   - job: Pytest
     displayName: 'Managed Identity E2E - Azure Arc'

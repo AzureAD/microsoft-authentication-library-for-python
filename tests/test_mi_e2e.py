@@ -18,6 +18,7 @@ lab configuration on the same machines.
 
 Everywhere else (hosted agents, local dev) the tests self-skip.
 """
+import hashlib
 import os
 import unittest
 
@@ -46,29 +47,51 @@ _UAMI_RESOURCE_ID = (
 )
 
 
+def _safe_error(result):
+    """Return a log-safe summary of a failed result.
+
+    Only the non-sensitive error fields are surfaced, so an assertion failure can
+    never spill an access token (or the whole result dict) into the CI logs.
+    """
+    return {
+        key: result[key]
+        for key in ("error", "error_description", "correlation_id")
+        if key in result
+    }
+
+
 def _acquire_token_twice_assert_caching(test, managed_identity):
     """Acquire an ARM token twice for the given managed identity and assert the first
     call reaches the identity provider while the second is served from the token cache.
 
     Shared by the IMDS and Azure Arc E2E tests, mirroring the Go helper of the same name.
     """
-    client = ManagedIdentityClient(managed_identity, http_client=requests.Session())
+    http_client = requests.Session()
+    client = ManagedIdentityClient(managed_identity, http_client=http_client)
+    try:
+        first = client.acquire_token_for_client(resource=_ARM_RESOURCE)
+        test.assertNotIn(
+            "error", first, "first acquisition failed: {}".format(_safe_error(first)))
+        test.assertIn("access_token", first)
+        test.assertEqual(
+            "identity_provider", first.get("token_source"),
+            "first call should reach the identity provider")
 
-    first = client.acquire_token_for_client(resource=_ARM_RESOURCE)
-    test.assertNotIn("error", first, "first acquisition failed: {}".format(first))
-    test.assertIn("access_token", first)
-    test.assertEqual(
-        "identity_provider", first.get("token_source"),
-        "first call should reach the identity provider")
-
-    second = client.acquire_token_for_client(resource=_ARM_RESOURCE)
-    test.assertNotIn("error", second, "second acquisition failed: {}".format(second))
-    test.assertEqual(
-        "cache", second.get("token_source"),
-        "second call should be served from the token cache")
-    test.assertEqual(
-        first["access_token"], second["access_token"],
-        "cached token should match the original token")
+        second = client.acquire_token_for_client(resource=_ARM_RESOURCE)
+        test.assertNotIn(
+            "error", second, "second acquisition failed: {}".format(_safe_error(second)))
+        test.assertIn("access_token", second)
+        test.assertEqual(
+            "cache", second.get("token_source"),
+            "second call should be served from the token cache")
+        # Compare tokens by SHA-256 digest so a mismatch never prints the actual
+        # token material into CI logs.
+        test.assertEqual(
+            hashlib.sha256(first["access_token"].encode("utf-8")).hexdigest(),
+            hashlib.sha256(second["access_token"].encode("utf-8")).hexdigest(),
+            "cached token should match the original token")
+    finally:
+        http_client.close()
 
 
 @unittest.skipUnless(
