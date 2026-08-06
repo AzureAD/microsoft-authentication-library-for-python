@@ -88,15 +88,22 @@ def _compute_ext_cache_key(data):
 
     Returns an empty string when *data* has no hashable fields.
 
-    The algorithm matches MSAL .NET's ``ComputeAccessTokenExtCacheKey``: sorted
-    key+value pairs are concatenated (no separators) and SHA256 hashed, then
-    base64url encoded. This keeps the hash byte-identical to MSAL .NET.
+    The algorithm uses a length-prefixed ("netstring") serialization matching
+    MSAL Go's ``CacheExtKeyGenerator``
+    (AzureAD/microsoft-authentication-library-for-go#629): for each key sorted
+    ascending, ``<byteLen(key)>:<key><byteLen(value)>:<value>`` is appended and
+    the parts concatenated, then SHA256 hashed and base64url (no padding)
+    encoded and lowercased.
 
-    MSAL Go's ``CacheExtKeyGenerator`` has since switched to a length-prefixed
-    encoding (AzureAD/microsoft-authentication-library-for-go#629) to make it
-    injective; Python deliberately tracks .NET instead, so these hashes are not
-    byte-identical to current Go. Caches are not shared across languages, so the
-    difference does not affect runtime correctness.
+    The length prefixes make the *serialization* injective: distinct component
+    sets can never produce the same pre-hash string, so they cannot collide at
+    the serialization layer. (The final cache key is still a SHA-256 digest, so
+    only a cryptographically negligible hash collision remains possible.) A plain
+    ``key + value`` concatenation, by contrast, is ambiguous: ``{"fmi_path":
+    "value"}`` and ``{"fmi_pat": "hvalue"}`` would both serialize to
+    ``fmi_pathvalue``. The byte length (``len(s.encode("utf-8"))``), not the
+    Unicode code-point count, is used so the hash stays byte-identical across the
+    MSAL SDK family (Go/.NET/Java/JS) as they converge on this scheme.
     """
     if not data:
         return ""
@@ -106,11 +113,13 @@ def _compute_ext_cache_key(data):
     }
     if not cache_components:
         return ""
-    # Sort keys, then concatenate key+value pairs with no separators. This
-    # matches MSAL .NET's ComputeAccessTokenExtCacheKey byte-for-byte. (See the
-    # docstring re: the Go #629 length-prefixed divergence.)
+    # Sort keys, then length-prefix each key and value so the serialization is
+    # injective (see docstring). Byte-identical to MSAL Go's netstring encoding.
     key_str = "".join(
-        k + cache_components[k] for k in sorted(cache_components.keys())
+        "{klen}:{k}{vlen}:{v}".format(
+            klen=len(k.encode("utf-8")), k=k,
+            vlen=len(cache_components[k].encode("utf-8")), v=cache_components[k])
+        for k in sorted(cache_components.keys())
     )
     hash_bytes = hashlib.sha256(key_str.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(hash_bytes).rstrip(b"=").decode("ascii").lower()
