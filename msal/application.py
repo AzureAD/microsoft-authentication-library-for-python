@@ -14,6 +14,7 @@ from .oauth2cli.oidc import decode_part
 from .authority import (
     Authority,
     WORLD_WIDE,
+    WELL_KNOWN_AUTHORITY_HOSTS,
     _get_instance_discovery_endpoint,
     _get_instance_discovery_host,
 )
@@ -31,6 +32,16 @@ from .oauth2cli.authcode import is_wsl
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
+
+
+def _validate_explicit_region(region, name):
+    if not _validate_region(region, source=name):
+        raise ValueError(
+            "Invalid {}={!r}. It must be a lowercase DNS label that starts "
+            "with a letter, contains only letters, digits, and internal "
+            "hyphens, and is at most 63 characters.".format(name, region))
+    return region
+
 
 def _init_broker(enable_pii_log):  # Make it a function to allow mocking
     from . import broker  # Trigger Broker's initialization, lazily
@@ -670,6 +681,13 @@ class ClientApplication(object):
         self.client_claims = client_claims
         self._client_capabilities = client_capabilities
         self._instance_discovery = instance_discovery
+        if isinstance(azure_region, str):
+            _validate_explicit_region(azure_region, "azure_region")
+        force_region = None
+        if azure_region is None and client_credential:
+            force_region = os.getenv("MSAL_FORCE_REGION")
+            if force_region is not None:
+                _validate_explicit_region(force_region, "MSAL_FORCE_REGION")
 
         if exclude_scopes and not isinstance(exclude_scopes, list):
             raise ValueError(
@@ -717,8 +735,8 @@ class ClientApplication(object):
         if isinstance(authority, str) and urlparse(authority).path.startswith(
             "/dstsv2"):  # dSTS authority's path always starts with "/dstsv2"
             oidc_authority = authority  # So we treat it as if an oidc_authority
+        authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
         try:
-            authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
             self.authority = Authority(
                 authority_to_use,
                 self.http_client,
@@ -726,22 +744,23 @@ class ClientApplication(object):
                 instance_discovery=self._instance_discovery,
                 oidc_authority_url=oidc_authority,
                 )
-        except ValueError:  # Those are explicit authority validation errors
-            raise
-        except Exception:  # The rest are typically connection errors
-            if validate_authority and not oidc_authority and (
-                azure_region  # Opted in to use region
-                or (azure_region is None and os.getenv("MSAL_FORCE_REGION"))  # Will use region
-            ):
-                # Since caller opts in to use region, here we tolerate connection
-                # errors happened during authority validation at non-region endpoint
-                self.authority = Authority(
-                    authority_to_use,
-                    self.http_client,
-                    instance_discovery=False,
-                    )
-            else:
+        except OSError:
+            authority_host = urlparse(str(authority_to_use)).hostname
+            if not (
+                    validate_authority
+                    and not oidc_authority
+                    and authority_host in WELL_KNOWN_AUTHORITY_HOSTS
+                    and (
+                        azure_region
+                        or force_region is not None
+                    )):
                 raise
+            self.authority = Authority(
+                authority_to_use,
+                self.http_client,
+                validate_authority=True,
+                instance_discovery=False,
+                )
 
         self._decide_broker(allow_broker, enable_pii_log)
         self.token_cache = token_cache or TokenCache()
@@ -843,7 +862,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if self._region_configured is False:  # User opts out of ESTS-R
             return None  # Short circuit to completely bypass region detection
         if self._region_configured is None:  # User did not make an ESTS-R choice
-            self._region_configured = os.getenv("MSAL_FORCE_REGION") or None
+            force_region = os.getenv("MSAL_FORCE_REGION")
+            self._region_configured = (
+                _validate_explicit_region(force_region, "MSAL_FORCE_REGION")
+                if force_region is not None else None)
         self._region_detected = self._region_detected or _detect_region(
             self.http_client if self._region_configured is not None else None)
         if (self._region_configured != self.ATTEMPT_REGION_DISCOVERY
