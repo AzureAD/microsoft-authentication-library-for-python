@@ -638,6 +638,32 @@ _supported_arc_platforms_and_their_prefixes = {
 class ArcPlatformNotSupportedError(ManagedIdentityError):
     pass
 
+def _raise_if_arc_did_not_honor_user_assigned_identity(managed_identity, payload):
+    """Fail closed when a user-assigned identity was requested but Azure Arc did not confirm it.
+
+    A legacy Azure Arc agent ignores the client_id / object_id / msi_res_id selector and silently
+    returns the machine's system-assigned identity. An agent that supports user-assigned managed
+    identity echoes the identity it used in the token response. When that echo is missing or does
+    not match the requested selector, MSAL must not hand back a token for a different identity than
+    the one that was requested.
+    """
+    if not ManagedIdentity.is_user_assigned(managed_identity):
+        return  # System-assigned: there is no requested identity to confirm
+    requested = managed_identity.get(ManagedIdentity.ID)
+    echoed = {
+        ManagedIdentity.CLIENT_ID: payload.get("client_id"),
+        ManagedIdentity.OBJECT_ID: payload.get("object_id"),
+        # Azure Arc echoes msi_res_id; accept the mi_res_id spelling too as a safety net
+        ManagedIdentity.RESOURCE_ID: payload.get("msi_res_id") or payload.get("mi_res_id"),
+    }.get(managed_identity.get(ManagedIdentity.ID_TYPE))
+    # Compare case-insensitively: client_id / object_id are GUIDs, and an ARM resource id
+    # (msi_res_id) can legitimately differ in segment casing.
+    if not echoed or str(echoed).lower() != str(requested).lower():
+        raise ManagedIdentityError(
+            "Azure Arc did not confirm the requested user-assigned managed identity "
+            "in the token response. The agent likely does not support user-assigned "
+            "managed identities and returned the system-assigned identity.")
+
 def _obtain_token_on_arc(http_client, endpoint, resource, managed_identity=None):
     # https://learn.microsoft.com/en-us/azure/azure-arc/servers/managed-identity-authentication
     logger.debug("Obtaining token via managed identity on Azure Arc")
@@ -683,6 +709,8 @@ def _obtain_token_on_arc(http_client, endpoint, resource, managed_identity=None)
         payload = json.loads(response.text)
         if payload.get("access_token") and payload.get("expires_in"):
             # Example: https://learn.microsoft.com/en-us/azure/azure-arc/servers/media/managed-identity-authentication/bash-token-output-example.png
+            _raise_if_arc_did_not_honor_user_assigned_identity(
+                managed_identity, payload)
             return {
                 "access_token": payload["access_token"],
                 "expires_in": int(payload["expires_in"]),

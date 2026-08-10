@@ -483,7 +483,9 @@ class ArcTestCase(ClientTestCase):
             self.challenge,
             MinimalResponse(
                 status_code=200,
-                text='{"access_token": "AT", "expires_in": "1234", "resource": "R"}',
+                # A compliant Azure Arc agent echoes the identity it used; MSAL verifies it (fail closed).
+                text='{"access_token": "AT", "expires_in": "1234", "resource": "R", "%s": "%s"}' % (
+                    selector_name, selector_value),
             ),
         ]) as mocked_method:
             try:
@@ -520,6 +522,26 @@ class ArcTestCase(ClientTestCase):
             "object_id",
             "object-id",
         )
+
+    def test_arc_user_assigned_identity_not_confirmed_should_fail_closed(self, mocked_stat):
+        # A legacy Azure Arc agent ignores the selector and returns the system-assigned identity:
+        # the token response echoes a different identity than the one requested. MSAL must fail
+        # closed rather than hand back a token for a different identity than requested.
+        app = ManagedIdentityClient(
+            UserAssignedManagedIdentity(client_id="client-id"),
+            http_client=requests.Session())
+        with patch.object(app._http_client, "get", side_effect=[
+            self.challenge,
+            MinimalResponse(
+                status_code=200,
+                text='{"access_token": "AT", "expires_in": "1234", "resource": "R", "client_id": "a-different-id"}',
+            ),
+        ]):
+            with self.assertRaises(ManagedIdentityError):
+                app.acquire_token_for_client(resource="R")
+        self.assertEqual(
+            {}, app._token_cache._cache,
+            "An unconfirmed identity token must not be cached")
 
 
 class GetManagedIdentitySourceTestCase(unittest.TestCase):
