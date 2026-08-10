@@ -507,10 +507,10 @@ class ArcTestCase(ClientTestCase):
             "client-id",
         )
 
-    def test_arc_user_assigned_resource_id_should_be_forwarded_as_mi_res_id(self, mocked_stat):
+    def test_arc_user_assigned_resource_id_should_be_forwarded_as_msi_res_id(self, mocked_stat):
         self._assert_user_assigned_selector(
             UserAssignedManagedIdentity(resource_id="resource-id"),
-            "mi_res_id",
+            "msi_res_id",
             "resource-id",
         )
 

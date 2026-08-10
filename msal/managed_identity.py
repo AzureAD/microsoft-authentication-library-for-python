@@ -645,7 +645,7 @@ def _obtain_token_on_arc(http_client, endpoint, resource, managed_identity=None)
     if managed_identity:
         _adjust_param(params, managed_identity, types_mapping={
             ManagedIdentity.CLIENT_ID: "client_id",
-            ManagedIdentity.RESOURCE_ID: "mi_res_id",
+            ManagedIdentity.RESOURCE_ID: "msi_res_id",  # Azure Arc honors the IMDS msi_res_id spelling; mi_res_id is ignored and returns the system-assigned identity
             ManagedIdentity.OBJECT_ID: "object_id",
         })
     resp = http_client.get(
