@@ -477,6 +477,72 @@ class ArcTestCase(ClientTestCase):
                 if sys.platform in _supported_arc_platforms_and_their_prefixes:
                     self.fail("Should not raise ArcPlatformNotSupportedError")
 
+    def _assert_user_assigned_selector(self, managed_identity, selector_name, selector_value):
+        app = ManagedIdentityClient(managed_identity, http_client=requests.Session())
+        with patch.object(app._http_client, "get", side_effect=[
+            self.challenge,
+            MinimalResponse(
+                status_code=200,
+                # A compliant Azure Arc agent echoes the identity it used; MSAL verifies it (fail closed).
+                text='{"access_token": "AT", "expires_in": "1234", "resource": "R", "%s": "%s"}' % (
+                    selector_name, selector_value),
+            ),
+        ]) as mocked_method:
+            try:
+                result = app.acquire_token_for_client(resource="R")
+                self.assertEqual("AT", result["access_token"])
+                expected_params = {
+                    "api-version": "2020-06-01",
+                    "resource": "R",
+                    selector_name: selector_value,
+                }
+                self.assertEqual(expected_params, mocked_method.call_args_list[0].kwargs["params"])
+                self.assertEqual(expected_params, mocked_method.call_args_list[1].kwargs["params"])
+            except ArcPlatformNotSupportedError:
+                if sys.platform in _supported_arc_platforms_and_their_prefixes:
+                    self.fail("Should not raise ArcPlatformNotSupportedError")
+
+    def test_arc_user_assigned_client_id_should_be_forwarded(self, mocked_stat):
+        self._assert_user_assigned_selector(
+            UserAssignedManagedIdentity(client_id="client-id"),
+            "client_id",
+            "client-id",
+        )
+
+    def test_arc_user_assigned_resource_id_should_be_forwarded_as_msi_res_id(self, mocked_stat):
+        self._assert_user_assigned_selector(
+            UserAssignedManagedIdentity(resource_id="resource-id"),
+            "msi_res_id",
+            "resource-id",
+        )
+
+    def test_arc_user_assigned_object_id_should_be_forwarded(self, mocked_stat):
+        self._assert_user_assigned_selector(
+            UserAssignedManagedIdentity(object_id="object-id"),
+            "object_id",
+            "object-id",
+        )
+
+    def test_arc_user_assigned_identity_not_confirmed_should_fail_closed(self, mocked_stat):
+        # A legacy Azure Arc agent ignores the selector and returns the system-assigned identity:
+        # the token response echoes a different identity than the one requested. MSAL must fail
+        # closed rather than hand back a token for a different identity than requested.
+        app = ManagedIdentityClient(
+            UserAssignedManagedIdentity(client_id="client-id"),
+            http_client=requests.Session())
+        with patch.object(app._http_client, "get", side_effect=[
+            self.challenge,
+            MinimalResponse(
+                status_code=200,
+                text='{"access_token": "AT", "expires_in": "1234", "resource": "R", "client_id": "a-different-id"}',
+            ),
+        ]):
+            with self.assertRaises(ManagedIdentityError):
+                app.acquire_token_for_client(resource="R")
+        self.assertEqual(
+            {}, app._token_cache._cache,
+            "An unconfirmed identity token must not be cached")
+
 
 class GetManagedIdentitySourceTestCase(unittest.TestCase):
 
@@ -531,4 +597,3 @@ class GetManagedIdentitySourceTestCase(unittest.TestCase):
 
     def test_default_to_vm(self):
         self.assertEqual(get_managed_identity_source(), DEFAULT_TO_VM)
-

@@ -452,13 +452,8 @@ def _obtain_token(
         )
     arc_endpoint = _get_arc_endpoint()
     if arc_endpoint:
-        if ManagedIdentity.is_user_assigned(managed_identity):
-            raise ManagedIdentityError(  # Note: Azure Identity for Python raised exception too
-                "Invalid managed_identity parameter. "
-                "Azure Arc supports only system-assigned managed identity, "
-                "See also "
-                "https://learn.microsoft.com/en-us/azure/service-fabric/configure-existing-cluster-enable-managed-identity-token-service")
-        return _obtain_token_on_arc(http_client, arc_endpoint, resource)
+        return _obtain_token_on_arc(
+            http_client, arc_endpoint, resource, managed_identity)
     return _obtain_token_on_azure_vm(http_client, managed_identity, resource)
 
 
@@ -643,12 +638,45 @@ _supported_arc_platforms_and_their_prefixes = {
 class ArcPlatformNotSupportedError(ManagedIdentityError):
     pass
 
-def _obtain_token_on_arc(http_client, endpoint, resource):
+def _raise_if_arc_did_not_honor_user_assigned_identity(managed_identity, payload):
+    """Fail closed when a user-assigned identity was requested but Azure Arc did not confirm it.
+
+    A legacy Azure Arc agent ignores the client_id / object_id / msi_res_id selector and silently
+    returns the machine's system-assigned identity. An agent that supports user-assigned managed
+    identity echoes the identity it used in the token response. When that echo is missing or does
+    not match the requested selector, MSAL must not hand back a token for a different identity than
+    the one that was requested.
+    """
+    if not ManagedIdentity.is_user_assigned(managed_identity):
+        return  # System-assigned: there is no requested identity to confirm
+    requested = managed_identity.get(ManagedIdentity.ID)
+    echoed = {
+        ManagedIdentity.CLIENT_ID: payload.get("client_id"),
+        ManagedIdentity.OBJECT_ID: payload.get("object_id"),
+        # Azure Arc echoes msi_res_id; accept the mi_res_id spelling too as a safety net
+        ManagedIdentity.RESOURCE_ID: payload.get("msi_res_id") or payload.get("mi_res_id"),
+    }.get(managed_identity.get(ManagedIdentity.ID_TYPE))
+    # Compare case-insensitively: client_id / object_id are GUIDs, and an ARM resource id
+    # (msi_res_id) can legitimately differ in segment casing.
+    if not echoed or str(echoed).lower() != str(requested).lower():
+        raise ManagedIdentityError(
+            "Azure Arc did not confirm the requested user-assigned managed identity "
+            "in the token response. The agent likely does not support user-assigned "
+            "managed identities and returned the system-assigned identity.")
+
+def _obtain_token_on_arc(http_client, endpoint, resource, managed_identity=None):
     # https://learn.microsoft.com/en-us/azure/azure-arc/servers/managed-identity-authentication
     logger.debug("Obtaining token via managed identity on Azure Arc")
+    params = {"api-version": "2020-06-01", "resource": resource}
+    if managed_identity:
+        _adjust_param(params, managed_identity, types_mapping={
+            ManagedIdentity.CLIENT_ID: "client_id",
+            ManagedIdentity.RESOURCE_ID: "msi_res_id",  # Azure Arc honors the IMDS msi_res_id spelling; mi_res_id is ignored and returns the system-assigned identity
+            ManagedIdentity.OBJECT_ID: "object_id",
+        })
     resp = http_client.get(
         endpoint,
-        params={"api-version": "2020-06-01", "resource": resource},
+        params=params.copy(),
         headers={"Metadata": "true"},
         )
     www_auth = "www-authenticate"  # Header in lower case
@@ -674,13 +702,15 @@ def _obtain_token_on_arc(http_client, endpoint, resource):
         secret = f.read()
     response = http_client.get(
         endpoint,
-        params={"api-version": "2020-06-01", "resource": resource},
+        params=params.copy(),
         headers={"Metadata": "true", "Authorization": "Basic {}".format(secret)},
         )
     try:
         payload = json.loads(response.text)
         if payload.get("access_token") and payload.get("expires_in"):
             # Example: https://learn.microsoft.com/en-us/azure/azure-arc/servers/media/managed-identity-authentication/bash-token-output-example.png
+            _raise_if_arc_did_not_honor_user_assigned_identity(
+                managed_identity, payload)
             return {
                 "access_token": payload["access_token"],
                 "expires_in": int(payload["expires_in"]),
