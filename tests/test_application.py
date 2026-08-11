@@ -8,6 +8,7 @@ import sys
 import time
 import warnings
 from unittest.mock import patch, Mock
+from requests.exceptions import ConnectionError as RequestsConnectionError
 import msal
 from msal.application import (
     extract_certs,
@@ -149,7 +150,7 @@ class TestAuthorityValidationWithRegionalMode(unittest.TestCase):
         with patch("msal.authority._instance_discovery") as instance_discovery, \
                 patch("msal.authority.tenant_discovery") as tenant_discovery:
             tenant_discovery.side_effect = [
-                OSError("network unavailable"), safe_metadata]
+                RequestsConnectionError("network unavailable"), safe_metadata]
             app = ClientApplication(
                 "id", authority=safe_authority, azure_region="westus")
 
