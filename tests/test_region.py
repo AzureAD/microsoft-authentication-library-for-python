@@ -57,6 +57,20 @@ class TestValidateRegion(unittest.TestCase):
     def test_rejects_leading_digit(self):
         self.assertIsNone(_validate_region("2westus"))
 
+    def test_rejects_trailing_hyphen(self):
+        self.assertIsNone(_validate_region("westus-"))
+
+    def test_rejects_label_longer_than_63_characters(self):
+        self.assertIsNone(_validate_region("a" * 64))
+
+    def test_rejects_adversarial_dns_labels(self):
+        for region in (
+                "EastUS", "east us", " eastus", "eastus ", "eastus\n",
+                "westus2.login.microsoft.com", "https://westus2",
+                "westus2:443", "westus2/path", "wéstus"):
+            with self.subTest(region=region):
+                self.assertIsNone(_validate_region(region))
+
     def test_empty_string(self):
         self.assertIsNone(_validate_region(""))
 
@@ -73,6 +87,12 @@ class TestDetectRegion(unittest.TestCase):
     @patch.dict(os.environ, {"REGION_NAME": "evil.com/hijack"})
     def test_rejects_invalid_env_region(self):
         self.assertIsNone(_detect_region())
+
+    def test_rejects_unnormalized_env_regions(self):
+        for region in ("EastUS", "East Us 2", "westus-", "a" * 64):
+            with self.subTest(region=region), patch.dict(
+                    os.environ, {"REGION_NAME": region}):
+                self.assertIsNone(_detect_region())
 
     @patch.dict(os.environ, {"REGION_NAME": ""})
     def test_empty_env_returns_none(self):
@@ -116,6 +136,13 @@ class TestDetectRegionOfAzureVm(unittest.TestCase):
         client = _StubHttpClient(
             MinimalResponse(status_code=200, text='{"location": "evil.com/hijack"}'))
         self.assertIsNone(_detect_region_of_azure_vm(client))
+
+    def test_invalid_dns_label_location_returns_none(self):
+        for region in ("westus-", "a" * 64, "westus2:443", "wéstus"):
+            with self.subTest(region=region):
+                client = _StubHttpClient(MinimalResponse(
+                    status_code=200, text='{"location": "%s"}' % region))
+                self.assertIsNone(_detect_region_of_azure_vm(client))
 
     def test_non_string_location_returns_none(self):
         client = _StubHttpClient(

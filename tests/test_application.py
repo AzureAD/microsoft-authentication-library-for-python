@@ -3,10 +3,12 @@
 import base64
 import json
 import logging
+import os
 import sys
 import time
 import warnings
 from unittest.mock import patch, Mock
+from requests.exceptions import ConnectionError as RequestsConnectionError
 import msal
 from msal.application import (
     extract_certs,
@@ -63,6 +65,163 @@ class TestBytesConversion(unittest.TestCase):
 
     def test_bytes_to_bytes(self):
         self.assertEqual(type(_str2bytes(b"some bytes")), type(b"bytes"))
+
+
+class TestAuthorityValidationWithRegionalMode(unittest.TestCase):
+    authority = "https://untrusted.example/tenant"
+    metadata = {
+        "authorization_endpoint": (
+            "https://untrusted.example/tenant/oauth2/v2.0/authorize"),
+        "token_endpoint": "https://untrusted.example/tenant/oauth2/v2.0/token",
+        "issuer": "https://untrusted.example/tenant/v2.0",
+    }
+
+    def test_unknown_authority_fails_closed_when_region_is_enabled(self):
+        with patch("msal.authority._instance_discovery") as instance_discovery, \
+                patch("msal.authority.tenant_discovery") as tenant_discovery:
+            instance_discovery.return_value = {"error": "invalid_instance"}
+            with self.assertRaisesRegex(ValueError, "invalid_instance"):
+                ClientApplication(
+                    "id", authority=self.authority, azure_region="westus")
+
+        instance_discovery.assert_called_once()
+        tenant_discovery.assert_not_called()
+
+    def test_invalid_oidc_metadata_is_not_retried_without_validation(self):
+        with patch("msal.authority._instance_discovery") as instance_discovery, \
+                patch("msal.authority.tenant_discovery") as tenant_discovery:
+            instance_discovery.return_value = {
+                "tenant_discovery_endpoint": (
+                    "https://untrusted.example/tenant/v2.0/"
+                    ".well-known/openid-configuration")}
+            tenant_discovery.return_value = {
+                "issuer": "https://untrusted.example/tenant/v2.0"}
+            with self.assertRaises(KeyError):
+                ClientApplication(
+                    "id", authority=self.authority, azure_region="westus")
+
+        instance_discovery.assert_called_once()
+        tenant_discovery.assert_called_once()
+
+    def test_invalid_oidc_endpoint_is_not_retried_without_validation(self):
+        with patch("msal.authority._instance_discovery") as instance_discovery, \
+                patch("msal.authority.tenant_discovery") as tenant_discovery:
+            instance_discovery.return_value = {
+                "tenant_discovery_endpoint": (
+                    "https://untrusted.example/tenant/v2.0/"
+                    ".well-known/openid-configuration")}
+            tenant_discovery.return_value = {
+                "authorization_endpoint": (
+                    "https://untrusted.example/tenant/oauth2/v2.0/authorize"),
+                "token_endpoint": None,
+                "issuer": "https://untrusted.example/tenant/v2.0",
+            }
+            with self.assertRaises(ValueError):
+                ClientApplication(
+                    "id", authority=self.authority, azure_region="westus")
+
+        instance_discovery.assert_called_once()
+        tenant_discovery.assert_called_once()
+
+    def test_transient_discovery_failure_is_not_retried_without_validation(self):
+        with patch("msal.authority._instance_discovery") as instance_discovery, \
+                patch("msal.authority.tenant_discovery") as tenant_discovery:
+            instance_discovery.return_value = {
+                "tenant_discovery_endpoint": (
+                    "https://untrusted.example/tenant/v2.0/"
+                    ".well-known/openid-configuration")}
+            tenant_discovery.side_effect = OSError("network unavailable")
+            with self.assertRaisesRegex(OSError, "network unavailable"):
+                ClientApplication(
+                    "id", authority=self.authority, azure_region="westus")
+
+        instance_discovery.assert_called_once()
+        tenant_discovery.assert_called_once()
+
+    def test_known_authority_retries_transient_network_failure(self):
+        safe_authority = "https://login.microsoftonline.com/tenant"
+        safe_metadata = {
+            "authorization_endpoint": (
+                "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize"),
+            "token_endpoint": (
+                "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"),
+            "issuer": "https://login.microsoftonline.com/tenant/v2.0",
+        }
+        with patch("msal.authority._instance_discovery") as instance_discovery, \
+                patch("msal.authority.tenant_discovery") as tenant_discovery:
+            tenant_discovery.side_effect = [
+                RequestsConnectionError("network unavailable"), safe_metadata]
+            app = ClientApplication(
+                "id", authority=safe_authority, azure_region="westus")
+
+        self.assertEqual("login.microsoftonline.com", app.authority.instance)
+        instance_discovery.assert_not_called()
+        self.assertEqual(2, tenant_discovery.call_count)
+
+    def test_invalid_explicit_region_fails_before_authority_construction(self):
+        for region in ("westus-", "a" * 64, "westus2.login.microsoft.com"):
+            with self.subTest(region=region):
+                with self.assertRaisesRegex(ValueError, "Invalid azure_region"):
+                    ClientApplication(
+                        "id", authority=self.authority, azure_region=region)
+
+    @patch.dict(os.environ, {"MSAL_FORCE_REGION": "westus-"})
+    def test_invalid_force_region_fails_before_authority_construction(self):
+        with self.assertRaisesRegex(ValueError, "Invalid MSAL_FORCE_REGION"):
+            ConfidentialClientApplication(
+                "id", client_credential="secret", authority=self.authority)
+
+    @patch.dict(os.environ, {"MSAL_FORCE_REGION": ""})
+    def test_empty_force_region_fails_before_authority_construction(self):
+        with self.assertRaisesRegex(ValueError, "Invalid MSAL_FORCE_REGION"):
+            ConfidentialClientApplication(
+                "id", client_credential="secret", authority=self.authority)
+
+    @patch.dict(os.environ, {"MSAL_FORCE_REGION": "westus-"})
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+    def test_invalid_force_region_does_not_affect_public_client(self):
+        app = PublicClientApplication(
+            "id", authority="https://login.microsoftonline.com/tenant")
+
+        self.assertEqual("login.microsoftonline.com", app.authority.instance)
+
+    @patch.dict(os.environ, {"REGION_NAME": "westus-"})
+    @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+    def test_invalid_detected_region_uses_global_authority(self):
+        app = ConfidentialClientApplication(
+            "id", client_credential="secret",
+            authority="https://login.microsoftonline.com/tenant",
+            azure_region=True)
+
+        self.assertIsNone(app._regional_client)
+
+    def test_invalid_oidc_issuer_fails_closed(self):
+        with patch("msal.authority.tenant_discovery", return_value={
+                "authorization_endpoint": (
+                    "https://trusted.example/tenant/oauth2/v2.0/authorize"),
+                "token_endpoint": (
+                    "https://trusted.example/tenant/oauth2/v2.0/token"),
+                "issuer": "https://untrusted.example/tenant/v2.0",
+                }) as tenant_discovery:
+            with self.assertRaisesRegex(ValueError, "issuer"):
+                ClientApplication(
+                    "id", oidc_authority="https://trusted.example/tenant",
+                    azure_region="westus")
+
+        tenant_discovery.assert_called_once()
+
+    def test_validate_authority_false_remains_an_explicit_opt_out(self):
+        with patch.dict(os.environ, {"REGION_NAME": "westus"}), \
+                patch("msal.authority._instance_discovery") as instance_discovery, \
+                patch("msal.authority.tenant_discovery",
+                    return_value=self.metadata):
+            app = ConfidentialClientApplication(
+                "id", client_credential="secret", authority=self.authority,
+                azure_region="westus", validate_authority=False)
+
+        self.assertEqual("untrusted.example", app.authority.instance)
+        self.assertIsNotNone(app._regional_client)
+        instance_discovery.assert_not_called()
 
 
 class TestClientApplicationAcquireTokenSilentErrorBehaviors(unittest.TestCase):
