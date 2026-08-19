@@ -2,16 +2,23 @@
 # All rights reserved.
 #
 # This code is licensed under the MIT License.
+import copy
 import hashlib
+import hmac
 import json
 import logging
 import os
+import ssl
 import sys
 import time
 import uuid
 from urllib.parse import urlparse  # Python 3+
 from collections import UserDict  # Python 3+
 from typing import List, Optional, Union  # Needed in Python 3.7 & 3.8
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.connection import HTTPSConnection
+from urllib3.connectionpool import HTTPSConnectionPool
 from .token_cache import TokenCache
 from .individual_cache import _IndividualCache as IndividualCache
 from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
@@ -189,6 +196,11 @@ class ManagedIdentityClient(object):
                 s.mount('https://', HTTPAdapter(max_retries=retries))
                 managed_identity = ...
                 client = msal.ManagedIdentityClient(managed_identity, http_client=s)
+
+            For Service Fabric managed identity, ``http_client`` must be a
+            ``requests.Session`` using the standard ``requests.adapters.HTTPAdapter``.
+            MSAL derives a separate session for the Service Fabric endpoint so that
+            its certificate thumbprint can be validated before the Secret header is sent.
 
         :param token_cache:
             Optional. It accepts a :class:`msal.TokenCache` instance to store tokens.
@@ -594,7 +606,13 @@ def _obtain_token_on_service_fabric(
     # See also https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/identity/azure-identity/tests/managed-identity-live/service-fabric/service_fabric.md
     # Protocol https://learn.microsoft.com/en-us/azure/service-fabric/how-to-managed-identity-service-fabric-app-code#acquiring-an-access-token-using-rest-api
     logger.debug("Obtaining token via managed identity on Azure Service Fabric")
-    resp = http_client.get(
+    parsed_endpoint = urlparse(endpoint)
+    if parsed_endpoint.scheme.lower() != "https" or not parsed_endpoint.hostname:
+        raise ManagedIdentityError(
+            "Service Fabric managed identity endpoint must use HTTPS.")
+    service_fabric_http_client = _create_service_fabric_http_client(
+        http_client, endpoint, _normalize_service_fabric_thumbprint(server_thumbprint))
+    resp = service_fabric_http_client.get(
         endpoint,
         params={k: v for k, v in {
             "api-version": "2019-07-01-preview",
@@ -628,6 +646,124 @@ def _obtain_token_on_service_fabric(
     except json.decoder.JSONDecodeError:
         logger.debug("IMDS emits unexpected payload: %s", resp.text)
         raise
+
+
+def _normalize_service_fabric_thumbprint(server_thumbprint):
+    normalized = "".join(
+        character for character in str(server_thumbprint)
+        if character not in " \t\r\n:")
+    if len(normalized) != 40 or any(
+            character not in "0123456789abcdefABCDEF"
+            for character in normalized):
+        raise ManagedIdentityError(
+            "IDENTITY_SERVER_THUMBPRINT must be a SHA-1 certificate thumbprint.")
+    return normalized.lower()
+
+
+class _ServiceFabricHTTPSConnection(HTTPSConnection):
+    """An HTTPS connection that authenticates the Service Fabric endpoint certificate."""
+    _server_thumbprint = None
+
+    def connect(self):
+        super(_ServiceFabricHTTPSConnection, self).connect()
+        if self.proxy_is_forwarding:
+            self.close()
+            raise ssl.SSLCertVerificationError(
+                "Cannot validate the Service Fabric endpoint certificate through "
+                "a forwarding proxy.")
+        certificate = self.sock.getpeercert(binary_form=True)
+        actual_thumbprint = hashlib.sha1(certificate).hexdigest()
+        if not hmac.compare_digest(actual_thumbprint, self._server_thumbprint):
+            self.close()
+            raise ssl.SSLCertVerificationError(
+                "Service Fabric endpoint certificate thumbprint does not match "
+                "IDENTITY_SERVER_THUMBPRINT.")
+        self.is_verified = True
+
+
+class _ServiceFabricHTTPSConnectionPool(HTTPSConnectionPool):
+    ConnectionCls = _ServiceFabricHTTPSConnection
+
+
+class _ServiceFabricHTTPAdapter(HTTPAdapter):
+    """Use certificate-thumbprint authentication for the Service Fabric endpoint."""
+
+    def __init__(self, server_thumbprint, *args, **kwargs):
+        connection_class = type(
+            "_PinnedServiceFabricHTTPSConnection",
+            (_ServiceFabricHTTPSConnection,),
+            {"_server_thumbprint": server_thumbprint},
+        )
+        self._connection_pool_class = type(
+            "_PinnedServiceFabricHTTPSConnectionPool",
+            (_ServiceFabricHTTPSConnectionPool,),
+            {"ConnectionCls": connection_class},
+        )
+        super(_ServiceFabricHTTPAdapter, self).__init__(*args, **kwargs)
+
+    def _configure_pool_manager(self, pool_manager):
+        # PoolManager's mapping is module-global by default, so copy it before
+        # replacing HTTPS only for this derived Service Fabric session.
+        pool_manager.pool_classes_by_scheme = pool_manager.pool_classes_by_scheme.copy()
+        pool_manager.pool_classes_by_scheme["https"] = self._connection_pool_class
+
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        super(_ServiceFabricHTTPAdapter, self).init_poolmanager(
+            connections, maxsize, block=block, **pool_kwargs)
+        self._configure_pool_manager(self.poolmanager)
+
+    def proxy_manager_for(self, proxy, **proxy_kwargs):
+        pool_manager = super(_ServiceFabricHTTPAdapter, self).proxy_manager_for(
+            proxy, **proxy_kwargs)
+        self._configure_pool_manager(pool_manager)
+        return pool_manager
+
+    def cert_verify(self, conn, url, verify, cert):
+        # The exact Service Fabric certificate thumbprint is the trust anchor.
+        # Do not inherit caller-provided verify=False or a custom CA configuration.
+        super(_ServiceFabricHTTPAdapter, self).cert_verify(
+            conn, url, verify=False, cert=cert)
+
+
+def _create_service_fabric_http_client(http_client, endpoint, server_thumbprint):
+    """Clone a standard Requests session and attach a pinning-only HTTPS transport.
+
+    Custom HTTP clients and adapters are rejected because MSAL cannot prove that
+    they will validate the certificate before transmitting the Secret header.
+    """
+    if isinstance(http_client, ThrottledHttpClientBase):
+        http_client = http_client.http_client
+    if not isinstance(http_client, requests.Session):
+        raise ManagedIdentityError(
+            "Service Fabric managed identity requires a requests.Session "
+            "with the standard HTTPAdapter.")
+    source_adapter = http_client.get_adapter(endpoint)
+    if type(source_adapter) is not HTTPAdapter:
+        raise ManagedIdentityError(
+            "Service Fabric managed identity does not support custom HTTP adapters.")
+
+    service_fabric_client = requests.Session()
+    service_fabric_client.headers = http_client.headers.copy()
+    service_fabric_client.cookies = http_client.cookies.copy()
+    service_fabric_client.auth = http_client.auth
+    service_fabric_client.params = copy.copy(http_client.params)
+    service_fabric_client.hooks = {
+        event: handlers[:] for event, handlers in http_client.hooks.items()}
+    service_fabric_client.proxies = http_client.proxies.copy()
+    service_fabric_client.stream = http_client.stream
+    service_fabric_client.trust_env = http_client.trust_env
+    service_fabric_client.max_redirects = http_client.max_redirects
+    service_fabric_client.cert = http_client.cert
+    service_fabric_client.verify = True
+    service_fabric_client.adapters.clear()
+    service_fabric_client.mount("https://", _ServiceFabricHTTPAdapter(
+        server_thumbprint,
+        max_retries=copy.deepcopy(source_adapter.max_retries),
+        pool_connections=source_adapter._pool_connections,
+        pool_maxsize=source_adapter._pool_maxsize,
+        pool_block=source_adapter._pool_block,
+    ))
+    return service_fabric_client
 
 
 _supported_arc_platforms_and_their_prefixes = {
