@@ -505,6 +505,7 @@ class ServiceFabricTlsValidationTestCase(unittest.TestCase):
             ("localhost", 0), _ServiceFabricTlsRequestHandler)
         self.server.requests = []
         tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
         tls_context.load_cert_chain(certificate_path, private_key_path)
         self.server.socket = tls_context.wrap_socket(self.server.socket, server_side=True)
         self.server_thread = threading.Thread(target=self.server.serve_forever)

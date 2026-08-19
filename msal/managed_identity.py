@@ -666,7 +666,7 @@ class _ServiceFabricHTTPSConnection(HTTPSConnection):
 
     def connect(self):
         super(_ServiceFabricHTTPSConnection, self).connect()
-        if self.proxy_is_forwarding:
+        if getattr(self, "proxy_is_forwarding", False):
             self.close()
             raise ssl.SSLCertVerificationError(
                 "Cannot validate the Service Fabric endpoint certificate through "
