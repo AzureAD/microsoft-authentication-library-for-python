@@ -36,6 +36,7 @@ pr: none
 variables:
   CDP_DEFINITION_BUILD_COUNT: $[counter('', 0)]
   system.debug: ${{ parameters.debug }}
+  WindowsContainerImage: 'onebranch.azurecr.io/windows/ltsc2022/vse2022:latest' # https://aka.ms/obpipelines/containers
 
 resources:
   repositories:
