@@ -567,6 +567,43 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertIsNone(result.get("binding_certificate"))
         self.assertCacheWorksForApp(result, self._MTLS_POP_SCOPE)
 
+    def test_fic_two_leg_over_mtls_pop(self):
+        from tests.lab_config import get_client_certificate
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
+        authority = "https://login.microsoftonline.com/microsoft.onmicrosoft.com"
+        # Leg 1: SN/I cert -> cert-bound (mtls_pop) federated assertion for the
+        # caller-supplied token-exchange audience.
+        leg1_app = msal.ConfidentialClientApplication(
+            LAB_APP_CLIENT_ID, authority=authority,
+            client_credential=get_client_certificate())
+        leg1 = leg1_app.acquire_token_for_client(
+            ["api://AzureADTokenExchange/.default"], mtls_proof_of_possession=True)
+        if "access_token" not in leg1:
+            self.skipTest("FIC leg 1 not pre-authorized for token exchange: %s" % leg1)
+        self.assertEqual("mtls_pop", leg1.get("token_type"), "Leg 1 must be mtls_pop")
+        leg1_thumbprint = leg1["binding_certificate"]["thumbprint_sha256"]
+
+        # Leg 2: same cert binds the TLS handshake, leg-1 token carried as jwt-pop.
+        leg2_app = msal.ConfidentialClientApplication(
+            LAB_APP_CLIENT_ID, authority=authority,
+            client_credential={
+                "client_assertion": leg1["access_token"],
+                "mtls_binding_certificate": get_client_certificate()})
+        # Leg 2 -> Bearer over mTLS (implicit Bearer-over-mTLS, no flag)
+        leg2_bearer = leg2_app.acquire_token_for_client(self._MTLS_POP_SCOPE)
+        self.assertIn("access_token", leg2_bearer, "Leg 2 (Bearer) failed: %s" % leg2_bearer)
+        # Leg 2 -> mTLS PoP final token
+        leg2_pop = leg2_app.acquire_token_for_client(
+            self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
+        self.assertIn("access_token", leg2_pop, "Leg 2 (PoP) failed: %s" % leg2_pop)
+        self.assertEqual("mtls_pop", leg2_pop.get("token_type"))
+        # The final PoP token must be bound to the leg-1 certificate thumbprint
+        cnf = self._cnf_x5t_s256(leg2_pop["access_token"])
+        if cnf:
+            self.assertEqual(leg1_thumbprint, cnf,
+                "Final token cnf must be bound to the leg-1 cert thumbprint")
+
 
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
     @classmethod
