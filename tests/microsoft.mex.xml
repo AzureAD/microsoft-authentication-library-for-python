@@ -648,9 +648,9 @@
     </wsp:Policy>
     <wsdl:types>
         <xsd:schema targetNamespace="http://schemas.microsoft.com/ws/2008/06/identity/securitytokenservice/Imports">
-            <xsd:import schemaLocation="https://corp.sts.microsoft.com/adfs/services/trust/mex?xsd=xsd0" namespace="http://schemas.microsoft.com/Message"/>
-            <xsd:import schemaLocation="https://corp.sts.microsoft.com/adfs/services/trust/mex?xsd=xsd1" namespace="http://schemas.xmlsoap.org/ws/2005/02/trust"/>
-            <xsd:import schemaLocation="https://corp.sts.microsoft.com/adfs/services/trust/mex?xsd=xsd2" namespace="http://docs.oasis-open.org/ws-sx/ws-trust/200512"/>
+            <xsd:import schemaLocation="https://example.com/adfs/services/trust/mex?xsd=xsd0" namespace="http://schemas.microsoft.com/Message"/>
+            <xsd:import schemaLocation="https://example.com/adfs/services/trust/mex?xsd=xsd1" namespace="http://schemas.xmlsoap.org/ws/2005/02/trust"/>
+            <xsd:import schemaLocation="https://example.com/adfs/services/trust/mex?xsd=xsd2" namespace="http://docs.oasis-open.org/ws-sx/ws-trust/200512"/>
         </xsd:schema>
     </wsdl:types>
     <wsdl:message name="IWSTrustFeb2005Async_TrustFeb2005IssueAsync_InputMessage">
@@ -835,80 +835,80 @@
     </wsdl:binding>
     <wsdl:service name="SecurityTokenService">
         <wsdl:port name="CustomBinding_IWSTrustFeb2005Async" binding="tns:CustomBinding_IWSTrustFeb2005Async">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/2005/windowstransport"/>
+            <soap12:address location="https://example.com/adfs/services/trust/2005/windowstransport"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/2005/windowstransport</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/2005/windowstransport</wsa10:Address>
                 <Identity xmlns="http://schemas.xmlsoap.org/ws/2006/02/addressingidentity">
-                    <Upn>iamfed@redmond.corp.microsoft.com</Upn>
+                    <Upn>iamfed@example.com</Upn>
                 </Identity>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="CertificateWSTrustBinding_IWSTrustFeb2005Async" binding="tns:CertificateWSTrustBinding_IWSTrustFeb2005Async">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/2005/certificatemixed"/>
+            <soap12:address location="https://example.com/adfs/services/trust/2005/certificatemixed"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/2005/certificatemixed</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/2005/certificatemixed</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="UserNameWSTrustBinding_IWSTrustFeb2005Async" binding="tns:UserNameWSTrustBinding_IWSTrustFeb2005Async">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/2005/usernamemixed"/>
+            <soap12:address location="https://example.com/adfs/services/trust/2005/usernamemixed"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/2005/usernamemixed</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/2005/usernamemixed</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="CustomBinding_IWSTrustFeb2005Async1" binding="tns:CustomBinding_IWSTrustFeb2005Async1">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/2005/kerberosmixed"/>
+            <soap12:address location="https://example.com/adfs/services/trust/2005/kerberosmixed"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/2005/kerberosmixed</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/2005/kerberosmixed</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="IssuedTokenWSTrustBinding_IWSTrustFeb2005Async" binding="tns:IssuedTokenWSTrustBinding_IWSTrustFeb2005Async">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/2005/issuedtokenmixedasymmetricbasic256"/>
+            <soap12:address location="https://example.com/adfs/services/trust/2005/issuedtokenmixedasymmetricbasic256"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/2005/issuedtokenmixedasymmetricbasic256</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/2005/issuedtokenmixedasymmetricbasic256</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="IssuedTokenWSTrustBinding_IWSTrustFeb2005Async1" binding="tns:IssuedTokenWSTrustBinding_IWSTrustFeb2005Async1">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/2005/issuedtokenmixedsymmetricbasic256"/>
+            <soap12:address location="https://example.com/adfs/services/trust/2005/issuedtokenmixedsymmetricbasic256"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/2005/issuedtokenmixedsymmetricbasic256</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/2005/issuedtokenmixedsymmetricbasic256</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="CustomBinding_IWSTrust13Async" binding="tns:CustomBinding_IWSTrust13Async">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/13/kerberosmixed"/>
+            <soap12:address location="https://example.com/adfs/services/trust/13/kerberosmixed"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/13/kerberosmixed</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/13/kerberosmixed</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="CertificateWSTrustBinding_IWSTrust13Async" binding="tns:CertificateWSTrustBinding_IWSTrust13Async">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/13/certificatemixed"/>
+            <soap12:address location="https://example.com/adfs/services/trust/13/certificatemixed"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/13/certificatemixed</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/13/certificatemixed</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="UserNameWSTrustBinding_IWSTrust13Async" binding="tns:UserNameWSTrustBinding_IWSTrust13Async">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/13/usernamemixed"/>
+            <soap12:address location="https://example.com/adfs/services/trust/13/usernamemixed"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/13/usernamemixed</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/13/usernamemixed</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="IssuedTokenWSTrustBinding_IWSTrust13Async" binding="tns:IssuedTokenWSTrustBinding_IWSTrust13Async">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/13/issuedtokenmixedasymmetricbasic256"/>
+            <soap12:address location="https://example.com/adfs/services/trust/13/issuedtokenmixedasymmetricbasic256"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/13/issuedtokenmixedasymmetricbasic256</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/13/issuedtokenmixedasymmetricbasic256</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="IssuedTokenWSTrustBinding_IWSTrust13Async1" binding="tns:IssuedTokenWSTrustBinding_IWSTrust13Async1">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/13/issuedtokenmixedsymmetricbasic256"/>
+            <soap12:address location="https://example.com/adfs/services/trust/13/issuedtokenmixedsymmetricbasic256"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/13/issuedtokenmixedsymmetricbasic256</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/13/issuedtokenmixedsymmetricbasic256</wsa10:Address>
             </wsa10:EndpointReference>
         </wsdl:port>
         <wsdl:port name="CustomBinding_IWSTrust13Async1" binding="tns:CustomBinding_IWSTrust13Async1">
-            <soap12:address location="https://corp.sts.microsoft.com/adfs/services/trust/13/windowstransport"/>
+            <soap12:address location="https://example.com/adfs/services/trust/13/windowstransport"/>
             <wsa10:EndpointReference>
-                <wsa10:Address>https://corp.sts.microsoft.com/adfs/services/trust/13/windowstransport</wsa10:Address>
+                <wsa10:Address>https://example.com/adfs/services/trust/13/windowstransport</wsa10:Address>
                 <Identity xmlns="http://schemas.xmlsoap.org/ws/2006/02/addressingidentity">
-                    <Upn>iamfed@redmond.corp.microsoft.com</Upn>
+                    <Upn>iamfed@example.com</Upn>
                 </Identity>
             </wsa10:EndpointReference>
         </wsdl:port>
