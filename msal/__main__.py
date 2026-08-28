@@ -216,11 +216,7 @@ def _remove_tokens_for_client(app):
 
 def _exit(app):
     """Exit"""
-    bug_link = (
-        "https://identitydivision.visualstudio.com/Engineering/_queries/query/79b3a352-a775-406f-87cd-a487c382a8ed/"
-        if app._enable_broker else
-        "https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/new/choose"
-        )
+    bug_link = "https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/new/choose"
     print("Bye. If you found a bug, please report it here: {}".format(bug_link))
     sys.exit()
 
@@ -334,4 +330,3 @@ def _main():
 
 if __name__ == "__main__":
     _main()
-
