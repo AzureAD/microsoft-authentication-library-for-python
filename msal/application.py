@@ -829,7 +829,7 @@ class ClientApplication(object):
             # errs on the side of not using the broker.
             self._enable_broker = False
             logger.warning(
-                "Broker is not supported on Intel-based Macs. "
+                "Broker on macOS is supported only on Apple Silicon (arm64). "
                 "We will fallback to non-broker.")
         if self._enable_broker:
             try:
