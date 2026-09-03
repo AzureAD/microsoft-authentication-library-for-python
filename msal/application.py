@@ -819,11 +819,14 @@ class ClientApplication(object):
         if (
             self._enable_broker
             and sys.platform == "darwin"
-            and platform.machine() in ("x86_64", "i386")
+            and platform.machine() != "arm64"
         ):
             # Broker on macOS is supported only on Apple Silicon (arm64).
-            # Intel Macs are excluded by product policy, regardless of whether
-            # a broker is actually installed on the device.
+            # Anything else on darwin -- Intel Macs, and an x86_64 Python
+            # running under Rosetta -- is excluded by product policy,
+            # regardless of whether a broker is installed on the device.
+            # This is an allowlist so that an unrecognized architecture
+            # errs on the side of not using the broker.
             self._enable_broker = False
             logger.warning(
                 "Broker is not supported on Intel-based Macs. "
@@ -2180,17 +2183,17 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
             1. You can set any combination of the following opt-in parameters to true:
 
-               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
-               | Opt-in flag              | If app will run on                | App has registered this as a Desktop platform redirect URI in Azure Portal         |
-               +==========================+===================================+====================================================================================+
-               | enable_broker_on_windows | Windows 10+                       | ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id                            |
-               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
-               | enable_broker_on_wsl     | WSL                               | ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id                            |
-               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
-               | enable_broker_on_mac     | Apple Silicon Mac, Company Portal | msauth.com.msauth.unsignedapp://auth                                               |
-               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
-               | enable_broker_on_linux   | Linux with Intune installed       | ``https://login.microsoftonline.com/common/oauth2/nativeclient`` (MUST be enabled) |
-               +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
+               +--------------------------+-------------------------------------------------+------------------------------------------------------------------------------------+
+               | Opt-in flag              | If app will run on                              | App has registered this as a Desktop platform redirect URI in Azure Portal         |
+               +==========================+=================================================+====================================================================================+
+               | enable_broker_on_windows | Windows 10+                                     | ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id                            |
+               +--------------------------+-------------------------------------------------+------------------------------------------------------------------------------------+
+               | enable_broker_on_wsl     | WSL                                             | ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id                            |
+               +--------------------------+-------------------------------------------------+------------------------------------------------------------------------------------+
+               | enable_broker_on_mac     | Apple Silicon Mac with Company Portal installed | msauth.com.msauth.unsignedapp://auth                                               |
+               +--------------------------+-------------------------------------------------+------------------------------------------------------------------------------------+
+               | enable_broker_on_linux   | Linux with Intune installed                     | ``https://login.microsoftonline.com/common/oauth2/nativeclient`` (MUST be enabled) |
+               +--------------------------+-------------------------------------------------+------------------------------------------------------------------------------------+
 
             2. Install broker dependency,
                e.g. ``pip install msal[broker]>=1.33,<2``.

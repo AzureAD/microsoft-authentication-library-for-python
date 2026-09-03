@@ -1787,6 +1787,16 @@ class TestBrokerDisabledOnIntelMac(unittest.TestCase):
             )
         self.assertFalse(app._enable_broker)
 
+    @patch("msal.application.platform.machine", new=Mock(return_value="unexpected"))
+    def test_broker_should_be_disabled_on_unrecognized_machine(self):
+        """The gate is an allowlist, so an unknown architecture stays broker-free."""
+        app = msal.PublicClientApplication(
+            "client_id",
+            authority="https://login.microsoftonline.com/common",
+            enable_broker_on_mac=True,
+            )
+        self.assertFalse(app._enable_broker)
+
 
 class MismatchingScopeTestCase(unittest.TestCase):
     """Test cache behavior when HTTP response scope differs from requested scope"""

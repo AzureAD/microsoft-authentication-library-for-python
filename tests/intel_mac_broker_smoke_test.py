@@ -15,7 +15,8 @@ Expected outcomes:
 
 * Apple Silicon Mac (``arm64``) with ``pymsalruntime`` installed:
   ``_enable_broker`` is ``True``.
-* Intel Mac (``x86_64`` / ``i386``):
+* Intel Mac (``x86_64`` / ``i386``), or any other non-``arm64`` machine
+  (including an ``x86_64`` Python running under Rosetta):
   ``_enable_broker`` is ``False`` even though the opt-in was passed and even
   if a broker is installed on the device.
 * Non-Mac (Windows, Linux):
@@ -37,8 +38,8 @@ _AUTHORITY = "https://login.microsoftonline.com/organizations"
 def _expected_broker_state():
     if sys.platform != "darwin":
         return False, "non-Mac platform — enable_broker_on_mac is a no-op"
-    if platform.machine() in ("x86_64", "i386"):
-        return False, "Intel Mac — broker disabled by product policy"
+    if platform.machine() != "arm64":
+        return False, "not Apple Silicon — broker disabled by product policy"
     return True, "Apple Silicon Mac — broker should be enabled"
 
 
