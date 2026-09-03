@@ -1229,10 +1229,10 @@ class WorldWideRegionalEndpointTestCase(LabBasedTestCase):
             msal.ConfidentialClientApplication.ATTEMPT_REGION_DISCOVERY, "eastus")
         del os.environ["REGION_NAME"]
 
-    def test_acquire_token_for_client_should_use_an_env_var_with_long_region_name(self):
+    def test_acquire_token_for_client_should_ignore_malformed_env_region(self):
         os.environ["REGION_NAME"] = "East Us 2"
         self._test_acquire_token_for_client(
-            msal.ConfidentialClientApplication.ATTEMPT_REGION_DISCOVERY, "eastus2")
+            msal.ConfidentialClientApplication.ATTEMPT_REGION_DISCOVERY, None)
         del os.environ["REGION_NAME"]
 
     def test_cca_obo_should_bypass_regional_endpoint_therefore_still_work(self):

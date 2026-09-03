@@ -15,15 +15,16 @@ from .oauth2cli.oidc import decode_part
 from .authority import (
     Authority,
     WORLD_WIDE,
+    WELL_KNOWN_AUTHORITY_HOSTS,
     _get_instance_discovery_endpoint,
     _get_instance_discovery_host,
 )
 from .mex import send_request as mex_send_request
 from .wstrust_request import send_request as wst_send_request
 from .wstrust_response import *
-from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER, _compute_ext_cache_key
+from .token_cache import TokenCache, _get_username, _GRANT_TYPE_BROKER, _compute_ext_cache_key, _parse_claims_or_raise, _merge_claims
 import msal.telemetry
-from .region import _detect_region
+from .region import _detect_region, _validate_region
 from .throttled_http_client import ThrottledHttpClient
 from .cloudshell import _is_running_in_cloud_shell
 from .sku import SKU, __version__
@@ -32,6 +33,16 @@ from .oauth2cli.authcode import is_wsl
 
 logger = logging.getLogger(__name__)
 _AUTHORITY_TYPE_CLOUDSHELL = "CLOUDSHELL"
+
+
+def _validate_explicit_region(region, name):
+    if not _validate_region(region, source=name):
+        raise ValueError(
+            "Invalid {}={!r}. It must be a lowercase DNS label that starts "
+            "with a letter, contains only letters, digits, and internal "
+            "hyphens, and is at most 63 characters.".format(name, region))
+    return region
+
 
 def _init_broker(enable_pii_log):  # Make it a function to allow mocking
     from . import broker  # Trigger Broker's initialization, lazily
@@ -63,6 +74,31 @@ def _merge_claims_challenge_and_capabilities(capabilities, claims_challenge):
     for key in ["access_token"]:  # We could add "id_token" if we'd decide to
         claims_dict.setdefault(key, {}).update(xms_cc={"values": capabilities})
     return json.dumps(claims_dict)
+
+
+def _stash_client_claims(forwarded_client_claims, data):
+    """Validate ``forwarded_client_claims`` and stash it into the request ``data``.
+
+    ``forwarded_client_claims`` carries *client-originated* claims supplied by
+    the caller. The raw value is stored in ``data`` (under the internal
+    ``client_claims`` key) so that it
+    (a) contributes to the extended cache key -- isolating cache entries by
+    claims value -- and (b) is stripped from the request body by the oauth2
+    layer (it reaches the wire only after being merged into the standard OAuth
+    ``claims`` parameter). ``data`` is mutated in place.
+
+    Unlike ``claims_challenge`` (server-issued, which bypasses the cache),
+    ``forwarded_client_claims`` tokens are cached and keyed on the claims value.
+    A no-op when ``forwarded_client_claims`` is ``None``.
+    """
+    if forwarded_client_claims is None:
+        return
+    if not isinstance(forwarded_client_claims, str):
+        raise ValueError(
+            "forwarded_client_claims must be a string, got {}".format(
+                type(forwarded_client_claims).__name__))
+    _parse_claims_or_raise(forwarded_client_claims)  # Fail fast on malformed JSON
+    data["client_claims"] = forwarded_client_claims
 
 
 def _str2bytes(raw):
@@ -425,6 +461,14 @@ class ClientApplication(object):
                     "jti": a_random_uuid
                 }
 
+            .. note::
+
+                This *constructor* ``client_claims`` (a ``dict`` signed into the
+                client-assertion JWT) is distinct from the per-request
+                ``forwarded_client_claims`` parameter (a JSON string of
+                client-originated claims forwarded in the token request) accepted
+                by the token-acquisition methods.
+
         :param str authority:
             A URL that identifies a token authority. It should be of the format
             ``https://login.microsoftonline.com/your_tenant``
@@ -638,6 +682,13 @@ class ClientApplication(object):
         self.client_claims = client_claims
         self._client_capabilities = client_capabilities
         self._instance_discovery = instance_discovery
+        if isinstance(azure_region, str):
+            _validate_explicit_region(azure_region, "azure_region")
+        force_region = None
+        if azure_region is None and client_credential:
+            force_region = os.getenv("MSAL_FORCE_REGION")
+            if force_region is not None:
+                _validate_explicit_region(force_region, "MSAL_FORCE_REGION")
 
         if exclude_scopes and not isinstance(exclude_scopes, list):
             raise ValueError(
@@ -685,8 +736,8 @@ class ClientApplication(object):
         if isinstance(authority, str) and urlparse(authority).path.startswith(
             "/dstsv2"):  # dSTS authority's path always starts with "/dstsv2"
             oidc_authority = authority  # So we treat it as if an oidc_authority
+        authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
         try:
-            authority_to_use = authority or "https://{}/common/".format(WORLD_WIDE)
             self.authority = Authority(
                 authority_to_use,
                 self.http_client,
@@ -694,22 +745,23 @@ class ClientApplication(object):
                 instance_discovery=self._instance_discovery,
                 oidc_authority_url=oidc_authority,
                 )
-        except ValueError:  # Those are explicit authority validation errors
-            raise
-        except Exception:  # The rest are typically connection errors
-            if validate_authority and not oidc_authority and (
-                azure_region  # Opted in to use region
-                or (azure_region is None and os.getenv("MSAL_FORCE_REGION"))  # Will use region
-            ):
-                # Since caller opts in to use region, here we tolerate connection
-                # errors happened during authority validation at non-region endpoint
-                self.authority = Authority(
-                    authority_to_use,
-                    self.http_client,
-                    instance_discovery=False,
-                    )
-            else:
+        except OSError:
+            authority_host = urlparse(str(authority_to_use)).hostname
+            if not (
+                    validate_authority
+                    and not oidc_authority
+                    and authority_host in WELL_KNOWN_AUTHORITY_HOSTS
+                    and (
+                        azure_region
+                        or force_region is not None
+                    )):
                 raise
+            self.authority = Authority(
+                authority_to_use,
+                self.http_client,
+                validate_authority=True,
+                instance_discovery=False,
+                )
 
         self._decide_broker(allow_broker, enable_pii_log)
         self.token_cache = token_cache or TokenCache()
@@ -823,7 +875,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if self._region_configured is False:  # User opts out of ESTS-R
             return None  # Short circuit to completely bypass region detection
         if self._region_configured is None:  # User did not make an ESTS-R choice
-            self._region_configured = os.getenv("MSAL_FORCE_REGION") or None
+            force_region = os.getenv("MSAL_FORCE_REGION")
+            self._region_configured = (
+                _validate_explicit_region(force_region, "MSAL_FORCE_REGION")
+                if force_region is not None else None)
         self._region_detected = self._region_detected or _detect_region(
             self.http_client if self._region_configured is not None else None)
         if (self._region_configured != self.ATTEMPT_REGION_DISCOVERY
@@ -834,6 +889,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             self._region_detected
             if self._region_configured == self.ATTEMPT_REGION_DISCOVERY
             else self._region_configured)  # It will retain the None i.e. opted out
+        if isinstance(region_to_use, str):
+            region_to_use = _validate_region(
+                region_to_use, source="azure_region parameter")
         logger.debug('Region to be used: {}'.format(repr(region_to_use)))
         if region_to_use:
             regional_host = ("{}.login.microsoft.com".format(region_to_use)
@@ -1247,6 +1305,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 # values MUST be identical.
             nonce=None,
             claims_challenge=None,
+            forwarded_client_claims=None,
             **kwargs):
         """The second half of the Authorization Code Grant.
 
@@ -1277,6 +1336,18 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             in the form of a claims_challenge directive in the www-authenticate header to be
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
+        :param str forwarded_client_claims:
+            Optional. A JSON string of *client-originated* claims to include in
+            the token request. Unlike ``claims_challenge`` (server-issued, which
+            bypasses the cache), tokens acquired with ``forwarded_client_claims``
+            **are cached** and keyed on the claims value. Send the *same* value on
+            every request that should share the cached token; omitting or changing
+            it routes to a different cache entry (a cache miss), so use stable,
+            non-dynamic values. The value is merged into the standard OAuth
+            ``claims`` request parameter sent on the wire.
+
+            Not to be confused with the constructor ``client_claims`` parameter
+            (a ``dict`` of extra claims signed into the client-assertion JWT).
 
         :return: A dict representing the json response from Microsoft Entra:
 
@@ -1296,14 +1367,18 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         with warnings.catch_warnings(record=True):
             telemetry_context = self._build_telemetry_context(
                 self.ACQUIRE_TOKEN_BY_AUTHORIZATION_CODE_ID)
+            _data = kwargs.pop("data", {})
+            _stash_client_claims(forwarded_client_claims, _data)
             response = _clean_up(self.client.obtain_token_by_authorization_code(
                 code, redirect_uri=redirect_uri,
                 scope=self._decorate_scope(scopes),
                 headers=telemetry_context.generate_headers(),
                 data=dict(
-                    kwargs.pop("data", {}),
-                    claims=_merge_claims_challenge_and_capabilities(
-                        self._client_capabilities, claims_challenge)),
+                    _data,
+                    claims=_merge_claims(
+                        _merge_claims_challenge_and_capabilities(
+                            self._client_capabilities, claims_challenge),
+                        _data.get("client_claims"))),
                 nonce=nonce,
                 **kwargs))
             if "access_token" in response:
@@ -1484,6 +1559,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
             claims_challenge=None,
+            forwarded_client_claims=None,
             auth_scheme=None,
             **kwargs):
         """Acquire an access token for given account, without user interaction.
@@ -1503,6 +1579,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         """
         if not account:
             return None  # A backward-compatible NO-OP to drop the account=None usage
+        if forwarded_client_claims is not None:
+            kwargs["data"] = kwargs.get("data", {})
+            _stash_client_claims(forwarded_client_claims, kwargs["data"])
         result = _clean_up(self._acquire_token_silent_with_error(
             scopes, account, authority=authority, force_refresh=force_refresh,
             claims_challenge=claims_challenge, auth_scheme=auth_scheme, **kwargs))
@@ -1515,6 +1594,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             authority=None,  # See get_authorization_request_url()
             force_refresh=False,  # type: Optional[boolean]
             claims_challenge=None,
+            forwarded_client_claims=None,
             auth_scheme=None,
             **kwargs):
         """Acquire an access token for given account, without user interaction.
@@ -1542,6 +1622,17 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             in the form of a claims_challenge directive in the www-authenticate header to be
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
+        :param str forwarded_client_claims:
+            Optional. A JSON string of *client-originated* claims, applied only
+            when no cached token is found and a network request is made. Unlike
+            ``claims_challenge`` (server-issued, which bypasses the cache), tokens
+            acquired with ``forwarded_client_claims`` **are cached** and keyed on
+            the claims value. Send the *same* value on every call that should
+            reuse the cached token; different or omitted values route to separate
+            cache entries, so use stable, non-dynamic values.
+
+            Not to be confused with the constructor ``client_claims`` parameter
+            (a ``dict`` of extra claims signed into the client-assertion JWT).
         :param object auth_scheme:
             You can provide an ``msal.auth_scheme.PopAuthScheme`` object
             so that MSAL will get a Proof-of-Possession (POP) token for you.
@@ -1557,6 +1648,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         """
         if not account:
             return None  # A backward-compatible NO-OP to drop the account=None usage
+        if forwarded_client_claims is not None:
+            kwargs["data"] = kwargs.get("data", {})
+            _stash_client_claims(forwarded_client_claims, kwargs["data"])
         return _clean_up(self._acquire_token_silent_with_error(
             scopes, account, authority=authority, force_refresh=force_refresh,
             claims_challenge=claims_challenge, auth_scheme=auth_scheme, **kwargs))
@@ -1819,6 +1913,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_SILENT_ID,
             correlation_id=correlation_id, refresh_reason=refresh_reason)
+        # Pop "data" once (rather than per-iteration) so client_claims and any
+        # other data fields apply consistently across all candidate RTs.
+        _data = kwargs.pop("data", {})
         for entry in sorted(  # Since unfit RTs would not be aggressively removed,
                               # we start from newer RTs which are more likely fit.
                 matches,
@@ -1842,9 +1939,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 scope=scopes,
                 headers=headers,
                 data=dict(
-                    kwargs.pop("data", {}),
-                    claims=_merge_claims_challenge_and_capabilities(
-                        self._client_capabilities, claims_challenge)),
+                    _data,
+                    claims=_merge_claims(
+                        _merge_claims_challenge_and_capabilities(
+                            self._client_capabilities, claims_challenge),
+                        _data.get("client_claims"))),
                 **kwargs)
             telemetry_context.update_telemetry(response)
             if "error" not in response:
@@ -2504,7 +2603,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
     except that ``allow_broker`` parameter shall remain ``None``.
     """
 
-    def acquire_token_for_client(self, scopes, claims_challenge=None, fmi_path=None, **kwargs):
+    def acquire_token_for_client(self, scopes, claims_challenge=None, fmi_path=None, forwarded_client_claims=None, **kwargs):
         """Acquires token for the current confidential client, not for an end user.
 
         Since MSAL Python 1.23, it will automatically look for token from cache,
@@ -2528,6 +2627,18 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     scopes=["api://resource/.default"],
                     fmi_path="SomeFmiPath/FmiCredentialPath",
                 )
+        :param str forwarded_client_claims:
+            Optional. A JSON string of *client-originated* claims to include in
+            the token request. Unlike ``claims_challenge`` (server-issued, which
+            bypasses the cache), tokens acquired with ``forwarded_client_claims``
+            **are cached** and keyed on the claims value. Send the *same* value on
+            every request that should share the cached token; omitting or changing
+            it routes to a different cache entry (a cache miss), so use stable,
+            non-dynamic values. The value is merged into the standard OAuth
+            ``claims`` request parameter sent on the wire.
+
+            Not to be confused with the constructor ``client_claims`` parameter
+            (a ``dict`` of extra claims signed into the client-assertion JWT).
         :return: A dict representing the json response from Microsoft Entra:
 
             - A successful response would contain "access_token" key,
@@ -2543,6 +2654,13 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                     "fmi_path must be a string, got {}".format(type(fmi_path).__name__))
             kwargs["data"] = kwargs.get("data", {})
             kwargs["data"]["fmi_path"] = fmi_path
+        if forwarded_client_claims is not None:
+            # Carry it in the request data so it contributes to the extended
+            # cache key (different claims => separate cache entries). It is
+            # merged into the "claims" body parameter in _acquire_token_for_client
+            # and stripped from the wire body by the oauth2 layer.
+            kwargs["data"] = kwargs.get("data", {})
+            _stash_client_claims(forwarded_client_claims, kwargs["data"])
         return _clean_up(self._acquire_token_silent_with_error(
             scopes, None, claims_challenge=claims_challenge, **kwargs))
 
@@ -2562,13 +2680,20 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_FOR_CLIENT_ID, refresh_reason=refresh_reason)
         client = self._regional_client or self.client
+        request_data = kwargs.pop("data", {})
+        claims = _merge_claims_challenge_and_capabilities(
+            self._client_capabilities, claims_challenge)
+        # Client-originated claims (set via forwarded_client_claims=) are merged into the
+        # same OAuth "claims" parameter and sent on the wire. The raw
+        # "client_claims" entry stays in request_data so it keys the cache; the
+        # oauth2 layer drops it from the actual request body.
+        client_claims = request_data.get("client_claims")
+        if client_claims:
+            claims = _merge_claims(claims, client_claims)
         response = client.obtain_token_for_client(
             scope=scopes,  # This grant flow requires no scope decoration
             headers=telemetry_context.generate_headers(),
-            data=dict(
-                kwargs.pop("data", {}),
-                claims=_merge_claims_challenge_and_capabilities(
-                    self._client_capabilities, claims_challenge)),
+            data=dict(request_data, claims=claims),
             **kwargs)
         telemetry_context.update_telemetry(response)
         return response
@@ -2587,7 +2712,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 self.token_cache.remove_at(at)
         # acquire_token_for_client() obtains no RTs, so we have no RT to remove
 
-    def acquire_token_on_behalf_of(self, user_assertion, scopes, claims_challenge=None, **kwargs):
+    def acquire_token_on_behalf_of(self, user_assertion, scopes, claims_challenge=None, forwarded_client_claims=None, **kwargs):
         """Acquires token using on-behalf-of (OBO) flow.
 
         The current app is a middle-tier service which was called with a token
@@ -2607,6 +2732,18 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             in the form of a claims_challenge directive in the www-authenticate header to be
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
+        :param str forwarded_client_claims:
+            Optional. A JSON string of *client-originated* claims to include in
+            the token request. Unlike ``claims_challenge`` (server-issued, which
+            bypasses the cache), tokens acquired with ``forwarded_client_claims``
+            **are cached** and keyed on the claims value. Send the *same* value on
+            every request that should share the cached token; omitting or changing
+            it routes to a different cache entry (a cache miss), so use stable,
+            non-dynamic values. The value is merged into the standard OAuth
+            ``claims`` request parameter sent on the wire.
+
+            Not to be confused with the constructor ``client_claims`` parameter
+            (a ``dict`` of extra claims signed into the client-assertion JWT).
 
         :return: A dict representing the json response from Microsoft Entra:
 
@@ -2615,6 +2752,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         """
         telemetry_context = self._build_telemetry_context(
             self.ACQUIRE_TOKEN_ON_BEHALF_OF_ID)
+        _data = kwargs.pop("data", {})
+        _stash_client_claims(forwarded_client_claims, _data)
         # The implementation is NOT based on Token Exchange (RFC 8693)
         response = _clean_up(self.client.obtain_token_by_assertion(  # bases on assertion RFC 7521
             user_assertion,
@@ -2626,10 +2765,12 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 #    so that the calling app could use id_token_claims to implement
                 #    their own cache mapping, which is likely needed in web apps.
             data=dict(
-                kwargs.pop("data", {}),
+                _data,
                 requested_token_use="on_behalf_of",
-                claims=_merge_claims_challenge_and_capabilities(
-                    self._client_capabilities, claims_challenge)),
+                claims=_merge_claims(
+                    _merge_claims_challenge_and_capabilities(
+                        self._client_capabilities, claims_challenge),
+                    _data.get("client_claims"))),
             headers=telemetry_context.generate_headers(),
                 # TBD: Expose a login_hint (or ccs_routing_hint) param for web app
             **kwargs))
@@ -2640,7 +2781,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
     def acquire_token_by_user_federated_identity_credential(
             self, scopes, assertion, username=None, user_object_id=None,
-            claims_challenge=None, **kwargs):
+            claims_challenge=None, forwarded_client_claims=None, **kwargs):
         """Acquires a user-scoped token using the ``user_fic`` grant type.
 
         This method exchanges a federated identity credential (typically an
@@ -2663,6 +2804,18 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             in the form of a claims_challenge directive in the www-authenticate header to be
             returned from the UserInfo Endpoint and/or in the ID Token and/or Access Token.
             It is a string of a JSON object which contains lists of claims being requested from these locations.
+        :param str forwarded_client_claims:
+            Optional. A JSON string of *client-originated* claims to include in
+            the token request. Unlike ``claims_challenge`` (server-issued, which
+            bypasses the cache), tokens acquired with ``forwarded_client_claims``
+            **are cached** and keyed on the claims value. Send the *same* value on
+            every request that should share the cached token; omitting or changing
+            it routes to a different cache entry (a cache miss), so use stable,
+            non-dynamic values. The value is merged into the standard OAuth
+            ``claims`` request parameter sent on the wire.
+
+            Not to be confused with the constructor ``client_claims`` parameter
+            (a ``dict`` of extra claims signed into the client-assertion JWT).
 
         :return: A dict representing the json response from Microsoft Entra:
 
@@ -2687,6 +2840,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         elif user_object_id:
             headers["X-AnchorMailbox"] = "Oid:{}@{}".format(
                 user_object_id, self.authority.tenant)
+        _data = kwargs.pop("data", {})
+        _stash_client_claims(forwarded_client_claims, _data)
         response = _clean_up(self.client.obtain_token_by_user_fic(
             scope=self._decorate_scope(scopes),
             assertion=assertion,
@@ -2694,9 +2849,11 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             user_object_id=user_object_id,
             headers=headers,
             data=dict(
-                kwargs.pop("data", {}),
-                claims=_merge_claims_challenge_and_capabilities(
-                    self._client_capabilities, claims_challenge)),
+                _data,
+                claims=_merge_claims(
+                    _merge_claims_challenge_and_capabilities(
+                        self._client_capabilities, claims_challenge),
+                    _data.get("client_claims"))),
             **kwargs))
         if "access_token" in response:
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP

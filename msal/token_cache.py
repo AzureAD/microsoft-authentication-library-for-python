@@ -7,7 +7,7 @@ import logging
 import warnings
 
 from .authority import canonicalize
-from .oauth2cli.oidc import decode_part, decode_id_token
+from .oauth2cli.oidc import decode_part, _decode_id_token_claims
 from .oauth2cli.oauth2 import Client
 
 
@@ -81,10 +81,29 @@ def _compute_ext_cache_key(data):
     This ensures tokens acquired with different parameter values
     (e.g., different FMI paths) are cached separately.
 
+    The hash may also intentionally include cache-key-only pseudo-parameters
+    such as ``client_claims`` -- these are stripped from the wire body by the
+    oauth2 layer but are retained in *data* precisely so that different
+    client-originated claims route to separate cache entries.
+
     Returns an empty string when *data* has no hashable fields.
 
-    The algorithm matches the Go MSAL implementation (CacheExtKeyGenerator):
-    sorted key+value pairs are concatenated and SHA256 hashed, then base64url encoded.
+    The algorithm uses a length-prefixed ("netstring") serialization matching
+    MSAL Go's ``CacheExtKeyGenerator``
+    (AzureAD/microsoft-authentication-library-for-go#629): for each key sorted
+    ascending, ``<byteLen(key)>:<key><byteLen(value)>:<value>`` is appended and
+    the parts concatenated, then SHA256 hashed and base64url (no padding)
+    encoded and lowercased.
+
+    The length prefixes make the *serialization* injective: distinct component
+    sets can never produce the same pre-hash string, so they cannot collide at
+    the serialization layer. (The final cache key is still a SHA-256 digest, so
+    only a cryptographically negligible hash collision remains possible.) A plain
+    ``key + value`` concatenation, by contrast, is ambiguous: ``{"fmi_path":
+    "value"}`` and ``{"fmi_pat": "hvalue"}`` would both serialize to
+    ``fmi_pathvalue``. The byte length (``len(s.encode("utf-8"))``), not the
+    Unicode code-point count, is used so the hash stays byte-identical across the
+    MSAL SDK family (Go/.NET/Java/JS) as they converge on this scheme.
     """
     if not data:
         return ""
@@ -94,12 +113,71 @@ def _compute_ext_cache_key(data):
     }
     if not cache_components:
         return ""
-    # Sort keys for consistent hashing (matches Go implementation)
+    # Sort keys, then length-prefix each key and value so the serialization is
+    # injective (see docstring). Byte-identical to MSAL Go's netstring encoding.
     key_str = "".join(
-        k + cache_components[k] for k in sorted(cache_components.keys())
+        "{klen}:{k}{vlen}:{v}".format(
+            klen=len(k.encode("utf-8")), k=k,
+            vlen=len(cache_components[k].encode("utf-8")), v=cache_components[k])
+        for k in sorted(cache_components.keys())
     )
     hash_bytes = hashlib.sha256(key_str.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(hash_bytes).rstrip(b"=").decode("ascii").lower()
+
+
+def _parse_claims_or_raise(claims):
+    """Parse a claims JSON string into a dict, or raise a friendly ``ValueError``.
+
+    The raw claims value is never included in the error message because it may
+    contain sensitive data. Mirrors MSAL .NET's ``ClaimsHelper.ParseClaimsOrThrow``.
+    """
+    try:
+        parsed = json.loads(claims)
+    except (ValueError, TypeError) as ex:
+        # json.JSONDecodeError (malformed JSON) is a subclass of ValueError;
+        # TypeError is raised when *claims* is not a str/bytes/bytearray. Both
+        # are surfaced as the same friendly ValueError so every caller behaves
+        # consistently regardless of the bad input's type.
+        raise ValueError(
+            "The claims value is not valid JSON. "
+            "See https://openid.net/specs/openid-connect-core-1_0.html#ClaimsParameter."
+        ) from ex
+    if not isinstance(parsed, dict):
+        # A valid JSON array, scalar, or the literal "null" is not a claims object.
+        raise ValueError(
+            "The claims value is not a valid JSON object. "
+            "See https://openid.net/specs/openid-connect-core-1_0.html#ClaimsParameter.")
+    return parsed
+
+
+def _deep_merge_dict(base, overlay):
+    """Recursively merge ``overlay`` into ``base``, returning a new dict.
+
+    Nested dicts are merged; for any other value type, ``overlay`` wins.
+    """
+    result = dict(base)
+    for key, value in overlay.items():
+        if (key in result
+                and isinstance(result[key], dict) and isinstance(value, dict)):
+            result[key] = _deep_merge_dict(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _merge_claims(claims_a, claims_b):
+    """Merge two claims JSON strings into a single JSON string.
+
+    If either side is empty/None, the other is returned as-is. Mirrors MSAL
+    .NET's ``ClaimsHelper.MergeClaimsObjects``.
+    """
+    if not claims_a:
+        return claims_b
+    if not claims_b:
+        return claims_a
+    merged = _deep_merge_dict(
+        _parse_claims_or_raise(claims_a), _parse_claims_or_raise(claims_b))
+    return json.dumps(merged)
 
 
 def is_subdict_of(small, big):
@@ -307,6 +385,11 @@ class TokenCache(object):
             data=make_clean_copy(event.get("data", {}), (
                 "password", "client_secret", "refresh_token", "assertion",
                 "user_federated_identity_credential",
+                # Client-originated claims may carry sensitive values; they are
+                # kept in data only for ext_cache_key computation, so redact them
+                # from the debug log (both the cache-key pseudo-param and the
+                # merged wire parameter).
+                "client_claims", "claims",
             )),
             response=make_clean_copy(event.get("response", {}), (
                 "id_token_claims",  # Provided by broker
@@ -349,8 +432,9 @@ class TokenCache(object):
         refresh_token = response.get("refresh_token")
         id_token = response.get("id_token")
         id_token_claims = response.get("id_token_claims") or (  # Prefer the claims from broker
-            # Only use decode_id_token() when necessary, it contains time-sensitive validation
-            decode_id_token(id_token, client_id=event["client_id"]) if id_token else {})
+            # MSAL does not validate the ID token; it only decodes the claims.
+            # https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/911
+            _decode_id_token_claims(id_token) if id_token else {})
         client_info, home_account_id = self.__parse_account(response, id_token_claims)
 
         target = ' '.join(sorted(event.get("scope") or []))  # Schema should have required sorting

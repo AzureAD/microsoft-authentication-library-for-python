@@ -3,22 +3,22 @@
 # Shared stages template for the msal Python package.
 #
 # Called from:
-#   pipeline-publish.yml — release build (runPublish: true)
-#   azure-pipelines.yml  — PR gate and post-merge CI (runPublish: false)
+#   pipeline-publish.yml - release build (runPublish: true)
+#   azure-pipelines.yml  - PR gate and post-merge CI (runPublish: false)
 #
 # Parameters:
 #   packageVersion  - Version to validate against msal/sku.py
 #                     Required when runPublish is true; unused otherwise.
 #   runPublish      - When true: also runs the Validate stage before UnitTests.
-#                     When false (PR / merge builds): only PreBuildCheck + tests run.
+#                     When false (PR / merge builds): only UnitTests + E2ETests run.
 #
 # Stage flow:
 #
-#   runPublish: true  → PreBuildCheck ─► Validate ─► UnitTests ─► E2ETests
-#   runPublish: false → PreBuildCheck ─► UnitTests ─► E2ETests  (Validate is skipped)
+#   runPublish: true  -> Validate -> UnitTests -> E2ETests
+#   runPublish: false -> UnitTests -> E2ETests
 #
-# Build and Publish stages are defined in pipeline-publish.yml (not here),
-# so that the PR build never references PyPI service connections.
+# Note: SDL security scans (PoliCheck, CredScan, CodeQL) are handled by OneBranch
+# globalSdl configuration in the parent pipeline. No explicit PreBuildCheck stage needed.
 
 parameters:
 - name: packageVersion
@@ -31,66 +31,21 @@ parameters:
 stages:
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Stage 0 · PreBuildCheck — SDL security scans (PoliCheck + CredScan)
-#           Always runs, mirrors MSAL.NET pre-build analysis.
-# ══════════════════════════════════════════════════════════════════════════════
-- stage: PreBuildCheck
-  displayName: 'Pre-build security checks'
-  jobs:
-  - job: SecurityScan
-    displayName: 'PoliCheck + CredScan'
-    pool:
-      vmImage: windows-latest
-    variables:
-      Codeql.SkipTaskAutoInjection: true
-    steps:
-    - task: NodeTool@0
-      displayName: 'Install Node.js (includes npm)'
-      inputs:
-        versionSpec: '20.x'
-
-    - task: securedevelopmentteam.vss-secure-development-tools.build-task-policheck.PoliCheck@2
-      displayName: 'Run PoliCheck'
-      inputs:
-        targetType: F
-      continueOnError: true
-
-    - task: securedevelopmentteam.vss-secure-development-tools.build-task-credscan.CredScan@3
-      displayName: 'Run CredScan'
-      inputs:
-        suppressionsFile: '$(Build.SourcesDirectory)/.Pipelines/credscan-exclusion.json'
-        toolMajorVersion: V2
-        debugMode: false
-
-    - task: securedevelopmentteam.vss-secure-development-tools.build-task-postanalysis.PostAnalysis@2
-      displayName: 'Post Analysis'
-      inputs:
-        GdnBreakGdnToolCredScan: true
-        GdnBreakGdnToolPoliCheck: true
-
-    - task: securedevelopmentteam.vss-secure-development-tools.build-task-publishsecurityanalysislogs.PublishSecurityAnalysisLogs@3
-      displayName: 'Publish Security Analysis Logs (TSA)'
-      condition: succeededOrFailed()
-      inputs:
-        tsaConfigFile: '$(Build.SourcesDirectory)/.Pipelines/tsaConfig.json'
-
-    - task: mspremier.PostBuildCleanup.PostBuildCleanup-task.PostBuildCleanup@3
-      displayName: 'Clean agent directories'
-      condition: always()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Stage 1 · Validate — verify packageVersion matches msal/sku.py __version__
+# Stage 1 - Validate - verify packageVersion matches msal/sku.py __version__
 #           Skipped when runPublish is false (PR / merge builds).
 # ══════════════════════════════════════════════════════════════════════════════
 - stage: Validate
   displayName: 'Validate version'
-  dependsOn: PreBuildCheck
-  condition: and(${{ parameters.runPublish }}, eq(dependencies.PreBuildCheck.result, 'Succeeded'))
+  condition: ${{ parameters.runPublish }}
   jobs:
   - job: ValidateVersion
     displayName: 'Check version matches source'
     pool:
-      vmImage: ubuntu-latest
+      type: linux
+      isCustom: true
+      vmImage: 'ubuntu-22.04'
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
     steps:
     - task: UsePythonVersion@0
       inputs:
@@ -116,7 +71,7 @@ stages:
       displayName: 'Verify version parameter matches msal/sku.py'
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Stage 2 · UnitTests — run unit tests across all supported Python versions.
+# Stage 2 - UnitTests - run unit tests across all supported Python versions.
 #           No Key Vault or service connection needed.
 #           Waits for Validate when runPublish is true;
 #           runs immediately when Validate is skipped (PR / merge builds).
@@ -124,22 +79,22 @@ stages:
 - stage: UnitTests
   displayName: 'Unit test'
   dependsOn:
-  - PreBuildCheck
   - Validate
   condition: |
-    and(
-      eq(dependencies.PreBuildCheck.result, 'Succeeded'),
-      in(dependencies.Validate.result, 'Succeeded', 'Skipped')
-    )
+    in(dependencies.Validate.result, 'Succeeded', 'Skipped')
   jobs:
   - job: Pytest
     displayName: 'pytest'
     pool:
-      vmImage: ubuntu-22.04
+      type: linux
+      isCustom: true
+      vmImage: 'ubuntu-22.04'
     timeoutInMinutes: 30
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
     strategy:
       matrix:
-        Python39:  { python.version: '3.9'  }
+        Python39:  { python.version: '3.9' }
         Python310: { python.version: '3.10' }
         Python311: { python.version: '3.11' }
         Python312: { python.version: '3.12' }
@@ -156,7 +111,7 @@ stages:
         set -euo pipefail
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-azurepipelines pytest-timeout
+        pip install pytest pytest-timeout
       displayName: 'Install Python dependencies'
 
     - bash: |
@@ -166,15 +121,16 @@ stages:
           --benchmark-skip \
           --timeout=120 \
           --junitxml=test-results/junit-unit.xml \
+          --log-file=test-results/pytest-unit.log \
           --ignore=tests/test_e2e.py \
           --ignore=tests/test_e2e_manual.py \
           --ignore=tests/test_fmi_e2e.py \
+          --ignore=tests/test_mi_e2e.py \
           --deselect tests/test_cryptography.py::CryptographyTestCase::test_ceiling_should_be_latest_cryptography_version_plus_three \
-          --deselect tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography \
-          2>&1 | tee test-results/pytest-unit.log
+          --deselect tests/test_cryptography.py::CryptographyTestCase::test_should_be_run_with_latest_version_of_cryptography
       displayName: 'Run pytest (unit)'
+      timeoutInMinutes: 5
       env:
-        # Force unbuffered stdout so ADO logs stream in real time through the tee pipe.
         PYTHONUNBUFFERED: '1'
 
     # Run cryptography version-gating tests separately as a warning-only check.
@@ -215,10 +171,17 @@ stages:
         failTaskOnFailedTests: false
         testRunTitle: 'Cryptography ceiling check $(python.version)'
 
+    - task: PostAnalysis@2
+      displayName: 'Guardian Break'
+      inputs:
+        GdnBreakFast: false
+        GdnBreakAllTools: false
+        GdnBreakGdnToolPoliCheck: true
+        GdnBreakGdnToolPoliCheckSeverity: Error
+
 # ══════════════════════════════════════════════════════════════════════════════
-# Stage 3 · E2ETests — runs only if unit tests pass. Fetches the MSID Lab
-#           certificate from Key Vault (mirrors MSAL.NET's
-#           build/template-install-keyvault-secrets.yaml).
+# Stage 3 - E2ETests - runs only if unit tests pass. Fetches the MSID Lab
+#           certificate from Key Vault.
 #           Fork behaviour: the stage still runs on forked PRs, but the
 #           Key Vault retrieval and certificate decoding steps are skipped
 #           via `ne(System.PullRequest.IsFork, 'True')`. The pytest step then
@@ -235,8 +198,12 @@ stages:
   - job: Pytest
     displayName: 'pytest'
     pool:
-      vmImage: ubuntu-22.04
+      type: linux
+      isCustom: true
+      vmImage: 'ubuntu-22.04'
     timeoutInMinutes: 60
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
     strategy:
       matrix:
         Python39:  { python.version: '3.9'  }
@@ -280,7 +247,7 @@ stages:
         set -euo pipefail
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-azurepipelines pytest-timeout
+        pip install pytest pytest-timeout
       displayName: 'Install Python dependencies'
 
     - bash: |
@@ -309,3 +276,123 @@ stages:
     - bash: rm -f "$(Agent.TempDirectory)/lab-auth.pfx"
       displayName: 'Remove lab certificate from agent'
       condition: always()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 4 - MI E2E (IMDS) - REAL managed identity token acquisition on an Azure VM.
+#           Runs on the self-hosted "MISEManagedIdentity" pool, a Windows Azure VM
+#           that has the lab system-assigned + user-assigned identities assigned.
+#           Mirrors the MSAL Go "MI E2E - IMDS" stage. Only the IMDS cases in
+#           tests/test_mi_e2e.py run here (gated on MSAL_TEST_MI_IMDS); the Arc case
+#           self-skips. No lab certificate is needed - the VM's own managed identity
+#           is used.
+#
+#           Pool assumptions (self-hosted): Python 3.x on PATH and outbound access to
+#           PyPI for "pip install". Adjust if the pool differs.
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: MIE2EImds
+  displayName: 'MI E2E - IMDS'
+  dependsOn: UnitTests
+  # Fork guard: never run untrusted forked-PR code on the self-hosted pool.
+  condition: and(eq(dependencies.UnitTests.result, 'Succeeded'), ne(variables['System.PullRequest.IsFork'], 'True'))
+  jobs:
+  - job: Pytest
+    displayName: 'Managed Identity E2E - VM / IMDS'
+    pool:
+      type: windows
+      isCustom: true
+      name: MISEManagedIdentity
+    timeoutInMinutes: 30
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+    steps:
+    # msal + its dependencies (requests, cryptography, PyJWT) and pytest are PRE-PROVISIONED on the
+    # self-hosted pool (like the Go/.NET toolchains already are), so there is no runtime pip install.
+    # This also avoids the Arc pool's egress TLS inspection blocking files.pythonhosted.org.
+    - task: PowerShell@2
+      displayName: 'Run pytest (MI E2E - IMDS)'
+      inputs:
+        targetType: 'inline'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $py = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if (-not $py) {
+            $py = Get-ChildItem 'C:\Program Files\Python3*\python.exe','C:\Program Files (x86)\Python3*\python.exe','C:\Python3*\python.exe' -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $py) { throw 'Python not found on this agent. Install Python 3.x on the pool machine.' }
+          Write-Host "Using Python: $py"
+          & $py --version
+          New-Item -ItemType Directory -Force -Path test-results | Out-Null
+          & $py -m pytest -vv --junitxml=test-results/junit-mi-e2e-imds.xml tests/test_mi_e2e.py
+      env:
+        PYTHONUNBUFFERED: '1'
+        MSAL_TEST_MI_IMDS: '1'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish MI E2E (IMDS) test results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results/junit-mi-e2e-imds.xml'
+        failTaskOnFailedTests: true
+        testRunTitle: 'MI E2E - IMDS'
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 5 - MI E2E (Azure Arc) - REAL managed identity token acquisition on an
+#           Azure Arc-enabled machine. Runs on the self-hosted "MISEAZUREARC" pool.
+#           Azure Arc supports the system-assigned identity only. Mirrors the MSAL Go
+#           "MI E2E - Azure Arc" stage. tests/test_mi_e2e.py's Arc case runs here; the
+#           IMDS cases self-skip (MSAL_TEST_MI_IMDS unset).
+#
+#           Pool note: as observed for MSAL Go, the Arc machine's egress inspection can
+#           reset TLS for package downloads. If "pip install" cannot reach PyPI, pre-provision
+#           the dependencies on the pool (or use an offline wheel cache) and drop the install step.
+# ══════════════════════════════════════════════════════════════════════════════
+- stage: MIE2EAzureArc
+  displayName: 'MI E2E - Azure Arc'
+  dependsOn: UnitTests
+  # Fork guard: never run untrusted forked-PR code on the self-hosted pool.
+  condition: and(eq(dependencies.UnitTests.result, 'Succeeded'), ne(variables['System.PullRequest.IsFork'], 'True'))
+  jobs:
+  - job: Pytest
+    displayName: 'Managed Identity E2E - Azure Arc'
+    pool:
+      type: windows
+      isCustom: true
+      name: MISEAZUREARC
+    timeoutInMinutes: 30
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+    steps:
+    # msal + its dependencies (requests, cryptography, PyJWT) and pytest are PRE-PROVISIONED on the
+    # self-hosted pool (like the Go/.NET toolchains already are), so there is no runtime pip install.
+    # This is required here because the Arc machine's egress TLS inspection blocks files.pythonhosted.org.
+    - task: PowerShell@2
+      displayName: 'Run pytest (MI E2E - Azure Arc)'
+      inputs:
+        targetType: 'inline'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $py = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+          if (-not $py) {
+            $py = Get-ChildItem 'C:\Program Files\Python3*\python.exe','C:\Program Files (x86)\Python3*\python.exe','C:\Python3*\python.exe' -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $py) { throw 'Python not found on this agent. Install Python 3.x on the pool machine.' }
+          Write-Host "Using Python: $py"
+          & $py --version
+          New-Item -ItemType Directory -Force -Path test-results | Out-Null
+          & $py -m pytest -vv --junitxml=test-results/junit-mi-e2e-arc.xml tests/test_mi_e2e.py
+      env:
+        PYTHONUNBUFFERED: '1'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish MI E2E (Azure Arc) test results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results/junit-mi-e2e-arc.xml'
+        failTaskOnFailedTests: true
+        testRunTitle: 'MI E2E - Azure Arc'
