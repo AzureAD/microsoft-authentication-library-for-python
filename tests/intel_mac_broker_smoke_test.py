@@ -52,9 +52,7 @@ def main():
     app = msal.PublicClientApplication(
         _CLIENT_ID,
         authority=_AUTHORITY,
-        enable_broker_on_mac=True,
-        enable_broker_on_windows=True,
-        enable_broker_on_linux=True,
+        enable_broker_on_mac=True,  # Only opt in on Mac; this script validates the Mac gate.
         )
     actual = bool(app._enable_broker)
     print(f"Actual   _enable_broker = {actual}")

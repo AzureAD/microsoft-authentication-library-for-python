@@ -1621,8 +1621,7 @@ class TestScopeDecoration(unittest.TestCase):
 
 
 @patch("sys.platform", new="darwin")  # Pretend running on Mac.
-@patch("msal.application.platform.machine", new=Mock(return_value="arm64"))
-# Pretend Apple Silicon, because broker is not supported on Intel-based Macs.
+@patch("msal.application.platform.machine", new=Mock(return_value="arm64"))  # Pretend Apple Silicon, because broker is not supported on Intel-based Macs.
 @patch("msal.authority.tenant_discovery", new=Mock(return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
@@ -1665,8 +1664,7 @@ class TestMsalBehaviorWithoutPyMsalRuntimeOrBroker(unittest.TestCase):
 
 
 @patch("sys.platform", new="darwin")  # Pretend running on Mac.
-@patch("msal.application.platform.machine", new=Mock(return_value="arm64"))
-# Pretend Apple Silicon, because broker is not supported on Intel-based Macs.
+@patch("msal.application.platform.machine", new=Mock(return_value="arm64"))  # Pretend Apple Silicon, because broker is not supported on Intel-based Macs.
 @patch("msal.authority.tenant_discovery", new=Mock(return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",

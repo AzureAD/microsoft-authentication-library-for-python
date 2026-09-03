@@ -2187,7 +2187,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
                +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
                | enable_broker_on_wsl     | WSL                               | ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id                            |
                +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
-               | enable_broker_on_mac     | Mac with Company Portal installed | msauth.com.msauth.unsignedapp://auth                                               |
+               | enable_broker_on_mac     | Apple Silicon Mac, Company Portal | msauth.com.msauth.unsignedapp://auth                                               |
                +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
                | enable_broker_on_linux   | Linux with Intune installed       | ``https://login.microsoftonline.com/common/oauth2/nativeclient`` (MUST be enabled) |
                +--------------------------+-----------------------------------+------------------------------------------------------------------------------------+
@@ -2227,7 +2227,10 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
             New in MSAL Python 1.25.0.
 
         :param boolean enable_broker_on_mac:
-            This setting is only effective if your app is running on Mac.
+            This setting is only effective if your app is running on
+            an Apple Silicon (arm64) Mac.
+            Broker is not supported on Intel-based Macs, where this setting
+            is ignored and MSAL will fall back to non-broker.
             This parameter defaults to None, which means MSAL will not utilize a broker.
 
             New in MSAL Python 1.31.0.
