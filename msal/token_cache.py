@@ -14,6 +14,17 @@ from .oauth2cli.oauth2 import Client
 logger = logging.getLogger(__name__)
 _GRANT_TYPE_BROKER = "broker"
 
+
+def _key_id_to_str(key_id):
+    """Coerce a key_id (base64url x5t#S256) into a str for the AT cache key.
+
+    It is normally an ASCII str, but tolerate bytes (decoded as ASCII) or any
+    other type so that building the cache key never raises ``TypeError``.
+    """
+    if isinstance(key_id, bytes):
+        return key_id.decode("ascii")
+    return key_id if isinstance(key_id, str) else str(key_id)
+
 # Fields in the request data dict that should NOT be included in the extended
 # cache key hash. Everything else in data IS included, because those are extra
 # body parameters going on the wire and must differentiate cached tokens.
@@ -230,7 +241,10 @@ class TokenCache(object):
                         realm=None, target=None,
                         ext_cache_key=None,
                         # Note: New field(s) can be added here
-                        #key_id=None,
+                        key_id=None,  # So ATs bound to different keys/certs can
+                            # coexist (e.g. an mtls_pop AT vs a Bearer AT for the
+                            # same app+scope). key_id is absent for Bearer, which
+                            # keeps the Bearer cache key byte-for-byte unchanged.
                         **ignored_payload_from_a_real_token:
                     "-".join([  # Note: Could use a hash here to shorten key length
                         home_account_id or "",
@@ -241,9 +255,13 @@ class TokenCache(object):
                         client_id or "",
                         realm or "",
                         target or "",
-                        #key_id or "",  # So ATs of different key_id can coexist
                         ] + ([ext_cache_key] if ext_cache_key else [])
-                        ).lower(),
+                        ).lower()
+                        # key_id is a base64url x5t#S256 and is case-sensitive,
+                        # so it is appended AFTER lower-casing the rest, to keep
+                        # ATs bound to different keys/certs isolated. Coerce it to
+                        # a str first so a non-str key_id never breaks caching.
+                        + ("-" + _key_id_to_str(key_id) if key_id else ""),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         realm=None, **ignored_payload_from_a_real_token:
@@ -272,6 +290,7 @@ class TokenCache(object):
         self,
         home_account_id, environment, client_id, realm, target,  # Together they form a compound key
         ext_cache_key=None,
+        key_id=None,
         default=None,
     ):  # O(1)
         return self._get(
@@ -283,6 +302,7 @@ class TokenCache(object):
                 realm=realm,
                 target=" ".join(target),
                 ext_cache_key=ext_cache_key,
+                key_id=key_id,
                 ),
             default=default)
 
@@ -311,11 +331,17 @@ class TokenCache(object):
             target_set <= set(entry.get("target", "").split())
             if target_set else True)
 
-    def search(self, credential_type, target=None, query=None, *, now=None):  # O(n) generator
+    def search(self, credential_type, target=None, query=None, *, now=None, for_removal=False):  # O(n) generator
         """Returns a generator of matching entries.
 
         It is O(1) for AT hits, and O(n) for other types.
         Note that it holds a lock during the entire search.
+
+        ``for_removal=True`` (used only by sign-out / remove_tokens_for_client)
+        disables the key_id/ext_cache_key isolation filters so those broad
+        cleanups can enumerate and delete key-bound and FMI-bound ATs. For-use
+        lookups must leave it False so a Bearer request never receives a
+        key-bound (e.g. mtls_pop) or ext-bound token, even with empty scopes.
         """
         target = sorted(target or [])  # Match the order sorted by add()
         assert isinstance(target, list), "Invalid parameter type"
@@ -329,7 +355,8 @@ class TokenCache(object):
             preferred_result = self._get_access_token(
                 query["home_account_id"], query["environment"],
                 query["client_id"], query["realm"], target,
-                ext_cache_key=query.get("ext_cache_key"))
+                ext_cache_key=query.get("ext_cache_key"),
+                key_id=query.get("key_id"))
             if preferred_result and self._is_matching(
                 preferred_result, query,
                 # Needs no target_set here because it is satisfied by dict key
@@ -357,9 +384,25 @@ class TokenCache(object):
                 ):
                     # Cache isolation for extended cache keys (e.g., FMI path).
                     # Entries with ext_cache_key must not match queries without one.
+                    # Unconditional for for-use lookups; only removal callers
+                    # (sign-out / remove_tokens_for_client) pass for_removal=True
+                    # to enumerate these ATs and delete them.
                     if (credential_type == self.CredentialType.ACCESS_TOKEN
+                        and not for_removal
                         and "ext_cache_key" in entry
                         and "ext_cache_key" not in (query or {})
+                    ):
+                        continue
+                    # Cache isolation for key-bound tokens (e.g. mtls_pop, SSH-cert).
+                    # An entry bound to a key_id must not satisfy a query without
+                    # one, so a Bearer lookup never returns a PoP/mtls_pop token.
+                    # Unconditional for for-use lookups; only removal callers
+                    # (sign-out / remove_tokens_for_client) pass for_removal=True
+                    # to enumerate these key-bound ATs and delete them.
+                    if (credential_type == self.CredentialType.ACCESS_TOKEN
+                        and not for_removal
+                        and "key_id" in entry
+                        and "key_id" not in (query or {})
                     ):
                         continue
                     yield entry
