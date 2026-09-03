@@ -343,6 +343,10 @@ class ClientApplication(object):
                             "Changed in version 1.35.0, if thumbprint is absent"
                             "and a public_certificate is present, MSAL will"
                             "automatically calculate an SHA-256 thumbprint instead.",
+                        "thumbprint_sha256": "An SHA-256 thumbprint (Added in version 1.35.0). "
+                            "If both thumbprint and thumbprint_sha256 are provided, "
+                            "SHA-256 is used for AAD authorities (including B2C, CIAM), "
+                            "and SHA-1 is used for ADFS and generic authorities.",
                         "passphrase": "Needed if the private_key is encrypted (Added in version 1.6.0)",
                         "public_certificate": "...-----BEGIN CERTIFICATE-----...",  # Needed if you use Subject Name/Issuer auth. Added in version 0.5.0.
                     }
@@ -954,10 +958,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     )
 
                     # Determine thumbprints based on what's provided
-                    if client_credential.get("thumbprint"):
-                        # User provided a thumbprint - use it as SHA-1 (legacy/manual approach)
-                        sha1_thumbprint = client_credential["thumbprint"]
-                        sha256_thumbprint = None
+                    if client_credential.get("thumbprint") or client_credential.get("thumbprint_sha256"):
+                        # User provided one or both thumbprints - use them as-is
+                        sha1_thumbprint = client_credential.get("thumbprint")
+                        sha256_thumbprint = client_credential.get("thumbprint_sha256")
                     elif isinstance(client_credential.get('public_certificate'), str):
                         # No thumbprint provided, but we have a certificate to calculate thumbprints
                         from cryptography import x509
@@ -967,8 +971,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                             _extract_cert_and_thumbprints(cert))
                     else:
                         raise ValueError(
-                            "You must provide either 'thumbprint' or 'public_certificate' "
-                            "from which the thumbprint can be calculated.")
+                            "You must provide 'thumbprint' (SHA-1), 'thumbprint_sha256' (SHA-256), "
+                            "or 'public_certificate' from which the thumbprint can be calculated.")
                 else:
                     raise ValueError(
                         "client_credential needs to follow this format "
@@ -977,13 +981,32 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     and isinstance(client_credential.get('public_certificate'), str)
                 ):  # Then we treat the public_certificate value as PEM content
                     headers["x5c"] = extract_certs(client_credential['public_certificate'])
-                if sha256_thumbprint and not authority.is_adfs:
+                # Determine which thumbprint to use based on what's available and authority type
+                # Authority classification:
+                #   - ADFS: authority.is_adfs
+                #   - B2C: authority._is_b2c (and not OIDC)
+                #   - CIAM: authority._is_b2c (and not OIDC)
+                #   - OIDC generic: authority._is_oidc (includes dSTS)
+                #   - AAD: everything else
+                # Use SHA256 for AAD, B2C, CIAM; use SHA1 for ADFS, OIDC generic, and dSTS
+                use_sha256 = False
+                if sha256_thumbprint and sha1_thumbprint:
+                    # Both thumbprints provided - choose based on authority type
+                    is_oidc = getattr(authority, '_is_oidc', False)
+                    # Use SHA1 for ADFS, OIDC generic (including dSTS); SHA256 for everything else (AAD, B2C, CIAM)
+                    use_sha256 = not authority.is_adfs and not is_oidc
+                elif sha256_thumbprint:
+                    # Only SHA256 provided
+                    use_sha256 = True
+                else:
+                    # Only SHA1 provided or fallback
+                    use_sha256 = False
+                
+                if use_sha256:
                     assertion_params = {
                         "algorithm": "PS256", "sha256_thumbprint": sha256_thumbprint,
                     }
-                else:  # Fall back
-                    if not sha1_thumbprint:
-                        raise ValueError("You shall provide a thumbprint in SHA1.")
+                else:
                     assertion_params = {
                         "algorithm": "RS256", "sha1_thumbprint": sha1_thumbprint,
                     }
