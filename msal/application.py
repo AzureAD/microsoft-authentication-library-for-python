@@ -267,6 +267,39 @@ def _msal_extension_check():
             )
 
 
+@functools.lru_cache(maxsize=1)
+def _retry_class(retry_base):
+    """Return a Retry subclass that retries errors on every method, POST included.
+
+    urllib3 retries a read error - a connection reset in the middle of a request, say -
+    only on the methods it considers idempotent, and POST is not one of them. The token
+    endpoint is the only thing MSAL POSTs, so the retry mounted below never applied to
+    it. Status-code retries stay on urllib3's default method set, so a 429 or a 5xx
+    carrying Retry-After still reaches MSAL's own throttling layer, rather than being
+    slept on and retried down here.
+    """
+    default_methods = getattr(
+        retry_base, "DEFAULT_ALLOWED_METHODS", None  # urllib3 1.26+
+        ) or getattr(retry_base, "DEFAULT_METHOD_WHITELIST", frozenset())
+
+    class RetryErrorsOnEveryMethod(retry_base):
+        def is_retry(self, method, status_code, has_retry_after=False):
+            if method is not None and method.upper() not in default_methods:
+                return False
+            return retry_base.is_retry(self, method, status_code, has_retry_after)
+
+    return RetryErrorsOnEveryMethod
+
+
+def _build_retry(requests):
+    """One retry for connection and read errors, on every method."""
+    retry_class = _retry_class(requests.adapters.Retry)
+    try:
+        return retry_class(total=1, allowed_methods=None)  # urllib3 1.26+
+    except TypeError:  # urllib3 < 1.26 spelled it method_whitelist
+        return retry_class(total=1, method_whitelist=None)
+
+
 class ClientApplication(object):
     """You do not usually directly use this class. Use its subclasses instead:
     :class:`PublicClientApplication` and :class:`ConfidentialClientApplication`.
@@ -715,7 +748,7 @@ class ClientApplication(object):
 
             # Enable a minimal retry. Better than nothing.
             # https://github.com/psf/requests/blob/v2.25.1/requests/adapters.py#L94-L108
-            a = requests.adapters.HTTPAdapter(max_retries=1)
+            a = requests.adapters.HTTPAdapter(max_retries=_build_retry(requests))
             self.http_client.mount("http://", a)
             self.http_client.mount("https://", a)
         self.http_client = ThrottledHttpClient(
