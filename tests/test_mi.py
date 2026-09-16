@@ -672,6 +672,31 @@ class ArcTestCase(ClientTestCase):
                 if sys.platform in _supported_arc_platforms_and_their_prefixes:
                     self.fail("Should not raise ArcPlatformNotSupportedError")
 
+    def test_arc_error_before_challenge_should_be_normalized(self, mocked_stat):
+        error = '{"error":"invalid_request","error_description":"The requested identity was not found"}'
+        app = ManagedIdentityClient(
+            UserAssignedManagedIdentity(client_id="system-assigned-client-id"),
+            http_client=requests.Session())
+        with patch.object(app._http_client, "get", return_value=MinimalResponse(
+            status_code=400,
+            text=error,
+            headers={"content-type": "application/json"},
+        )) as mocked_method:
+            self.assertEqual({
+                "error": "invalid_request",
+                "error_description": error,
+            }, app.acquire_token_for_client(resource="R"))
+            mocked_method.assert_called_once_with(
+                "http://localhost/token",
+                params={
+                    "api-version": "2020-06-01",
+                    "resource": "R",
+                    "client_id": "system-assigned-client-id",
+                },
+                headers={"Metadata": "true"},
+            )
+            self.assertEqual({}, app._token_cache._cache)
+
     def _assert_user_assigned_selector(self, managed_identity, selector_name, selector_value):
         app = ManagedIdentityClient(managed_identity, http_client=requests.Session())
         with patch.object(app._http_client, "get", side_effect=[
