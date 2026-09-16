@@ -815,6 +815,11 @@ def _obtain_token_on_arc(http_client, endpoint, resource, managed_identity=None)
         params=params.copy(),
         headers={"Metadata": "true"},
         )
+    if resp.status_code != 401:
+        return {
+            "error": "invalid_request",
+            "error_description": resp.text,
+            }
     www_auth = "www-authenticate"  # Header in lower case
     challenge = {
         # Normalized to lowercase, because header names are case-insensitive
