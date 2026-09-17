@@ -198,9 +198,12 @@ class ManagedIdentityClient(object):
                 client = msal.ManagedIdentityClient(managed_identity, http_client=s)
 
             For Service Fabric managed identity, ``http_client`` must be a
-            ``requests.Session`` using the standard ``requests.adapters.HTTPAdapter``.
+            ``requests.Session`` using ``requests.adapters.HTTPAdapter`` or a
+            subclass for the Service Fabric endpoint.
             MSAL derives a separate session for the Service Fabric endpoint so that
             its certificate thumbprint can be validated before the Secret header is sent.
+            Standard session, retry, and connection-pool settings are preserved,
+            but custom adapter behavior is not used.
 
         :param token_cache:
             Optional. It accepts a :class:`msal.TokenCache` instance to store tokens.
@@ -726,21 +729,22 @@ class _ServiceFabricHTTPAdapter(HTTPAdapter):
 
 
 def _create_service_fabric_http_client(http_client, endpoint, server_thumbprint):
-    """Clone a standard Requests session and attach a pinning-only HTTPS transport.
+    """Derive a Requests session with a pinning-only HTTPS transport.
 
-    Custom HTTP clients and adapters are rejected because MSAL cannot prove that
-    they will validate the certificate before transmitting the Secret header.
+    HTTPAdapter subclasses are accepted as sources of retry and pool settings,
+    but the derived session always uses MSAL's certificate-pinning adapter.
+    Other HTTP clients and adapters are unsupported.
     """
     if isinstance(http_client, ThrottledHttpClientBase):
         http_client = http_client.http_client
     if not isinstance(http_client, requests.Session):
         raise ManagedIdentityError(
             "Service Fabric managed identity requires a requests.Session "
-            "with the standard HTTPAdapter.")
+            "with an HTTPAdapter or subclass.")
     source_adapter = http_client.get_adapter(endpoint)
-    if type(source_adapter) is not HTTPAdapter:
+    if not isinstance(source_adapter, HTTPAdapter):
         raise ManagedIdentityError(
-            "Service Fabric managed identity does not support custom HTTP adapters.")
+            "Service Fabric managed identity requires an HTTPAdapter or subclass.")
 
     service_fabric_client = requests.Session()
     service_fabric_client.headers = http_client.headers.copy()
