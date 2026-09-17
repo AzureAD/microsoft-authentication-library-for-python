@@ -4,20 +4,21 @@
 # This code is licensed under the MIT License.
 import hashlib
 import hmac
+from http.client import HTTPException, HTTPSConnection
 import json
 import logging
 import os
+from queue import Empty, Queue
+import socket
 import ssl
 import sys
+from threading import Event, Lock, Thread, Timer
 import time
 import uuid
-from urllib.parse import urlparse  # Python 3+
+from urllib.parse import urlencode, urlparse  # Python 3+
 from collections import UserDict  # Python 3+
 from typing import List, Optional, Union  # Needed in Python 3.7 & 3.8
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.connection import HTTPSConnection
-from urllib3.connectionpool import HTTPSConnectionPool
 from .token_cache import TokenCache
 from .individual_cache import _IndividualCache as IndividualCache
 from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
@@ -196,10 +197,10 @@ class ManagedIdentityClient(object):
                 managed_identity = ...
                 client = msal.ManagedIdentityClient(managed_identity, http_client=s)
 
-            For Service Fabric managed identity, MSAL uses a separate internal session
-            so that the endpoint certificate thumbprint can be validated before the
-            Secret header is sent. The supplied ``http_client`` is not used for that
-            local Service Fabric request.
+            For Service Fabric managed identity, MSAL uses a bounded standard-library
+            HTTPS request so that the endpoint certificate thumbprint can be validated
+            before the Secret header is sent. The supplied ``http_client`` is not used
+            for that local Service Fabric request.
 
         :param token_cache:
             Optional. It accepts a :class:`msal.TokenCache` instance to store tokens.
@@ -609,24 +610,17 @@ def _obtain_token_on_service_fabric(
     if parsed_endpoint.scheme.lower() != "https" or not parsed_endpoint.hostname:
         raise ManagedIdentityError(
             "Service Fabric managed identity endpoint must use HTTPS.")
-    service_fabric_http_client = _create_service_fabric_http_client(
-        http_client, endpoint, _normalize_service_fabric_thumbprint(server_thumbprint))
-    try:
-        resp = service_fabric_http_client.get(
-            endpoint,
-            params={k: v for k, v in {
-                "api-version": "2019-07-01-preview",
-                "resource": resource,
-                "token_sha256_to_refresh": access_token_sha256_to_refresh,
-                "xms_cc": ",".join(client_capabilities) if client_capabilities else None,
-                }.items() if v is not None},
-            headers={"Secret": identity_header},
-            allow_redirects=False,
-            )
-    finally:
-        close = getattr(service_fabric_http_client, "close", None)
-        if callable(close):
-            close()
+    resp = _request_service_fabric_token(
+        endpoint,
+        _normalize_service_fabric_thumbprint(server_thumbprint),
+        {k: v for k, v in {
+            "api-version": "2019-07-01-preview",
+            "resource": resource,
+            "token_sha256_to_refresh": access_token_sha256_to_refresh,
+            "xms_cc": ",".join(client_capabilities) if client_capabilities else None,
+            }.items() if v is not None},
+        identity_header,
+        )
     if 300 <= resp.status_code < 400:
         return {
             "error": "invalid_request",
@@ -670,97 +664,230 @@ def _normalize_service_fabric_thumbprint(server_thumbprint):
     return normalized.lower()
 
 
-class _ServiceFabricHTTPSConnection(HTTPSConnection):
-    """An HTTPS connection that authenticates the Service Fabric endpoint certificate."""
-    _server_thumbprint = None
+_SERVICE_FABRIC_REQUEST_TIMEOUT = 5
+_SERVICE_FABRIC_MAX_ATTEMPTS = 4
+_SERVICE_FABRIC_MAX_RETRY_DELAY = 5
+_SERVICE_FABRIC_MAX_RESPONSE_SIZE = 1024 * 1024
+_SERVICE_FABRIC_RETRY_STATUS_CODES = frozenset([429, 500, 501, 502, 503, 504])
 
-    def connect(self):
-        super(_ServiceFabricHTTPSConnection, self).connect()
-        if getattr(self, "proxy_is_forwarding", False):
-            self.close()
-            raise ssl.SSLCertVerificationError(
-                "Cannot validate the Service Fabric endpoint certificate through "
-                "a forwarding proxy.")
-        certificate = self.sock.getpeercert(binary_form=True)
+
+class _ServiceFabricResponse(object):
+    def __init__(self, status_code, text, headers):
+        self.status_code = status_code
+        self.text = text
+        self.headers = headers
+
+
+def _service_fabric_retry_delay(response, attempt):
+    retry_after = next((
+        value for name, value in response.headers.items()
+        if name.lower() == "retry-after"), None)
+    if retry_after is not None:
+        try:
+            return min(
+                _SERVICE_FABRIC_MAX_RETRY_DELAY,
+                max(0, int(retry_after)))
+        except ValueError:
+            pass
+    return min(
+        _SERVICE_FABRIC_MAX_RETRY_DELAY,
+        0.5 * (2 ** attempt))
+
+
+def _resolve_service_fabric_endpoint(hostname, port):
+    result_queue = Queue(maxsize=1)
+
+    def resolve():
+        try:
+            result_queue.put((True, socket.getaddrinfo(
+                hostname,
+                port,
+                type=socket.SOCK_STREAM,
+            )))
+        except Exception as error:
+            result_queue.put((False, error))
+
+    resolver = Thread(target=resolve, daemon=True)
+    resolver.start()
+    try:
+        succeeded, result = result_queue.get(
+            timeout=_SERVICE_FABRIC_REQUEST_TIMEOUT)
+    except Empty:
+        raise socket.timeout(
+            "Service Fabric managed identity endpoint resolution exceeded its deadline.")
+    if not succeeded:
+        raise result
+    return result
+
+
+class _ServiceFabricHTTPSConnection(HTTPSConnection):
+    def __init__(self, host, port, resolved_addresses, **kwargs):
+        super(_ServiceFabricHTTPSConnection, self).__init__(
+            host, port=port, **kwargs)
+        self._resolved_addresses = resolved_addresses
+        self._create_connection = self._create_resolved_connection
+
+    def _create_resolved_connection(
+        self, address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+        source_address=None, *ignored, **ignored_kwargs
+    ):
+        last_error = None
+        for family, socktype, protocol, _, socket_address in self._resolved_addresses:
+            sock = None
+            try:
+                sock = socket.socket(family, socktype, protocol)
+                if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                    sock.settimeout(timeout)
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(socket_address)
+                return sock
+            except OSError as error:
+                last_error = error
+                if sock is not None:
+                    sock.close()
+        if last_error is not None:
+            raise last_error
+        raise OSError("Service Fabric managed identity endpoint could not be resolved.")
+
+
+def _request_service_fabric_token_once(
+    parsed_endpoint, port, resolved_addresses, tls_context, request_target,
+    server_thumbprint, secret,
+):
+    connection = _ServiceFabricHTTPSConnection(
+        parsed_endpoint.hostname,
+        port=port,
+        resolved_addresses=resolved_addresses,
+        timeout=_SERVICE_FABRIC_REQUEST_TIMEOUT,
+        context=tls_context,
+        )
+    expired = Event()
+    secret_authorization = Lock()
+    transport_socket = [None]
+
+    def expire():
+        with secret_authorization:
+            expired.set()
+        sock = transport_socket[0]
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        connection.close()
+
+    deadline = Timer(_SERVICE_FABRIC_REQUEST_TIMEOUT, expire)
+    deadline.daemon = True
+    deadline.start()
+    try:
+        connection.connect()
+        transport_socket[0] = connection.sock
+        if expired.is_set():
+            raise socket.timeout(
+                "Service Fabric managed identity request exceeded its deadline.")
+        certificate = connection.sock.getpeercert(binary_form=True)
+        if not certificate:
+            raise requests.exceptions.SSLError(
+                "Service Fabric managed identity endpoint did not provide a certificate.")
         actual_thumbprint = hashlib.sha1(certificate).hexdigest()
-        if not hmac.compare_digest(actual_thumbprint, self._server_thumbprint):
-            self.close()
-            raise ssl.SSLCertVerificationError(
+        if not hmac.compare_digest(actual_thumbprint, server_thumbprint):
+            raise requests.exceptions.SSLError(
                 "Service Fabric endpoint certificate thumbprint does not match "
                 "IDENTITY_SERVER_THUMBPRINT.")
-        self.is_verified = True
+
+        with secret_authorization:
+            if expired.is_set():
+                raise socket.timeout(
+                    "Service Fabric managed identity request exceeded its deadline.")
+            connection.request(
+                "GET",
+                request_target,
+                headers={"Secret": secret},
+                )
+        response = connection.getresponse()
+        response_body = response.read(_SERVICE_FABRIC_MAX_RESPONSE_SIZE + 1)
+        if expired.is_set():
+            raise socket.timeout(
+                "Service Fabric managed identity request exceeded its deadline.")
+        if len(response_body) > _SERVICE_FABRIC_MAX_RESPONSE_SIZE:
+            raise ManagedIdentityError(
+                "Service Fabric managed identity response exceeded 1 MB.")
+        charset = response.headers.get_content_charset() or "utf-8"
+        return _ServiceFabricResponse(
+            response.status,
+            response_body.decode(charset, errors="replace"),
+            dict(response.getheaders()),
+            )
+    except (HTTPException, OSError):
+        if expired.is_set():
+            raise socket.timeout(
+                "Service Fabric managed identity request exceeded its deadline.")
+        raise
+    finally:
+        deadline.cancel()
+        connection.close()
 
 
-class _ServiceFabricHTTPSConnectionPool(HTTPSConnectionPool):
-    ConnectionCls = _ServiceFabricHTTPSConnection
+def _request_service_fabric_token(endpoint, server_thumbprint, params, secret):
+    """Send a bounded request after authenticating the peer certificate by thumbprint."""
+    parsed_endpoint = urlparse(endpoint)
+    if (parsed_endpoint.scheme.lower() != "https"
+            or not parsed_endpoint.hostname
+            or parsed_endpoint.username is not None
+            or parsed_endpoint.password is not None
+    ):
+        raise ManagedIdentityError(
+            "Service Fabric managed identity endpoint must use HTTPS.")
+    try:
+        port = parsed_endpoint.port
+    except ValueError as error:
+        raise ManagedIdentityError(
+            "Service Fabric managed identity endpoint has an invalid port.") from error
 
+    request_target = parsed_endpoint.path or "/"
+    if parsed_endpoint.params:
+        request_target += ";" + parsed_endpoint.params
+    query = "&".join(filter(None, [parsed_endpoint.query, urlencode(params)]))
+    if query:
+        request_target += "?" + query
 
-class _ServiceFabricHTTPAdapter(HTTPAdapter):
-    """Use certificate-thumbprint authentication for the Service Fabric endpoint."""
-
-    def __init__(self, server_thumbprint, *args, **kwargs):
-        connection_class = type(
-            "_PinnedServiceFabricHTTPSConnection",
-            (_ServiceFabricHTTPSConnection,),
-            {"_server_thumbprint": server_thumbprint},
+    tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    tls_context.check_hostname = False
+    tls_context.verify_mode = ssl.CERT_NONE
+    resolved_addresses = _resolve_service_fabric_endpoint(
+        parsed_endpoint.hostname,
+        port or 443,
         )
-        self._connection_pool_class = type(
-            "_PinnedServiceFabricHTTPSConnectionPool",
-            (_ServiceFabricHTTPSConnectionPool,),
-            {"ConnectionCls": connection_class},
-        )
-        super(_ServiceFabricHTTPAdapter, self).__init__(*args, **kwargs)
 
-    def _configure_pool_manager(self, pool_manager):
-        # PoolManager's mapping is module-global by default, so copy it before
-        # replacing HTTPS only for this derived Service Fabric session.
-        pool_manager.pool_classes_by_scheme = pool_manager.pool_classes_by_scheme.copy()
-        pool_manager.pool_classes_by_scheme["https"] = self._connection_pool_class
+    for attempt in range(_SERVICE_FABRIC_MAX_ATTEMPTS):
+        try:
+            normalized_response = _request_service_fabric_token_once(
+                parsed_endpoint,
+                port,
+                resolved_addresses,
+                tls_context,
+                request_target,
+                server_thumbprint,
+                secret,
+                )
+        except (requests.exceptions.SSLError, ssl.SSLCertVerificationError):
+            raise
+        except (HTTPException, OSError, socket.timeout):
+            if attempt + 1 == _SERVICE_FABRIC_MAX_ATTEMPTS:
+                raise
+            time.sleep(min(
+                _SERVICE_FABRIC_MAX_RETRY_DELAY,
+                0.5 * (2 ** attempt)))
+            continue
 
-    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
-        super(_ServiceFabricHTTPAdapter, self).init_poolmanager(
-            connections, maxsize, block=block, **pool_kwargs)
-        self._configure_pool_manager(self.poolmanager)
-
-    def proxy_manager_for(self, proxy, **proxy_kwargs):
-        pool_manager = super(_ServiceFabricHTTPAdapter, self).proxy_manager_for(
-            proxy, **proxy_kwargs)
-        self._configure_pool_manager(pool_manager)
-        return pool_manager
-
-    def cert_verify(self, conn, url, verify, cert):
-        # The exact Service Fabric certificate thumbprint is the trust anchor.
-        # Do not inherit caller-provided verify=False or a custom CA configuration.
-        super(_ServiceFabricHTTPAdapter, self).cert_verify(
-            conn, url, verify=False, cert=cert)
-
-
-def _create_service_fabric_http_client(http_client, endpoint, server_thumbprint):
-    """Create an isolated session with a pinning-only HTTPS transport.
-
-    The caller's HTTP client is intentionally not reused because MSAL cannot prove
-    that a custom transport validates the certificate before sending the Secret header.
-    """
-    if isinstance(http_client, ThrottledHttpClientBase):
-        http_client = http_client.http_client
-    max_retries = None
-    if isinstance(http_client, requests.Session):
-        source_adapter = http_client.get_adapter(endpoint)
-        if isinstance(source_adapter, HTTPAdapter):
-            max_retries = source_adapter.max_retries
-
-    service_fabric_client = requests.Session()
-    service_fabric_client.trust_env = False
-    service_fabric_client.verify = True
-    adapter_kwargs = (
-        {"max_retries": max_retries}
-        if max_retries is not None else {})
-    service_fabric_client.mount(
-        "https://", _ServiceFabricHTTPAdapter(
-            server_thumbprint,
-            **adapter_kwargs
-        ))
-    return service_fabric_client
+        if (normalized_response.status_code
+                not in _SERVICE_FABRIC_RETRY_STATUS_CODES
+                or attempt + 1 == _SERVICE_FABRIC_MAX_ATTEMPTS
+        ):
+            return normalized_response
+        time.sleep(_service_fabric_retry_delay(normalized_response, attempt))
 
 
 _supported_arc_platforms_and_their_prefixes = {
