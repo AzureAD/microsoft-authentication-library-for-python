@@ -2,7 +2,6 @@
 # All rights reserved.
 #
 # This code is licensed under the MIT License.
-import copy
 import hashlib
 import hmac
 import json
@@ -197,10 +196,10 @@ class ManagedIdentityClient(object):
                 managed_identity = ...
                 client = msal.ManagedIdentityClient(managed_identity, http_client=s)
 
-            For Service Fabric managed identity, ``http_client`` must be a
-            ``requests.Session`` using the standard ``requests.adapters.HTTPAdapter``.
-            MSAL derives a separate session for the Service Fabric endpoint so that
-            its certificate thumbprint can be validated before the Secret header is sent.
+            For Service Fabric managed identity, MSAL uses a separate internal session
+            so that the endpoint certificate thumbprint can be validated before the
+            Secret header is sent. The supplied ``http_client`` is not used for that
+            local Service Fabric request.
 
         :param token_cache:
             Optional. It accepts a :class:`msal.TokenCache` instance to store tokens.
@@ -612,16 +611,27 @@ def _obtain_token_on_service_fabric(
             "Service Fabric managed identity endpoint must use HTTPS.")
     service_fabric_http_client = _create_service_fabric_http_client(
         http_client, endpoint, _normalize_service_fabric_thumbprint(server_thumbprint))
-    resp = service_fabric_http_client.get(
-        endpoint,
-        params={k: v for k, v in {
-            "api-version": "2019-07-01-preview",
-            "resource": resource,
-            "token_sha256_to_refresh": access_token_sha256_to_refresh,
-            "xms_cc": ",".join(client_capabilities) if client_capabilities else None,
-            }.items() if v is not None},
-        headers={"Secret": identity_header},
-        )
+    try:
+        resp = service_fabric_http_client.get(
+            endpoint,
+            params={k: v for k, v in {
+                "api-version": "2019-07-01-preview",
+                "resource": resource,
+                "token_sha256_to_refresh": access_token_sha256_to_refresh,
+                "xms_cc": ",".join(client_capabilities) if client_capabilities else None,
+                }.items() if v is not None},
+            headers={"Secret": identity_header},
+            allow_redirects=False,
+            )
+    finally:
+        close = getattr(service_fabric_http_client, "close", None)
+        if callable(close):
+            close()
+    if 300 <= resp.status_code < 400:
+        return {
+            "error": "invalid_request",
+            "error_description": "Service Fabric managed identity endpoint redirects are not supported.",
+            }
     try:
         payload = json.loads(resp.text)
         if payload.get("access_token") and payload.get("expires_on"):
@@ -726,43 +736,30 @@ class _ServiceFabricHTTPAdapter(HTTPAdapter):
 
 
 def _create_service_fabric_http_client(http_client, endpoint, server_thumbprint):
-    """Clone a standard Requests session and attach a pinning-only HTTPS transport.
+    """Create an isolated session with a pinning-only HTTPS transport.
 
-    Custom HTTP clients and adapters are rejected because MSAL cannot prove that
-    they will validate the certificate before transmitting the Secret header.
+    The caller's HTTP client is intentionally not reused because MSAL cannot prove
+    that a custom transport validates the certificate before sending the Secret header.
     """
     if isinstance(http_client, ThrottledHttpClientBase):
         http_client = http_client.http_client
-    if not isinstance(http_client, requests.Session):
-        raise ManagedIdentityError(
-            "Service Fabric managed identity requires a requests.Session "
-            "with the standard HTTPAdapter.")
-    source_adapter = http_client.get_adapter(endpoint)
-    if type(source_adapter) is not HTTPAdapter:
-        raise ManagedIdentityError(
-            "Service Fabric managed identity does not support custom HTTP adapters.")
+    max_retries = None
+    if isinstance(http_client, requests.Session):
+        source_adapter = http_client.get_adapter(endpoint)
+        if isinstance(source_adapter, HTTPAdapter):
+            max_retries = source_adapter.max_retries
 
     service_fabric_client = requests.Session()
-    service_fabric_client.headers = http_client.headers.copy()
-    service_fabric_client.cookies = http_client.cookies.copy()
-    service_fabric_client.auth = http_client.auth
-    service_fabric_client.params = copy.copy(http_client.params)
-    service_fabric_client.hooks = {
-        event: handlers[:] for event, handlers in http_client.hooks.items()}
-    service_fabric_client.proxies = http_client.proxies.copy()
-    service_fabric_client.stream = http_client.stream
-    service_fabric_client.trust_env = http_client.trust_env
-    service_fabric_client.max_redirects = http_client.max_redirects
-    service_fabric_client.cert = http_client.cert
+    service_fabric_client.trust_env = False
     service_fabric_client.verify = True
-    service_fabric_client.adapters.clear()
-    service_fabric_client.mount("https://", _ServiceFabricHTTPAdapter(
-        server_thumbprint,
-        max_retries=copy.deepcopy(source_adapter.max_retries),
-        pool_connections=source_adapter._pool_connections,
-        pool_maxsize=source_adapter._pool_maxsize,
-        pool_block=source_adapter._pool_block,
-    ))
+    adapter_kwargs = (
+        {"max_retries": max_retries}
+        if max_retries is not None else {})
+    service_fabric_client.mount(
+        "https://", _ServiceFabricHTTPAdapter(
+            server_thumbprint,
+            **adapter_kwargs
+        ))
     return service_fabric_client
 
 

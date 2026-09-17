@@ -401,6 +401,7 @@ class ServiceFabricTestCase(ClientTestCase):
                 "xms_cc": "foo,bar",
             },
             headers={'Secret': 'foo'},
+            allow_redirects=False,
         )
 
     def test_happy_path_with_claim_challenge_should_send_sha256_to_provider(self):
@@ -416,6 +417,7 @@ class ServiceFabricTestCase(ClientTestCase):
                 # There is no xms_cc in this case
             },
             headers={'Secret': 'foo'},
+            allow_redirects=False,
         )
 
     def test_unified_api_service_should_ignore_unnecessary_client_id(self):
@@ -444,6 +446,32 @@ class ServiceFabricTestCase(ClientTestCase):
                 }, self.app.acquire_token_for_client(resource="R"))
                 self.assertEqual({}, self.app._token_cache._cache)
 
+    def test_internal_session_is_closed_after_success(self):
+        internal_session = Mock()
+        internal_session.get.return_value = MinimalResponse(
+            status_code=200,
+            text='{"access_token": "AT", "expires_on": "%s", "resource": "R", "token_type": "Bearer"}' % (
+                int(time.time()) + 1234),
+        )
+        with patch(
+                "msal.managed_identity._create_service_fabric_http_client",
+                return_value=internal_session):
+            result = self.app.acquire_token_for_client(resource="R")
+
+        self.assertEqual("AT", result["access_token"])
+        internal_session.close.assert_called_once_with()
+
+    def test_internal_session_is_closed_after_transport_error(self):
+        internal_session = Mock()
+        internal_session.get.side_effect = SSLError("placeholder")
+        with patch(
+                "msal.managed_identity._create_service_fabric_http_client",
+                return_value=internal_session):
+            with self.assertRaises(SSLError):
+                self.app.acquire_token_for_client(resource="R")
+
+        internal_session.close.assert_called_once_with()
+
 
 class _ServiceFabricTlsRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -451,6 +479,12 @@ class _ServiceFabricTlsRequestHandler(BaseHTTPRequestHandler):
             "path": self.path,
             "headers": dict(self.headers),
         })
+        redirect_url = getattr(self.server, "redirect_url", None)
+        if redirect_url:
+            self.send_response(302)
+            self.send_header("Location", redirect_url)
+            self.end_headers()
+            return
         body = json.dumps({
             "access_token": "AT",
             "expires_on": str(int(time.time()) + 3600),
@@ -564,15 +598,13 @@ class ServiceFabricTlsValidationTestCase(unittest.TestCase):
 
         self.assertEqual([], self.server.requests)
 
-    def test_derived_client_preserves_standard_session_settings_without_mutation(self):
+    def test_service_fabric_uses_an_isolated_pinned_session(self):
         source = self._new_session()
         source.verify = False
         source.headers["X-Caller-Header"] = "caller-header"
         source.cookies.set("caller-cookie", "cookie-value")
         source.auth = ("caller", "password")
         source.params = {"caller-param": "caller-value"}
-        source.proxies = {}
-        source.max_redirects = 7
         source.mount("https://", HTTPAdapter(max_retries=Retry(total=2)))
 
         derived = _create_service_fabric_http_client(
@@ -580,12 +612,11 @@ class ServiceFabricTlsValidationTestCase(unittest.TestCase):
 
         self.assertFalse(source.verify)
         self.assertTrue(derived.verify)
-        self.assertEqual(source.headers, derived.headers)
-        self.assertEqual(source.cookies, derived.cookies)
-        self.assertEqual(source.auth, derived.auth)
-        self.assertEqual(source.params, derived.params)
-        self.assertEqual(source.proxies, derived.proxies)
-        self.assertEqual(source.max_redirects, derived.max_redirects)
+        self.assertFalse(derived.trust_env)
+        self.assertNotEqual(source.headers, derived.headers)
+        self.assertNotEqual(source.cookies, derived.cookies)
+        self.assertIsNone(derived.auth)
+        self.assertEqual({}, derived.params)
         self.assertEqual(2, derived.get_adapter(self.endpoint).max_retries.total)
         self.assertIsNot(source.get_adapter(self.endpoint), derived.get_adapter(self.endpoint))
         response = derived.get(
@@ -595,29 +626,79 @@ class ServiceFabricTlsValidationTestCase(unittest.TestCase):
         )
         self.assertEqual(200, response.status_code)
         request = self.server.requests[0]
-        self.assertIn("caller-param=caller-value", request["path"])
         self.assertIn("request-param=request-value", request["path"])
-        self.assertEqual("caller-header", request["headers"]["X-Caller-Header"])
-        self.assertIn("caller-cookie=cookie-value", request["headers"]["Cookie"])
-        self.assertTrue(request["headers"]["Authorization"].startswith("Basic "))
+        self.assertNotIn("caller-param=caller-value", request["path"])
+        self.assertNotIn("X-Caller-Header", request["headers"])
+        self.assertNotIn("Cookie", request["headers"])
+        self.assertNotIn("Authorization", request["headers"])
 
-    def test_custom_adapter_is_rejected_before_a_request_can_send_the_secret(self):
+    def test_custom_adapter_does_not_block_service_fabric(self):
         source = self._new_session()
 
         class CustomAdapter(HTTPAdapter):
-            pass
+            def send(self, *args, **kwargs):
+                raise AssertionError("The caller's adapter must not be used")
 
         source.mount("https://", CustomAdapter())
-        with self.assertRaises(ManagedIdentityError):
-            _obtain_token_on_service_fabric(
-                source,
+        result = _obtain_token_on_service_fabric(
+            source,
+            self.endpoint,
+            "service-fabric-secret",
+            self.thumbprint,
+            "R",
+        )
+
+        self.assertEqual("AT", result["access_token"])
+        self.assertEqual(
+            "service-fabric-secret",
+            self.server.requests[0]["headers"]["Secret"])
+
+    def test_custom_http_client_does_not_block_service_fabric(self):
+        class CustomHttpClient:
+            def get(self, *args, **kwargs):
+                raise AssertionError("The caller's transport must not be used")
+
+        result = _obtain_token_on_service_fabric(
+            CustomHttpClient(),
+            self.endpoint,
+            "service-fabric-secret",
+            self.thumbprint,
+            "R",
+        )
+
+        self.assertEqual("AT", result["access_token"])
+        self.assertEqual(
+            "service-fabric-secret",
+            self.server.requests[0]["headers"]["Secret"])
+
+    def test_redirect_does_not_forward_the_secret(self):
+        redirect_target = ThreadingHTTPServer(
+            ("localhost", 0), _ServiceFabricTlsRequestHandler)
+        redirect_target.requests = []
+        redirect_target_thread = threading.Thread(
+            target=redirect_target.serve_forever)
+        redirect_target_thread.start()
+        try:
+            self.server.redirect_url = "http://localhost:{}/token".format(
+                redirect_target.server_port)
+            result = _obtain_token_on_service_fabric(
+                self._new_session(),
                 self.endpoint,
                 "service-fabric-secret",
                 self.thumbprint,
                 "R",
             )
 
-        self.assertEqual([], self.server.requests)
+            self.assertEqual("invalid_request", result["error"])
+            self.assertEqual(
+                "Service Fabric managed identity endpoint redirects are not supported.",
+                result["error_description"])
+            self.assertEqual([], redirect_target.requests)
+        finally:
+            del self.server.redirect_url
+            redirect_target.shutdown()
+            redirect_target.server_close()
+            redirect_target_thread.join()
 
 
 @patch.dict(os.environ, {
