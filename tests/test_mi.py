@@ -797,6 +797,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                 .sign(ca_key, hashes.SHA256()))
             prefix = ".service-fabric-proxy-test-" + uuid.uuid4().hex
             server.ca_path = os.path.abspath(prefix + "-ca.pem")
+            server.certificate_der = certificate.public_bytes(serialization.Encoding.DER)
             server.thumbprint = certificate.fingerprint(hashes.SHA1()).hex()
             certificate_path, key_path = prefix + ".pem", prefix + ".key"
             for path, data in (
@@ -808,6 +809,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                 with open(path, "wb") as output:
                     output.write(data)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(certificate_path, key_path)
             os.remove(certificate_path)
             os.remove(key_path)
@@ -1047,12 +1049,41 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
             self.assertTrue(all("Proxy-Authorization" not in request["headers"]
                 for request in self.server.requests))
 
+    def test_https_proxy_authenticates_proxy_hostname_not_endpoint_hostname(self):
+        proxy, address = self._proxy(tls=True)
+        server_names = []
+        proxy.socket.context.set_servername_callback(
+            lambda sock, name, context: server_names.append(name))
+        address = address.replace("://", "://proxy-user:proxy-password@")
+        endpoint = self.endpoint.replace("localhost", "127.0.0.1")
+        options = {"proxies": {"https": address}, "timeout": 2, "max_retries": 2}
+        with patch.dict(os.environ, {"IDENTITY_ENDPOINT": endpoint}), patch(
+                "requests.adapters.DEFAULT_CA_BUNDLE_PATH", proxy.ca_path):
+            self.assertEqual("AT", self._app(options).acquire_token_for_client(
+                resource="R")["access_token"])
+            with patch.dict(os.environ, {"IDENTITY_SERVER_THUMBPRINT": proxy.thumbprint}):
+                with self.assertRaises((SSLError, requests.exceptions.ProxyError)):
+                    self._app(options).acquire_token_for_client(resource="R")
+        self.assertEqual(["localhost", "localhost"], server_names)
+        self.assertEqual(2, len(proxy.connects))
+        for target, headers in proxy.connects:
+            self.assertEqual("127.0.0.1:{}".format(self.server.server_port), target)
+            self.assertEqual(requests.auth._basic_auth_str("proxy-user", "proxy-password"),
+                headers["Proxy-Authorization"])
+            self.assertNotIn("Secret", headers)
+        self.assertEqual([], proxy.requests)
+        self.assertEqual(1, len(self.server.requests))
+        self.assertEqual("service-fabric-secret", self.server.requests[0]["headers"]["Secret"])
+        self.assertNotIn("Proxy-Authorization", self.server.requests[0]["headers"])
+        self.assertNotIn(b"service-fabric-secret", b"".join(proxy.tunnel_data))
+
     def test_https_proxy_strict_verification_accepts_valid_chain_and_checks_hostname(self):
         create_default_context = ssl.create_default_context
         contexts = []
 
         def strict_context(*args, **kwargs):
             context = create_default_context(*args, **kwargs)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.verify_flags |= ssl.VERIFY_X509_STRICT
             contexts.append(context)
             return context
@@ -1066,8 +1097,8 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                 # valid name before testing the actual proxy hostname below.
                 with socket.create_connection(("localhost", proxy.server_port), timeout=2) as sock:
                     with context.wrap_socket(sock, server_hostname=hostname) as tls_socket:
-                        self.assertEqual(proxy.thumbprint,
-                            hashlib.sha1(tls_socket.getpeercert(binary_form=True)).hexdigest())
+                        self.assertEqual(proxy.certificate_der,
+                            tls_socket.getpeercert(binary_form=True))
                 self.assertEqual([], proxy.connects)
                 self.assertEqual([], proxy.requests)
                 before = len(self.server.requests)
