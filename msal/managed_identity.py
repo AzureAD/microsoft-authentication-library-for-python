@@ -863,11 +863,12 @@ class _ServiceFabricHTTPSConnectionPool(HTTPSConnectionPool):
 
 class _ServiceFabricAuthenticatedProxyConnection(_ServiceFabricHTTPSConnection):
     _proxy_ssl_context = None
+    _proxy_hostname = None
 
     def _connect_tls_proxy(self, hostname, sock):
         # This hook runs before CONNECT. The endpoint's CERT_NONE must never
         # configure the outer TLS handshake, which authenticates proxy credentials.
-        hostname = hostname.strip("[]").split("%", 1)[0].rstrip(".")
+        hostname = self._proxy_hostname.strip("[]").split("%", 1)[0].rstrip(".")
         proxy_socket = self._proxy_ssl_context.wrap_socket(sock, server_hostname=hostname)
         self.proxy_is_verified = True
         return proxy_socket
@@ -944,6 +945,7 @@ class _ServiceFabricHTTPAdapter(HTTPAdapter):
                     capath=ca_bundle if os.path.isdir(ca_bundle) else None,
                     cafile=None if os.path.isdir(ca_bundle) else ca_bundle)
                 self._connection_pool_class.ConnectionCls._proxy_ssl_context = context
+                self._connection_pool_class.ConnectionCls._proxy_hostname = parse_url(proxy).host
         return super(_ServiceFabricHTTPAdapter, self).send(
             request, stream=stream, timeout=timeout, verify=verify, cert=cert, proxies=proxies)
 

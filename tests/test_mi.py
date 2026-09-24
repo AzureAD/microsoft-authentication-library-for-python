@@ -1077,6 +1077,23 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
         self.assertNotIn("Proxy-Authorization", self.server.requests[0]["headers"])
         self.assertNotIn(b"service-fabric-secret", b"".join(proxy.tunnel_data))
 
+    def test_https_proxy_hostname_is_independent_of_tls_hook_argument(self):
+        session = _create_owned_service_fabric_http_client(
+            {"headers": {}, "proxies": {}, "trust_env": False, "max_retries": 0},
+            self.thumbprint)
+        self.addCleanup(session.close)
+        adapter = session.get_adapter(self.endpoint)
+        with patch("msal.managed_identity.ssl.create_default_context") as context, patch.object(
+                HTTPAdapter, "send"):
+            adapter.send(requests.Request("GET", self.endpoint).prepare(),
+                proxies={"https": "https://proxy.example:8443"})
+        connection = adapter._connection_pool_class.ConnectionCls("origin.example")
+        sock = Mock()
+        self.assertIs(context.return_value.wrap_socket.return_value,
+            connection._connect_tls_proxy("origin.example", sock))
+        context.return_value.wrap_socket.assert_called_once_with(
+            sock, server_hostname="proxy.example")
+
     def test_https_proxy_strict_verification_accepts_valid_chain_and_checks_hostname(self):
         create_default_context = ssl.create_default_context
         contexts = []
@@ -1150,7 +1167,9 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                     trust = (patch("requests.adapters.DEFAULT_CA_BUNDLE_PATH", proxy.ca_path)
                         if failure == "hostname" else nullcontext())
                     with self.subTest(failure=failure, environment=environment, cached=cached), trust, patch.dict(
-                            os.environ, {"HTTPS_PROXY": address} if environment else {}), patch(
+                            os.environ, dict(
+                                {"HTTPS_PROXY": address} if environment else {},
+                                IDENTITY_ENDPOINT=self.endpoint.replace("localhost", "wrong.invalid"))), patch(
                             "msal.managed_identity.requests.Session", return_value=session), patch.object(
                             session, "close", wraps=session.close) as close, patch.object(
                             _ServiceFabricHTTPSConnection, "connect", autospec=True,
