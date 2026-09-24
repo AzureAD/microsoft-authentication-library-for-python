@@ -5,20 +5,27 @@
 import copy
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
+import math
 import os
+import re
 import ssl
 import sys
 import time
 import uuid
-from urllib.parse import urlparse  # Python 3+
+from urllib.parse import urlparse, urlsplit  # Python 3+
 from collections import UserDict  # Python 3+
-from typing import List, Optional, Union  # Needed in Python 3.7 & 3.8
+from typing import Dict, List, Optional, Tuple, TypedDict, Union
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.connection import HTTPSConnection
 from urllib3.connectionpool import HTTPSConnectionPool
+from urllib3.exceptions import MaxRetryError
+from urllib3.util import parse_url
+from urllib3.util import ssl_ as urllib3_ssl
+from urllib3.util.retry import Retry
 from .token_cache import TokenCache
 from .individual_cache import _IndividualCache as IndividualCache
 from .throttled_http_client import ThrottledHttpClientBase, RetryAfterParser
@@ -31,6 +38,119 @@ logger = logging.getLogger(__name__)
 
 class ManagedIdentityError(ValueError):
     pass
+
+
+class ServiceFabricHttpOptions(TypedDict, total=False):
+    """Optional settings for MSAL's owned, certificate-pinned Service Fabric client.
+
+    See :class:`ManagedIdentityClient` for validation, defaults, and ownership.
+    No setting can disable endpoint certificate pinning or enable redirects.
+    """
+    headers: Dict[str, str]
+    proxies: Dict[str, str]
+    trust_env: bool
+    timeout: Union[int, float, Tuple[Union[int, float], Union[int, float]]]
+    max_retries: int
+
+
+class _ServiceFabricOptionsError(ManagedIdentityError):
+    """A configuration error must not be hidden by proactive-refresh fallback."""
+
+
+def _snapshot_service_fabric_options(options):
+    if not isinstance(options, dict):
+        return options
+    snapshot = dict(options)
+    for field in ("headers", "proxies"):
+        if isinstance(snapshot.get(field), dict):
+            snapshot[field] = dict(snapshot[field])
+    return snapshot
+
+
+def _valid_proxy_host(host):
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return all(re.fullmatch(
+            r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", label)
+            for label in host.encode("idna").decode("ascii").rstrip(".").split("."))
+
+
+def _valid_service_fabric_proxy(value, *, selection_key=False, allow_default_scheme=False):
+    if not isinstance(value, str) or not value or any(
+            character.isspace() or ord(character) < 32 for character in value):
+        return False
+    try:
+        if selection_key:
+            if value in ("http", "https", "all"):
+                return True
+            scheme, separator, host = value.partition("://")
+            # Requests selection uses urlparse(endpoint).hostname, including
+            # unbracketed IPv6 literals, rather than a proxy URL's authority.
+            return bool(separator and scheme in ("http", "https", "all")
+                and _valid_proxy_host(host))
+        if allow_default_scheme:
+            value = requests.utils.prepend_scheme_if_needed(value, "http")
+        parsed = urlsplit(value)
+        if (parsed.scheme not in ("http", "https")
+                or not _valid_proxy_host(parsed.hostname)
+                or parsed.query or parsed.fragment or "?" in value or "#" in value
+                or parsed.path not in ("", "/")):
+            return False
+        # The transport's IDNA parser is stricter than Python's builtin codec.
+        # Consume its potentially credential-bearing errors only in this helper.
+        parse_url(value)
+        return (not parsed.netloc.endswith(":")
+            and (parsed.port is None or 0 < parsed.port <= 65535))
+    except (ValueError, UnicodeError):
+        return False
+
+
+def _validate_service_fabric_options(options):
+    if not isinstance(options, dict):
+        raise _ServiceFabricOptionsError("Service Fabric HTTP options must be a dict.")
+    if options.keys() - ServiceFabricHttpOptions.__annotations__.keys():
+        raise _ServiceFabricOptionsError("Unknown Service Fabric HTTP option.")
+    result = dict(headers={}, proxies={}, trust_env=False, timeout=(5, 30), max_retries=0)
+    result.update(options)
+    for field in ("headers", "proxies"):
+        if not isinstance(result[field], dict) or any(
+                not isinstance(key, str) or not isinstance(value, str)
+                for key, value in result[field].items()):
+            raise _ServiceFabricOptionsError(
+                "Service Fabric {} must be a dict of strings.".format(field))
+    for name, value in result["headers"].items():
+        if (not re.fullmatch(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+", name)
+                or name.lower() in ("secret", "host")
+                or (value and value[0].isspace())
+                or any(ord(character) < 32 and character != "\t"
+                    or ord(character) == 127 or ord(character) > 255
+                    for character in value)):
+            raise _ServiceFabricOptionsError("Invalid or reserved Service Fabric header.")
+    for key, value in result["proxies"].items():
+        if (not _valid_service_fabric_proxy(key, selection_key=True)
+                or not _valid_service_fabric_proxy(value)):
+            raise _ServiceFabricOptionsError("Invalid Service Fabric proxies configuration.")
+    if not isinstance(result["trust_env"], bool):
+        raise _ServiceFabricOptionsError("Service Fabric trust_env must be a bool.")
+    retries = result["max_retries"]
+    if isinstance(retries, bool) or not isinstance(retries, int) or retries < 0:
+        raise _ServiceFabricOptionsError("Service Fabric max_retries must be a non-negative int.")
+    timeout = result["timeout"]
+    waits = timeout if isinstance(timeout, tuple) else (timeout, timeout)
+    try:
+        valid_timeout = len(waits) == 2 and all(
+            isinstance(wait, (int, float)) and not isinstance(wait, bool)
+            and wait > 0 and math.isfinite(wait) for wait in waits)
+    except OverflowError:
+        valid_timeout = False
+    if not valid_timeout:
+        raise _ServiceFabricOptionsError(
+            "Service Fabric timeout must contain positive finite numbers.")
+    return result
 
 
 class ManagedIdentity(UserDict):
@@ -175,6 +295,7 @@ class ManagedIdentityClient(object):
         token_cache=None,
         http_cache=None,
         client_capabilities: Optional[List[str]] = None,
+        service_fabric_http_options: Optional[ServiceFabricHttpOptions] = None,
     ):
         """Create a managed identity client.
 
@@ -197,13 +318,28 @@ class ManagedIdentityClient(object):
                 managed_identity = ...
                 client = msal.ManagedIdentityClient(managed_identity, http_client=s)
 
-            For Service Fabric managed identity, ``http_client`` must be a
+            Unless ``service_fabric_http_options`` is supplied, for Service Fabric
+            managed identity, ``http_client`` must be a
             ``requests.Session`` using ``requests.adapters.HTTPAdapter`` or a
             subclass for the Service Fabric endpoint.
             MSAL derives a separate session for the Service Fabric endpoint so that
             its certificate thumbprint can be validated before the Secret header is sent.
             Standard session, retry, and connection-pool settings are preserved,
             but custom adapter behavior is not used.
+
+        :param service_fabric_http_options:
+            Optional :class:`msal.ServiceFabricHttpOptions` dictionary. Any dict,
+            including ``{}``, selects an isolated MSAL-owned Service Fabric
+            session without inspecting or using ``http_client``. Omission or
+            ``None`` retains the legacy behavior described above. Other managed
+            identity providers still use the required ``http_client``.
+
+            Supported dictionaries are snapshotted at construction. Validation
+            is deferred until Service Fabric needs a network acquisition, not
+            performed on token-cache hits or in other environments. Invalid
+            options raise :class:`ManagedIdentityError`, even when a proactive
+            refresh could otherwise fall back to a cached token. See
+            :ref:`service-fabric-http-options` for all settings and defaults.
 
         :param token_cache:
             Optional. It accepts a :class:`msal.TokenCache` instance to store tokens.
@@ -270,6 +406,8 @@ class ManagedIdentityClient(object):
         )
         self._token_cache = token_cache or TokenCache()
         self._client_capabilities = client_capabilities
+        self._service_fabric_http_options = _snapshot_service_fabric_options(
+            service_fabric_http_options)
 
     def acquire_token_for_client(
         self,
@@ -349,6 +487,7 @@ class ManagedIdentityClient(object):
                     access_token_to_refresh.encode("utf-8")).hexdigest()
                     if access_token_to_refresh else None,
                 client_capabilities=self._client_capabilities,
+                service_fabric_http_options=self._service_fabric_http_options,
             )
             if "access_token" in result:
                 expires_in = result.get("expires_in", 3600)
@@ -368,6 +507,8 @@ class ManagedIdentityClient(object):
                 result[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
             if (result and "error" not in result) or (not access_token_from_cache):
                 return result
+        except _ServiceFabricOptionsError:
+            raise
         except:  # The exact HTTP exception is transportation-layer dependent
             # Typically network error. Potential AAD outage?
             if not access_token_from_cache:  # It means there is no fall back option
@@ -429,6 +570,7 @@ def _obtain_token(
     *,
     access_token_sha256_to_refresh: Optional[str] = None,
     client_capabilities: Optional[List[str]] = None,
+    service_fabric_http_options=None,
 ):
     if ("IDENTITY_ENDPOINT" in os.environ and "IDENTITY_HEADER" in os.environ
             and "IDENTITY_SERVER_THUMBPRINT" in os.environ
@@ -447,6 +589,7 @@ def _obtain_token(
             resource,
             access_token_sha256_to_refresh=access_token_sha256_to_refresh,
             client_capabilities=client_capabilities,
+            service_fabric_http_options=service_fabric_http_options,
         )
     if "IDENTITY_ENDPOINT" in os.environ and "IDENTITY_HEADER" in os.environ:
         return _obtain_token_on_app_service(
@@ -601,6 +744,7 @@ def _obtain_token_on_service_fabric(
     *,
     access_token_sha256_to_refresh: str = None,
     client_capabilities: Optional[List[str]] = None,
+    service_fabric_http_options=None,
 ):
     """Obtains token for
     `Service Fabric <https://learn.microsoft.com/en-us/azure/service-fabric/>`_
@@ -609,22 +753,51 @@ def _obtain_token_on_service_fabric(
     # See also https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/identity/azure-identity/tests/managed-identity-live/service-fabric/service_fabric.md
     # Protocol https://learn.microsoft.com/en-us/azure/service-fabric/how-to-managed-identity-service-fabric-app-code#acquiring-an-access-token-using-rest-api
     logger.debug("Obtaining token via managed identity on Azure Service Fabric")
+    options = (_validate_service_fabric_options(service_fabric_http_options)
+        if service_fabric_http_options is not None else None)
     parsed_endpoint = urlparse(endpoint)
     if parsed_endpoint.scheme.lower() != "https" or not parsed_endpoint.hostname:
         raise ManagedIdentityError(
             "Service Fabric managed identity endpoint must use HTTPS.")
-    service_fabric_http_client = _create_service_fabric_http_client(
-        http_client, endpoint, _normalize_service_fabric_thumbprint(server_thumbprint))
-    resp = service_fabric_http_client.get(
-        endpoint,
-        params={k: v for k, v in {
+    thumbprint = _normalize_service_fabric_thumbprint(server_thumbprint)
+    params = {k: v for k, v in {
             "api-version": "2019-07-01-preview",
             "resource": resource,
             "token_sha256_to_refresh": access_token_sha256_to_refresh,
             "xms_cc": ",".join(client_capabilities) if client_capabilities else None,
-            }.items() if v is not None},
-        headers={"Secret": identity_header},
-        )
+            }.items() if v is not None}
+    if options is None:
+        service_fabric_http_client = _create_service_fabric_http_client(
+            http_client, endpoint, thumbprint)
+        return _parse_service_fabric_response(service_fabric_http_client.get(
+            endpoint, params=params, headers={"Secret": identity_header}))
+
+    service_fabric_http_client = _create_owned_service_fabric_http_client(options, thumbprint)
+    response = None
+
+    def receive_response(raw_response, **ignored):
+        nonlocal response
+        # Capture ownership before Requests processes redirects or reads content.
+        response = raw_response
+        if 300 <= response.status_code < 400:
+            raise ManagedIdentityError(
+                "Service Fabric returned a redirect (HTTP {}).".format(response.status_code))
+
+    try:
+        service_fabric_http_client.get(
+            endpoint, params=params, headers={"Secret": identity_header},
+            timeout=options["timeout"], allow_redirects=False, stream=True,
+            hooks={"response": receive_response})
+        return _parse_service_fabric_response(response)
+    finally:
+        try:
+            if response is not None:
+                response.close()
+        finally:
+            service_fabric_http_client.close()
+
+
+def _parse_service_fabric_response(resp):
     try:
         payload = json.loads(resp.text)
         if payload.get("access_token") and payload.get("expires_on"):
@@ -688,13 +861,40 @@ class _ServiceFabricHTTPSConnectionPool(HTTPSConnectionPool):
     ConnectionCls = _ServiceFabricHTTPSConnection
 
 
+class _ServiceFabricAuthenticatedProxyConnection(_ServiceFabricHTTPSConnection):
+    _proxy_ssl_context = None
+
+    def _connect_tls_proxy(self, hostname, sock):
+        # This hook runs before CONNECT. The endpoint's CERT_NONE must never
+        # configure the outer TLS handshake, which authenticates proxy credentials.
+        hostname = hostname.strip("[]").split("%", 1)[0].rstrip(".")
+        proxy_socket = self._proxy_ssl_context.wrap_socket(sock, server_hostname=hostname)
+        self.proxy_is_verified = True
+        return proxy_socket
+
+
+class _ServiceFabricConnectionRetry(Retry):
+    """Exclude non-connection retries even on urllib3 without an 'other' limit."""
+
+    def increment(self, method=None, url=None, response=None, error=None,
+            _pool=None, _stacktrace=None):
+        if (error is not None and not self._is_connection_error(error)
+                and not self._is_read_error(error)):
+            raise MaxRetryError(_pool, url, error) from error
+        return super(_ServiceFabricConnectionRetry, self).increment(
+            method=method, url=url, response=response, error=error,
+            _pool=_pool, _stacktrace=_stacktrace)
+
+
 class _ServiceFabricHTTPAdapter(HTTPAdapter):
     """Use certificate-thumbprint authentication for the Service Fabric endpoint."""
 
-    def __init__(self, server_thumbprint, *args, **kwargs):
+    def __init__(self, server_thumbprint, *args, _restrict_proxies=False, **kwargs):
+        self._restrict_proxies = _restrict_proxies
         connection_class = type(
             "_PinnedServiceFabricHTTPSConnection",
-            (_ServiceFabricHTTPSConnection,),
+            (_ServiceFabricAuthenticatedProxyConnection if _restrict_proxies
+                else _ServiceFabricHTTPSConnection,),
             {"_server_thumbprint": server_thumbprint},
         )
         self._connection_pool_class = type(
@@ -716,16 +916,63 @@ class _ServiceFabricHTTPAdapter(HTTPAdapter):
         self._configure_pool_manager(self.poolmanager)
 
     def proxy_manager_for(self, proxy, **proxy_kwargs):
+        if self._restrict_proxies and not _valid_service_fabric_proxy(proxy):
+            raise ManagedIdentityError("Unsupported Service Fabric proxy configuration.")
         pool_manager = super(_ServiceFabricHTTPAdapter, self).proxy_manager_for(
             proxy, **proxy_kwargs)
         self._configure_pool_manager(pool_manager)
         return pool_manager
 
+    def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
+        if self._restrict_proxies:
+            proxy = requests.utils.select_proxy(request.url, proxies)
+            # Requests parses selected proxies before calling proxy_manager_for.
+            if proxy and not _valid_service_fabric_proxy(proxy, allow_default_scheme=True):
+                raise ManagedIdentityError("Unsupported Service Fabric proxy configuration.")
+            if proxy and urlsplit(proxy).scheme.lower() == "https":
+                # Older urllib3 accepts arbitrary pool kwargs without supporting
+                # HTTPS tunneling. Require the actual pre-CONNECT TLS hook and
+                # TLS-in-TLS implementation instead of passing ignored options.
+                if (not callable(getattr(HTTPSConnection, "_connect_tls_proxy", None))
+                        or not callable(getattr(urllib3_ssl, "SSLTransport", None))
+                        or not callable(getattr(urllib3_ssl.SSLContext, "wrap_bio", None))):
+                    raise ManagedIdentityError(
+                        "Installed urllib3 does not support authenticated HTTPS proxy tunneling.")
+                ca_bundle = verify if isinstance(verify, str) else (
+                    requests.utils.extract_zipped_paths(requests.adapters.DEFAULT_CA_BUNDLE_PATH))
+                context = ssl.create_default_context(
+                    capath=ca_bundle if os.path.isdir(ca_bundle) else None,
+                    cafile=None if os.path.isdir(ca_bundle) else ca_bundle)
+                self._connection_pool_class.ConnectionCls._proxy_ssl_context = context
+        return super(_ServiceFabricHTTPAdapter, self).send(
+            request, stream=stream, timeout=timeout, verify=verify, cert=cert, proxies=proxies)
+
     def cert_verify(self, conn, url, verify, cert):
         # The exact Service Fabric certificate thumbprint is the trust anchor.
-        # Do not inherit caller-provided verify=False or a custom CA configuration.
+        # CA configuration applies only to the owned transport's outer proxy TLS.
         super(_ServiceFabricHTTPAdapter, self).cert_verify(
             conn, url, verify=False, cert=cert)
+
+
+def _create_owned_service_fabric_http_client(options, server_thumbprint):
+    session = requests.Session()
+    try:
+        session.headers.update(options["headers"])
+        session.proxies.update(options["proxies"])
+        session.trust_env = options["trust_env"]
+        adapter = _ServiceFabricHTTPAdapter(
+            server_thumbprint, _restrict_proxies=True,
+            max_retries=_ServiceFabricConnectionRetry(
+                total=options["max_retries"], connect=options["max_retries"],
+                read=False, redirect=0, status=0,
+                backoff_factor=0, respect_retry_after_header=False))
+        default_adapter = session.adapters["https://"]
+        session.mount("https://", adapter)
+        default_adapter.close()
+    except BaseException:
+        session.close()
+        raise
+    return session
 
 
 def _create_service_fabric_http_client(http_client, endpoint, server_thumbprint):

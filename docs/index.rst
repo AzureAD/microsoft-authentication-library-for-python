@@ -188,3 +188,141 @@ And then feed the configuration object into a :class:`ManagedIdentityClient` obj
    :members:
 
    .. automethod:: __init__
+
+.. _service-fabric-http-options:
+
+Service Fabric HTTP options
+---------------------------
+
+.. autoclass:: msal.ServiceFabricHttpOptions
+
+Pass ``service_fabric_http_options={}`` to :class:`msal.ManagedIdentityClient`
+to use MSAL's isolated, certificate-pinned Service Fabric transport.
+The required ``http_client`` remains the transport for other managed identity
+providers. On this new Service Fabric path, MSAL does not inspect, open, invoke,
+mutate, or close that client. It need not be a Requests session or be opened::
+
+    import msal
+
+    class UnopenedConsumerClient:
+        def get(self, url, **kwargs):
+            raise RuntimeError("Open the consumer transport before non-Service-Fabric use")
+
+    client = msal.ManagedIdentityClient(
+        msal.SystemAssignedManagedIdentity(),
+        http_client=UnopenedConsumerClient(),
+        service_fabric_http_options={},
+    )
+    # In a Service Fabric environment:
+    result = client.acquire_token_for_client(resource="https://management.azure.com/")
+
+All five keys are optional. Unknown keys and explicit ``None`` field values
+are invalid; omission is different from ``None``.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 20 65
+
+   * - Key
+     - Default
+     - Accepted values and behavior
+   * - ``headers``
+     - ``{}``
+     - A dict of string HTTP header names and values, overlaid on standard
+       session headers case-insensitively (last supplied value wins).
+       ``Secret`` and ``Host`` overrides, in any case, are forbidden. Names
+       must be ASCII HTTP tokens; values must be transport-encodable, without
+       CR/LF, invalid control characters, or leading whitespace. Empty values
+       are allowed.
+   * - ``proxies``
+     - ``{}``
+     - A dict of Requests-style selection keys (``http``, ``https``, ``all``,
+       or scheme plus ``://hostname``) to HTTP/HTTPS proxy URLs. Host-specific
+       keys cannot contain credentials, ports, paths, queries, or fragments.
+       URLs require a transport-valid hostname (including IDNA validation)
+       and valid explicit port, if supplied, and
+       cannot contain queries, fragments, or non-root paths. Proxy credentials
+       are allowed. SOCKS and forwarding without endpoint authentication are
+       unsupported. HTTPS endpoints use CONNECT tunnels and retain pinning.
+   * - ``trust_env``
+     - ``False``
+     - A bool. Only ``True`` opts into Requests environment-derived settings,
+       including proxy selection, ``NO_PROXY``, and netrc authentication.
+       For HTTPS proxy authentication, ``REQUESTS_CA_BUNDLE`` (or, if unset,
+       ``CURL_CA_BUNDLE``) selects a CA bundle file or directory.
+       Requests precedence rules apply; environment proxies can take
+       precedence over session proxy settings. Neither environment settings
+       nor explicit proxies can bypass the endpoint pin.
+   * - ``timeout``
+     - ``(5, 30)``
+     - Positive finite int/float seconds, or a two-item tuple
+       ``(connect, read)``. A scalar applies to both waits. Booleans, lists,
+       zero, negative values, NaN, infinity, and disabled timeouts are invalid.
+       Limits apply to each wait on every attempt, not total wall-clock time
+       (DNS resolution and multiple addresses may add elapsed time).
+   * - ``max_retries``
+     - ``0``
+     - Non-negative int, excluding bool. Counts additional attempts only for
+       connection failures before request transmission: at most ``1 + N``
+       attempts. No retry for TLS/certificate failures, reads, redirects,
+       HTTP statuses, or ``Retry-After``; no backoff.
+
+MSAL snapshots the dictionary and its supported nested dictionaries at
+construction. Later mutations have no effect; create a new client to
+reconfigure. Validation occurs only when Service Fabric needs network I/O:
+not at construction, on a token-cache-only call, or in another environment.
+Invalid explicit options raise :class:`msal.ManagedIdentityError` before session
+allocation and cannot be hidden by proactive-refresh cached-token fallback.
+Selected environment proxies are checked before Requests parses them for
+transmission. Malformed or unsupported selected proxies raise
+:class:`msal.ManagedIdentityError` without exposing proxy credentials; these
+environment failures retain the existing eligible cached-token fallback.
+
+MSAL owns and closes a separate session and response for each network
+acquisition, including its retries. There is no new close API or persistent
+pool. Every connection authenticates the actual endpoint certificate against
+``IDENTITY_SERVER_THUMBPRINT`` before sending the environment-sourced
+``Secret``. Self-signed certificates remain supported by this exact pin;
+there is no caller TLS override. Endpoints must use HTTPS. Redirects are never
+followed, even on the same origin; all HTTP 300-399 responses raise
+:class:`msal.ManagedIdentityError` without exposing the redirect target.
+Transport/TLS and existing endpoint/response errors retain their exception
+behavior and existing eligible cached-token fallback.
+
+HTTPS proxies are authenticated independently of the Service Fabric endpoint.
+Before sending CONNECT or proxy credentials, MSAL validates the proxy's
+certificate chain and hostname against Requests' default CA bundle.
+Only ``trust_env=True`` enables the environment CA selection described above,
+including for explicitly configured proxies. This trust never replaces the
+inner endpoint pin or requires its self-signed certificate to be CA-trusted.
+There is no option to disable proxy verification. HTTP CONNECT proxies remain
+supported; their proxy credentials travel over plain HTTP, so use them only
+on trusted networks. Neither proxy type receives ``Secret`` outside the
+endpoint's pinned TLS connection.
+
+HTTPS proxy tunneling requires urllib3's pre-CONNECT TLS and TLS-in-TLS
+capabilities (available in supported urllib3 1.26 and 2.x configurations).
+Older stacks such as urllib3 1.25 cannot provide this authenticated route;
+MSAL raises :class:`msal.ManagedIdentityError` before connection or credential
+transmission, rather than treating an HTTPS proxy as HTTP. This does not raise
+the global dependency minimum or disable direct/HTTP-proxy acquisition.
+Capability failures retain eligible cached-token fallback. Proxy TLS
+validation failures are not retried, just like endpoint pin failures.
+
+Compatibility and migration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Omitting ``service_fabric_http_options`` or passing top-level ``None`` preserves
+the legacy Service Fabric contract: a Requests session with an HTTPAdapter
+or subclass is required, and its settings are inherited by MSAL's pinned
+transport (not its custom sending behavior). ``None`` does **not** mean ``{}``.
+Other providers, token protocol, token cache, and HTTP cache behavior are
+unchanged.
+
+Consumers of the new keyword or public type must require the first MSAL release
+that provides it. Older MSAL versions reject the keyword/type with
+``TypeError``/``ImportError``. Do not catch these and silently fall back.
+Rollback by removing the argument is valid only when the consumer can satisfy
+the legacy Requests-session contract. Downgrades must update consumer code
+and dependency requirements together; an unopened arbitrary transport is not
+a legacy Service Fabric fallback.
