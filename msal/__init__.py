@@ -38,6 +38,7 @@ from .auth_scheme import PopAuthScheme
 from .managed_identity import (
     SystemAssignedManagedIdentity, UserAssignedManagedIdentity,
     ManagedIdentityClient,
+    ServiceFabricHttpOptions,
     ManagedIdentityError,
     ArcPlatformNotSupportedError,
     )
