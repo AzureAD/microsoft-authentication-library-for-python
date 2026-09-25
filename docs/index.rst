@@ -281,8 +281,10 @@ environment failures retain the existing eligible cached-token fallback.
 MSAL owns and closes a separate session and response for each network
 acquisition, including its retries. There is no new close API or persistent
 pool. Every connection authenticates the actual endpoint certificate against
-``IDENTITY_SERVER_THUMBPRINT`` before sending the environment-sourced
-``Secret``. Self-signed certificates remain supported by this exact pin;
+``IDENTITY_SERVER_THUMBPRINT`` using urllib3's ``assert_fingerprint`` before
+sending the environment-sourced ``Secret``. Direct and HTTP CONNECT routes
+use urllib3's standard HTTPS connection and pool classes.
+Self-signed certificates remain supported by this exact pin;
 there is no caller TLS override. Endpoints must use HTTPS. Redirects are never
 followed, even on the same origin; all HTTP 300-399 responses raise
 :class:`msal.ManagedIdentityError` without exposing the redirect target.

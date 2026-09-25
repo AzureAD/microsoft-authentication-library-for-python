@@ -24,6 +24,8 @@ except:
 import requests
 from requests.adapters import BaseAdapter, HTTPAdapter
 from requests.exceptions import SSLError
+from urllib3.connection import HTTPSConnection
+from urllib3.connectionpool import HTTPSConnectionPool
 from urllib3.util.retry import Retry
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -52,7 +54,6 @@ from msal.managed_identity import (
     _create_service_fabric_http_client,
     _obtain_token_on_service_fabric,
     _ServiceFabricHTTPAdapter,
-    _ServiceFabricHTTPSConnection,
     _create_owned_service_fabric_http_client,
 )
 from msal.token_cache import is_subdict_of
@@ -643,9 +644,12 @@ class ServiceFabricTlsValidationTestCase(_ServiceFabricTlsFixture):
         self.assertTrue(derived_adapter._pool_block)
         self.assertIs(source_adapter, source.get_adapter(self.endpoint))
         self.assertIsNot(source_adapter, derived_adapter)
-        self.assertIsNot(
-            source_adapter.poolmanager.pool_classes_by_scheme,
-            derived_adapter.poolmanager.pool_classes_by_scheme)
+        pool = derived_adapter.poolmanager.connection_from_url(self.endpoint)
+        self.assertIs(type(pool), HTTPSConnectionPool)
+        self.assertIs(pool.ConnectionCls, HTTPSConnection)
+        self.assertEqual(self.thumbprint, pool.assert_fingerprint)
+        self.assertIsNone(
+            source_adapter.poolmanager.connection_from_url(self.endpoint).assert_fingerprint)
         self.assertEqual(source_pool_classes, source_adapter.poolmanager.pool_classes_by_scheme)
         response = derived.get(
             self.endpoint,
@@ -948,7 +952,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                 with self.subTest(scheme=scheme, cached=cached), patch(
                         "msal.managed_identity.requests.Session", wraps=requests.Session
                         ) as allocation, patch.object(
-                        _ServiceFabricHTTPSConnection, "_new_conn") as connect, self.assertLogs(
+                        HTTPSConnection, "_new_conn") as connect, self.assertLogs(
                         level="DEBUG") as logs:
                     app = self._app({"proxies": {
                         "https": "{}://user:{}@\u2603.example".format(scheme, private)}})
@@ -989,6 +993,51 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                 self.assertEqual("AT", self._app().acquire_token_for_client(resource="R")["access_token"])
         self.assertEqual(3, len(self.server.requests))
 
+    def test_native_fingerprint_configuration_is_isolated_by_route_and_adapter(self):
+        from urllib3.poolmanager import pool_classes_by_scheme
+        original_pool_classes = pool_classes_by_scheme.copy()
+        for restricted in (False, True):
+            adapters = [_ServiceFabricHTTPAdapter(pin, _restrict_proxies=restricted)
+                for pin in (self.thumbprint, "00" * 20)]
+            for adapter in adapters:
+                self.addCleanup(adapter.close)
+            for proxy in (None, "http://localhost:8080", "https://localhost:8443"):
+                for adapter, pin in zip(adapters, (self.thumbprint, "00" * 20)):
+                    with self.subTest(restricted=restricted, proxy=proxy, pin=pin):
+                        manager = (adapter.proxy_manager_for(proxy) if proxy
+                            else adapter.poolmanager)
+                        pool = manager.connection_from_url(self.endpoint)
+                        connection = pool._new_conn()
+                        self.assertEqual(pin, pool.assert_fingerprint)
+                        self.assertEqual(pin, connection.assert_fingerprint)
+                        self.assertIs(type(connection).connect, HTTPSConnection.connect)
+                        if restricted and proxy and proxy.startswith("https:"):
+                            self.assertIsNot(type(pool), HTTPSConnectionPool)
+                            self.assertIsNot(manager.pool_classes_by_scheme, pool_classes_by_scheme)
+                        else:
+                            self.assertIs(type(pool), HTTPSConnectionPool)
+                            self.assertIs(type(connection), HTTPSConnection)
+                        if proxy:
+                            self.assertIs(manager, adapter.proxy_manager_for(proxy))
+                        self.assertEqual(original_pool_classes, pool_classes_by_scheme)
+
+    def test_direct_endpoint_uses_pin_instead_of_ca_or_hostname_validation(self):
+        with patch.dict(os.environ, {
+                "IDENTITY_ENDPOINT": self.endpoint.replace("localhost", "127.0.0.1")}):
+            self.assertEqual("AT", self._app().acquire_token_for_client(resource="R")["access_token"])
+        self.assertEqual(1, len(self.server.requests))
+        self.assertEqual("service-fabric-secret", self.server.requests[0]["headers"]["Secret"])
+
+    def test_pinning_does_not_change_standard_requests_tls_verification(self):
+        context = ssl.create_default_context()
+        with patch.object(requests.adapters, "_preloaded_ssl_context", context, create=True):
+            self.assertEqual("AT", self._app().acquire_token_for_client(resource="R")["access_token"])
+            self.assertEqual(ssl.CERT_REQUIRED, context.verify_mode)
+            self.assertTrue(context.check_hostname)
+            with self._new_session() as session, self.assertRaises(SSLError):
+                session.get(self.endpoint, timeout=2)
+        self.assertEqual(1, len(self.server.requests))
+
     def test_bad_pin_and_endpoint_never_send_or_retry_secret(self):
         for pin, endpoint, error in [
                 ("00" * 20, self.endpoint, SSLError),
@@ -997,8 +1046,8 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                 (self.thumbprint, self.endpoint.replace("https:", "http:"), ManagedIdentityError)]:
             with self.subTest(pin=pin), patch.dict(os.environ, {
                     "IDENTITY_SERVER_THUMBPRINT": pin, "IDENTITY_ENDPOINT": endpoint}), patch.object(
-                    _ServiceFabricHTTPSConnection, "connect", autospec=True,
-                    side_effect=_ServiceFabricHTTPSConnection.connect) as connect:
+                    HTTPSConnection, "connect", autospec=True,
+                    side_effect=HTTPSConnection.connect) as connect:
                 with self.assertRaises(error):
                     self._app({"max_retries": 2}).acquire_token_for_client(resource="R")
                 self.assertEqual(1 if error is SSLError else 0, connect.call_count)
@@ -1087,12 +1136,43 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                 HTTPAdapter, "send"):
             adapter.send(requests.Request("GET", self.endpoint).prepare(),
                 proxies={"https": "https://proxy.example:8443"})
-        connection = adapter._connection_pool_class.ConnectionCls("origin.example")
+        pool_manager = adapter.proxy_manager_for("https://proxy.example:8443")
+        connection = pool_manager.connection_from_url(self.endpoint)._new_conn()
         sock = Mock()
         self.assertIs(context.return_value.wrap_socket.return_value,
             connection._connect_tls_proxy("origin.example", sock))
         context.return_value.wrap_socket.assert_called_once_with(
             sock, server_hostname="proxy.example")
+
+    def test_https_proxy_normalization_preserves_authenticated_context(self):
+        from urllib3.util import connection as urllib3_connection
+        original_new_socket = urllib3_connection.create_connection
+        def connect(address, *args, **kwargs):
+            host, port = address
+            if host == "xn--bcher-kva.example":
+                address = ("localhost", port)
+            return original_new_socket(address, *args, **kwargs)
+        for hostname, authority in [
+                ("localhost", "https://LOCALHOST"),
+                ("localhost", "HTTPS://localhost"),
+                ("xn--bcher-kva.example", "https://b\u00fccher.example")]:
+            proxy, address = self._proxy(tls=True, hostname=hostname)
+            selected = address.replace("https://localhost", authority)
+            server_names = []
+            proxy.socket.context.set_servername_callback(
+                lambda sock, name, context: server_names.append(name))
+            with patch("requests.adapters.DEFAULT_CA_BUNDLE_PATH", proxy.ca_path), patch.object(
+                    urllib3_connection, "create_connection", side_effect=connect):
+                for environment in (False, True):
+                    with self.subTest(proxy=selected, environment=environment), patch.dict(
+                            os.environ, {"HTTPS_PROXY": selected} if environment else {}):
+                        self.assertEqual("AT", self._app({
+                            "trust_env": environment,
+                            "proxies": {} if environment else {"https": selected},
+                        }).acquire_token_for_client(resource="R")["access_token"])
+            self.assertEqual([hostname, hostname], server_names)
+            self.assertEqual(2, len(proxy.connects))
+        self.assertEqual(6, len(self.server.requests))
 
     def test_https_proxy_strict_verification_accepts_valid_chain_and_checks_hostname(self):
         create_default_context = ssl.create_default_context
@@ -1172,8 +1252,8 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                                 IDENTITY_ENDPOINT=self.endpoint.replace("localhost", "wrong.invalid"))), patch(
                             "msal.managed_identity.requests.Session", return_value=session), patch.object(
                             session, "close", wraps=session.close) as close, patch.object(
-                            _ServiceFabricHTTPSConnection, "connect", autospec=True,
-                            side_effect=_ServiceFabricHTTPSConnection.connect) as connect, patch(
+                            HTTPSConnection, "connect", autospec=True,
+                            side_effect=HTTPSConnection.connect) as connect, patch(
                             "urllib3.util.retry.time.sleep") as sleep, self.assertLogs(level="DEBUG") as logs:
                         app = self._app({"trust_env": environment, "max_retries": 2,
                             "proxies": {} if environment else {"https": address}})
@@ -1262,7 +1342,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                             {"HTTPS_PROXY": secure_address} if environment else {}), patch(
                             "msal.managed_identity.requests.Session", return_value=session), patch.object(
                             session, "close", wraps=session.close) as close, patch.object(
-                            _ServiceFabricHTTPSConnection, "_new_conn") as connect, self.assertLogs(
+                            HTTPSConnection, "_new_conn") as connect, self.assertLogs(
                             level="DEBUG") as logs:
                         app = self._app({"trust_env": environment, "max_retries": 2,
                             "proxies": {} if environment else {"https": secure_address}})
@@ -1293,8 +1373,8 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
         app.acquire_token_for_client(resource="R")
         self.tls_context.set_servername_callback(
             lambda sock, name, context: setattr(sock, "context", other.tls_context))
-        with patch.object(_ServiceFabricHTTPSConnection, "connect", autospec=True,
-                side_effect=_ServiceFabricHTTPSConnection.connect) as connect:
+        with patch.object(HTTPSConnection, "connect", autospec=True,
+                side_effect=HTTPSConnection.connect) as connect:
             with self.assertRaises(SSLError):
                 app.acquire_token_for_client(resource="R", claims_challenge="refresh")
             self.assertEqual(1, connect.call_count)
@@ -1325,15 +1405,18 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
             "https://[::1]/token", options["proxies"]))
 
     def test_forwarding_mode_fails_closed(self):
-        connection = _ServiceFabricHTTPSConnection("localhost")
-        connection._server_thumbprint = self.thumbprint
-        connection.sock = Mock()
-        with patch("urllib3.connection.HTTPSConnection.connect"), patch.object(
-                _ServiceFabricHTTPSConnection, "proxy_is_forwarding",
-                new_callable=lambda: property(lambda self: True), create=True):
-            with self.assertRaises(ssl.SSLCertVerificationError):
-                connection.connect()
-        self.assertIsNone(connection.sock)
+        for restricted in (False, True):
+            adapter = _ServiceFabricHTTPAdapter(self.thumbprint, _restrict_proxies=restricted)
+            self.addCleanup(adapter.close)
+            for cached in (False, True):
+                with self.subTest(restricted=restricted, cached=cached), patch.object(
+                        HTTPSConnection, "_new_conn") as connect:
+                    if cached:
+                        adapter.proxy_manager_for("https://localhost:8443")
+                    with self.assertRaisesRegex(SSLError, "forwarding proxy"):
+                        adapter.proxy_manager_for(
+                            "https://localhost:8443", use_forwarding_for_https=True)
+                    connect.assert_not_called()
         self.assertEqual([], self.server.requests)
 
     def test_environment_routing_and_netrc_are_explicit_opt_in(self):
@@ -1373,7 +1456,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                         with self.subTest(variable=variable, scheme=scheme,
                                 authority=authority, cached=cached), patch.dict(os.environ, {
                                 variable: "{}://user:{}@{}".format(scheme, private, authority)
-                                }), patch.object(_ServiceFabricHTTPSConnection, "_new_conn") as connect, patch.object(
+                                }), patch.object(HTTPSConnection, "_new_conn") as connect, patch.object(
                                 HTTPAdapter, "send", autospec=True, side_effect=original_send
                                 ) as send, self.assertLogs(
                                 level="DEBUG") as logs:
@@ -1427,7 +1510,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
         for cached in (False, True):
             with self.subTest(cached=cached), patch.dict(os.environ, {
                     "HTTPS_PROXY": "http://localhost:9"}), patch.object(
-                    _ServiceFabricHTTPSConnection, "_new_conn",
+                    HTTPSConnection, "_new_conn",
                     side_effect=NewConnectionError(None, "controlled connection failure")) as connect:
                 app = self._app({"trust_env": True, "max_retries": 1})
                 if cached:
@@ -1463,7 +1546,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
 
     def test_connect_retry_boundaries_timeouts_and_eventual_pin_success(self):
         from urllib3.exceptions import NewConnectionError, ConnectTimeoutError
-        original = _ServiceFabricHTTPSConnection._new_conn
+        original = HTTPSConnection._new_conn
         for retries in (0, 1, 2):
             for eventual_success in (False, True):
                 for exception_type in (NewConnectionError, ConnectTimeoutError):
@@ -1474,7 +1557,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                             return original(connection)
                         raise exception_type(connection, "controlled pre-send failure")
                     with self.subTest(retries=retries, success=eventual_success, error=exception_type), patch.object(
-                            _ServiceFabricHTTPSConnection, "_new_conn", connect), patch(
+                            HTTPSConnection, "_new_conn", connect), patch(
                             "urllib3.util.retry.time.sleep") as sleep:
                         app = self._app({"max_retries": retries, "timeout": (1.25, 2)})
                         if eventual_success:
@@ -1505,7 +1588,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                         if first_connection_fails else []) + [failure, failure, failure]
                     with self.subTest(failure=type(failure), cached=cached,
                             first_connection_fails=first_connection_fails), patch.object(
-                            _ServiceFabricHTTPSConnection, "_new_conn", side_effect=failures) as connect, patch(
+                            HTTPSConnection, "_new_conn", side_effect=failures) as connect, patch(
                             "urllib3.util.retry.time.sleep") as sleep:
                         app = self._app({"max_retries": 2})
                         if cached:
@@ -1532,8 +1615,8 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
     def test_other_tls_handshake_failure_is_not_retried(self):
         server, address = self._proxy()
         with patch.dict(os.environ, {"IDENTITY_ENDPOINT": address.replace("http:", "https:")}), patch.object(
-                _ServiceFabricHTTPSConnection, "connect", autospec=True,
-                side_effect=_ServiceFabricHTTPSConnection.connect) as connect:
+                HTTPSConnection, "connect", autospec=True,
+                side_effect=HTTPSConnection.connect) as connect:
             with self.assertRaises(SSLError):
                 self._app({"max_retries": 2}).acquire_token_for_client(resource="R")
             self.assertEqual(1, connect.call_count)
@@ -1622,7 +1705,7 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                         environment["IDENTITY_SERVER_THUMBPRINT"] = "00" * 20
                     if failure == "endpoint":
                         environment["IDENTITY_ENDPOINT"] = "http://localhost"
-                    transport = (patch.object(_ServiceFabricHTTPSConnection, "_new_conn",
+                    transport = (patch.object(HTTPSConnection, "_new_conn",
                         side_effect=requests.exceptions.ConnectionError())
                         if failure == "transport" else nullcontext())
                     with patch.dict(os.environ, environment, clear=True), transport:
@@ -1679,6 +1762,22 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
         for fixture in (self, other):
             self.assertEqual(1, len(fixture.server.requests))
             self.assertEqual(fixture.thumbprint, fixture.server.requests[0]["headers"]["X-Pin"])
+
+    def test_concurrent_clients_with_different_pins_cannot_share_verified_connections(self):
+        barrier = threading.Barrier(2)
+        def acquire(pin):
+            barrier.wait(timeout=5)
+            return _obtain_token_on_service_fabric(
+                _UnopenedHttpClient(), self.endpoint, "service-fabric-secret",
+                pin, "R", service_fabric_http_options={"headers": {"X-Pin": pin}})
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            matching = executor.submit(acquire, self.thumbprint)
+            mismatching = executor.submit(acquire, "00" * 20)
+            self.assertEqual("AT", matching.result(timeout=5)["access_token"])
+            with self.assertRaises(SSLError):
+                mismatching.result(timeout=5)
+        self.assertEqual(1, len(self.server.requests))
+        self.assertEqual(self.thumbprint, self.server.requests[0]["headers"]["X-Pin"])
 
     def test_error_mapping_and_http_cache_parity(self):
         for code, error in [("SecretHeaderNotFound", "unauthorized_client"),

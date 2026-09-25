@@ -4,7 +4,6 @@
 # This code is licensed under the MIT License.
 import copy
 import hashlib
-import hmac
 import ipaddress
 import json
 import logging
@@ -836,32 +835,7 @@ def _normalize_service_fabric_thumbprint(server_thumbprint):
     return normalized.lower()
 
 
-class _ServiceFabricHTTPSConnection(HTTPSConnection):
-    """An HTTPS connection that authenticates the Service Fabric endpoint certificate."""
-    _server_thumbprint = None
-
-    def connect(self):
-        super(_ServiceFabricHTTPSConnection, self).connect()
-        if getattr(self, "proxy_is_forwarding", False):
-            self.close()
-            raise ssl.SSLCertVerificationError(
-                "Cannot validate the Service Fabric endpoint certificate through "
-                "a forwarding proxy.")
-        certificate = self.sock.getpeercert(binary_form=True)
-        actual_thumbprint = hashlib.sha1(certificate).hexdigest()
-        if not hmac.compare_digest(actual_thumbprint, self._server_thumbprint):
-            self.close()
-            raise ssl.SSLCertVerificationError(
-                "Service Fabric endpoint certificate thumbprint does not match "
-                "IDENTITY_SERVER_THUMBPRINT.")
-        self.is_verified = True
-
-
-class _ServiceFabricHTTPSConnectionPool(HTTPSConnectionPool):
-    ConnectionCls = _ServiceFabricHTTPSConnection
-
-
-class _ServiceFabricAuthenticatedProxyConnection(_ServiceFabricHTTPSConnection):
+class _ServiceFabricAuthenticatedProxyConnection(HTTPSConnection):
     _proxy_ssl_context = None
     _proxy_hostname = None
 
@@ -891,37 +865,39 @@ class _ServiceFabricHTTPAdapter(HTTPAdapter):
     """Use certificate-thumbprint authentication for the Service Fabric endpoint."""
 
     def __init__(self, server_thumbprint, *args, _restrict_proxies=False, **kwargs):
+        self._server_thumbprint = server_thumbprint
         self._restrict_proxies = _restrict_proxies
-        connection_class = type(
-            "_PinnedServiceFabricHTTPSConnection",
-            (_ServiceFabricAuthenticatedProxyConnection if _restrict_proxies
-                else _ServiceFabricHTTPSConnection,),
-            {"_server_thumbprint": server_thumbprint},
-        )
-        self._connection_pool_class = type(
-            "_PinnedServiceFabricHTTPSConnectionPool",
-            (_ServiceFabricHTTPSConnectionPool,),
-            {"ConnectionCls": connection_class},
-        )
         super(_ServiceFabricHTTPAdapter, self).__init__(*args, **kwargs)
 
-    def _configure_pool_manager(self, pool_manager):
-        # PoolManager's mapping is module-global by default, so copy it before
-        # replacing HTTPS only for this derived Service Fabric session.
-        pool_manager.pool_classes_by_scheme = pool_manager.pool_classes_by_scheme.copy()
-        pool_manager.pool_classes_by_scheme["https"] = self._connection_pool_class
-
     def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        pool_kwargs["assert_fingerprint"] = self._server_thumbprint
         super(_ServiceFabricHTTPAdapter, self).init_poolmanager(
             connections, maxsize, block=block, **pool_kwargs)
-        self._configure_pool_manager(self.poolmanager)
 
     def proxy_manager_for(self, proxy, **proxy_kwargs):
         if self._restrict_proxies and not _valid_service_fabric_proxy(proxy):
             raise ManagedIdentityError("Unsupported Service Fabric proxy configuration.")
+        if proxy_kwargs.get("use_forwarding_for_https"):
+            raise requests.exceptions.SSLError(
+                "Cannot validate the Service Fabric endpoint certificate through "
+                "a forwarding proxy.")
+        proxy_kwargs["assert_fingerprint"] = self._server_thumbprint
+        new_manager = proxy not in self.proxy_manager
         pool_manager = super(_ServiceFabricHTTPAdapter, self).proxy_manager_for(
             proxy, **proxy_kwargs)
-        self._configure_pool_manager(pool_manager)
+        if new_manager and self._restrict_proxies and urlsplit(proxy).scheme.lower() == "https":
+            connection_class = type(
+                "_ServiceFabricProxyConnection",
+                (_ServiceFabricAuthenticatedProxyConnection,),
+                {"_proxy_hostname": parse_url(proxy).host},
+            )
+            # Isolate outer-proxy trust without changing direct or HTTP CONNECT pools.
+            pool_manager.pool_classes_by_scheme = pool_manager.pool_classes_by_scheme.copy()
+            pool_manager.pool_classes_by_scheme["https"] = type(
+                "_ServiceFabricProxyConnectionPool",
+                (HTTPSConnectionPool,),
+                {"ConnectionCls": connection_class},
+            )
         return pool_manager
 
     def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
@@ -944,16 +920,13 @@ class _ServiceFabricHTTPAdapter(HTTPAdapter):
                 context = ssl.create_default_context(
                     capath=ca_bundle if os.path.isdir(ca_bundle) else None,
                     cafile=None if os.path.isdir(ca_bundle) else ca_bundle)
-                self._connection_pool_class.ConnectionCls._proxy_ssl_context = context
-                self._connection_pool_class.ConnectionCls._proxy_hostname = parse_url(proxy).host
+                proxy = requests.utils.prepend_scheme_if_needed(proxy, "http")
+                pool_manager = self.proxy_manager_for(proxy)
+                pool_manager.pool_classes_by_scheme["https"].ConnectionCls._proxy_ssl_context = context
+        # Select pin-only pools before Requests can attach its shared CA context.
+        # The original verify value above applies only to the outer proxy TLS.
         return super(_ServiceFabricHTTPAdapter, self).send(
-            request, stream=stream, timeout=timeout, verify=verify, cert=cert, proxies=proxies)
-
-    def cert_verify(self, conn, url, verify, cert):
-        # The exact Service Fabric certificate thumbprint is the trust anchor.
-        # CA configuration applies only to the owned transport's outer proxy TLS.
-        super(_ServiceFabricHTTPAdapter, self).cert_verify(
-            conn, url, verify=False, cert=cert)
+            request, stream=stream, timeout=timeout, verify=False, cert=cert, proxies=proxies)
 
 
 def _create_owned_service_fabric_http_client(options, server_thumbprint):
