@@ -16,7 +16,7 @@ class TestMex(unittest.TestCase):
 
     def test_happy_path_1(self):
         self._test_parser("microsoft.mex.xml",
-            'https://corp.sts.microsoft.com/adfs/services/trust/13/usernamemixed')
+            'https://example.com/adfs/services/trust/13/usernamemixed')
 
     def test_happy_path_2(self):
         self._test_parser('arupela.mex.xml',
@@ -25,4 +25,3 @@ class TestMex(unittest.TestCase):
     def test_happy_path_3(self):
         self._test_parser('archan.us.mex.xml',
             'https://arvmserver2012.archan.us/adfs/services/trust/13/usernamemixed')
-

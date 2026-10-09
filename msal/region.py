@@ -5,7 +5,7 @@ import re
 
 logger = logging.getLogger(__name__)
 
-_VALID_REGION_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_VALID_REGION_RE = re.compile(r"^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 # IMDS compute metadata API version used for region auto-discovery.
 # Bump this single constant when moving to a newer IMDS API version.
@@ -15,7 +15,7 @@ _IMDS_API_VERSION = "2021-02-01"
 def _validate_region(region, source="unknown"):
     """Return *region* unchanged if it looks like a valid Azure region name,
     otherwise log a warning and return ``None``."""
-    if region and _VALID_REGION_RE.match(region):
+    if region and _VALID_REGION_RE.fullmatch(region):
         return region
     if region:
         logger.warning(
@@ -25,7 +25,7 @@ def _validate_region(region, source="unknown"):
 
 
 def _detect_region(http_client=None):
-    region = os.environ.get("REGION_NAME", "").replace(" ", "").lower()  # e.g. westus2
+    region = os.environ.get("REGION_NAME", "")  # e.g. westus2
     if region:
         return _validate_region(region, source="REGION_NAME env variable")
     if http_client:
@@ -69,4 +69,3 @@ def _detect_region_of_azure_vm(http_client):
             logger.info("IMDS {} returned a non-string location.".format(url))
             return None
         return _validate_region(location, source="IMDS endpoint")
-

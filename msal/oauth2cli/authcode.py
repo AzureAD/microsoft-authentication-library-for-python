@@ -41,17 +41,28 @@ def obtain_auth_code(listen_port, auth_uri=None):  # Historically only used in t
 
 
 def _is_inside_docker():
+    # Marker files created by the container runtimes themselves are the most
+    # reliable signal. "/.dockerenv" is created by Docker (including Docker
+    # Desktop on Mac); "/run/.containerenv" is created by Podman.
+    if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
+        return True
     try:
         with open("/proc/1/cgroup") as f:  # https://stackoverflow.com/a/20012536/728675
             # Search keyword "/proc/pid/cgroup" in this link for the file format
             # https://man7.org/linux/man-pages/man7/cgroups.7.html
             for line in f.readlines():
                 cgroup_path = line.split(":", 2)[2].strip()
-                if cgroup_path.strip() != "/":
+                # Only a recognized container cgroup counts as "inside a container".
+                # We must NOT treat any non-"/" path as a container: on a cgroups v2
+                # host, systemd puts PID 1 in "/init.scope" (rather than "/"), which
+                # is not a container and would otherwise cause this server to bind to
+                # 0.0.0.0 (all interfaces) instead of loopback. See issue #886.
+                if any(marker in cgroup_path for marker in (
+                        "docker", "containerd", "kubepods", "lxc", "libpod")):
                     return True
     except IOError:
         pass  # We are probably not running on Linux
-    return os.path.exists("/.dockerenv")  # Docker on Mac will run this line
+    return False
 
 
 def is_wsl():
