@@ -2,9 +2,14 @@ import unittest
 import socket
 import sys
 
+try:  # Python 3
+    from unittest.mock import patch, mock_open
+except ImportError:  # Python 2
+    from mock import patch, mock_open
+
 import requests
 
-from msal.oauth2cli.authcode import AuthCodeReceiver
+from msal.oauth2cli.authcode import AuthCodeReceiver, _is_inside_docker
 
 
 class TestAuthCodeReceiver(unittest.TestCase):
@@ -104,3 +109,52 @@ class TestAuthCodeReceiver(unittest.TestCase):
             )]
             result = receiver.get_auth_response(timeout=3, state="expected_state")
             self.assertIsNone(result, "Should not receive auth response due to state mismatch")
+
+
+class TestIsInsideDocker(unittest.TestCase):
+    """Guard the container-detection heuristic used to decide the bind address.
+
+    A false positive makes the auth-code receiver bind to 0.0.0.0 (all
+    interfaces) instead of loopback, which is a security concern per
+    RFC 8252 Section 8.3. See issue #886.
+    """
+
+    def _run(self, cgroup_content, existing_files=()):
+        existing = set(existing_files)
+        if cgroup_content is None:
+            open_mock = mock_open()
+            open_mock.side_effect = IOError("no such file")  # e.g. Windows/Mac
+        else:
+            open_mock = mock_open(read_data=cgroup_content)
+        with patch("msal.oauth2cli.authcode.open", open_mock, create=True), \
+                patch(
+                    "msal.oauth2cli.authcode.os.path.exists",
+                    side_effect=lambda p: p in existing):
+            return _is_inside_docker()
+
+    def test_systemd_cgroups_v2_host_is_not_docker(self):
+        # Modern systemd host on cgroups v2: PID 1 lives in /init.scope, not "/".
+        self.assertFalse(self._run("0::/init.scope\n"))
+
+    def test_cgroups_v1_host_is_not_docker(self):
+        content = "12:pids:/\n11:hugetlb:/\n0::/\n"
+        self.assertFalse(self._run(content))
+
+    def test_dockerenv_marker_is_docker(self):
+        self.assertTrue(self._run("0::/\n", existing_files=("/.dockerenv",)))
+
+    def test_containerenv_marker_is_container(self):
+        self.assertTrue(
+            self._run("0::/\n", existing_files=("/run/.containerenv",)))
+
+    def test_docker_cgroup_path_is_docker(self):
+        content = "12:pids:/docker/abc123\n0::/docker/abc123\n"
+        self.assertTrue(self._run(content))
+
+    def test_kubepods_cgroup_path_is_container(self):
+        content = "0::/kubepods/besteffort/pod123/abc\n"
+        self.assertTrue(self._run(content))
+
+    def test_non_linux_without_marker_is_not_docker(self):
+        # No /proc/1/cgroup (open raises IOError) and no marker files.
+        self.assertFalse(self._run(None))

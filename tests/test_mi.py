@@ -1,9 +1,14 @@
 import hashlib
 import json
 import os
+import ssl
 import sys
+import tempfile
+import threading
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import List, Optional
 import unittest
 try:
@@ -11,6 +16,13 @@ try:
 except:
     from mock import patch, ANY, mock_open, Mock
 import requests
+from requests.adapters import BaseAdapter, HTTPAdapter
+from requests.exceptions import SSLError
+from urllib3.util.retry import Retry
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from tests.test_throttled_http_client import (
     MinimalResponse, ThrottledHttpClientBaseTestCase, DummyHttpClient)
@@ -30,6 +42,8 @@ from msal.managed_identity import (
     MACHINE_LEARNING,
     SERVICE_FABRIC,
     DEFAULT_TO_VM,
+    _create_service_fabric_http_client,
+    _obtain_token_on_service_fabric,
 )
 from msal.token_cache import is_subdict_of
 
@@ -355,9 +369,9 @@ class MachineLearningTestCase(ClientTestCase):
 
 
 @patch.dict(os.environ, {
-    "IDENTITY_ENDPOINT": "http://localhost",
+    "IDENTITY_ENDPOINT": "https://localhost",
     "IDENTITY_HEADER": "foo",
-    "IDENTITY_SERVER_THUMBPRINT": "bar",
+    "IDENTITY_SERVER_THUMBPRINT": "ab" * 20,
 })
 class ServiceFabricTestCase(ClientTestCase):
     access_token = "AT"
@@ -365,18 +379,21 @@ class ServiceFabricTestCase(ClientTestCase):
 
     def _test_happy_path(self, app, *, claims_challenge=None) -> callable:
         expires_in = 1234
-        with patch.object(app._http_client, "get", return_value=MinimalResponse(
-            status_code=200,
-            text='{"access_token": "%s", "expires_on": %s, "resource": "R", "token_type": "Bearer"}' % (
-                self.access_token, int(time.time()) + expires_in),
-        )) as mocked_method:
-            super(ServiceFabricTestCase, self)._test_happy_path(
-                app, mocked_method, expires_in, claims_challenge=claims_challenge)
-            return mocked_method
+        with patch(
+                "msal.managed_identity._create_service_fabric_http_client",
+                return_value=app._http_client):
+            with patch.object(app._http_client, "get", return_value=MinimalResponse(
+                status_code=200,
+                text='{"access_token": "%s", "expires_on": %s, "resource": "R", "token_type": "Bearer"}' % (
+                    self.access_token, int(time.time()) + expires_in),
+            )) as mocked_method:
+                super(ServiceFabricTestCase, self)._test_happy_path(
+                    app, mocked_method, expires_in, claims_challenge=claims_challenge)
+                return mocked_method
 
     def test_happy_path_with_client_capabilities_should_relay_capabilities(self):
         self._test_happy_path(self._build_app(client_capabilities=["foo", "bar"])).assert_called_with(
-            'http://localhost',
+            'https://localhost',
             params={
                 'api-version': '2019-07-01-preview',
                 'resource': 'R',
@@ -391,7 +408,7 @@ class ServiceFabricTestCase(ClientTestCase):
             self._build_app(client_capabilities=[]),  # Test empty client_capabilities
             claims_challenge='{"access_token": {"nbf": {"essential": true, "value": "1563308371"}}}',
         ).assert_called_with(
-            'http://localhost',
+            'https://localhost',
             params={
                 'api-version': '2019-07-01-preview',
                 'resource': 'R',
@@ -414,15 +431,235 @@ class ServiceFabricTestCase(ClientTestCase):
     "code": "SecretHeaderNotFound",
     "message": "Secret is not found in the request headers."
 }}'''  # https://learn.microsoft.com/en-us/azure/service-fabric/how-to-managed-identity-service-fabric-app-code#error-handling
-        with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
-            status_code=404,
-            text=raw_error,
-        )) as mocked_method:
-            self.assertEqual({
-                "error": "unauthorized_client",
-                "error_description": raw_error,
-            }, self.app.acquire_token_for_client(resource="R"))
-            self.assertEqual({}, self.app._token_cache._cache)
+        with patch(
+                "msal.managed_identity._create_service_fabric_http_client",
+                return_value=self.app._http_client):
+            with patch.object(self.app._http_client, "get", return_value=MinimalResponse(
+                status_code=404,
+                text=raw_error,
+            )) as mocked_method:
+                self.assertEqual({
+                    "error": "unauthorized_client",
+                    "error_description": raw_error,
+                }, self.app.acquire_token_for_client(resource="R"))
+                self.assertEqual({}, self.app._token_cache._cache)
+
+
+class _ServiceFabricTlsRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.server.requests.append({
+            "path": self.path,
+            "headers": dict(self.headers),
+        })
+        body = json.dumps({
+            "access_token": "AT",
+            "expires_on": str(int(time.time()) + 3600),
+            "resource": "R",
+            "token_type": "Bearer",
+        }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+
+class ServiceFabricTlsValidationTestCase(unittest.TestCase):
+    _adapter_class = HTTPAdapter
+
+    def setUp(self):
+        self._temporary_directory = tempfile.TemporaryDirectory()
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        certificate = (
+            x509.CertificateBuilder()
+            .subject_name(x509.Name([
+                x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+            ]))
+            .issuer_name(x509.Name([
+                x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+            ]))
+            .public_key(private_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.now(timezone.utc))
+            .not_valid_after(
+                datetime.now(timezone.utc) + timedelta(days=1))
+            .add_extension(
+                x509.SubjectAlternativeName([x509.DNSName("localhost")]),
+                critical=False,
+            )
+            .sign(private_key, hashes.SHA256())
+        )
+        self.thumbprint = certificate.fingerprint(hashes.SHA1()).hex()
+        certificate_path = os.path.join(self._temporary_directory.name, "server.pem")
+        private_key_path = os.path.join(self._temporary_directory.name, "server.key")
+        with open(certificate_path, "wb") as certificate_file:
+            certificate_file.write(certificate.public_bytes(serialization.Encoding.PEM))
+        with open(private_key_path, "wb") as private_key_file:
+            private_key_file.write(private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            ))
+        self.server = ThreadingHTTPServer(
+            ("localhost", 0), _ServiceFabricTlsRequestHandler)
+        self.server.requests = []
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        tls_context.load_cert_chain(certificate_path, private_key_path)
+        self.server.socket = tls_context.wrap_socket(self.server.socket, server_side=True)
+        self.server_thread = threading.Thread(target=self.server.serve_forever)
+        self.server_thread.start()
+        self.endpoint = "https://localhost:{}/token".format(self.server.server_port)
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.server_thread.join()
+        self._temporary_directory.cleanup()
+
+    def _new_session(self, **adapter_kwargs):
+        session = requests.Session()
+        self.addCleanup(session.close)
+        session.trust_env = False
+        session.mount("https://", self._adapter_class(**adapter_kwargs))
+        return session
+
+    def test_matching_thumbprint_sends_secret_after_validating_certificate(self):
+        result = _obtain_token_on_service_fabric(
+            _ThrottledHttpClient(self._new_session()),
+            self.endpoint,
+            "service-fabric-secret",
+            ":".join(
+                self.thumbprint[index:index + 2].upper()
+                for index in range(0, len(self.thumbprint), 2)),
+            "R",
+        )
+
+        self.assertEqual("AT", result["access_token"])
+        self.assertEqual(1, len(self.server.requests))
+        self.assertEqual(
+            "service-fabric-secret",
+            self.server.requests[0]["headers"]["Secret"])
+
+    def test_mismatching_thumbprint_prevents_the_secret_from_being_sent(self):
+        source = self._new_session()
+        source.verify = False
+        with self.assertRaises(SSLError):
+            _obtain_token_on_service_fabric(
+                source,
+                self.endpoint,
+                "service-fabric-secret",
+                "00" * 20,
+                "R",
+            )
+
+        self.assertEqual([], self.server.requests)
+
+    def test_non_https_endpoint_is_rejected_before_a_request_can_send_the_secret(self):
+        with self.assertRaises(ManagedIdentityError):
+            _obtain_token_on_service_fabric(
+                self._new_session(),
+                self.endpoint.replace("https://", "http://", 1),
+                "service-fabric-secret",
+                self.thumbprint,
+                "R",
+            )
+
+        self.assertEqual([], self.server.requests)
+
+    def test_malformed_thumbprint_is_rejected_before_a_request_can_send_the_secret(self):
+        with self.assertRaises(ManagedIdentityError):
+            _obtain_token_on_service_fabric(
+                self._new_session(),
+                self.endpoint,
+                "service-fabric-secret",
+                "not-a-thumbprint",
+                "R",
+            )
+
+        self.assertEqual([], self.server.requests)
+
+    def test_derived_client_preserves_standard_session_settings_without_mutation(self):
+        source = self._new_session(
+            max_retries=Retry(total=2),
+            pool_connections=3,
+            pool_maxsize=7,
+            pool_block=True,
+        )
+        source.verify = False
+        source.headers["X-Caller-Header"] = "caller-header"
+        source.cookies.set("caller-cookie", "cookie-value")
+        source.auth = ("caller", "password")
+        source.params = {"caller-param": "caller-value"}
+        source.proxies = {}
+        source.max_redirects = 7
+        source_adapter = source.get_adapter(self.endpoint)
+        source_pool_classes = source_adapter.poolmanager.pool_classes_by_scheme.copy()
+
+        derived = _create_service_fabric_http_client(
+            source, self.endpoint, self.thumbprint)
+        self.addCleanup(derived.close)
+        derived_adapter = derived.get_adapter(self.endpoint)
+
+        self.assertFalse(source.verify)
+        self.assertTrue(derived.verify)
+        self.assertEqual(source.headers, derived.headers)
+        self.assertEqual(source.cookies, derived.cookies)
+        self.assertEqual(source.auth, derived.auth)
+        self.assertEqual(source.params, derived.params)
+        self.assertEqual(source.proxies, derived.proxies)
+        self.assertEqual(source.max_redirects, derived.max_redirects)
+        self.assertEqual(2, derived_adapter.max_retries.total)
+        self.assertIsNot(source_adapter.max_retries, derived_adapter.max_retries)
+        self.assertEqual(3, derived_adapter._pool_connections)
+        self.assertEqual(7, derived_adapter._pool_maxsize)
+        self.assertTrue(derived_adapter._pool_block)
+        self.assertIs(source_adapter, source.get_adapter(self.endpoint))
+        self.assertIsNot(source_adapter, derived_adapter)
+        self.assertIsNot(
+            source_adapter.poolmanager.pool_classes_by_scheme,
+            derived_adapter.poolmanager.pool_classes_by_scheme)
+        self.assertEqual(source_pool_classes, source_adapter.poolmanager.pool_classes_by_scheme)
+        response = derived.get(
+            self.endpoint,
+            params={"request-param": "request-value"},
+            headers={"Secret": "service-fabric-secret"},
+        )
+        self.assertEqual(200, response.status_code)
+        request = self.server.requests[0]
+        self.assertIn("caller-param=caller-value", request["path"])
+        self.assertIn("request-param=request-value", request["path"])
+        self.assertEqual("caller-header", request["headers"]["X-Caller-Header"])
+        self.assertIn("caller-cookie=cookie-value", request["headers"]["Cookie"])
+        self.assertTrue(request["headers"]["Authorization"].startswith("Basic "))
+
+    def test_non_http_adapter_is_rejected_before_a_request_can_send_the_secret(self):
+        source = self._new_session()
+        adapter = Mock(spec=BaseAdapter)
+        source.mount("https://", adapter)
+        with self.assertRaises(ManagedIdentityError):
+            _obtain_token_on_service_fabric(
+                source,
+                self.endpoint,
+                "service-fabric-secret",
+                self.thumbprint,
+                "R",
+            )
+
+        self.assertEqual([], self.server.requests)
+        adapter.send.assert_not_called()
+
+
+class _ServiceFabricSourceHTTPAdapter(HTTPAdapter):
+    def send(self, *args, **kwargs):
+        raise AssertionError("Service Fabric requests must use MSAL's pinned adapter")
+
+
+class ServiceFabricHTTPAdapterSubclassTestCase(ServiceFabricTlsValidationTestCase):
+    _adapter_class = _ServiceFabricSourceHTTPAdapter
 
 
 @patch.dict(os.environ, {
@@ -476,6 +713,97 @@ class ArcTestCase(ClientTestCase):
             except ArcPlatformNotSupportedError:
                 if sys.platform in _supported_arc_platforms_and_their_prefixes:
                     self.fail("Should not raise ArcPlatformNotSupportedError")
+
+    def test_arc_error_before_challenge_should_be_normalized(self, mocked_stat):
+        error = '{"error":"invalid_request","error_description":"The requested identity was not found"}'
+        app = ManagedIdentityClient(
+            UserAssignedManagedIdentity(client_id="system-assigned-client-id"),
+            http_client=requests.Session())
+        with patch.object(app._http_client, "get", return_value=MinimalResponse(
+            status_code=400,
+            text=error,
+            headers={"content-type": "application/json"},
+        )) as mocked_method:
+            self.assertEqual({
+                "error": "invalid_request",
+                "error_description": error,
+            }, app.acquire_token_for_client(resource="R"))
+            mocked_method.assert_called_once_with(
+                "http://localhost/token",
+                params={
+                    "api-version": "2020-06-01",
+                    "resource": "R",
+                    "client_id": "system-assigned-client-id",
+                },
+                headers={"Metadata": "true"},
+            )
+            self.assertEqual({}, app._token_cache._cache)
+
+    def _assert_user_assigned_selector(self, managed_identity, selector_name, selector_value):
+        app = ManagedIdentityClient(managed_identity, http_client=requests.Session())
+        with patch.object(app._http_client, "get", side_effect=[
+            self.challenge,
+            MinimalResponse(
+                status_code=200,
+                # A compliant Azure Arc agent echoes the identity it used; MSAL verifies it (fail closed).
+                text='{"access_token": "AT", "expires_in": "1234", "resource": "R", "%s": "%s"}' % (
+                    selector_name, selector_value),
+            ),
+        ]) as mocked_method:
+            try:
+                result = app.acquire_token_for_client(resource="R")
+                self.assertEqual("AT", result["access_token"])
+                expected_params = {
+                    "api-version": "2020-06-01",
+                    "resource": "R",
+                    selector_name: selector_value,
+                }
+                self.assertEqual(expected_params, mocked_method.call_args_list[0].kwargs["params"])
+                self.assertEqual(expected_params, mocked_method.call_args_list[1].kwargs["params"])
+            except ArcPlatformNotSupportedError:
+                if sys.platform in _supported_arc_platforms_and_their_prefixes:
+                    self.fail("Should not raise ArcPlatformNotSupportedError")
+
+    def test_arc_user_assigned_client_id_should_be_forwarded(self, mocked_stat):
+        self._assert_user_assigned_selector(
+            UserAssignedManagedIdentity(client_id="client-id"),
+            "client_id",
+            "client-id",
+        )
+
+    def test_arc_user_assigned_resource_id_should_be_forwarded_as_msi_res_id(self, mocked_stat):
+        self._assert_user_assigned_selector(
+            UserAssignedManagedIdentity(resource_id="resource-id"),
+            "msi_res_id",
+            "resource-id",
+        )
+
+    def test_arc_user_assigned_object_id_should_be_forwarded(self, mocked_stat):
+        self._assert_user_assigned_selector(
+            UserAssignedManagedIdentity(object_id="object-id"),
+            "object_id",
+            "object-id",
+        )
+
+    def test_arc_user_assigned_identity_not_confirmed_should_fail_closed(self, mocked_stat):
+        # A legacy Azure Arc agent ignores the selector and returns the system-assigned identity:
+        # the token response echoes a different identity than the one requested. MSAL must fail
+        # closed rather than hand back a token for a different identity than requested.
+        app = ManagedIdentityClient(
+            UserAssignedManagedIdentity(client_id="client-id"),
+            http_client=requests.Session())
+        with patch.object(app._http_client, "get", side_effect=[
+            self.challenge,
+            MinimalResponse(
+                status_code=200,
+                text='{"access_token": "AT", "expires_in": "1234", "resource": "R", "client_id": "a-different-id"}',
+            ),
+        ]):
+            with self.assertRaises(ManagedIdentityError):
+                app.acquire_token_for_client(resource="R")
+        self.assertEqual(
+            {}, app._token_cache._cache,
+            "An unconfirmed identity token must not be cached")
 
 
 class GetManagedIdentitySourceTestCase(unittest.TestCase):
@@ -531,4 +859,3 @@ class GetManagedIdentitySourceTestCase(unittest.TestCase):
 
     def test_default_to_vm(self):
         self.assertEqual(get_managed_identity_source(), DEFAULT_TO_VM)
-
