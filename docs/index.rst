@@ -208,6 +208,10 @@ Notes and requirements:
   authenticates the client through the mutual-TLS handshake instead. The classic
   (non-mTLS) certificate path is unchanged and still sends a signed
   ``client_assertion`` (``private_key_jwt``) to obtain an ordinary token.
+* For a Federated Identity Credential (FIC) exchange, configure the leg-2 client
+  with both a ``client_assertion`` (the leg-1 token) and an
+  ``mtls_binding_certificate`` sub-key; the leg-1 assertion is then sent as a
+  ``jwt-pop`` client assertion over the same mTLS connection.
 
 
 Exceptions
