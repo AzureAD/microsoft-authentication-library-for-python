@@ -90,6 +90,7 @@ class TokenCacheTestCase(unittest.TestCase):
             "user_id": "SENSITIVE_USER_ID",
             "password": "SENSITIVE_PASSWORD",
             "client_secret": "SENSITIVE_CLIENT_SECRET",
+            "client_assertion": "SENSITIVE_CLIENT_ASSERTION",
             "refresh_token": "SENSITIVE_REQUEST_REFRESH_TOKEN",
             "assertion": b"SENSITIVE_ASSERTION",
             "user_federated_identity_credential": "SENSITIVE_FEDERATED_CREDENTIAL",
@@ -163,6 +164,34 @@ class TokenCacheTestCase(unittest.TestCase):
                     "uid.utid-login.example.com-contoso"]
                 self.assertEqual(account["username"], "SENSITIVE_USERNAME")
                 self.assertNotIn("SENSITIVE_USERNAME", "\n".join(cm.output))
+
+    def test_add_redacts_broker_account_id_without_changing_account(self):
+        event = {
+            "client_id": "my_client_id",
+            "grant_type": "broker",
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "_account_id": "SENSITIVE_BROKER_ACCOUNT_ID",
+            "response": build_response(
+                uid="uid", utid="utid", access_token="at",
+                id_token_claims={"sub": "subject"},
+                _account_id="SENSITIVE_BROKER_ACCOUNT_ID"),
+        }
+        original_event = copy.deepcopy(event)
+        with self.assertLogs("msal.token_cache", level="DEBUG") as cm:
+            self.cache.add(event, now=1000)
+
+        self.assertEqual(event, original_event)
+        account = self.cache._cache["Account"][
+            "uid.utid-login.example.com-contoso"]
+        self.assertEqual(
+            account["local_account_id"], "SENSITIVE_BROKER_ACCOUNT_ID")
+        self.assertEqual(account["account_source"], "broker")
+        self.assertEqual(len(cm.records), 1)
+        logged_event = json.loads(
+            cm.records[0].getMessage().removeprefix("event="))
+        self.assertEqual(logged_event["_account_id"], "********")
+        self.assertEqual(logged_event["response"]["_account_id"], "********")
+        self.assertNotIn("SENSITIVE_BROKER_ACCOUNT_ID", "\n".join(cm.output))
 
     def testAddByAad(self):
         client_id = "my_client_id"
