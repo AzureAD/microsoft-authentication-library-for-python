@@ -1,5 +1,6 @@
 import logging
 import base64
+import copy
 import json
 import time
 import warnings
@@ -79,6 +80,89 @@ class TokenCacheTestCase(unittest.TestCase):
         logged = "\n".join(cm.output)
         self.assertNotIn("SENSITIVE", logged)
         self.assertIn("********", logged)
+
+    def test_add_redacts_authentication_data_in_debug_log(self):
+        sensitive_data = {
+            "code": "SENSITIVE_AUTHORIZATION_CODE",
+            "code_verifier": "SENSITIVE_PKCE_VERIFIER",
+            "device_code": "SENSITIVE_DEVICE_CODE",
+            "username": "SENSITIVE_REQUEST_USERNAME",
+            "user_id": "SENSITIVE_USER_ID",
+            "password": "SENSITIVE_PASSWORD",
+            "client_secret": "SENSITIVE_CLIENT_SECRET",
+            "refresh_token": "SENSITIVE_REQUEST_REFRESH_TOKEN",
+            "assertion": b"SENSITIVE_ASSERTION",
+            "user_federated_identity_credential": "SENSITIVE_FEDERATED_CREDENTIAL",
+            "client_claims": '{"custom_claim": "SENSITIVE_CLIENT_CLAIM"}',
+            "claims": '{"access_token": {"custom_claim": "SENSITIVE_CLAIM"}}',
+        }
+        event = {
+            "client_id": "my_client_id",
+            "scope": ["s1"],
+            "grant_type": "authorization_code",
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "username": "SENSITIVE_EVENT_USERNAME",
+            "data": dict(sensitive_data, redirect_uri="http://localhost"),
+            "response": build_response(
+                uid="SENSITIVE_UID", utid="SENSITIVE_UTID",
+                access_token="SENSITIVE_ACCESS_TOKEN",
+                refresh_token="SENSITIVE_RESPONSE_REFRESH_TOKEN",
+                id_token=build_id_token(sub="SENSITIVE_SUBJECT"),
+                id_token_claims={"sub": "SENSITIVE_SUBJECT"},
+                username="SENSITIVE_RESPONSE_USERNAME"),
+        }
+        original_event = copy.deepcopy(event)
+        expected_log = copy.deepcopy(event)
+        expected_log["username"] = "********"
+        expected_log["data"].update({k: "********" for k in sensitive_data})
+        expected_log["response"].update({k: "********" for k in (
+            "access_token", "refresh_token", "id_token", "id_token_claims",
+            "username", "client_info",
+        )})
+
+        with self.assertLogs("msal.token_cache", level="DEBUG") as cm:
+            self.cache.add(event, now=1000)
+
+        self.assertEqual(event, original_event)
+        for credential_type, field in (
+                (TokenCache.CredentialType.ACCESS_TOKEN, "access_token"),
+                (TokenCache.CredentialType.REFRESH_TOKEN, "refresh_token"),
+                (TokenCache.CredentialType.ID_TOKEN, "id_token")):
+            entries = list(self.cache._cache[credential_type].values())
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["secret"], event["response"][field])
+            self.assertEqual(
+                entries[0]["home_account_id"], "SENSITIVE_UID.SENSITIVE_UTID")
+        access_token = next(iter(
+            self.cache._cache[TokenCache.CredentialType.ACCESS_TOKEN].values()))
+        self.assertEqual(
+            access_token["ext_cache_key"],
+            _compute_ext_cache_key(original_event["data"]))
+        self.assertEqual(len(cm.records), 1)
+        self.assertEqual(
+            json.loads(cm.records[0].getMessage().removeprefix("event=")),
+            expected_log)
+        self.assertNotIn("SENSITIVE", "\n".join(cm.output))
+
+    def test_add_redacts_username_without_changing_account(self):
+        for username_location in ("data", "event"):
+            with self.subTest(username_location=username_location):
+                event = {
+                    "client_id": "my_client_id",
+                    "token_endpoint": "https://login.example.com/contoso/v2/token",
+                    "data": {},
+                    "response": build_response(uid="uid", utid="utid"),
+                }
+                source = event["data"] if username_location == "data" else event
+                source["username"] = "SENSITIVE_USERNAME"
+                original_event = copy.deepcopy(event)
+                with self.assertLogs("msal.token_cache", level="DEBUG") as cm:
+                    self.cache.add(event, now=1000)
+                self.assertEqual(event, original_event)
+                account = self.cache._cache["Account"][
+                    "uid.utid-login.example.com-contoso"]
+                self.assertEqual(account["username"], "SENSITIVE_USERNAME")
+                self.assertNotIn("SENSITIVE_USERNAME", "\n".join(cm.output))
 
     def testAddByAad(self):
         client_id = "my_client_id"
