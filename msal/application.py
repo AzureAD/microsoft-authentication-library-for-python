@@ -500,6 +500,9 @@ class ClientApplication(object):
             to attempt one retry on connection error.
             If you are providing your own http_client,
             it will be your http_client's duty to decide whether to perform retry.
+            The ``verify``, ``proxies`` and ``timeout`` parameters below configure
+            only the default session; when you pass your own http_client,
+            set those on it yourself.
 
         :param verify: (optional)
             It will be passed to the
