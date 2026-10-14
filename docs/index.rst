@@ -160,6 +160,56 @@ New in MSAL Python 1.26
    .. automethod:: __init__
 
 
+mTLS Proof-of-Possession (SN/I certificate)
+-------------------------------------------
+
+New in MSAL Python 1.38
+
+MSAL Python supports two different kinds of Proof-of-Possession (PoP) tokens:
+
+* **Signed HTTP Request (SHR) PoP** -- used by public-client apps through the
+  broker, and configured with the ``auth_scheme`` parameter and
+  :py:class:`msal.PopAuthScheme` above.
+* **mutual-TLS (mTLS) PoP** -- used by *confidential-client* apps. The app's
+  Subject Name + Issuer (SN/I) certificate is presented as the **client TLS
+  certificate** in a mutual-TLS handshake to Microsoft Entra, and the returned
+  access token is cryptographically bound to that certificate
+  (``token_type == "mtls_pop"``, ``cnf``/``x5t#S256``).
+
+To request an mTLS-PoP token, configure the confidential client with a
+certificate credential and pass ``mtls_proof_of_possession=True`` to
+:py:meth:`msal.ConfidentialClientApplication.acquire_token_for_client`::
+
+    app = msal.ConfidentialClientApplication(
+        client_id,
+        authority="https://login.microsoftonline.com/<tenant-id>",  # MUST be tenanted
+        client_credential={"private_key_pfx_path": "sni.pfx", "public_certificate": True},
+        # azure_region="westus3",  # optional; omit for the global mtls endpoint
+    )
+    result = app.acquire_token_for_client(
+        ["https://graph.microsoft.com/.default"],
+        mtls_proof_of_possession=True,
+    )
+    # result["token_type"] == "mtls_pop"
+    # result["binding_certificate"] == {"x5c": [...], "thumbprint_sha256": "..."}
+
+Notes and requirements:
+
+* The ``authority`` must be **tenanted** (not ``/common`` or ``/organizations``).
+* MSAL must own the TLS transport, so a custom ``http_client`` is not supported
+  together with ``mtls_proof_of_possession=True``.
+* ``azure_region`` is **optional**: omit it to use the global mTLS endpoint
+  (``mtlsauth.microsoft.com``); set it (e.g. ``westus3``) only to pin a region.
+* The existing SN/I + Bearer (client-assertion) flow is unchanged; the same
+  certificate can be used either as an assertion signer (Bearer) or as the TLS
+  client certificate (mtls_pop).
+* mTLS PoP currently targets the public and Azure Government (Arlington) clouds.
+* Only the mTLS-PoP path drops the signed ``client_assertion``: the certificate
+  authenticates the client through the mutual-TLS handshake instead. The classic
+  (non-mTLS) certificate path is unchanged and still sends a signed
+  ``client_assertion`` (``private_key_jwt``) to obtain an ordinary token.
+
+
 Exceptions
 ----------
 These are exceptions that MSAL Python may raise.

@@ -441,6 +441,133 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
+    # ── SN/I certificate over mTLS Proof-of-Possession ─────────────────────────
+    # These reuse the same lab SN/I cert as test_subject_name_issuer_authentication
+    # (it is not CNG-backed, so it works as a TLS client cert on the CI agents).
+    # NOTE: MSAL must own the TLS transport for mTLS, so unlike the tests above we
+    # do NOT pass http_client=MinimalHttpClient() here.
+    # ESTS gates mTLS PoP on the final resource audience (must be allow-listed,
+    # e.g. MS Graph), not on the client app, so we target Microsoft Graph.
+    _MTLS_POP_SCOPE = ["https://graph.microsoft.com/.default"]
+    # SN/I app + tenant that ESTS allow-lists for mTLS PoP. The generic
+    # LAB_APP_CLIENT_ID + microsoft.onmicrosoft.com works for Bearer SN/I but is
+    # rejected for mTLS PoP with AADSTS700025. Mirrors the MSAL .NET/Java e2e config.
+    _SNI_ALLOWLISTED_CLIENT_ID = "163ffef9-a313-45b4-ab2f-c7e2f5e0e23e"
+    _SNI_ALLOWLISTED_AUTHORITY = "https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c"
+    # The mTLS Graph host (NOT plain graph.microsoft.com): only this host performs
+    # the client-certificate TLS handshake that an mtls_pop token's binding is
+    # validated against. Presenting the token here, with the binding cert on the
+    # handshake, must return 200; a 401/403 means the binding was lost.
+    _MTLS_GRAPH_RESOURCE = "https://mtlstb.graph.microsoft.com/v1.0/applications?$top=1"
+
+    def _assert_pop_cache_hit(self, app, scope):
+        # A second mTLS-PoP call for the same scope must be served from cache.
+        # (assertCacheWorksForApp cannot be reused: its follow-up call omits the
+        # flag and would look up a Bearer entry, missing the mtls_pop token.)
+        again = app.acquire_token_for_client(scope, mtls_proof_of_possession=True)
+        self.assertIsNotNone(again)
+        self.assertEqual(app._TOKEN_SOURCE_CACHE, again[app._TOKEN_SOURCE])
+
+    @staticmethod
+    def _cnf_x5t_s256(access_token):
+        # Best-effort decode of an mtls_pop JWT's cnf.x5t#S256 binding claim.
+        try:
+            payload = json.loads(decode_part(access_token.split(".")[1]))
+            return payload.get("cnf", {}).get("x5t#S256")
+        except Exception:  # Opaque/non-JWT token - skip the offline binding check
+            return None
+
+    def _call_graph_with_mtls_pop_token(self, token, cert_credential):
+        """Prove an ``mtls_pop`` token is genuinely usable: present it to the
+        mTLS Graph endpoint over a TLS channel bound by the SAME certificate and
+        require HTTP 200. Acquiring the token is not enough - a resource only
+        honors it when the binding certificate is on the TLS handshake and the
+        auth scheme is ``mtls_pop``; a 401/403 means the binding was lost, i.e. a
+        real regression rather than a transient failure.
+
+        Shared test infrastructure: the FIC two-leg e2e in PR #939 reuses this
+        as-is (please do not inline it), which is why it takes an explicit
+        ``cert_credential`` rather than reading ``self.app``'s certificate.
+        """
+        from msal.application import _load_mtls_cert_material
+        from msal.mtls import _create_ssl_context, _make_mtls_adapter
+        material = _load_mtls_cert_material(cert_credential)
+        session = requests.Session()
+        session.mount("https://", _make_mtls_adapter(_create_ssl_context(
+            material["cert_pem"], material["private_key_pem"])))
+        try:
+            resp = session.get(
+                self._MTLS_GRAPH_RESOURCE,
+                headers={"Authorization": "mtls_pop " + token},
+                timeout=30)
+        finally:
+            session.close()
+        self.assertEqual(
+            200, resp.status_code,
+            "mtls_pop token rejected by the resource (HTTP %s). A 401/403 means "
+            "the binding certificate was not presented on the TLS handshake, or "
+            "the 'mtls_pop' auth scheme was wrong. Body[:500]=%s" % (
+                resp.status_code, (resp.text or "")[:500]))
+        return resp
+
+    # ── Credential x Output matrix (mirrors the MSAL .NET e2e naming) ──────────
+    # Credential_<X509|Fic>_Output_<Pop|Bearer>. Task 1 covers the two X509 cells
+    # (this file); the Fic cells live in the FIC follow-up PR. snake_case per
+    # unittest, but the matrix names line up 1:1 with the sibling SDKs.
+    def test_credential_x509_output_pop(self):
+        from tests.lab_config import get_client_certificate
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
+        cert = get_client_certificate()
+        self.app = msal.ConfidentialClientApplication(
+            self._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=self._SNI_ALLOWLISTED_AUTHORITY,
+            client_credential=cert)
+        result = self.app.acquire_token_for_client(
+            self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
+        self.assertIn("access_token", result, "mTLS PoP request failed: %s" % result)
+        self.assertEqual("mtls_pop", result.get("token_type"))
+        binding = result.get("binding_certificate")
+        self.assertTrue(binding and binding.get("x5c") and binding.get("thumbprint_sha256"))
+        self.assertNotIn("private", json.dumps(binding).lower())
+        cnf = self._cnf_x5t_s256(result["access_token"])
+        if cnf:  # When the AT is a decodable JWT, its cnf must match our cert
+            self.assertEqual(binding["thumbprint_sha256"], cnf)
+        # The token must actually work at the resource, bound to our cert.
+        self._call_graph_with_mtls_pop_token(result["access_token"], cert)
+        self._assert_pop_cache_hit(self.app, self._MTLS_POP_SCOPE)
+
+    def test_credential_x509_output_bearer(self):
+        # The SAME SN/I cert, but WITHOUT mtls_proof_of_possession, must still
+        # authenticate via a signed client_assertion (private_key_jwt) and yield
+        # an ordinary Bearer token. This proves the client_assertion is dropped
+        # only on the mTLS-PoP path, never on the classic certificate path.
+        from tests.lab_config import get_client_certificate
+        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
+            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
+        self.app = msal.ConfidentialClientApplication(
+            self._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=self._SNI_ALLOWLISTED_AUTHORITY,
+            client_credential=get_client_certificate(),
+            # Regional is correct/desirable HERE and must stay: a Bearer
+            # token_type is deterministic, so this retains live regional-endpoint
+            # E2E coverage. Region is FORBIDDEN on the mtls_pop cell, where the
+            # regional slice intermittently downgrades PoP -> Bearer (a Bearer
+            # *token*, not a temporarily_unavailable error) - which is why all
+            # sibling SDKs (.NET/Java/JS/Go) have no regional PoP cell either.
+            azure_region="westus3")
+        result = self.app.acquire_token_for_client(self._MTLS_POP_SCOPE)
+        self.assertIn("access_token", result, "SN/I Bearer request failed: %s" % result)
+        self.assertEqual("Bearer", result.get("token_type"))
+        # Prove the cert binding is genuinely ABSENT, not merely that we skipped
+        # the flag. MSAL Python adds binding_certificate ONLY on the mtls_pop
+        # path, so assert both the SDK-internal contract (key omitted entirely)
+        # and the caller-visible one (a lookup yields None) - no cert is bound.
+        self.assertNotIn("binding_certificate", result)
+        self.assertIsNone(result.get("binding_certificate"))
+        self.assertCacheWorksForApp(result, self._MTLS_POP_SCOPE)
+
+
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
     @classmethod
     def setUpClass(cls):
