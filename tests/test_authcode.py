@@ -1,6 +1,8 @@
 import unittest
 import socket
 import sys
+import threading
+import time
 
 try:  # Python 3
     from unittest.mock import patch, mock_open
@@ -9,7 +11,8 @@ except ImportError:  # Python 2
 
 import requests
 
-from msal.oauth2cli.authcode import AuthCodeReceiver, _is_inside_docker
+from msal.oauth2cli.authcode import (
+    AuthCodeReceiver, _AuthCodeHandler, _is_inside_docker)
 
 
 class TestAuthCodeReceiver(unittest.TestCase):
@@ -109,6 +112,44 @@ class TestAuthCodeReceiver(unittest.TestCase):
             )]
             result = receiver.get_auth_response(timeout=3, state="expected_state")
             self.assertIsNone(result, "Should not receive auth response due to state mismatch")
+
+    def _post_auth_response_behind_idle_connections(self, idle_connections):
+        """Return (expected, actual, elapsed) for an auth response that a browser
+        posts after the given number of idle connections reached the receiver"""
+        expected = {"code": "test_auth_code_12345", "state": "test_state_67890"}
+        with AuthCodeReceiver() as receiver:
+            address = ("127.0.0.1", receiver.get_port())
+            for _ in range(idle_connections):  # They connect but never send a request
+                self.addCleanup(socket.create_connection(address).close)
+
+            def browser_posts_auth_response():
+                time.sleep(1)  # By now, the receiver has accepted an idle connection
+                try:
+                    requests.post(
+                        "http://{}:{}".format(*address), data=expected, timeout=30)
+                except requests.RequestException:
+                    pass  # The receiver closed without reading it. Caller will notice.
+            browser = threading.Thread(target=browser_posts_auth_response)
+            browser.daemon = True
+            browser.start()
+            begin = time.time()
+            result = receiver.get_auth_response(timeout=30, state=expected["state"])
+            elapsed = time.time() - begin
+        browser.join(5)
+        return expected, result, elapsed
+
+    def test_idle_connection_should_not_block_auth_response(self):
+        # Seen behind VS Code port forwarding, see
+        # https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/950
+        expected, result, elapsed = self._post_auth_response_behind_idle_connections(1)
+        self.assertEqual(expected, result)
+        self.assertLess(elapsed, _AuthCodeHandler.timeout + 5)
+
+    def test_several_idle_connections_should_not_block_auth_response(self):
+        with patch.object(_AuthCodeHandler, "timeout", 1):  # Keeps this test short
+            expected, result, elapsed = self._post_auth_response_behind_idle_connections(3)
+        self.assertEqual(expected, result)
+        self.assertLess(elapsed, 3 * 1 + 5)
 
 
 class TestIsInsideDocker(unittest.TestCase):
