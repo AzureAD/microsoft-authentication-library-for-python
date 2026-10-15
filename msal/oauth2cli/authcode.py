@@ -136,6 +136,15 @@ def _printify(text):
     return repr(text) if isinstance(text, str) and not text.isprintable() else text
 
 class _AuthCodeHandler(BaseHTTPRequestHandler):
+    # Read timeout, in seconds, for each accepted connection. Our server handles
+    # one connection at a time, so a client that connects but sends nothing
+    # would otherwise block the auth response queued behind it, maybe forever.
+    # On timeout, handle_one_request() closes that connection,
+    # so that handle_request() returns and the next one can be accepted.
+    # A client delivering the auth response sends it right after connecting,
+    # so in practice only idle connections would hit this limit.
+    timeout = 10
+
     def do_GET(self):
         qs = parse_qs(urlparse(self.path).query)
         welcome_param = qs.get('welcome', [None])[0]
