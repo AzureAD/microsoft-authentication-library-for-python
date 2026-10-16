@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "msal-key-attestation"
+dynamic = ["version"]
+description = "KeyGuard attestation support for MSAL Python MSI v2 (mTLS PoP). Provides Python bindings for AttestationClientLib.dll (Windows Credential Guard key attestation)."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Microsoft Corporation", email = "nugetaad@microsoft.com"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = [
+    "msal>=1.32.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/AzureAD/microsoft-authentication-library-for-python"
+Repository = "https://github.com/AzureAD/microsoft-authentication-library-for-python"
+
+[tool.setuptools.dynamic]
+version = {attr = "msal_key_attestation.__version__"}
+
+[tool.setuptools.packages.find]
+exclude = ["tests", "tests.*"]
+
+# Native dependency (not a pip package):
+# AttestationClientLib.dll is sourced from NuGet:
+#   Microsoft.Azure.Security.KeyGuardAttestation v1.1.5
+#   Path: runtimes/win-x64/native/AttestationClientLib.dll
+#
+# For development/testing:
+#   nuget install Microsoft.Azure.Security.KeyGuardAttestation -Version 1.1.5
+#   Copy runtimes/win-x64/native/AttestationClientLib.dll to msal_key_attestation/
+#
+# For production packaging:
+#   The DLL should be bundled into a platform wheel (msal_key_attestation-*-win_amd64.whl)
+#   built by CI/CD from the NuGet source.
