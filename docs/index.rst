@@ -198,6 +198,9 @@ Notes and requirements:
 * The ``authority`` must be **tenanted** (not ``/common`` or ``/organizations``).
 * MSAL must own the TLS transport, so a custom ``http_client`` is not supported
   together with ``mtls_proof_of_possession=True``.
+  A per-request ``post`` override is also rejected.
+* If the provider returns a different token type, MSAL returns
+  ``token_type_mismatch`` without caching the rejected response.
 * ``azure_region`` is **optional**: omit it to use the global mTLS endpoint
   (``mtlsauth.microsoft.com``); set it (e.g. ``westus3``) only to pin a region.
 * The existing SN/I + Bearer (client-assertion) flow is unchanged; the same

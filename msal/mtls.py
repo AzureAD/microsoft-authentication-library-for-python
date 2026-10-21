@@ -39,20 +39,15 @@ _PUBLIC_CLOUD_LOGIN_HOSTS = frozenset([
 # ─────────────────────────────────────────────────────────────────────────────
 # SOVEREIGN GUARDRAIL - single override point for mTLS cloud availability.
 #
-# mTLS PoP is currently rejected for the deprecated sovereign login hosts below
-# and for any non-"login." host. ``mtlsauth.*`` is rolling out across clouds
-# (Azure Government / AGC: available; Bleu / Delos: TBD). To enable a cloud,
-# remove its entry here (and, if needed, relax the non-"login." host check in
-# ``mtls_pop_host``). This is the ONLY place cloud eligibility is enforced, so
-# do not scatter equivalent checks elsewhere in the codebase.
+# Only public-cloud aliases and Azure Government are supported. Add an explicit
+# mapping here when another cloud becomes available.
 # ─────────────────────────────────────────────────────────────────────────────
 _MTLS_POP_UNSUPPORTED_HOSTS = {
     "login.usgovcloudapi.net":
         "login.usgovcloudapi.net is not supported for mTLS PoP, "
         "please use login.microsoftonline.us",
     "login.chinacloudapi.cn":
-        "login.chinacloudapi.cn is not supported for mTLS PoP, "
-        "please use login.partner.microsoftonline.cn",
+        "login.chinacloudapi.cn is not supported for mTLS PoP.",
     }
 
 
@@ -62,8 +57,7 @@ def mtls_pop_host(instance, region=None):
     :param str instance: The authority host, e.g. ``login.microsoftonline.com``.
     :param region: Optional region, e.g. ``westus3``. When provided, a regional
         mTLS host ``{region}.mtlsauth...`` is returned; otherwise the global one.
-    :raises ValueError: When mTLS PoP is not supported for the given host
-        (the sovereign guardrail above, or a non-``login.`` host).
+    :raises ValueError: When mTLS PoP is not supported for the given host.
     """
     instance = instance.lower()
     if instance in _MTLS_POP_UNSUPPORTED_HOSTS:  # Sovereign guardrail
@@ -72,12 +66,12 @@ def mtls_pop_host(instance, region=None):
         # Known public aliases (incl. legacy login.windows.net / sts.windows.net)
         # all normalize to the single global mTLS host.
         base = _PUBLIC_MTLS_HOST
-    elif instance.startswith("login."):  # e.g. login.microsoftonline.us
-        base = "mtlsauth" + instance[len("login"):]  # -> mtlsauth.microsoftonline.us
+    elif instance == "login.microsoftonline.us":
+        base = "mtlsauth.microsoftonline.us"
     else:
         raise ValueError(
-            "mTLS PoP is only supported for hosts that start with 'login.'. "
-            "The provided authority host ({}) does not meet this requirement. "
+            "mTLS PoP is only supported for public-cloud and Azure Government "
+            "authority hosts. The provided authority host ({}) is not supported. "
             "See {} for details.".format(instance, _MTLS_POP_DOC_LINK))
     return "{}.{}".format(region, base) if region else base
 
@@ -121,40 +115,45 @@ class _MtlsHttpClient(object):
         self._proxies = proxies
         self._timeout = timeout
         self._session = None
+        self._sessions = {}
         self._session_lock = threading.Lock()
 
-    def _ensure_session(self):
-        # Double-checked locking: confidential clients are typically
-        # multi-threaded servers, and a cold-start burst must not build N
-        # sessions (each writing the private key to a temp file N times) and
-        # orphan all but one. Mirrors the client-level lock in application.py.
-        if self._session is None:
-            with self._session_lock:
-                if self._session is None:
-                    import requests  # Lazy import, same as the rest of MSAL
+    def _ensure_session(self, url="", verify=None):
+        import requests
+        with self._session_lock:
+            session = self._session or requests.Session()
+            session.verify = self._verify
+            if self._proxies:
+                session.proxies = self._proxies
+            effective_verify = session.merge_environment_settings(
+                url, {}, None, verify, None)["verify"]
+            if effective_verify not in self._sessions:
+                if self._sessions:
                     session = requests.Session()
                     session.verify = self._verify
                     if self._proxies:
                         session.proxies = self._proxies
-                    adapter = _make_mtls_adapter(_create_ssl_context(
-                        self._cert_pem, self._key_pem, self._verify))
-                    session.mount("https://", adapter)
-                    self._session = session
-        return self._session
+                adapter = _make_mtls_adapter(_create_ssl_context(
+                    self._cert_pem, self._key_pem, effective_verify))
+                session.mount("https://", adapter)
+                self._sessions[effective_verify] = session
+                self._session = self._session or session
+            return self._sessions[effective_verify]
 
     def post(self, url, **kwargs):
         if self._timeout is not None:
             kwargs.setdefault("timeout", self._timeout)
-        return self._ensure_session().post(url, **kwargs)
+        return self._ensure_session(url, kwargs.get("verify")).post(url, **kwargs)
 
     def get(self, url, **kwargs):
         if self._timeout is not None:
             kwargs.setdefault("timeout", self._timeout)
-        return self._ensure_session().get(url, **kwargs)
+        return self._ensure_session(url, kwargs.get("verify")).get(url, **kwargs)
 
     def close(self):
-        if self._session is not None:
-            self._session.close()
+        with self._session_lock:
+            for session in self._sessions.values():
+                session.close()
 
 
 def _make_mtls_adapter(ssl_context):
@@ -229,4 +228,3 @@ def _create_ssl_context(cert_pem, key_pem, verify=True):
         except OSError:  # pragma: no cover
             logger.warning("Unable to remove temporary mTLS key file")
     return context
-

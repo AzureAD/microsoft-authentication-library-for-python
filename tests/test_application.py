@@ -2278,8 +2278,10 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         app = ConfidentialClientApplication(
             "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
         captured = []
-        result = app.acquire_token_for_client(
-            ["s1"], mtls_proof_of_possession=True, post=self._capturing_post(captured))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            result = app.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True)
         req = captured[0]
         # Endpoint transformed to the global mtls host
         self.assertEqual(
@@ -2301,14 +2303,39 @@ class TestMtlsProofOfPossession(unittest.TestCase):
     def test_repeat_call_is_cache_hit(self):
         app = ConfidentialClientApplication(
             "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
-        app.acquire_token_for_client(
-            ["s1"], mtls_proof_of_possession=True, post=self._capturing_post([]))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post([])):
+            app.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
         second = []
-        result = app.acquire_token_for_client(
-            ["s1"], mtls_proof_of_possession=True, post=self._capturing_post(second))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(second)):
+            result = app.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True)
         self.assertEqual([], second, "Second call must be served from cache")
         self.assertEqual(app._TOKEN_SOURCE_CACHE, result[app._TOKEN_SOURCE])
+        self.assertEqual("mtls_pop", result["token_type"])
         self.assertTrue(result.get("binding_certificate"))
+
+    def test_released_positional_claims_argument_is_preserved(self):
+        app = ConfidentialClientApplication(
+            "cid", client_credential="a_secret", authority=self._AUTHORITY)
+        captured = []
+        claims = '{"access_token": {"example": {"value": "value"}}}'
+        result = app.acquire_token_for_client(
+            ["s1"], None, None, claims,
+            post=self._capturing_post(captured, token_type="Bearer"))
+        self.assertEqual(json.loads(claims), json.loads(captured[0]["data"]["claims"]))
+        self.assertEqual("Bearer", result["token_type"])
+        self.assertNotIn("binding_certificate", result)
+
+    def test_post_override_is_rejected_for_pop(self):
+        app = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
+        post = Mock()
+        with self.assertRaisesRegex(ValueError, "post"):
+            app.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True, post=post)
+        post.assert_not_called()
 
     def test_backward_compatible_bearer_is_unchanged(self):
         app = ConfidentialClientApplication(
@@ -2332,9 +2359,10 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         # binding_certificate, and nothing cached as a bound (key_id) token.
         app = ConfidentialClientApplication(
             "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
-        result = app.acquire_token_for_client(
-            ["s1"], mtls_proof_of_possession=True,
-            post=self._capturing_post([], token_type="Bearer"))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post([], token_type="Bearer")):
+            result = app.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True)
         self.assertEqual("token_type_mismatch", result.get("error"))
         self.assertNotIn("access_token", result)
         self.assertNotIn("binding_certificate", result)
@@ -2345,14 +2373,31 @@ class TestMtlsProofOfPossession(unittest.TestCase):
             or (at.get("token_type") or "").lower() == "mtls_pop"]
         self.assertEqual(
             [], bound, "A downgraded token must never be cached as bound")
+        self.assertEqual({}, app.token_cache._cache.get("AccessToken", {}))
+        captured = []
+        ordinary = app.acquire_token_for_client(
+            ["s1"], post=self._capturing_post(captured, token_type="Bearer"))
+        self.assertEqual(1, len(captured))
+        self.assertEqual(app._TOKEN_SOURCE_IDP, ordinary[app._TOKEN_SOURCE])
+
+    def test_missing_token_type_is_not_cached(self):
+        app = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post([], token_type=None)):
+            result = app.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True)
+        self.assertEqual("token_type_mismatch", result["error"])
+        self.assertEqual({}, app.token_cache._cache.get("AccessToken", {}))
 
     def test_regional_mtls_endpoint(self):
         app = ConfidentialClientApplication(
             "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY,
             azure_region="westus3")
         captured = []
-        app.acquire_token_for_client(
-            ["s1"], mtls_proof_of_possession=True, post=self._capturing_post(captured))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            app.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
         self.assertEqual(
             captured[0]["url"],
             "https://westus3.mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
@@ -2439,6 +2484,25 @@ class TestSendCertificateOverMtls(unittest.TestCase):
                     "send_certificate_over_mtls": True})
         self.assertIn("send_certificate_over_mtls", str(ctx.exception))
 
+    def test_flag_with_incomplete_pem_credential_raises_at_construction(self):
+        from msal.application import _load_mtls_cert_material
+        material = _load_mtls_cert_material(_MTLS_CERT_CRED)
+        credential = {
+            "private_key": material["private_key_pem"].decode("ascii"),
+            "thumbprint": "0" * 40,
+        }
+        ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=credential)
+        for public_certificate in (None, "", " ", True):
+            with self.subTest(public_certificate=public_certificate):
+                with self.assertRaisesRegex(
+                        ValueError, "send_certificate_over_mtls.*public_certificate"):
+                    ConfidentialClientApplication(
+                        "cid", authority=self._AUTHORITY,
+                        client_credential=dict(
+                            credential, send_certificate_over_mtls=True,
+                            public_certificate=public_certificate))
+
     # --- B. Client-credentials behavior -------------------------------------
     def test_cc_flag_no_region_uses_global_mtls_and_returns_bearer(self):
         app = ConfidentialClientApplication(
@@ -2502,9 +2566,10 @@ class TestSendCertificateOverMtls(unittest.TestCase):
             "cid", authority=self._AUTHORITY, client_credential=dict(
                 _MTLS_CERT_CRED, send_certificate_over_mtls=True))
         captured = []
-        result = app.acquire_token_for_client(
-            ["s1"], mtls_proof_of_possession=True,
-            post=self._capturing_post(captured, token_type="mtls_pop"))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured, token_type="mtls_pop")):
+            result = app.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True)
         req = captured[0]
         self.assertEqual("mtls_pop", req["data"].get("token_type"))
         # The mtls_pop path is vanilla SN/I: no signed assertion on the wire
@@ -2580,6 +2645,126 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         self.assertEqual("authorization_code", req["data"].get("grant_type"))
         self.assertTrue(req["data"].get("client_assertion"))
         self.assertNotEqual("mtls_pop", req["data"].get("token_type"))
+
+    def test_auth_code_flow_uses_mtls_and_preserves_state_validation(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        flow = app.initiate_auth_code_flow(
+            ["s1"], redirect_uri="https://localhost/callback",
+            response_mode="form_post")
+        captured = []
+        with patch.object(app.http_client, "post",
+                          side_effect=AssertionError("Expected mTLS transport")), \
+                patch("msal.mtls._MtlsHttpClient.post",
+                      side_effect=self._capturing_post(captured)) as post:
+            with self.assertRaises(ValueError):
+                app.acquire_token_by_auth_code_flow(
+                    flow, {"code": "a_code", "state": "wrong_state"})
+            post.assert_not_called()
+            result = app.acquire_token_by_auth_code_flow(
+                flow, {"code": "a_code", "state": flow["state"]})
+        self.assertIn("access_token", result)
+        self.assertEqual(
+            "https://mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token",
+            captured[0]["url"])
+        self.assertEqual("authorization_code", captured[0]["data"]["grant_type"])
+        self.assertEqual(flow["code_verifier"], captured[0]["data"]["code_verifier"])
+
+    def test_silent_refresh_uses_mtls_and_preserves_cache_callbacks(self):
+        for succeeds in (True, False):
+            with self.subTest(succeeds=succeeds):
+                app = ConfidentialClientApplication(
+                    "cid", authority=self._AUTHORITY, client_credential=dict(
+                        _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+                app.acquire_token_on_behalf_of(
+                    "user_assertion", ["s1"],
+                    post=lambda *a, **k: MinimalResponse(
+                        status_code=200, text=_build_user_token_response(
+                            client_id="cid", refresh_token="original_rt")))
+                account = next(app.token_cache.search(
+                    msal.TokenCache.CredentialType.ACCOUNT))
+                captured = []
+
+                def refresh(url, data=None, **kwargs):
+                    captured.append({"url": url, "data": data})
+                    if succeeds:
+                        app.token_cache.remove_account(account)
+                    return MinimalResponse(
+                        status_code=200 if succeeds else 400,
+                        text=_build_user_token_response(
+                            client_id="cid", refresh_token="rotated_rt")
+                        if succeeds else '{"error": "invalid_grant"}')
+
+                with patch.object(app.http_client, "post",
+                                  side_effect=AssertionError("Expected mTLS transport")), \
+                        patch("msal.mtls._MtlsHttpClient.post", side_effect=refresh), \
+                        patch.object(app, "_get_authority_aliases", return_value=[]):
+                    result = app.acquire_token_silent_with_error(
+                        ["s1"], account, force_refresh=True)
+                self.assertEqual(
+                    "https://mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token",
+                    captured[0]["url"])
+                self.assertEqual("refresh_token", captured[0]["data"]["grant_type"])
+                refresh_tokens = list(app.token_cache.search(
+                    msal.TokenCache.CredentialType.REFRESH_TOKEN))
+                self.assertEqual(1, len(refresh_tokens))
+                self.assertEqual(
+                    "rotated_rt" if succeeds else "original_rt",
+                    refresh_tokens[0]["secret"])
+                if succeeds:
+                    self.assertIn("access_token", result)
+                    self.assertEqual([], list(app.token_cache.search(
+                        msal.TokenCache.CredentialType.ACCOUNT)))
+                else:
+                    self.assertEqual("invalid_grant", result["error"])
+
+    def test_silent_refresh_preserves_effective_authority(self):
+        from msal.authority import Authority
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        alias = "login.windows.net"
+        endpoint = "https://{}/other_tenant/oauth2/v2.0/token".format(alias)
+        with patch(_OIDC_DISCOVERY, return_value={
+                "authorization_endpoint": endpoint.replace("/token", "/authorize"),
+                "token_endpoint": endpoint,
+                "issuer": "https://{}/other_tenant/v2.0".format(alias)}):
+            authority = Authority(
+                "https://{}/other_tenant".format(alias), app.http_client,
+                instance_discovery=False)
+        rt = {
+            "credential_type": "RefreshToken",
+            "environment": alias, "home_account_id": "uid.utid",
+            "client_id": "cid", "secret": "a_rt",
+        }
+        app.token_cache.modify(msal.TokenCache.CredentialType.REFRESH_TOKEN, rt, rt)
+        for region in (None, "westus3"):
+            with self.subTest(region=region), patch.object(
+                    app, "_compute_region_to_use", return_value=region):
+                original_client = app._get_mtls_bearer_client(app.authority)
+                captured = []
+                with patch.object(app.http_client, "post",
+                                  side_effect=AssertionError("Expected mTLS transport")), \
+                        patch("msal.mtls._MtlsHttpClient.post",
+                              side_effect=self._capturing_post(captured)), \
+                        patch.object(app.token_cache, "add",
+                                     wraps=app.token_cache.add) as add:
+                    result = app._acquire_token_silent_by_finding_specific_refresh_token(
+                        authority, ["s1"], {
+                            "environment": alias, "home_account_id": "uid.utid",
+                            "client_id": "cid"})
+                expected = "https://{}mtlsauth.microsoft.com/other_tenant/oauth2/v2.0/token".format(
+                    region + "." if region else "")
+                self.assertIn("access_token", result)
+                self.assertEqual(expected, captured[0]["url"])
+                event = add.call_args[0][0]
+                self.assertEqual(alias, event["environment"])
+                self.assertTrue(event["skip_account_creation"])
+                alias_client = app._get_mtls_bearer_client(authority)
+                self.assertIsNot(original_client, alias_client)
+                self.assertIs(alias_client, app._get_mtls_bearer_client(authority))
+                self.assertIs(original_client, app._get_mtls_bearer_client(app.authority))
 
     def test_obo_without_flag_uses_regular_login_endpoint(self):
         # Negative control: without the app-level flag, OBO stays on the
