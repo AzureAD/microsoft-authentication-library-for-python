@@ -126,16 +126,70 @@ def _extract_cert_and_thumbprints(cert):
     sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # CodeQL [SM02167] for legacy support such as ADFS
     return sha256_thumbprint, sha1_thumbprint, x5c, cert_pem
 
-def _parse_pfx(pfx_path, passphrase_bytes):
+def _is_certificate_issuer(cert, issuer):
+    from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+    from cryptography.hazmat.primitives.asymmetric import rsa, ec, dsa, padding
+    from cryptography.x509.oid import SignatureAlgorithmOID
+
+    if cert.issuer != issuer.subject:
+        return False
+    try:
+        if hasattr(cert, "verify_directly_issued_by"):
+            cert.verify_directly_issued_by(issuer)
+        else:  # Support cryptography versions before 40.
+            key = issuer.public_key()
+            if isinstance(key, rsa.RSAPublicKey):
+                parameters = getattr(cert, "signature_algorithm_parameters", None)
+                if (cert.signature_algorithm_oid == SignatureAlgorithmOID.RSASSA_PSS
+                        and parameters is None):
+                    raise UnsupportedAlgorithm(
+                        "Upgrade cryptography to verify RSA-PSS certificate chains")
+                key.verify(
+                    cert.signature, cert.tbs_certificate_bytes,
+                    parameters or padding.PKCS1v15(), cert.signature_hash_algorithm)
+            elif isinstance(key, ec.EllipticCurvePublicKey):
+                key.verify(
+                    cert.signature, cert.tbs_certificate_bytes,
+                    ec.ECDSA(cert.signature_hash_algorithm))
+            elif isinstance(key, dsa.DSAPublicKey):
+                key.verify(
+                    cert.signature, cert.tbs_certificate_bytes,
+                    cert.signature_hash_algorithm)
+            else:
+                from cryptography.hazmat.primitives.asymmetric import ed25519, ed448
+                if isinstance(key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+                    key.verify(cert.signature, cert.tbs_certificate_bytes)
+                else:
+                    raise UnsupportedAlgorithm("Unsupported certificate issuer key")
+    except (InvalidSignature, ValueError):
+        return False
+    return True
+
+
+def _parse_pfx(pfx_path, passphrase_bytes, *, include_chain=False):
     # Cert concepts https://security.stackexchange.com/a/226758/125264
     from cryptography.hazmat.primitives.serialization import pkcs12
     with open(pfx_path, 'rb') as f:
-        private_key, cert, _ = pkcs12.load_key_and_certificates(  # cryptography 2.5+
+        private_key, cert, additional_certs = pkcs12.load_key_and_certificates(  # cryptography 2.5+
             # https://cryptography.io/en/latest/hazmat/primitives/asymmetric/serialization/#cryptography.hazmat.primitives.serialization.pkcs12.load_key_and_certificates
             f.read(), passphrase_bytes)
     if not (private_key and cert):
         raise ValueError("Your PFX file shall contain both private key and cert")
     sha256_thumbprint, sha1_thumbprint, x5c, cert_pem = _extract_cert_and_thumbprints(cert)
+    if include_chain:
+        remaining = [candidate for candidate in additional_certs or [] if candidate != cert]
+        current = cert
+        while remaining:
+            issuer = next(
+                (candidate for candidate in remaining
+                 if _is_certificate_issuer(current, candidate)), None)
+            if issuer is None:
+                break  # A PFX may contain only a partial chain.
+            remaining = [candidate for candidate in remaining if candidate != issuer]
+            _, _, issuer_x5c, issuer_pem = _extract_cert_and_thumbprints(issuer)
+            x5c.extend(issuer_x5c)
+            cert_pem += issuer_pem
+            current = issuer
     return private_key, sha256_thumbprint, sha1_thumbprint, x5c, cert_pem
 
 
@@ -182,7 +236,7 @@ def _load_mtls_cert_material(cert_credential):
 
     ``cert_credential`` is the app's main ``client_credential`` (vanilla SN/I),
     a certificate credential dict. Returns a dict with the unencrypted-PEM private key,
-    the leaf cert PEM, ``x5c``, the SHA-256 thumbprint (hex), and ``key_id``
+    the certificate chain PEM, ``x5c``, the SHA-256 thumbprint (hex), and ``key_id``
     (base64url ``x5t#S256``, used for cache binding). Raises ``ValueError`` when
     the credential cannot yield mTLS-capable certificate material.
     """
@@ -191,7 +245,8 @@ def _load_mtls_cert_material(cert_credential):
         ) if cert_credential.get("passphrase") else None
     if cert_credential.get("private_key_pfx_path"):
         private_key, sha256_thumbprint, _, x5c, cert_pem = _parse_pfx(
-            cert_credential["private_key_pfx_path"], passphrase_bytes)
+            cert_credential["private_key_pfx_path"], passphrase_bytes,
+            include_chain=True)
     elif cert_credential.get("private_key"):
         public_cert = cert_credential.get("public_certificate")
         if not isinstance(public_cert, str):
@@ -202,6 +257,8 @@ def _load_mtls_cert_material(cert_credential):
         from cryptography import x509
         cert = x509.load_pem_x509_certificate(_str2bytes(public_cert))
         sha256_thumbprint, _, x5c, cert_pem = _extract_cert_and_thumbprints(cert)
+        x5c = extract_certs(public_cert)
+        cert_pem = public_cert
         private_key = (
             _load_private_key_from_pem_str(
                 cert_credential['private_key'], passphrase_bytes)
@@ -348,13 +405,12 @@ class _MtlsClient(_ClientWithCcsRoutingInfo):
                 # Bind the stored AT to the certificate (via key_id) only when
                 # ESTS actually returned a cert-bound token. On a token_type
                 # downgrade (e.g. a Bearer response) leave key_id off, so the
-                # token is never cached as a bound mtls_pop token - it caches as
-                # an ordinary Bearer, and the fail-closed check in
+                # response is never cached, and the fail-closed check in
                 # acquire_token_for_client returns token_type_mismatch.
                 response = event.get("response") or {}
                 if (response.get("token_type") or "").lower() == "mtls_pop":
                     event["data"] = dict(event.get("data", {}), key_id=key_id)
-                (outer or self.on_obtaining_tokens)(event)
+                    (outer or self.on_obtaining_tokens)(event)
 
             kwargs["on_obtaining_tokens"] = _reinject_key_id
         return super(_MtlsClient, self).obtain_token_for_client(
@@ -2860,7 +2916,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
 
     def acquire_token_for_client(
             self, scopes, claims_challenge=None, fmi_path=None,
-            mtls_proof_of_possession=False, forwarded_client_claims=None,
+            forwarded_client_claims=None, *, mtls_proof_of_possession=False,
             **kwargs):
         """Acquires token for the current confidential client, not for an end user.
 
@@ -2902,6 +2958,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             ``/common`` or ``/organizations``); and MSAL's built-in HTTP
             transport must be in use (a custom ``http_client`` cannot perform
             the mTLS handshake). Any of these unmet raises ``ValueError``.
+            A ``post`` transport override is also rejected. If the provider
+            returns another token type, the result is ``token_type_mismatch``
+            and the rejected response is not cached.
 
             On success the result also contains a ``binding_certificate`` dict
             with the **public** binding material only (never the private key)::
@@ -2953,6 +3012,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             kwargs["data"] = kwargs.get("data", {})
             _stash_client_claims(forwarded_client_claims, kwargs["data"])
         if mtls_proof_of_possession:
+            if "post" in kwargs:
+                raise ValueError(
+                    "mtls_proof_of_possession=True does not support a post "
+                    "override. Omit post to use MSAL's built-in mTLS transport.")
             # An mTLS transport is required to present the certificate for a
             # cert-bound PoP request.
             if self._http_client_is_custom:
@@ -2983,8 +3046,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             # Fail closed on a token_type downgrade: if ESTS returned a
             # non-cert-bound token (e.g. a Bearer downgrade) for our mtls_pop
             # request, do not surface it as bound. The cache side is handled in
-            # _MtlsClient (key_id binds the entry only when the response is
-            # mtls_pop), so a downgraded token is never stored as bound either.
+            # _MtlsClient, which does not cache downgraded responses.
             # Mirrors the fail-closed behavior of MSAL .NET and MSAL Go.
             if (result.get("token_type") or "").lower() != "mtls_pop":
                 return {

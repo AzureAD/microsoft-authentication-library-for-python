@@ -16,14 +16,31 @@ _GRANT_TYPE_BROKER = "broker"
 
 
 def _key_id_to_str(key_id):
-    """Coerce a key_id (base64url x5t#S256) into a str for the AT cache key.
-
-    It is normally an ASCII str, but tolerate bytes (decoded as ASCII) or any
-    other type so that building the cache key never raises ``TypeError``.
-    """
+    """Normalize a key_id to text for cache storage and lookup."""
     if isinstance(key_id, bytes):
-        return key_id.decode("ascii")
+        try:
+            return key_id.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise ValueError("key_id bytes must contain ASCII text") from exc
     return key_id if isinstance(key_id, str) else str(key_id)
+
+
+def _make_access_token_key(
+        home_account_id=None, environment=None, client_id=None, realm=None,
+        target=None, ext_cache_key=None, key_id=None):
+    components = [
+        home_account_id or "", environment or "",
+        "atext" if ext_cache_key else "AccessToken",
+        client_id or "", realm or "", target or "",
+        ] + ([ext_cache_key] if ext_cache_key else [])
+    components = [value.lower() for value in components]
+    key_id = _key_id_to_str(key_id) if key_id is not None else None
+    if key_id:
+        # A hyphen-free namespace cannot collide with the legacy joined keys.
+        payload = json.dumps(
+            components + [key_id], separators=(",", ":"))
+        return "atkey:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return "-".join(components)
 
 # Fields in the request data dict that should NOT be included in the extended
 # cache key hash. Everything else in data IS included, because those are extra
@@ -246,22 +263,9 @@ class TokenCache(object):
                             # same app+scope). key_id is absent for Bearer, which
                             # keeps the Bearer cache key byte-for-byte unchanged.
                         **ignored_payload_from_a_real_token:
-                    "-".join([  # Note: Could use a hash here to shorten key length
-                        home_account_id or "",
-                        environment or "",
-                        # Use "atext" credential type when ext_cache_key is
-                        # present, matching MSAL Go and MSAL .NET behaviour.
-                        "atext" if ext_cache_key else "AccessToken",
-                        client_id or "",
-                        realm or "",
-                        target or "",
-                        ] + ([ext_cache_key] if ext_cache_key else [])
-                        ).lower()
-                        # key_id is a base64url x5t#S256 and is case-sensitive,
-                        # so it is appended AFTER lower-casing the rest, to keep
-                        # ATs bound to different keys/certs isolated. Coerce it to
-                        # a str first so a non-str key_id never breaks caching.
-                        + ("-" + _key_id_to_str(key_id) if key_id else ""),
+                    _make_access_token_key(
+                        home_account_id, environment, client_id, realm, target,
+                        ext_cache_key, key_id),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         realm=None, **ignored_payload_from_a_real_token:
@@ -345,6 +349,9 @@ class TokenCache(object):
         """
         target = sorted(target or [])  # Match the order sorted by add()
         assert isinstance(target, list), "Invalid parameter type"
+        target_set = set(target)
+        if query and query.get("key_id") is not None:
+            query = dict(query, key_id=_key_id_to_str(query["key_id"]))
 
         preferred_result = None
         if (credential_type == self.CredentialType.ACCESS_TOKEN
@@ -357,13 +364,14 @@ class TokenCache(object):
                 query["client_id"], query["realm"], target,
                 ext_cache_key=query.get("ext_cache_key"),
                 key_id=query.get("key_id"))
-            if preferred_result and self._is_matching(
-                preferred_result, query,
-                # Needs no target_set here because it is satisfied by dict key
+            if (preferred_result
+                and self._is_matching(preferred_result, query, target_set)
+                and (for_removal or all(
+                    not preferred_result.get(field) or query.get(field)
+                    for field in ("key_id", "ext_cache_key")))
             ):
                 yield preferred_result
 
-        target_set = set(target)
         with self._lock:
             # O(n) search. The key is NOT used in search.
             now = int(time.time() if now is None else now)
@@ -389,8 +397,8 @@ class TokenCache(object):
                     # to enumerate these ATs and delete them.
                     if (credential_type == self.CredentialType.ACCESS_TOKEN
                         and not for_removal
-                        and "ext_cache_key" in entry
-                        and "ext_cache_key" not in (query or {})
+                        and entry.get("ext_cache_key")
+                        and not (query or {}).get("ext_cache_key")
                     ):
                         continue
                     # Cache isolation for key-bound tokens (e.g. mtls_pop, SSH-cert).
@@ -401,8 +409,8 @@ class TokenCache(object):
                     # to enumerate these key-bound ATs and delete them.
                     if (credential_type == self.CredentialType.ACCESS_TOKEN
                         and not for_removal
-                        and "key_id" in entry
-                        and "key_id" not in (query or {})
+                        and entry.get("key_id")
+                        and not (query or {}).get("key_id")
                     ):
                         continue
                     yield entry
@@ -594,13 +602,25 @@ class TokenCache(object):
         # You can monkeypatch self.key_makers to support more types on-the-fly.
         key = self.key_makers[credential_type](**old_entry)
         with self._lock:
+            entries = self._cache.setdefault(credential_type, {})
             if new_key_value_pairs:  # Update with them
-                entries = self._cache.setdefault(credential_type, {})
-                entries[key] = dict(
+                entry = dict(
                     old_entry,  # Do not use entries[key] b/c it might not exist
                     **new_key_value_pairs)
+                if (credential_type == self.CredentialType.ACCESS_TOKEN
+                        and entry.get("key_id") is not None):
+                    entry["key_id"] = _key_id_to_str(entry["key_id"])
+                entries[key] = entry
+            elif credential_type == self.CredentialType.ACCESS_TOKEN:
+                # Persisted caches may still use an older AT key format.
+                if entries.get(key) == old_entry:
+                    entries.pop(key)
+                else:
+                    for stored_key in [
+                            k for k, entry in entries.items() if entry == old_entry]:
+                        entries.pop(stored_key)
             else:  # Remove old_entry
-                self._cache.setdefault(credential_type, {}).pop(key, None)
+                entries.pop(key, None)
 
     def remove_rt(self, rt_item):
         assert rt_item.get("credential_type") == self.CredentialType.REFRESH_TOKEN
@@ -683,4 +703,3 @@ class SerializableTokenCache(TokenCache):
         with self._lock:
             self.has_state_changed = False
             return json.dumps(self._cache, indent=4)
-
