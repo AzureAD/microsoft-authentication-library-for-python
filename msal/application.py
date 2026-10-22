@@ -537,15 +537,29 @@ class ClientApplication(object):
 
             .. admonition:: Binding an assertion to an mTLS certificate (FIC leg 2)
 
-                *Added in version 1.38.0*:
                 For a Federated Identity Credential (FIC) exchange over mutual-TLS
                 Proof-of-Possession, the ``client_assertion`` container may also
                 carry an ``mtls_binding_certificate`` sub-key -- a certificate
                 credential (same shape as the top-level cert credential) that is
-                presented as the client TLS certificate during the token request::
+                presented as the client TLS certificate during the token request.
+                An explicitly supplied binding certificate must be a non-empty
+                certificate credential dictionary; invalid or incomplete values
+                raise ``ValueError``.
+                Use a callable to acquire the leg-1 token on demand; the leg-1
+                application's cache reuses valid tokens and renews expired ones::
+
+                    def get_leg1_assertion():
+                        result = leg1_app.acquire_token_for_client(
+                            ["api://AzureADTokenExchange/.default"],
+                            mtls_proof_of_possession=True,
+                        )
+                        if "access_token" not in result:
+                            raise RuntimeError(
+                                "FIC leg 1 failed: {}".format(result.get("error")))
+                        return result["access_token"]
 
                     {
-                        "client_assertion": leg1_result["access_token"],  # the leg-1 mtls_pop token
+                        "client_assertion": get_leg1_assertion,
                         "mtls_binding_certificate": {
                             "private_key_pfx_path": "/path/to/your.pfx",
                             "public_certificate": True,
@@ -554,8 +568,10 @@ class ClientApplication(object):
 
                 When ``mtls_binding_certificate`` is present, MSAL sends the
                 assertion with ``client_assertion_type`` set to the ``jwt-pop``
-                type and routes the request over mTLS using that binding
-                certificate. See
+                type and routes the request over mTLS using the same certificate
+                as the leg-1 application. A fixed token string is supported for
+                short-lived use, but emits the static-assertion deprecation
+                warning and cannot be renewed automatically. See
                 :func:`~msal.ConfidentialClientApplication.acquire_token_for_client`'s
                 ``mtls_proof_of_possession`` parameter for the full two-leg flow.
 
@@ -926,15 +942,26 @@ class ClientApplication(object):
         self._mtls_client = None  # Lazily built global mTLS client
         self._mtls_regional_client = None  # Lazily built regional mTLS client
         self._mtls_lock = Lock()
-        if isinstance(client_credential, dict) and client_credential.get(
-                "mtls_binding_certificate"):  # FIC leg 2 (assertion + binding cert)
+        if (isinstance(client_credential, dict)
+                and "mtls_binding_certificate" in client_credential):
+            binding_certificate = client_credential["mtls_binding_certificate"]
+            if not isinstance(binding_certificate, dict) or not (
+                    binding_certificate.get("private_key_pfx_path")
+                    or (binding_certificate.get("private_key")
+                        and isinstance(
+                            binding_certificate.get("public_certificate"), str)
+                        and binding_certificate["public_certificate"])):
+                raise ValueError(
+                    "mtls_binding_certificate must be a non-empty certificate "
+                    "credential dictionary with 'private_key_pfx_path', or "
+                    "'private_key' plus a PEM 'public_certificate'.")
             if not client_credential.get("client_assertion"):
                 raise ValueError(
                     "mtls_binding_certificate (FIC leg 2) also requires a "
                     "client_assertion (the leg-1 mtls_pop token) in the same "
                     "client_credential; the binding certificate is presented "
                     "to carry that assertion.")
-            self._mtls_cert_credential = client_credential["mtls_binding_certificate"]
+            self._mtls_cert_credential = binding_certificate
             self._mtls_is_fic_leg2 = True
         elif isinstance(client_credential, dict) and not client_credential.get(
                 "client_assertion") and (

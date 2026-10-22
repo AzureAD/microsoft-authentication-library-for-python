@@ -27,6 +27,17 @@ Configuration is read from environment variables so no secrets are hard-coded::
     SCOPE              e.g. https://graph.microsoft.com/.default
     AZURE_REGION       (optional) e.g. westus3; omit for the global mtls endpoint
 
+For the optional FIC sample, also configure::
+
+    RUN_FIC_SAMPLE     set to 1 to run the two-leg exchange
+    LEG2_CLIENT_ID     target application with a provisioned federated identity credential
+    LEG2_AUTHORITY     tenanted authority for that target application
+    FIC_EXCHANGE_SCOPE (optional) defaults to api://AzureADTokenExchange/.default
+
+The leg-1 app must be authorized for mTLS PoP at the exchange audience. The
+leg-2 app's federated identity credential must trust the leg-1 token's issuer,
+subject, and audience. Both legs use the SAME local certificate.
+
 Then run::
 
     python confidential_client_mtls_pop_sample.py
@@ -120,19 +131,24 @@ def fic_two_leg_over_mtls_pop():
     # The exchange audience is caller-supplied, not hard-coded by MSAL.
     exchange_scope = os.getenv(
         "FIC_EXCHANGE_SCOPE", "api://AzureADTokenExchange/.default")
-    leg1 = leg1_app.acquire_token_for_client(
-        [exchange_scope], mtls_proof_of_possession=True)
-    if "access_token" not in leg1:
-        _print_result_summary(leg1, "FIC leg 1 result:")
-        return leg1
+
+    def get_leg1_assertion():
+        # Reuse the leg-1 cache, acquiring a fresh token when the old one expires.
+        leg1 = leg1_app.acquire_token_for_client(
+            [exchange_scope], mtls_proof_of_possession=True)
+        if "access_token" not in leg1:
+            _print_result_summary(leg1, "FIC leg 1 result:")
+            raise RuntimeError(
+                "FIC leg 1 failed: {}".format(leg1.get("error")))
+        return leg1["access_token"]
 
     # --- Leg 2: exchange the leg-1 token for the final token ---------------
     leg2_app = msal.ConfidentialClientApplication(
-        os.getenv("LEG2_CLIENT_ID", os.environ["CLIENT_ID"]),
-        authority=os.environ["AUTHORITY"],
+        os.environ["LEG2_CLIENT_ID"],
+        authority=os.environ["LEG2_AUTHORITY"],
         client_credential={
-            "client_assertion": leg1["access_token"],   # the leg-1 mtls_pop token
-            "mtls_binding_certificate": cert,            # binds the leg-2 TLS handshake
+            "client_assertion": get_leg1_assertion,
+            "mtls_binding_certificate": cert,
         },
         azure_region=os.getenv("AZURE_REGION"),
     )

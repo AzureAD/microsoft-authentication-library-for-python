@@ -209,9 +209,15 @@ Notes and requirements:
   (non-mTLS) certificate path is unchanged and still sends a signed
   ``client_assertion`` (``private_key_jwt``) to obtain an ordinary token.
 * For a Federated Identity Credential (FIC) exchange, configure the leg-2 client
-  with both a ``client_assertion`` (the leg-1 token) and an
+  with both a ``client_assertion`` callable (acquiring the leg-1 token) and an
   ``mtls_binding_certificate`` sub-key; the leg-1 assertion is then sent as a
-  ``jwt-pop`` client assertion over the same mTLS connection.
+  ``jwt-pop`` client assertion over mTLS using the same certificate as leg 1.
+  A fixed assertion string expires and emits a deprecation warning; the callable
+  lets the leg-1 application reuse cached tokens and acquire fresh ones as needed.
+  The target application must have a federated identity credential trusting the
+  leg-1 token's issuer, subject, and audience. See
+  ``fic_two_leg_over_mtls_pop()`` in
+  ``sample/confidential_client_mtls_pop_sample.py`` for the two-leg setup.
 
 
 Exceptions

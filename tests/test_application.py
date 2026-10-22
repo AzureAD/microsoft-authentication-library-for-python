@@ -2402,6 +2402,42 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                 "cid", authority=self._AUTHORITY,
                 client_credential={"mtls_binding_certificate": _MTLS_CERT_CRED})
 
+    def test_invalid_binding_certificate_is_rejected(self):
+        for certificate in (
+                {}, None, "", [], ["certificate"], True, 1, "certificate",
+                {"passphrase": "password"}, {"private_key": "key"},
+                {"private_key": "key", "public_certificate": True}):
+            with self.subTest(certificate=certificate):
+                with self.assertRaisesRegex(ValueError, "mtls_binding_certificate"):
+                    ConfidentialClientApplication(
+                        "cid", authority=self._AUTHORITY,
+                        client_credential={
+                            "client_assertion": lambda: "LEG1_TOKEN",
+                            "mtls_binding_certificate": certificate})
+
+    def test_fic_callable_renews_assertion_without_deprecation_warning(self):
+        assertion = Mock(side_effect=["LEG1_TOKEN", "RENEWED_LEG1_TOKEN"])
+        captured = []
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            app = ConfidentialClientApplication(
+                "cid", authority=self._AUTHORITY,
+                client_credential={
+                    "client_assertion": assertion,
+                    "mtls_binding_certificate": _MTLS_CERT_CRED})
+            for scope in ("s1", "s2"):
+                result = app.acquire_token_for_client(
+                    [scope], mtls_proof_of_possession=True,
+                    post=self._capturing_post(captured))
+                self.assertIn("access_token", result)
+        self.assertEqual(
+            ["LEG1_TOKEN", "RENEWED_LEG1_TOKEN"],
+            [request["data"]["client_assertion"] for request in captured])
+        self.assertTrue(all(
+            request["data"]["client_assertion_type"] == _JWT_POP
+            and request["url"].startswith("https://mtlsauth.microsoft.com/")
+            for request in captured))
+
     def test_fic_leg2_app_rejects_non_client_credential_flows(self):
         # A FIC leg-2 app (client_assertion + mtls_binding_certificate) is only
         # valid via acquire_token_for_client over mTLS. Any other flow would put
