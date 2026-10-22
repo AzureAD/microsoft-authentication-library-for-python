@@ -191,7 +191,22 @@ certificate credential and pass ``mtls_proof_of_possession=True`` to
         mtls_proof_of_possession=True,
     )
     # result["token_type"] == "mtls_pop"
-    # result["binding_certificate"] == {"x5c": [...], "thumbprint_sha256": "..."}
+    binding = result["binding_certificate"]
+    # binding.x5c
+    # binding.thumbprint_sha256
+
+    with binding.create_requests_session() as session:
+        response = session.get(
+            resource_url,
+            headers={
+                "Authorization":
+                    "{} {}".format(
+                        result["token_type"],
+                        result["access_token"],
+                    ),
+            },
+            timeout=30,
+        )
 
 Notes and requirements:
 
@@ -211,6 +226,19 @@ Notes and requirements:
   authenticates the client through the mutual-TLS handshake instead. The classic
   (non-mTLS) certificate path is unchanged and still sends a signed
   ``client_assertion`` (``private_key_jwt``) to obtain an ordinary token.
+* ``result["binding_certificate"]`` is a process-local
+  :py:class:`msal.MtlsBindingContext`. It exposes the public certificate chain
+  and SHA-256 thumbprint and can create an ``ssl.SSLContext`` or
+  ``requests.Session`` that presents the same certificate to the resource. It
+  is not serializable and must not be persisted.
+* To request Bearer-over-mTLS instead, set
+  ``send_certificate_over_mtls=True`` in the certificate credential and omit
+  ``mtls_proof_of_possession``. The resulting token uses the ``Bearer`` scheme,
+  and its result still includes ``binding_certificate`` for constructing the
+  downstream certificate-bearing TLS connection.
+
+.. autoclass:: msal.MtlsBindingContext
+   :members:
 
 
 Exceptions

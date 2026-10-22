@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import pickle
 import sys
 import time
 import warnings
@@ -1575,6 +1576,34 @@ class TestAcquireTokenSilentWithClientClaims(unittest.TestCase):
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
 class TestRemoveTokensForClient(unittest.TestCase):
+    def test_legacy_bound_tokens_are_removed_after_deserialization(self):
+        for home_account_id in (None, "uid.utid"):
+            with self.subTest(home_account_id=home_account_id):
+                cache = msal.SerializableTokenCache()
+                entry = {
+                    "credential_type": "AccessToken",
+                    "environment": "login.microsoftonline.com",
+                    "client_id": "client_id", "realm": "tenant",
+                    "home_account_id": home_account_id, "target": "scope",
+                    "key_id": "THUMB", "token_type": "ssh-cert",
+                    "secret": "legacy_at", "expires_on": str(int(time.time()) + 3600),
+                }
+                legacy_key = cache.key_makers["AccessToken"](
+                    **dict(entry, key_id=None))
+                cache.deserialize(json.dumps({"AccessToken": {legacy_key: entry}}))
+                app = ConfidentialClientApplication(
+                    "client_id", client_credential="secret", token_cache=cache,
+                    authority="https://login.microsoftonline.com/tenant")
+                if home_account_id is None:
+                    with patch.object(app, "_get_authority_aliases", return_value=[]):
+                        app.remove_tokens_for_client()
+                else:
+                    app.remove_account({
+                        "environment": entry["environment"],
+                        "home_account_id": home_account_id})
+                self.assertEqual({}, cache._cache["AccessToken"])
+                self.assertTrue(cache.has_state_changed)
+
     def test_remove_tokens_for_client_should_remove_client_tokens_only(self):
         at_for_user = "AT for user"
         cca = msal.ConfidentialClientApplication(
@@ -2294,11 +2323,17 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertNotIn("key_id", req["data"], "key_id must never travel on the wire")
         # Telemetry marks token-type 6 (parity with .NET MtlsPop)
         self.assertEqual("4|730,2|,,6", req["headers"].get(CLIENT_CURRENT_TELEMETRY))
-        # Result carries token_type and the PUBLIC binding cert (no private key)
+        # Result carries token_type and a TLS-capable binding context.
         self.assertEqual("mtls_pop", result.get("token_type"))
         binding = result["binding_certificate"]
+        self.assertIsInstance(binding, msal.MtlsBindingContext)
         self.assertEqual({"x5c", "thumbprint_sha256"}, set(binding))
-        self.assertNotIn("private", json.dumps(binding).lower())
+        self.assertEqual(binding.x5c, binding["x5c"])
+        self.assertEqual(
+            binding.thumbprint_sha256, binding["thumbprint_sha256"])
+        self.assertNotIn("private", repr(binding).lower())
+        with self.assertRaises(TypeError):
+            pickle.dumps(binding)
 
     def test_repeat_call_is_cache_hit(self):
         app = ConfidentialClientApplication(
@@ -2314,7 +2349,8 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertEqual([], second, "Second call must be served from cache")
         self.assertEqual(app._TOKEN_SOURCE_CACHE, result[app._TOKEN_SOURCE])
         self.assertEqual("mtls_pop", result["token_type"])
-        self.assertTrue(result.get("binding_certificate"))
+        self.assertIsInstance(
+            result.get("binding_certificate"), msal.MtlsBindingContext)
 
     def test_released_positional_claims_argument_is_preserved(self):
         app = ConfidentialClientApplication(
@@ -2356,7 +2392,7 @@ class TestMtlsProofOfPossession(unittest.TestCase):
     def test_token_type_downgrade_fails_closed(self):
         # ESTS returns a non-cert-bound token (a Bearer downgrade) for an
         # mtls_pop request. MSAL must fail closed: an error result, no
-        # binding_certificate, and nothing cached as a bound (key_id) token.
+        # binding_certificate, and no persistence of the rejected response.
         app = ConfidentialClientApplication(
             "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
         with patch("msal.mtls._MtlsHttpClient.post",
@@ -2368,7 +2404,7 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertNotIn("binding_certificate", result)
         bound = [
             at for at in app.token_cache.search(
-                msal.TokenCache.CredentialType.ACCESS_TOKEN)
+                msal.TokenCache.CredentialType.ACCESS_TOKEN, for_removal=True)
             if at.get("key_id")
             or (at.get("token_type") or "").lower() == "mtls_pop"]
         self.assertEqual(
@@ -2526,7 +2562,8 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         self.assertNotIn("key_id", req["data"])
         # Result is a plain Bearer token, NOT cert-bound
         self.assertEqual("Bearer", result.get("token_type"))
-        self.assertNotIn("binding_certificate", result)
+        self.assertIsInstance(
+            result.get("binding_certificate"), msal.MtlsBindingContext)
 
     def test_cc_x5c_is_forced_on_assertion(self):
         # Bearer-over-mTLS forces the x5c chain onto the assertion header even
@@ -2826,7 +2863,8 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         self.assertNotIn("mtlsauth", cached_env or "")
         self.assertEqual(app._TOKEN_SOURCE_CACHE, result[app._TOKEN_SOURCE])
         self.assertEqual("Bearer", result.get("token_type"))
-        self.assertNotIn("binding_certificate", result)
+        self.assertIsInstance(
+            result.get("binding_certificate"), msal.MtlsBindingContext)
 
     def test_post_override_rejected_for_all_mtls_bearer_grants(self):
         for grant in ("client_credentials", "obo", "auth_code", "auth_code_flow",

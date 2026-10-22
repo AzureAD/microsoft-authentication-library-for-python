@@ -165,7 +165,7 @@ def _is_certificate_issuer(cert, issuer):
     return True
 
 
-def _parse_pfx(pfx_path, passphrase_bytes):
+def _parse_pfx(pfx_path, passphrase_bytes, *, include_chain=False):
     # Cert concepts https://security.stackexchange.com/a/226758/125264
     from cryptography.hazmat.primitives.serialization import pkcs12
     with open(pfx_path, 'rb') as f:
@@ -175,20 +175,20 @@ def _parse_pfx(pfx_path, passphrase_bytes):
     if not (private_key and cert):
         raise ValueError("Your PFX file shall contain both private key and cert")
     sha256_thumbprint, sha1_thumbprint, x5c, cert_pem = _extract_cert_and_thumbprints(cert)
-    remaining = [candidate for candidate in additional_certs or [] if candidate != cert]
-    current = cert
-    while remaining:
-        additional_cert = next(
-            (candidate for candidate in remaining
-             if _is_certificate_issuer(current, candidate)), None)
-        if additional_cert is None:
-            break  # A PFX may contain only a partial chain.
-        remaining = [candidate for candidate in remaining if candidate != additional_cert]
-        _, _, additional_x5c, additional_pem = _extract_cert_and_thumbprints(
-            additional_cert)
-        x5c.extend(additional_x5c)
-        cert_pem += additional_pem
-        current = additional_cert
+    if include_chain:
+        remaining = [candidate for candidate in additional_certs or [] if candidate != cert]
+        current = cert
+        while remaining:
+            issuer = next(
+                (candidate for candidate in remaining
+                 if _is_certificate_issuer(current, candidate)), None)
+            if issuer is None:
+                break  # A PFX may contain only a partial chain.
+            remaining = [candidate for candidate in remaining if candidate != issuer]
+            _, _, issuer_x5c, issuer_pem = _extract_cert_and_thumbprints(issuer)
+            x5c.extend(issuer_x5c)
+            cert_pem += issuer_pem
+            current = issuer
     return private_key, sha256_thumbprint, sha1_thumbprint, x5c, cert_pem
 
 
@@ -244,7 +244,8 @@ def _load_mtls_cert_material(cert_credential):
         ) if cert_credential.get("passphrase") else None
     if cert_credential.get("private_key_pfx_path"):
         private_key, sha256_thumbprint, _, x5c, cert_pem = _parse_pfx(
-            cert_credential["private_key_pfx_path"], passphrase_bytes)
+            cert_credential["private_key_pfx_path"], passphrase_bytes,
+            include_chain=True)
     elif cert_credential.get("private_key"):
         public_cert = cert_credential.get("public_certificate")
         if not isinstance(public_cert, str):
@@ -648,6 +649,9 @@ class ClientApplication(object):
                 ``ValueError``. Custom ``http_client`` instances and per-request
                 ``post`` overrides are rejected when making an mTLS token request,
                 because MSAL must own the certificate-bearing transport.
+                Successful results include ``binding_certificate`` as an
+                :class:`msal.MtlsBindingContext`, which can create the
+                certificate-bearing TLS session for the downstream resource.
                 A per-request ``mtls_proof_of_possession=True`` on
                 :func:`~acquire_token_for_client` always takes precedence, yielding
                 a cert-bound ``mtls_pop`` token instead of a Bearer one.
@@ -1212,6 +1216,19 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     self._mtls_cert_credential)
             return self._mtls_pop_cert_material
 
+    def _decorate_mtls_binding_context(self, result):
+        if (not self._send_certificate_over_mtls
+                or not result or "access_token" not in result):
+            return result
+        cert = self._get_mtls_pop_cert()
+        result["binding_certificate"] = mtls.MtlsBindingContext(
+            cert["cert_pem"],
+            cert["private_key_pem"],
+            cert["x5c"],
+            cert["key_id"],
+            )
+        return result
+
     def _get_mtls_client(self, central_authority):
         """Lazily build (and cache) the mTLS PoP client for ``central_authority``.
 
@@ -1393,7 +1410,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 if client_credential.get("private_key_pfx_path"):
                     private_key, sha256_thumbprint, sha1_thumbprint, x5c, _ = _parse_pfx(
                         client_credential["private_key_pfx_path"],
-                        passphrase_bytes)
+                        passphrase_bytes, include_chain=True)
                     if client_credential.get("public_certificate") is True and x5c:
                         headers["x5c"] = x5c
                 elif client_credential.get("private_key"):  # PEM blob
@@ -1747,7 +1764,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if "access_token" in response:
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
         telemetry_context.update_telemetry(response)
-        return response
+        return self._decorate_mtls_binding_context(response)
 
     def acquire_token_by_authorization_code(
             self,
@@ -1838,7 +1855,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             if "access_token" in response:
                 response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
             telemetry_context.update_telemetry(response)
-            return response
+            return self._decorate_mtls_binding_context(response)
 
     def get_accounts(self, username=None):
         """Get a list of accounts which previously signed in, i.e. exists in cache.
@@ -2040,6 +2057,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         result = _clean_up(self._acquire_token_silent_with_error(
             scopes, account, authority=authority, force_refresh=force_refresh,
             claims_challenge=claims_challenge, auth_scheme=auth_scheme, **kwargs))
+        result = self._decorate_mtls_binding_context(result)
         return result if result and "error" not in result else None
 
     def acquire_token_silent_with_error(
@@ -2106,9 +2124,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if forwarded_client_claims is not None:
             kwargs["data"] = kwargs.get("data", {})
             _stash_client_claims(forwarded_client_claims, kwargs["data"])
-        return _clean_up(self._acquire_token_silent_with_error(
-            scopes, account, authority=authority, force_refresh=force_refresh,
-            claims_challenge=claims_challenge, auth_scheme=auth_scheme, **kwargs))
+        return self._decorate_mtls_binding_context(_clean_up(
+            self._acquire_token_silent_with_error(
+                scopes, account, authority=authority, force_refresh=force_refresh,
+                claims_challenge=claims_challenge, auth_scheme=auth_scheme, **kwargs)))
 
     def _acquire_token_silent_with_error(
             self,
@@ -2466,7 +2485,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if "access_token" in response:
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
         telemetry_context.update_telemetry(response)
-        return response
+        return self._decorate_mtls_binding_context(response)
 
     def acquire_token_by_username_password(
             self, username, password, scopes, claims_challenge=None,
@@ -3112,13 +3131,19 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             returns another token type, the result is ``token_type_mismatch``
             and the rejected response is not cached.
 
-            On success the result also contains a ``binding_certificate`` dict
-            with the **public** binding material only (never the private key)::
+            On success the result also contains an
+            :py:class:`msal.MtlsBindingContext` as ``binding_certificate``. It
+            exposes public binding metadata and creates a TLS context or
+            ``requests`` session that presents the same certificate::
 
-                result["binding_certificate"] == {
-                    "x5c": ["<base64-DER leaf>", ...],
-                    "thumbprint_sha256": "<base64url x5t#S256>",
-                }
+                binding = result["binding_certificate"]
+                binding.x5c
+                binding.thumbprint_sha256
+                with binding.create_requests_session() as session:
+                    response = session.get(
+                        resource_url,
+                        headers={"Authorization": "mtls_pop " + result["access_token"]},
+                    )
 
             Example usage::
 
@@ -3206,13 +3231,16 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                         "of 'mtls_pop'; the access token is not "
                         "certificate-bound.".format(result.get("token_type"))),
                     }
-            # Surface the PUBLIC binding certificate (never the private key), so
-            # callers can correlate the token to its cert. Survives _clean_up
-            # (the key has no "_" prefix).
-            result["binding_certificate"] = {
-                "x5c": mtls_cert["x5c"],
-                "thumbprint_sha256": mtls_cert["key_id"],  # base64url x5t#S256
-                }
+            # Attach process-local TLS capability after cache cleanup. The
+            # private key is never added to the token result or token cache.
+            result["binding_certificate"] = mtls.MtlsBindingContext(
+                mtls_cert["cert_pem"],
+                mtls_cert["private_key_pem"],
+                mtls_cert["x5c"],
+                mtls_cert["key_id"],  # base64url x5t#S256
+                )
+        elif self._send_certificate_over_mtls:
+            result = self._decorate_mtls_binding_context(result)
         return result
 
     def _acquire_token_for_client(
@@ -3340,7 +3368,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
         if "access_token" in response:
             response[self._TOKEN_SOURCE] = self._TOKEN_SOURCE_IDP
         telemetry_context.update_telemetry(response)
-        return response
+        return self._decorate_mtls_binding_context(response)
 
     def acquire_token_by_user_federated_identity_credential(
             self, scopes, assertion, username=None, user_object_id=None,

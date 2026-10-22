@@ -22,6 +22,7 @@ Configuration is read from environment variables so no secrets are hard-coded::
     PFX_PATH           path to the .pfx file holding the SN/I cert + private key
     PFX_PASSPHRASE     (optional) passphrase protecting the .pfx
     SCOPE              e.g. https://graph.microsoft.com/.default
+    RESOURCE_URL       optional mTLS resource URL to call with the acquired token
     AZURE_REGION       (optional) e.g. westus3; omit for the global mtls endpoint
 
 Then run::
@@ -51,16 +52,16 @@ def _print_result_summary(result, header):
     """Print a *log-safe* summary of an MSAL token ``result``.
 
     The sensitive part of ``result`` is the ``access_token`` (a PoP/bearer
-    secret) - that is what we must never log. The ``binding_certificate`` is the
-    certificate's PUBLIC material (x5c + thumbprint), not a secret, so it is safe
-    to inspect. We still avoid dumping the whole ``result`` dict and instead
-    surface only a few derived booleans/fields, to model the habit of not
-    routinely logging token responses.
+    secret) - that is what we must never log. The ``binding_certificate`` is a
+    process-local TLS context containing private-key capability, so it must not
+    be serialized or logged. Its ``x5c`` and ``thumbprint_sha256`` properties
+    contain public metadata.
 
     On success the interesting (non-sensitive) fields are::
 
         result["token_type"]          == "mtls_pop"
-        result["binding_certificate"] == {"x5c": [...], "thumbprint_sha256": ...}
+        result["binding_certificate"].x5c
+        result["binding_certificate"].thumbprint_sha256
         result["token_source"]        in ("identity_provider", "cache")
 
     Inspect those directly (e.g. in a debugger) when you need their values.
@@ -68,12 +69,33 @@ def _print_result_summary(result, header):
     print(header)
     if "access_token" in result:
         print("  acquired:                     yes")
-        print("  token_type is mtls_pop:      ", result.get("token_type") == "mtls_pop")
+        print("  token_type:                  ", result.get("token_type"))
         print("  carries binding_certificate: ", "binding_certificate" in result)
         print("  served from cache:           ", result.get("token_source") == "cache")
     else:
         print("  acquired:                     no")
         print("  (inspect result['error'] / result['error_description'] to diagnose)")
+
+
+def _call_resource(result):
+    resource_url = os.getenv("RESOURCE_URL")
+    if not resource_url or "access_token" not in result:
+        return
+    binding = result["binding_certificate"]
+    with binding.create_requests_session() as session:
+        response = session.get(
+            resource_url,
+            headers={
+                "Authorization":
+                    "{} {}".format(
+                        result["token_type"],
+                        result["access_token"],
+                    ),
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        print("  resource call status:        ", response.status_code)
 
 
 def vanilla_sni_mtls_pop():
@@ -93,9 +115,28 @@ def vanilla_sni_mtls_pop():
     )
 
     _print_result_summary(result, "Vanilla SN/I -> mTLS PoP result:")
+    _call_resource(result)
+    return result
+
+
+def bearer_over_mtls():
+    """Acquire a Bearer token while presenting the certificate over mTLS."""
+    credential = _build_cert_credential()
+    credential["send_certificate_over_mtls"] = True
+    app = msal.ConfidentialClientApplication(
+        os.environ["CLIENT_ID"],
+        authority=os.environ["AUTHORITY"],
+        client_credential=credential,
+        azure_region=os.getenv("AZURE_REGION"),
+    )
+    result = app.acquire_token_for_client(os.environ["SCOPE"].split())
+    _print_result_summary(result, "SN/I -> Bearer-over-mTLS result:")
+    _call_resource(result)
     return result
 
 
 if __name__ == "__main__":
     print("=== Vanilla SN/I -> mTLS PoP ===")
     vanilla_sni_mtls_pop()
+    print("\n=== SN/I -> Bearer-over-mTLS ===")
+    bearer_over_mtls()

@@ -477,7 +477,7 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         except Exception:  # Opaque/non-JWT token - skip the offline binding check
             return None
 
-    def _call_graph_with_mtls_pop_token(self, token, cert_credential):
+    def _call_graph_with_mtls_pop_token(self, token, binding_certificate):
         """Prove an ``mtls_pop`` token is genuinely usable: present it to the
         mTLS Graph endpoint over a TLS channel bound by the SAME certificate and
         require HTTP 200. Acquiring the token is not enough - a resource only
@@ -486,22 +486,13 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         real regression rather than a transient failure.
 
         Shared test infrastructure: the FIC two-leg e2e in PR #939 reuses this
-        as-is (please do not inline it), which is why it takes an explicit
-        ``cert_credential`` rather than reading ``self.app``'s certificate.
+        as-is (please do not inline it).
         """
-        from msal.application import _load_mtls_cert_material
-        from msal.mtls import _create_ssl_context, _make_mtls_adapter
-        material = _load_mtls_cert_material(cert_credential)
-        session = requests.Session()
-        session.mount("https://", _make_mtls_adapter(_create_ssl_context(
-            material["cert_pem"], material["private_key_pem"])))
-        try:
+        with binding_certificate.create_requests_session() as session:
             resp = session.get(
                 self._MTLS_GRAPH_RESOURCE,
                 headers={"Authorization": "mtls_pop " + token},
                 timeout=30)
-        finally:
-            session.close()
         self.assertEqual(
             200, resp.status_code,
             "mtls_pop token rejected by the resource (HTTP %s). A 401/403 means "
@@ -529,12 +520,13 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertEqual("mtls_pop", result.get("token_type"))
         binding = result.get("binding_certificate")
         self.assertTrue(binding and binding.get("x5c") and binding.get("thumbprint_sha256"))
-        self.assertNotIn("private", json.dumps(binding).lower())
+        self.assertIsInstance(binding, msal.MtlsBindingContext)
+        self.assertNotIn("private", repr(binding).lower())
         cnf = self._cnf_x5t_s256(result["access_token"])
         if cnf:  # When the AT is a decodable JWT, its cnf must match our cert
             self.assertEqual(binding["thumbprint_sha256"], cnf)
         # The token must actually work at the resource, bound to our cert.
-        self._call_graph_with_mtls_pop_token(result["access_token"], cert)
+        self._call_graph_with_mtls_pop_token(result["access_token"], binding)
         self._assert_pop_cache_hit(self.app, self._MTLS_POP_SCOPE)
 
     def test_credential_x509_output_bearer(self):
@@ -595,8 +587,10 @@ class PublicCloudScenariosTestCase(E2eTestCase):
             "Bearer-over-mTLS request failed: %s" % result)
         # A PLAIN Bearer token, NOT cert-bound (contrast the mtls_pop cell).
         self.assertEqual("Bearer", result.get("token_type"))
-        self.assertNotIn("binding_certificate", result)
-        self.assertIsNone(result.get("binding_certificate"))
+        binding = result.get("binding_certificate")
+        self.assertIsInstance(binding, msal.MtlsBindingContext)
+        self.assertTrue(binding.x5c)
+        self.assertTrue(binding.thumbprint_sha256)
         # The AT is an ordinary Bearer entry (no key_id/thumbprint fence), so a
         # normal flagless acquire_token_for_client lookup returns it from cache
         # -- the caller-visible proof of the feature's goal. (mtls_pop needed the
