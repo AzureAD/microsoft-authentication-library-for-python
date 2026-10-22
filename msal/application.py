@@ -126,6 +126,45 @@ def _extract_cert_and_thumbprints(cert):
     sha1_thumbprint = cert.fingerprint(hashes.SHA1()).hex()  # CodeQL [SM02167] for legacy support such as ADFS
     return sha256_thumbprint, sha1_thumbprint, x5c, cert_pem
 
+def _is_certificate_issuer(cert, issuer):
+    from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+    from cryptography.hazmat.primitives.asymmetric import (
+        rsa, ec, dsa, ed25519, ed448, padding)
+    from cryptography.x509.oid import SignatureAlgorithmOID
+
+    if cert.issuer != issuer.subject:
+        return False
+    try:
+        if hasattr(cert, "verify_directly_issued_by"):
+            cert.verify_directly_issued_by(issuer)
+        else:  # Support cryptography versions before 40.
+            key = issuer.public_key()
+            if isinstance(key, rsa.RSAPublicKey):
+                parameters = getattr(cert, "signature_algorithm_parameters", None)
+                if (cert.signature_algorithm_oid == SignatureAlgorithmOID.RSASSA_PSS
+                        and parameters is None):
+                    raise UnsupportedAlgorithm(
+                        "Upgrade cryptography to verify RSA-PSS certificate chains")
+                key.verify(
+                    cert.signature, cert.tbs_certificate_bytes,
+                    parameters or padding.PKCS1v15(), cert.signature_hash_algorithm)
+            elif isinstance(key, ec.EllipticCurvePublicKey):
+                key.verify(
+                    cert.signature, cert.tbs_certificate_bytes,
+                    ec.ECDSA(cert.signature_hash_algorithm))
+            elif isinstance(key, dsa.DSAPublicKey):
+                key.verify(
+                    cert.signature, cert.tbs_certificate_bytes,
+                    cert.signature_hash_algorithm)
+            elif isinstance(key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+                key.verify(cert.signature, cert.tbs_certificate_bytes)
+            else:
+                raise UnsupportedAlgorithm("Unsupported certificate issuer key")
+    except (InvalidSignature, ValueError):
+        return False
+    return True
+
+
 def _parse_pfx(pfx_path, passphrase_bytes):
     # Cert concepts https://security.stackexchange.com/a/226758/125264
     from cryptography.hazmat.primitives.serialization import pkcs12
@@ -136,11 +175,20 @@ def _parse_pfx(pfx_path, passphrase_bytes):
     if not (private_key and cert):
         raise ValueError("Your PFX file shall contain both private key and cert")
     sha256_thumbprint, sha1_thumbprint, x5c, cert_pem = _extract_cert_and_thumbprints(cert)
-    for additional_cert in additional_certs or []:
+    remaining = [candidate for candidate in additional_certs or [] if candidate != cert]
+    current = cert
+    while remaining:
+        additional_cert = next(
+            (candidate for candidate in remaining
+             if _is_certificate_issuer(current, candidate)), None)
+        if additional_cert is None:
+            break  # A PFX may contain only a partial chain.
+        remaining = [candidate for candidate in remaining if candidate != additional_cert]
         _, _, additional_x5c, additional_pem = _extract_cert_and_thumbprints(
             additional_cert)
         x5c.extend(additional_x5c)
         cert_pem += additional_pem
+        current = additional_cert
     return private_key, sha256_thumbprint, sha1_thumbprint, x5c, cert_pem
 
 
@@ -331,6 +379,15 @@ class _ClientWithCcsRoutingInfo(Client):
         headers["X-AnchorMailbox"] = "upn:{}".format(username)
         return super(_ClientWithCcsRoutingInfo, self).obtain_token_by_username_password(
             username, password, headers=headers, **kwargs)
+
+
+class _MtlsBearerClient(_ClientWithCcsRoutingInfo):
+    def _obtain_token(self, *args, **kwargs):
+        if "post" in kwargs:
+            raise ValueError(
+                "send_certificate_over_mtls=True does not support a post "
+                "override. Omit post to use MSAL's built-in mTLS transport.")
+        return super(_MtlsBearerClient, self)._obtain_token(*args, **kwargs)
 
 
 class _MtlsClient(_ClientWithCcsRoutingInfo):
@@ -588,7 +645,10 @@ class ClientApplication(object):
                 redemption during :func:`~acquire_token_silent`. It defaults to
                 ``False`` (so leaving it unset changes no behavior) and requires
                 a certificate credential -- otherwise construction raises
-                ``ValueError``. A per-request ``mtls_proof_of_possession=True`` on
+                ``ValueError``. Custom ``http_client`` instances and per-request
+                ``post`` overrides are rejected when making an mTLS token request,
+                because MSAL must own the certificate-bearing transport.
+                A per-request ``mtls_proof_of_possession=True`` on
                 :func:`~acquire_token_for_client` always takes precedence, yielding
                 a cert-bound ``mtls_pop`` token instead of a Bearer one.
 
@@ -1273,7 +1333,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         client_assertion = assertion.create_regenerative_assertion(
             audience=token_endpoint, issuer=self.client_id,
             additional_claims=self.client_claims or {})
-        client = _ClientWithCcsRoutingInfo(
+        client = _MtlsBearerClient(
             configuration,
             self.client_id,
             http_client=http_client,

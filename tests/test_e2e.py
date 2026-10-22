@@ -642,16 +642,16 @@ class PublicCloudScenariosTestCase(E2eTestCase):
             self.assertNotIn("key_id", req["data"])
             self.assertNotIn("req_cnf", req["data"])
         cap = []
-        _new_app().acquire_token_on_behalf_of(
-            "a_user_assertion", scope, post=_capture(cap))
+        with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
+            _new_app().acquire_token_on_behalf_of("a_user_assertion", scope)
         _assert_mtls(cap[0], "requested_token_use", "on_behalf_of")
         cap = []
-        _new_app().acquire_token_by_refresh_token(
-            "a_refresh_token", scope, post=_capture(cap))
+        with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
+            _new_app().acquire_token_by_refresh_token("a_refresh_token", scope)
         _assert_mtls(cap[0], "grant_type", "refresh_token")
         cap = []
-        _new_app().acquire_token_by_authorization_code(
-            "an_auth_code", scope, post=_capture(cap))
+        with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
+            _new_app().acquire_token_by_authorization_code("an_auth_code", scope)
         _assert_mtls(cap[0], "grant_type", "authorization_code")
 
     def test_send_certificate_over_mtls_user_flows_live_acquire(self):

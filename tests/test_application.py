@@ -2509,8 +2509,9 @@ class TestSendCertificateOverMtls(unittest.TestCase):
             "cid", authority=self._AUTHORITY, client_credential=dict(
                 _MTLS_CERT_CRED, send_certificate_over_mtls=True))
         captured = []
-        result = app.acquire_token_for_client(
-            ["s1"], post=self._capturing_post(captured))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            result = app.acquire_token_for_client(["s1"])
         req = captured[0]
         # Routed to the GLOBAL mtls host (login.* -> mtlsauth.*)
         self.assertEqual(
@@ -2535,7 +2536,9 @@ class TestSendCertificateOverMtls(unittest.TestCase):
             "cid", authority=self._AUTHORITY, client_credential=dict(
                 _MTLS_CERT_CRED_NO_X5C, send_certificate_over_mtls=True))
         captured = []
-        forced.acquire_token_for_client(["s1"], post=self._capturing_post(captured))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            forced.acquire_token_for_client(["s1"])
         self.assertIn(
             "x5c", _jwt_header_of(captured[0]["data"]["client_assertion"]),
             "Bearer-over-mTLS must force x5c onto the assertion header")
@@ -2554,7 +2557,9 @@ class TestSendCertificateOverMtls(unittest.TestCase):
             client_credential=dict(
                 _MTLS_CERT_CRED, send_certificate_over_mtls=True))
         captured = []
-        app.acquire_token_for_client(["s1"], post=self._capturing_post(captured))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            app.acquire_token_for_client(["s1"])
         self.assertEqual(
             captured[0]["url"],
             "https://westus3.mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
@@ -2592,8 +2597,9 @@ class TestSendCertificateOverMtls(unittest.TestCase):
             "cid", authority=self._AUTHORITY, client_credential=dict(
                 _MTLS_CERT_CRED, send_certificate_over_mtls=True))
         captured = []
-        app.acquire_token_on_behalf_of(
-            "a_user_assertion", ["s1"], post=self._capturing_post(captured))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            app.acquire_token_on_behalf_of("a_user_assertion", ["s1"])
         req = captured[0]
         self.assertEqual(
             req["url"],
@@ -2610,8 +2616,9 @@ class TestSendCertificateOverMtls(unittest.TestCase):
             client_credential=dict(
                 _MTLS_CERT_CRED, send_certificate_over_mtls=True))
         captured = []
-        app.acquire_token_on_behalf_of(
-            "a_user_assertion", ["s1"], post=self._capturing_post(captured))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            app.acquire_token_on_behalf_of("a_user_assertion", ["s1"])
         self.assertEqual(
             captured[0]["url"],
             "https://westus3.mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
@@ -2621,8 +2628,9 @@ class TestSendCertificateOverMtls(unittest.TestCase):
             "cid", authority=self._AUTHORITY, client_credential=dict(
                 _MTLS_CERT_CRED, send_certificate_over_mtls=True))
         captured = []
-        app.acquire_token_by_refresh_token(
-            "a_rt", ["s1"], post=self._capturing_post(captured))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            app.acquire_token_by_refresh_token("a_rt", ["s1"])
         req = captured[0]
         self.assertEqual(
             req["url"],
@@ -2636,8 +2644,9 @@ class TestSendCertificateOverMtls(unittest.TestCase):
             "cid", authority=self._AUTHORITY, client_credential=dict(
                 _MTLS_CERT_CRED, send_certificate_over_mtls=True))
         captured = []
-        app.acquire_token_by_authorization_code(
-            "a_code", ["s1"], post=self._capturing_post_full(captured))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post_full(captured)):
+            app.acquire_token_by_authorization_code("a_code", ["s1"])
         req = captured[0]
         self.assertEqual(
             req["url"],
@@ -2677,11 +2686,11 @@ class TestSendCertificateOverMtls(unittest.TestCase):
                 app = ConfidentialClientApplication(
                     "cid", authority=self._AUTHORITY, client_credential=dict(
                         _MTLS_CERT_CRED, send_certificate_over_mtls=True))
-                app.acquire_token_on_behalf_of(
-                    "user_assertion", ["s1"],
-                    post=lambda *a, **k: MinimalResponse(
+                with patch("msal.mtls._MtlsHttpClient.post",
+                           return_value=MinimalResponse(
                         status_code=200, text=_build_user_token_response(
-                            client_id="cid", refresh_token="original_rt")))
+                            client_id="cid", refresh_token="original_rt"))):
+                    app.acquire_token_on_behalf_of("user_assertion", ["s1"])
                 account = next(app.token_cache.search(
                     msal.TokenCache.CredentialType.ACCOUNT))
                 captured = []
@@ -2794,8 +2803,9 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         app = ConfidentialClientApplication(
             "cid", authority=self._AUTHORITY, client_credential=dict(
                 _MTLS_CERT_CRED, send_certificate_over_mtls=True))
-        first = app.acquire_token_for_client(
-            ["s1"], post=self._capturing_post([]))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post([])):
+            first = app.acquire_token_for_client(["s1"])
         self.assertEqual("Bearer", first.get("token_type"))
         second = []
         result = app.acquire_token_for_client(
@@ -2817,3 +2827,42 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         self.assertEqual(app._TOKEN_SOURCE_CACHE, result[app._TOKEN_SOURCE])
         self.assertEqual("Bearer", result.get("token_type"))
         self.assertNotIn("binding_certificate", result)
+
+    def test_post_override_rejected_for_all_mtls_bearer_grants(self):
+        for grant in ("client_credentials", "obo", "auth_code", "auth_code_flow",
+                      "refresh", "silent_refresh"):
+            with self.subTest(grant=grant):
+                app = ConfidentialClientApplication(
+                    "cid", authority=self._AUTHORITY, client_credential=dict(
+                        _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+                with patch("msal.mtls._MtlsHttpClient.post",
+                           return_value=MinimalResponse(
+                               status_code=200, text=_build_user_token_response(
+                                   client_id="cid", refresh_token="a_rt"))):
+                    app.acquire_token_on_behalf_of("assertion", ["s1"])
+                account = next(app.token_cache.search(
+                    msal.TokenCache.CredentialType.ACCOUNT))
+                with patch("msal.mtls._MtlsHttpClient.post") as transport, \
+                        patch.object(app.http_client, "post") as regular_transport, \
+                        patch.object(app, "_get_authority_aliases", return_value=[]):
+                    override = Mock()
+                    with self.assertRaisesRegex(ValueError, "does not support a post"):
+                        if grant == "client_credentials":
+                            app.acquire_token_for_client(["s2"], post=override)
+                        elif grant == "obo":
+                            app.acquire_token_on_behalf_of("assertion", ["s2"], post=override)
+                        elif grant == "auth_code":
+                            app.acquire_token_by_authorization_code("code", ["s2"], post=override)
+                        elif grant == "auth_code_flow":
+                            flow = app.initiate_auth_code_flow(["s2"])
+                            app.acquire_token_by_auth_code_flow(
+                                flow, {"code": "code", "state": flow["state"]},
+                                post=override)
+                        elif grant == "refresh":
+                            app.acquire_token_by_refresh_token("a_rt", ["s2"], post=override)
+                        else:
+                            app.acquire_token_silent_with_error(
+                                ["s1"], account, force_refresh=True, post=override)
+                    override.assert_not_called()
+                    transport.assert_not_called()
+                    regular_transport.assert_not_called()

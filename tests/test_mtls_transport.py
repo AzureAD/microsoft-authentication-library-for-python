@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from msal import mtls
 from msal.application import (
-    _load_mtls_cert_material, _private_key_to_unencrypted_pem, extract_certs)
+    _is_certificate_issuer, _load_mtls_cert_material,
+    _private_key_to_unencrypted_pem, extract_certs)
 
 
 class TestMtlsEndpointTransform(unittest.TestCase):
@@ -185,14 +186,21 @@ class TestMtlsCertificateChain(unittest.TestCase):
 
         root_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         root = make_cert("root", root_key, None, root_key, True)
+        cls.root = root
+        upper_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.upper_intermediate = make_cert(
+            "upper", upper_key, root.subject, root_key, True)
         intermediate_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         cls.intermediate = make_cert(
-            "intermediate", intermediate_key, root.subject, root_key, True)
+            "intermediate", intermediate_key, cls.upper_intermediate.subject, upper_key, True)
+        unrelated_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.unrelated = make_cert("unrelated", unrelated_key, None, unrelated_key, True)
+        cls.impostor = make_cert("intermediate", unrelated_key, None, unrelated_key, True)
         cls.leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         cls.leaf = make_cert(
             "client", cls.leaf_key, cls.intermediate.subject, intermediate_key, False)
         cls.chain_pem = b"".join(cert.public_bytes(serialization.Encoding.PEM)
-            for cert in (cls.leaf, cls.intermediate))
+            for cert in (cls.leaf, cls.intermediate, cls.upper_intermediate))
         cls.key_pem = _private_key_to_unencrypted_pem(cls.leaf_key)
         cls.root_pem = root.public_bytes(serialization.Encoding.PEM)
         cls.server_pem = cls.root_pem + _private_key_to_unencrypted_pem(root_key)
@@ -275,7 +283,11 @@ class TestMtlsCertificateChain(unittest.TestCase):
                     return MinimalResponse(
                         status_code=200, text='{"access_token": "at", "token_type": "Bearer"}')
 
-                app.acquire_token_for_client(["s1"], post=post)
+                if send_over_mtls:
+                    with patch("msal.mtls._MtlsHttpClient.post", side_effect=post):
+                        app.acquire_token_for_client(["s1"])
+                else:
+                    app.acquire_token_for_client(["s1"], post=post)
 
     def test_pfx_intermediates_reach_tls_handshake(self):
         from cryptography.hazmat.primitives import serialization
@@ -284,10 +296,68 @@ class TestMtlsCertificateChain(unittest.TestCase):
             path = os.path.join(directory, "chain.pfx")
             with open(path, "wb") as stream:
                 stream.write(pkcs12.serialize_key_and_certificates(
-                    b"client", self.leaf_key, self.leaf, [self.intermediate],
+                    b"client", self.leaf_key, self.leaf,
+                    [self.intermediate, self.upper_intermediate],
                     serialization.NoEncryption()))
             material = _load_mtls_cert_material({"private_key_pfx_path": path})
         self._assert_chain_and_handshake(material)
+
+    def test_unordered_pfx_chain_excludes_unrelated_and_wrong_signer(self):
+        from msal.application import ConfidentialClientApplication
+        from tests.http_client import MinimalResponse
+
+        endpoint = "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"
+        path = os.path.join(os.path.dirname(__file__), "certificate-with-password.pfx")
+        expected_pem = self.chain_pem + self.root_pem
+        expected_x5c = extract_certs(expected_pem.decode("ascii"))
+        additional = [
+            self.root, self.impostor, self.upper_intermediate,
+            self.unrelated, self.intermediate, self.leaf, self.intermediate]
+        with patch("cryptography.hazmat.primitives.serialization.pkcs12."
+                   "load_key_and_certificates",
+                   return_value=(self.leaf_key, self.leaf, additional)):
+            material = _load_mtls_cert_material({"private_key_pfx_path": path})
+            self.assertEqual(expected_pem, material["cert_pem"])
+            self.assertEqual(expected_x5c, material["x5c"])
+            self.assertEqual(self.key_id, material["key_id"])
+            for send_over_mtls in (False, True):
+                with self.subTest(send_over_mtls=send_over_mtls), patch(
+                        "msal.authority.tenant_discovery", return_value={
+                            "authorization_endpoint": endpoint.replace("/token", "/authorize"),
+                            "token_endpoint": endpoint,
+                            "issuer": "https://login.microsoftonline.com/tenant/v2.0"}):
+                    app = ConfidentialClientApplication(
+                        "cid", authority="https://login.microsoftonline.com/tenant",
+                        azure_region=False, client_credential={
+                            "private_key_pfx_path": path,
+                            "public_certificate": True,
+                            "send_certificate_over_mtls": send_over_mtls})
+
+                    def post(url, data=None, **kwargs):
+                        header = data["client_assertion"].split(b".")[0]
+                        decoded = json.loads(base64.urlsafe_b64decode(
+                            header + b"=" * (-len(header) % 4)))
+                        self.assertEqual(expected_x5c, decoded["x5c"])
+                        return MinimalResponse(
+                            status_code=200,
+                            text='{"access_token": "at", "token_type": "Bearer"}')
+
+                    if send_over_mtls:
+                        with patch("msal.mtls._MtlsHttpClient.post", side_effect=post):
+                            app.acquire_token_for_client(["s1"])
+                    else:
+                        app.acquire_token_for_client(["s1"], post=post)
+
+    def test_issuer_signature_verification_on_older_cryptography(self):
+        class LegacyCertificate:
+            issuer = self.leaf.issuer
+            signature = self.leaf.signature
+            tbs_certificate_bytes = self.leaf.tbs_certificate_bytes
+            signature_algorithm_oid = self.leaf.signature_algorithm_oid
+            signature_hash_algorithm = self.leaf.signature_hash_algorithm
+
+        self.assertFalse(_is_certificate_issuer(LegacyCertificate(), self.impostor))
+        self.assertTrue(_is_certificate_issuer(LegacyCertificate(), self.intermediate))
 
     def test_environment_ca_bundles_replace_default_roots(self):
         with tempfile.TemporaryDirectory() as directory:
