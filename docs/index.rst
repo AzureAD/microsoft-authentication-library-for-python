@@ -191,13 +191,31 @@ certificate credential and pass ``mtls_proof_of_possession=True`` to
         mtls_proof_of_possession=True,
     )
     # result["token_type"] == "mtls_pop"
-    # result["binding_certificate"] == {"x5c": [...], "thumbprint_sha256": "..."}
+    binding = result["binding_certificate"]
+    # binding.x5c
+    # binding.thumbprint_sha256
+
+    with binding.create_requests_session() as session:
+        response = session.get(
+            resource_url,
+            headers={
+                "Authorization":
+                    "{} {}".format(
+                        result["token_type"],
+                        result["access_token"],
+                    ),
+            },
+            timeout=30,
+        )
 
 Notes and requirements:
 
 * The ``authority`` must be **tenanted** (not ``/common`` or ``/organizations``).
 * MSAL must own the TLS transport, so a custom ``http_client`` is not supported
   together with ``mtls_proof_of_possession=True``.
+  A per-request ``post`` override is also rejected.
+* If the provider returns a different token type, MSAL returns
+  ``token_type_mismatch`` without caching the rejected response.
 * ``azure_region`` is **optional**: omit it to use the global mTLS endpoint
   (``mtlsauth.microsoft.com``); set it (e.g. ``westus3``) only to pin a region.
 * The existing SN/I + Bearer (client-assertion) flow is unchanged; the same
@@ -208,6 +226,11 @@ Notes and requirements:
   authenticates the client through the mutual-TLS handshake instead. The classic
   (non-mTLS) certificate path is unchanged and still sends a signed
   ``client_assertion`` (``private_key_jwt``) to obtain an ordinary token.
+* ``result["binding_certificate"]`` is a process-local
+  :py:class:`msal.MtlsBindingContext`. It exposes the public certificate chain
+  and SHA-256 thumbprint and can create an ``ssl.SSLContext`` or
+  ``requests.Session`` that presents the same certificate to the resource. It
+  is not serializable and must not be persisted.
 * For a Federated Identity Credential (FIC) exchange, configure the leg-2 client
   with both a ``client_assertion`` callable (acquiring the leg-1 token) and an
   ``mtls_binding_certificate`` sub-key; the leg-1 assertion is then sent as a
@@ -218,6 +241,11 @@ Notes and requirements:
   leg-1 token's issuer, subject, and audience. See
   ``fic_two_leg_over_mtls_pop()`` in
   ``sample/confidential_client_mtls_pop_sample.py`` for the two-leg setup.
+  Both final ``mtls_pop`` and Bearer-over-mTLS results include an
+  ``MtlsBindingContext`` for the downstream resource connection.
+
+.. autoclass:: msal.MtlsBindingContext
+   :members:
 
 
 Exceptions

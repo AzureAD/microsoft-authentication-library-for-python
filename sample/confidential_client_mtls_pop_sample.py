@@ -25,6 +25,7 @@ Configuration is read from environment variables so no secrets are hard-coded::
     PFX_PATH           path to the .pfx file holding the SN/I cert + private key
     PFX_PASSPHRASE     (optional) passphrase protecting the .pfx
     SCOPE              e.g. https://graph.microsoft.com/.default
+    RESOURCE_URL       optional mTLS resource URL to call with the acquired token
     AZURE_REGION       (optional) e.g. westus3; omit for the global mtls endpoint
 
 For the optional FIC sample, also configure::
@@ -65,16 +66,16 @@ def _print_result_summary(result, header):
     """Print a *log-safe* summary of an MSAL token ``result``.
 
     The sensitive part of ``result`` is the ``access_token`` (a PoP/bearer
-    secret) - that is what we must never log. The ``binding_certificate`` is the
-    certificate's PUBLIC material (x5c + thumbprint), not a secret, so it is safe
-    to inspect. We still avoid dumping the whole ``result`` dict and instead
-    surface only a few derived booleans/fields, to model the habit of not
-    routinely logging token responses.
+    secret) - that is what we must never log. The ``binding_certificate`` is a
+    process-local TLS context containing private-key capability, so it must not
+    be serialized or logged. Its ``x5c`` and ``thumbprint_sha256`` properties
+    contain public metadata.
 
     On success the interesting (non-sensitive) fields are::
 
         result["token_type"]          == "mtls_pop"
-        result["binding_certificate"] == {"x5c": [...], "thumbprint_sha256": ...}
+        result["binding_certificate"].x5c
+        result["binding_certificate"].thumbprint_sha256
         result["token_source"]        in ("identity_provider", "cache")
 
     Inspect those directly (e.g. in a debugger) when you need their values.
@@ -107,6 +108,19 @@ def vanilla_sni_mtls_pop():
     )
 
     _print_result_summary(result, "Vanilla SN/I -> mTLS PoP result:")
+    resource_url = os.getenv("RESOURCE_URL")
+    if resource_url and "access_token" in result:
+        binding = result["binding_certificate"]
+        with binding.create_requests_session() as session:
+            response = session.get(
+                resource_url,
+                headers={
+                    "Authorization": "mtls_pop " + result["access_token"],
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            print("  resource call status:        ", response.status_code)
     return result
 
 
@@ -157,6 +171,22 @@ def fic_two_leg_over_mtls_pop():
     leg2 = leg2_app.acquire_token_for_client(
         os.environ["SCOPE"].split(), mtls_proof_of_possession=True)
     _print_result_summary(leg2, "FIC leg 2 result:")
+    resource_url = os.getenv("RESOURCE_URL")
+    if resource_url and "access_token" in leg2:
+        with leg2["binding_certificate"].create_requests_session() as session:
+            response = session.get(
+                resource_url,
+                headers={
+                    "Authorization":
+                        "{} {}".format(
+                            leg2["token_type"],
+                            leg2["access_token"],
+                        ),
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            print("  resource call status:        ", response.status_code)
     return leg2
 
 

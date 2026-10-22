@@ -405,11 +405,110 @@ key, nor a plain Bearer token for the same scope. We therefore keep 2 tokens."""
         self.assertEqual("THUMB", _key_id_to_str(b"THUMB"))
         self.assertEqual("THUMB", _key_id_to_str("THUMB"))
         self.assertEqual("123", _key_id_to_str(123))  # Any other type -> str()
-        # Adding + searching an AT with a bytes key_id no longer raises; the
-        # helper below stores and then finds it by that same key_id.
-        self._test_data_should_be_saved_and_searchable_in_access_token(
-            {"key_id": b"THUMB"})
+        # Bytes IDs are normalized before persistence and during lookup.
+        self.cache = SerializableTokenCache()
+        self.cache.add({
+            "client_id": "my_client_id", "scope": ["s1"],
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "data": {"key_id": b"THUMB"},
+            "response": build_response(access_token="bound_at"),
+            }, now=1000)
+        self.cache.deserialize(self.cache.serialize())
+        for key_id in (b"THUMB", "THUMB"):
+            entry = self.assertFoundAccessToken(
+                scopes=["s1"], now=1000, query=dict(
+                    client_id="my_client_id", environment="login.example.com",
+                    realm="contoso", home_account_id=None, key_id=key_id))
+            self.assertEqual("THUMB", entry["key_id"])
         self.assertEqual(1, len(self.cache._cache["AccessToken"]))
+
+    def test_non_ascii_key_id_bytes_fail_explicitly(self):
+        with self.assertRaisesRegex(ValueError, "ASCII"):
+            self.cache.add({
+                "data": {"key_id": b"\xff"},
+                "response": build_response(access_token="bound_at"),
+                })
+
+    def test_bound_scope_suffix_cannot_collide_with_unbound_scope(self):
+        common = dict(
+            client_id="my_client_id",
+            token_endpoint="https://login.example.com/contoso/v2/token")
+        events = [
+            dict(common, scope=["scope"], data={"key_id": "abc"},
+                 response=build_response(access_token="bound_at", token_type="mtls_pop")),
+            dict(common, scope=["scope-abc"],
+                 response=build_response(access_token="bearer_at", token_type="Bearer")),
+            ]
+        query = dict(
+            client_id="my_client_id", environment="login.example.com",
+            realm="contoso", home_account_id=None)
+        for insertion_order in (events, list(reversed(events))):
+            with self.subTest(order=[e["scope"] for e in insertion_order]):
+                self.cache = TokenCache()
+                for event in insertion_order:
+                    self.cache.add(event, now=1000)
+                self.assertEqual(2, len(self.cache._cache["AccessToken"]))
+                self.assertEqual("bearer_at", self.assertFoundAccessToken(
+                    scopes=["scope-abc"], query=query, now=1000)["secret"])
+                self.assertEqual("bound_at", self.assertFoundAccessToken(
+                    scopes=["scope"], query=dict(query, key_id="abc"),
+                    now=1000)["secret"])
+
+    def test_legacy_bound_entries_are_isolated_and_removable(self):
+        self.cache.add({
+            "client_id": "my_client_id", "scope": ["s1"],
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "data": {"key_id": "THUMB"},
+            "response": build_response(access_token="legacy_at", token_type="ssh-cert"),
+            }, now=1000)
+        entry = next(iter(self.cache._cache["AccessToken"].values()))
+        legacy_key = self.at_key_maker(**dict(entry, key_id=None))
+        for stored_key in (legacy_key, legacy_key + "-THUMB"):
+            for expired in (False, True):
+                with self.subTest(key=stored_key, expired=expired):
+                    self.cache = SerializableTokenCache()
+                    self.cache.deserialize(json.dumps({
+                        "AccessToken": {stored_key: entry}}))
+                    query = dict(
+                        client_id="my_client_id", environment="login.example.com",
+                        realm="contoso", home_account_id=None)
+                    self.assertEqual([], list(self.cache.search(
+                        "AccessToken", target=["s1"], query=query, now=1000)))
+                    if expired:
+                        list(self.cache.search("AccessToken", now=5000))
+                    else:
+                        self.assertFoundAccessToken(
+                            scopes=["s1"], query=dict(query, key_id="THUMB"),
+                            now=1000)
+                        self.cache.remove_at(entry)
+                    self.assertEqual({}, self.cache._cache["AccessToken"])
+                    self.assertTrue(self.cache.has_state_changed)
+
+    def test_fast_lookup_checks_stored_scope(self):
+        entry = {
+            "credential_type": "AccessToken", "home_account_id": None,
+            "environment": "env", "client_id": "cid", "realm": "tenant",
+            "target": "different", "secret": "wrong_at", "expires_on": "4600",
+            }
+        query = dict(
+            home_account_id=None, environment="env", client_id="cid", realm="tenant")
+        key = self.at_key_maker(**dict(query, target="requested"))
+        self.cache._cache["AccessToken"] = {key: entry}
+        self.assertEqual([], list(self.cache.search(
+            "AccessToken", target=["requested"], query=query, now=1000)))
+
+    def test_case_distinct_key_ids_remain_distinct_after_serialization(self):
+        self.cache = SerializableTokenCache()
+        for key_id in ("Thumb", "thumb"):
+            self.cache.add({
+                "scope": ["s1"], "data": {"key_id": key_id},
+                "response": build_response(access_token=key_id),
+                }, now=1000)
+        self.cache.deserialize(self.cache.serialize())
+        for key_id in ("Thumb", "thumb"):
+            entries = list(self.cache.search(
+                "AccessToken", target=["s1"], query={"key_id": key_id}, now=1000))
+            self.assertEqual([key_id], [entry["secret"] for entry in entries])
 
     def test_bearer_and_mtls_pop_tokens_coexist_and_isolate(self):
         # The crux of mTLS PoP cache isolation (plan C6): a Bearer token and an
