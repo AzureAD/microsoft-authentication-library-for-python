@@ -14,6 +14,10 @@ The wire contract and host mapping mirror the shipped MSAL.NET
 import logging
 import threading
 try:
+    from collections.abc import Mapping
+except ImportError:  # Python 2
+    from collections import Mapping
+try:
     from urllib.parse import urlparse, urlunparse
 except ImportError:  # Python 2
     from urlparse import urlparse, urlunparse
@@ -87,6 +91,87 @@ def transform_token_endpoint(token_endpoint, instance, region=None):
     # Preserve a non-default port if the original endpoint carried one (tests).
     netloc = "{}:{}".format(host, parsed.port) if parsed.port else host
     return urlunparse(parsed._replace(netloc=netloc))
+
+
+class MtlsBindingContext(Mapping):
+    """The certificate binding and TLS helpers for an mTLS-bound access token.
+
+    Instances are created by MSAL and returned as ``binding_certificate`` in a
+    successful token result. The certificate metadata remains available through
+    mapping access for compatibility, while the private key is exposed only
+    through TLS contexts and sessions created by this object.
+
+    This object is process-local and must not be serialized or persisted.
+    """
+
+    __slots__ = (
+        "__cert_pem", "__key_pem", "__x5c", "__thumbprint_sha256")
+    _PUBLIC_KEYS = ("x5c", "thumbprint_sha256")
+
+    def __init__(self, cert_pem, key_pem, x5c, thumbprint_sha256):
+        self.__cert_pem = cert_pem
+        self.__key_pem = key_pem
+        self.__x5c = tuple(x5c)
+        self.__thumbprint_sha256 = thumbprint_sha256
+
+    @property
+    def x5c(self):
+        """The public certificate chain as base64-encoded DER certificates."""
+        return list(self.__x5c)
+
+    @property
+    def thumbprint_sha256(self):
+        """The base64url-encoded SHA-256 thumbprint (``x5t#S256``)."""
+        return self.__thumbprint_sha256
+
+    def create_ssl_context(self, verify=True):
+        """Create an ``ssl.SSLContext`` that presents the binding certificate.
+
+        ``verify`` follows ``requests`` semantics: ``True`` uses its default CA
+        bundle, a path selects a custom CA file/directory, and ``False`` disables
+        server verification.
+        """
+        return _create_ssl_context(self.__cert_pem, self.__key_pem, verify)
+
+    def create_requests_session(self, verify=True, proxies=None):
+        """Create a ``requests.Session`` that presents the binding certificate.
+
+        The caller owns the returned session and should close it, preferably by
+        using it as a context manager.
+        """
+        import requests
+        effective_verify = True if verify is None else verify
+        session = requests.Session()
+        session.verify = effective_verify
+        if proxies:
+            session.proxies.update(proxies)
+        session.mount(
+            "https://",
+            _make_mtls_adapter(self.create_ssl_context(effective_verify)))
+        return session
+
+    def __getitem__(self, key):
+        if key == "x5c":
+            return self.x5c
+        if key == "thumbprint_sha256":
+            return self.thumbprint_sha256
+        raise KeyError(key)
+
+    def __iter__(self):
+        return iter(self._PUBLIC_KEYS)
+
+    def __len__(self):
+        return len(self._PUBLIC_KEYS)
+
+    def __repr__(self):
+        return (
+            "MtlsBindingContext("
+            "thumbprint_sha256={!r}, certificate_chain_length={})".format(
+                self.thumbprint_sha256, len(self.__x5c)))
+
+    def __reduce__(self):
+        raise TypeError(
+            "MtlsBindingContext is process-local and cannot be serialized")
 
 
 class _MtlsHttpClient(object):

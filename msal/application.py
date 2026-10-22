@@ -2962,13 +2962,19 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             returns another token type, the result is ``token_type_mismatch``
             and the rejected response is not cached.
 
-            On success the result also contains a ``binding_certificate`` dict
-            with the **public** binding material only (never the private key)::
+            On success the result also contains an
+            :py:class:`msal.MtlsBindingContext` as ``binding_certificate``. It
+            exposes public binding metadata and creates a TLS context or
+            ``requests`` session that presents the same certificate::
 
-                result["binding_certificate"] == {
-                    "x5c": ["<base64-DER leaf>", ...],
-                    "thumbprint_sha256": "<base64url x5t#S256>",
-                }
+                binding = result["binding_certificate"]
+                binding.x5c
+                binding.thumbprint_sha256
+                with binding.create_requests_session() as session:
+                    response = session.get(
+                        resource_url,
+                        headers={"Authorization": "mtls_pop " + result["access_token"]},
+                    )
 
             Example usage::
 
@@ -3056,13 +3062,14 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                         "of 'mtls_pop'; the access token is not "
                         "certificate-bound.".format(result.get("token_type"))),
                     }
-            # Surface the PUBLIC binding certificate (never the private key), so
-            # callers can correlate the token to its cert. Survives _clean_up
-            # (the key has no "_" prefix).
-            result["binding_certificate"] = {
-                "x5c": mtls_cert["x5c"],
-                "thumbprint_sha256": mtls_cert["key_id"],  # base64url x5t#S256
-                }
+            # Attach process-local TLS capability after cache cleanup. The
+            # private key is never added to the token result or token cache.
+            result["binding_certificate"] = mtls.MtlsBindingContext(
+                mtls_cert["cert_pem"],
+                mtls_cert["private_key_pem"],
+                mtls_cert["x5c"],
+                mtls_cert["key_id"],  # base64url x5t#S256
+                )
         return result
 
     def _acquire_token_for_client(

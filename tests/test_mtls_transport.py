@@ -5,9 +5,9 @@ import ssl
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
-from msal import mtls
+from msal import mtls, MtlsBindingContext
 from msal.application import (
     _is_certificate_issuer, _load_mtls_cert_material,
     _private_key_to_unencrypted_pem, extract_certs)
@@ -156,6 +156,53 @@ class TestMtlsSslContext(unittest.TestCase):
         # The https adapter is our mTLS adapter (cert-bearing), not the default
         self.assertIn("https://", session.adapters)
         client.close()
+
+    def test_binding_context_exposes_metadata_without_key_material(self):
+        material = self._material()
+        binding = MtlsBindingContext(
+            material["cert_pem"],
+            material["private_key_pem"],
+            material["x5c"],
+            material["key_id"])
+        self.assertEqual(material["x5c"], binding.x5c)
+        self.assertEqual(material["x5c"], binding["x5c"])
+        self.assertEqual(material["key_id"], binding.thumbprint_sha256)
+        self.assertEqual(material["key_id"], binding["thumbprint_sha256"])
+        self.assertEqual(
+            {"x5c", "thumbprint_sha256"}, set(binding))
+        self.assertNotIn("PRIVATE KEY", repr(binding))
+
+    def test_binding_context_creates_ssl_context(self):
+        material = self._material()
+        binding = MtlsBindingContext(
+            material["cert_pem"],
+            material["private_key_pem"],
+            material["x5c"],
+            material["key_id"])
+        self.assertIsInstance(binding.create_ssl_context(), ssl.SSLContext)
+
+    def test_binding_context_creates_requests_session(self):
+        material = self._material()
+        binding = MtlsBindingContext(
+            material["cert_pem"],
+            material["private_key_pem"],
+            material["x5c"],
+            material["key_id"])
+        context = Mock(spec=ssl.SSLContext)
+        adapter = Mock()
+        with patch.object(
+                MtlsBindingContext, "create_ssl_context",
+                return_value=context), \
+                patch("msal.mtls._make_mtls_adapter", return_value=adapter):
+            session = binding.create_requests_session(
+                verify=False, proxies={"https": "https://proxy.example"})
+        try:
+            self.assertFalse(session.verify)
+            self.assertEqual(
+                "https://proxy.example", session.proxies["https"])
+            self.assertIs(adapter, session.adapters["https://"])
+        finally:
+            session.close()
 
 
 class TestMtlsCertificateChain(unittest.TestCase):

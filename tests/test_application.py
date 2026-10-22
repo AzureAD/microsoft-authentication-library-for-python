@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import pickle
 import sys
 import time
 import warnings
@@ -2322,11 +2323,17 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertNotIn("key_id", req["data"], "key_id must never travel on the wire")
         # Telemetry marks token-type 6 (parity with .NET MtlsPop)
         self.assertEqual("4|730,2|,,6", req["headers"].get(CLIENT_CURRENT_TELEMETRY))
-        # Result carries token_type and the PUBLIC binding cert (no private key)
+        # Result carries token_type and a TLS-capable binding context.
         self.assertEqual("mtls_pop", result.get("token_type"))
         binding = result["binding_certificate"]
+        self.assertIsInstance(binding, msal.MtlsBindingContext)
         self.assertEqual({"x5c", "thumbprint_sha256"}, set(binding))
-        self.assertNotIn("private", json.dumps(binding).lower())
+        self.assertEqual(binding.x5c, binding["x5c"])
+        self.assertEqual(
+            binding.thumbprint_sha256, binding["thumbprint_sha256"])
+        self.assertNotIn("private", repr(binding).lower())
+        with self.assertRaises(TypeError):
+            pickle.dumps(binding)
 
     def test_repeat_call_is_cache_hit(self):
         app = ConfidentialClientApplication(
@@ -2342,7 +2349,8 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertEqual([], second, "Second call must be served from cache")
         self.assertEqual(app._TOKEN_SOURCE_CACHE, result[app._TOKEN_SOURCE])
         self.assertEqual("mtls_pop", result["token_type"])
-        self.assertTrue(result.get("binding_certificate"))
+        self.assertIsInstance(
+            result.get("binding_certificate"), msal.MtlsBindingContext)
 
     def test_released_positional_claims_argument_is_preserved(self):
         app = ConfidentialClientApplication(
