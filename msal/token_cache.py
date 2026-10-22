@@ -424,10 +424,11 @@ class TokenCache(object):
                 for k, v in dictionary.items()
             }
         clean_event = dict(
-            event,
+            make_clean_copy(event, ("username", "_account_id")),
             data=make_clean_copy(event.get("data", {}), (
                 "password", "client_secret", "refresh_token", "assertion",
-                "user_federated_identity_credential",
+                "client_assertion", "user_federated_identity_credential",
+                "code", "code_verifier", "device_code", "username", "user_id",
                 # Client-originated claims may carry sensitive values; they are
                 # kept in data only for ext_cache_key computation, so redact them
                 # from the debug log (both the cache-key pseudo-param and the
@@ -437,6 +438,7 @@ class TokenCache(object):
             response=make_clean_copy(event.get("response", {}), (
                 "id_token_claims",  # Provided by broker
                 "access_token", "refresh_token", "id_token", "username",
+                "client_info", "_account_id",
             )),
         )
         logger.debug("event=%s", json.dumps(
