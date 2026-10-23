@@ -12,6 +12,7 @@ The wire contract and host mapping mirror the shipped MSAL.NET
 ``RegionAndMtlsDiscoveryProvider`` so MSAL Python stays cross-SDK consistent.
 """
 import logging
+import os
 import threading
 try:
     from collections.abc import Mapping
@@ -140,7 +141,8 @@ class MtlsBindingContext(Mapping):
         using it as a context manager.
         """
         import requests
-        effective_verify = True if verify is None else verify
+        _require_mtls_dependencies()
+        effective_verify = _normalize_verify(verify)
         session = requests.Session()
         session.verify = effective_verify
         if proxies:
@@ -187,6 +189,7 @@ class _MtlsHttpClient(object):
     """
     def __init__(self, cert_pem, key_pem, *,
                  verify=True, proxies=None, timeout=None):
+        _require_mtls_dependencies()
         # cert_pem / key_pem are PEM-encoded bytes. key_pem must be an
         # unencrypted private key (the caller normalizes it).
         self._cert_pem = cert_pem
@@ -195,7 +198,7 @@ class _MtlsHttpClient(object):
         # verification, but requests treats session.verify=None as "no verify"
         # and would force CERT_NONE onto a verifying context (ValueError). None
         # means "default", which for a security library is verify (via certifi).
-        self._verify = True if verify is None else verify
+        self._verify = _normalize_verify(verify)
         self._proxies = proxies
         self._timeout = timeout
         self._session = None
@@ -209,8 +212,8 @@ class _MtlsHttpClient(object):
             session.verify = self._verify
             if self._proxies:
                 session.proxies = self._proxies
-            effective_verify = session.merge_environment_settings(
-                url, {}, None, verify, None)["verify"]
+            effective_verify = _normalize_verify(session.merge_environment_settings(
+                url, {}, None, verify, None)["verify"])
             if effective_verify not in self._sessions:
                 if self._sessions:
                     session = requests.Session()
@@ -225,14 +228,27 @@ class _MtlsHttpClient(object):
             return self._sessions[effective_verify]
 
     def post(self, url, **kwargs):
-        if self._timeout is not None:
-            kwargs.setdefault("timeout", self._timeout)
-        return self._ensure_session(url, kwargs.get("verify")).post(url, **kwargs)
+        return self._request("POST", url, **kwargs)
 
     def get(self, url, **kwargs):
+        return self._request("GET", url, **kwargs)
+
+    def _request(self, method, url, **kwargs):
+        from requests.exceptions import HTTPError
+
         if self._timeout is not None:
             kwargs.setdefault("timeout", self._timeout)
-        return self._ensure_session(url, kwargs.get("verify")).get(url, **kwargs)
+        # The certificate and token request must stay at the selected authority.
+        kwargs["allow_redirects"] = False
+        response = self._ensure_session(url, kwargs.get("verify")).request(
+            method, url, **kwargs)
+        if 300 <= response.status_code < 400:
+            response.close()
+            raise HTTPError(
+                "mTLS token transport does not support HTTP redirects "
+                "(status {}).".format(response.status_code),
+                response=response)
+        return response
 
     def close(self):
         with self._session_lock:
@@ -253,9 +269,10 @@ def _make_mtls_adapter(ssl_context=None, ssl_context_factory=None):
             super(_MtlsHTTPAdapter, self).__init__(max_retries=1)
 
         def send(self, request, **kwargs):
+            verify = _normalize_verify(kwargs.get("verify", True))
+            kwargs["verify"] = verify
             if ssl_context_factory is None:
                 return super(_MtlsHTTPAdapter, self).send(request, **kwargs)
-            verify = kwargs.get("verify", True)
             with self._adapter_lock:
                 if verify not in self._adapters:
                     self._adapters[verify] = _make_mtls_adapter(
@@ -300,6 +317,42 @@ def _make_mtls_adapter(ssl_context=None, ssl_context_factory=None):
     return _MtlsHTTPAdapter(ssl_context)
 
 
+def _require_mtls_dependencies():
+    """Reject unsupported mTLS transports without restricting Bearer users."""
+    import inspect
+    import re
+    import requests
+
+    message = (
+        "mTLS requires Requests >= 2.25.0 and a compatible urllib3 with "
+        "SSLContext support and Session.merge_environment_settings. "
+        "Upgrade with: python -m pip install --upgrade 'requests>=2.25.0,<3'")
+    version = re.match(r"^(\d+)\.(\d+)", requests.__version__)
+    if (not version or tuple(map(int, version.groups())) < (2, 25)
+            or not callable(getattr(
+                requests.Session, "merge_environment_settings", None))):
+        raise ValueError(message)
+    try:
+        from urllib3.connection import HTTPSConnection
+        from requests.adapters import PoolManager
+        supported = (
+            "ssl_context" in inspect.signature(HTTPSConnection).parameters
+            and "pool_kwargs" in inspect.signature(
+                PoolManager.connection_from_url).parameters)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        supported = False
+    if not supported:
+        raise ValueError(message)
+
+
+def _normalize_verify(verify):
+    if verify is None:
+        return True
+    if isinstance(verify, (str, bytes, os.PathLike)):
+        return os.fsdecode(os.fspath(verify))
+    return verify
+
+
 def _new_verifying_context(verify):
     """Build an ssl context whose server verification matches ``verify`` (the
     same semantics as ``requests``). A custom ssl_context otherwise bypasses
@@ -309,7 +362,7 @@ def _new_verifying_context(verify):
     ``requests`` would raise when it tries to set CERT_NONE on this context).
     """
     import ssl
-    import os
+    verify = _normalize_verify(verify)
     if verify is False:
         context = ssl.create_default_context()
         context.check_hostname = False  # Must be cleared before CERT_NONE

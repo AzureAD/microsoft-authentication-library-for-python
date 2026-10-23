@@ -386,6 +386,19 @@ class _ClientWithCcsRoutingInfo(Client):
             username, password, headers=headers, **kwargs)
 
 
+def _validate_mtls_pop_response(response):
+    if (response and "access_token" in response
+            and (response.get("token_type") or "").lower() != "mtls_pop"):
+        return {
+            "error": "token_type_mismatch",
+            "error_description": (
+                "The identity provider returned token_type {!r} instead "
+                "of 'mtls_pop'; the access token is not "
+                "certificate-bound.".format(response.get("token_type"))),
+        }
+    return response
+
+
 class _MtlsClient(_ClientWithCcsRoutingInfo):
     """A confidential-client OAuth2 client whose token request presents a
     client certificate over mutual-TLS (mTLS Proof-of-Possession).
@@ -416,8 +429,11 @@ class _MtlsClient(_ClientWithCcsRoutingInfo):
                     (outer or self.on_obtaining_tokens)(event)
 
             kwargs["on_obtaining_tokens"] = _reinject_key_id
-        return super(_MtlsClient, self).obtain_token_for_client(
+        response = super(_MtlsClient, self).obtain_token_for_client(
             scope=scope, data=data, **kwargs)
+        return (_validate_mtls_pop_response(response)
+                if (data.get("token_type") or "").lower() == "mtls_pop"
+                else response)
 
 
 def _msal_extension_check():
@@ -988,6 +1004,8 @@ class ClientApplication(object):
         self.token_cache = token_cache or TokenCache()
         self._region_configured = azure_region
         self._region_detected = None
+        self._region_resolved = False
+        self._region_to_use = None
         self.client, self._regional_client = self._build_client(
             client_credential, self.authority)
 
@@ -1146,6 +1164,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         (which builds a ``{region}.mtlsauth.*`` endpoint) can reuse the exact
         same region resolution.
         """
+        if self._region_resolved:
+            return self._region_to_use
         if self._region_configured is False:  # User opts out of ESTS-R
             return None  # Short circuit to completely bypass region detection
         if self._region_configured is None:  # User did not make an ESTS-R choice
@@ -1167,6 +1187,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             region_to_use = _validate_region(
                 region_to_use, source="azure_region parameter")
         logger.debug('Region to be used: {}'.format(repr(region_to_use)))
+        self._region_to_use = region_to_use
+        self._region_resolved = True
         return region_to_use
 
     def _get_regional_authority(self, central_authority) -> Optional[Authority]:
@@ -2146,6 +2168,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     "environment": authority.instance,
                     "realm": authority.tenant,
                     "home_account_id": (account or {}).get("home_account_id"),
+                    "token_type": kwargs.get("data", {}).get("token_type") or "Bearer",
                     }
             key_id = kwargs.get("data", {}).get("key_id")
             if key_id:  # Some token types (SSH-certs, POP) are bound to a key
@@ -3108,8 +3131,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             raise ValueError(  # We choose to disallow force_refresh
                 "Historically, this method does not support force_refresh behavior. "
             )
+        requested_token_type = (kwargs.get("data") or {}).get("token_type")
         if (not mtls_proof_of_possession
-                and (kwargs.get("data") or {}).get("token_type") == "mtls_pop"):
+                and (requested_token_type or "").lower() == "mtls_pop"):
             raise ValueError(
                 "Request mTLS PoP using mtls_proof_of_possession=True, "
                 "not data['token_type'].")
@@ -3127,6 +3151,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             kwargs["data"] = kwargs.get("data", {})
             _stash_client_claims(forwarded_client_claims, kwargs["data"])
         if mtls_proof_of_possession or self._mtls_is_fic_leg2:
+            if kwargs.get("cert") is not None:
+                raise ValueError(
+                    "mTLS token requests do not support a cert "
+                    "override. MSAL must present the configured binding certificate.")
             if "post" in kwargs:
                 raise ValueError(
                     "mTLS token requests do not support a post override. "
@@ -3173,15 +3201,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             # request, do not surface it as bound. The cache side is handled in
             # _MtlsClient, which does not cache downgraded responses.
             # Mirrors the fail-closed behavior of MSAL .NET and MSAL Go.
-            if (mtls_proof_of_possession
-                    and (result.get("token_type") or "").lower() != "mtls_pop"):
-                return {
-                    "error": "token_type_mismatch",
-                    "error_description": (
-                        "The identity provider returned token_type {!r} instead "
-                        "of 'mtls_pop'; the access token is not "
-                        "certificate-bound.".format(result.get("token_type"))),
-                    }
+            if (result.get("token_type") or "").lower() != "mtls_pop":
+                return _validate_mtls_pop_response(result)
             # Attach process-local TLS capability only when the final token is
             # certificate-bound. A FIC assertion can travel as jwt-pop over
             # mTLS while the final token remains an ordinary Bearer token.

@@ -213,11 +213,19 @@ Notes and requirements:
 * The ``authority`` must be **tenanted** (not ``/common`` or ``/organizations``).
 * MSAL must own the TLS transport, so a custom ``http_client`` is not supported
   together with ``mtls_proof_of_possession=True``.
-  A per-request ``post`` override is also rejected.
+  Per-request ``post`` and ``cert`` overrides are also rejected.
+  The owned mTLS token transport never follows redirects; HTTP 3xx responses
+  raise ``requests.exceptions.HTTPError`` and are not cached as tokens.
+* mTLS transport and ``binding.create_requests_session()`` require
+  Requests >= 2.25.0 with a compatible urllib3 that supports ``SSLContext``.
+  Missing transport capabilities raise ``ValueError`` with upgrade instructions.
+  This requirement does not change support for ordinary Bearer authentication.
 * If the provider returns a different token type, MSAL returns
   ``token_type_mismatch`` without caching the rejected response.
-* ``azure_region`` is **optional**: omit it to use the global mTLS endpoint
-  (``mtlsauth.microsoft.com``); set it (e.g. ``westus3``) only to pin a region.
+* ``azure_region`` is **optional**: omission honors ``MSAL_FORCE_REGION`` and
+  otherwise uses the global mTLS endpoint (``mtlsauth.microsoft.com``).
+  Set ``azure_region=False`` to guarantee global routing, or provide a region
+  (e.g. ``westus3``) to pin one.
 * The existing SN/I + Bearer (client-assertion) flow is unchanged; the same
   certificate can be used either as an assertion signer (Bearer) or as the TLS
   client certificate (mtls_pop).
@@ -231,6 +239,10 @@ Notes and requirements:
   and SHA-256 thumbprint and can create an ``ssl.SSLContext`` or
   ``requests.Session`` that presents the same certificate to the resource. It
   is not serializable and must not be persisted.
+  The TLS helpers accept custom CA file/directory paths as strings or
+  ``os.PathLike`` objects (including ``pathlib.Path``); these replace the default
+  trust roots. ``True`` or ``None`` selects the Requests CA bundle, while
+  ``False`` disables server verification.
 * For a Federated Identity Credential (FIC) exchange, configure the leg-2 client
   with both a ``client_assertion`` callable (acquiring the leg-1 token) and an
   ``mtls_binding_certificate`` sub-key; the leg-1 assertion is then sent as a
@@ -245,6 +257,12 @@ Notes and requirements:
   downstream resource connection. If leg 2 does not request PoP, its bound
   assertion still travels as ``jwt-pop`` over mTLS, but the final Bearer token
   is not certificate-bound and does not include ``binding_certificate``.
+
+mTLS-bound access tokens are persisted in a separate ``AccessToken_mTLS`` cache
+bucket. Older SDK versions ignore that bucket and retain their normal Bearer
+and SSH behavior. Before rolling back, remove bound tokens using the newer
+MSAL version or clear the entire persisted cache. An older version's
+``remove_tokens_for_client()`` does not purge an unknown mTLS bucket.
 
 .. autoclass:: msal.MtlsBindingContext
    :members:

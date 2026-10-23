@@ -2304,6 +2304,57 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                 "access_token": "an_at", "expires_in": 3600, "token_type": token_type}))
         return mock_post
 
+    def test_certificate_override_is_rejected_before_cache_lookup(self):
+        app = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED,
+            authority=self._AUTHORITY, azure_region=False)
+        for cached in (False, True):
+            with self.subTest(cached=cached):
+                if cached:
+                    with patch("msal.mtls._MtlsHttpClient.post",
+                               side_effect=self._capturing_post([])):
+                        app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True)
+                with patch.object(app, "_acquire_token_silent_with_error") as lookup:
+                    with self.assertRaisesRegex(ValueError, "cert override"):
+                        app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True,
+                            cert=("other-cert.pem", "other-key.pem"))
+                    lookup.assert_not_called()
+
+    def test_failed_region_discovery_is_not_repeated(self):
+        for region in ("westus3", True):
+            with self.subTest(region=region), patch(
+                    "msal.application._detect_region", return_value=None) as detect:
+                app = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    authority=self._AUTHORITY, azure_region=region)
+                first = app._get_mtls_client(app.authority)
+                self.assertIs(first, app._get_mtls_client(app.authority))
+                self.assertEqual(1, detect.call_count)
+
+    def test_ssh_and_mtls_with_same_key_are_isolated(self):
+        for first_kind in ("ssh-cert", "mtls_pop"):
+            with self.subTest(first_kind=first_kind):
+                app = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    authority=self._AUTHORITY, azure_region=False)
+                key_id = app._get_mtls_pop_cert()["key_id"]
+                ssh = {"token_type": "ssh-cert", "req_cnf": "{}", "key_id": key_id}
+                second_kind = "mtls_pop" if first_kind == "ssh-cert" else "ssh-cert"
+                for kind in (first_kind, second_kind):
+                    captured = []
+                    post = self._capturing_post(captured, token_type=kind)
+                    if kind == "mtls_pop":
+                        with patch("msal.mtls._MtlsHttpClient.post", side_effect=post):
+                            result = app.acquire_token_for_client(
+                                ["s1"], mtls_proof_of_possession=True)
+                    else:
+                        result = app.acquire_token_for_client(
+                            ["s1"], data=dict(ssh), post=post)
+                    self.assertEqual(1, len(captured))
+                    self.assertEqual(kind, result["token_type"])
+
     def test_vanilla_sni_mtls_pop_request_and_result(self):
         app = ConfidentialClientApplication(
             "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
@@ -2402,22 +2453,37 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                             second._get_mtls_pop_cert()["key_id"])
 
     def test_raw_mtls_token_type_is_rejected_before_cache_lookup(self):
-        app = ConfidentialClientApplication(
-            "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
-        for cached in (False, True):
-            with self.subTest(cached=cached):
-                if cached:
-                    app.acquire_token_for_client(
-                        ["s1"], post=self._capturing_post([], token_type="Bearer"))
-                with patch.object(app, "_acquire_token_silent_with_error") as lookup:
-                    with self.assertRaisesRegex(
-                            ValueError, "mtls_proof_of_possession=True"):
-                        app.acquire_token_for_client(
-                            ["s1"], data={"token_type": "mtls_pop"})
-                    lookup.assert_not_called()
-                captured = []
+        for credential in (_MTLS_CERT_CRED, "a_secret"):
+            for cached_type in (None, "Bearer", "mtls_pop"):
+                producer = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    authority=self._AUTHORITY, azure_region=False)
+                if cached_type == "mtls_pop":
+                    with patch("msal.mtls._MtlsHttpClient.post",
+                               side_effect=self._capturing_post([])):
+                        producer.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True)
+                elif cached_type:
+                    producer.acquire_token_for_client(
+                        ["s1"], post=self._capturing_post([], token_type=cached_type))
+                app = ConfidentialClientApplication(
+                    "cid", client_credential=credential, authority=self._AUTHORITY,
+                    azure_region=False, token_cache=producer.token_cache)
+                for token_type in ("mtls_pop", "MTLS_POP", "mTlS_pOp"):
+                    with self.subTest(
+                            certificate=isinstance(credential, dict),
+                            cached_type=cached_type, token_type=token_type):
+                        with patch.object(
+                                app, "_acquire_token_silent_with_error",
+                                wraps=app._acquire_token_silent_with_error) as lookup:
+                            with self.assertRaisesRegex(
+                                    ValueError, "mtls_proof_of_possession=True"):
+                                app.acquire_token_for_client(
+                                    ["s1"], data={"token_type": token_type},
+                                    post=self._capturing_post([], token_type="Bearer"))
+                            lookup.assert_not_called()
                 ordinary = app.acquire_token_for_client(
-                    ["s1"], post=self._capturing_post(captured, token_type="Bearer"))
+                    ["s1"], post=self._capturing_post([], token_type="Bearer"))
                 self.assertEqual("Bearer", ordinary["token_type"])
                 self.assertNotIn("binding_certificate", ordinary)
 
@@ -2469,6 +2535,10 @@ class TestMtlsProofOfPossession(unittest.TestCase):
             result = app.acquire_token_for_client(
                 ["s1"], mtls_proof_of_possession=True)
         self.assertEqual("token_type_mismatch", result.get("error"))
+        self.assertIn(
+            "token_type_mismatch",
+            app._build_telemetry_context(
+                app.ACQUIRE_TOKEN_FOR_CLIENT_ID).generate_headers()[CLIENT_LAST_TELEMETRY])
         self.assertNotIn("access_token", result)
         self.assertNotIn("binding_certificate", result)
         bound = [
@@ -2484,6 +2554,8 @@ class TestMtlsProofOfPossession(unittest.TestCase):
             ["s1"], post=self._capturing_post(captured, token_type="Bearer"))
         self.assertEqual(1, len(captured))
         self.assertEqual(app._TOKEN_SOURCE_IDP, ordinary[app._TOKEN_SOURCE])
+        self.assertIn(
+            "token_type_mismatch", captured[0]["headers"][CLIENT_LAST_TELEMETRY])
 
     def test_missing_token_type_is_not_cached(self):
         app = ConfidentialClientApplication(
@@ -2494,6 +2566,38 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                 ["s1"], mtls_proof_of_possession=True)
         self.assertEqual("token_type_mismatch", result["error"])
         self.assertEqual({}, app.token_cache._cache.get("AccessToken", {}))
+
+    def test_mtls_redirect_is_not_followed_or_cached(self):
+        import io
+        from requests.exceptions import HTTPError
+        from urllib3.response import HTTPResponse
+
+        for status in (300, 301, 302, 303, 304, 307, 308, 399):
+            with self.subTest(status=status):
+                app = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    authority=self._AUTHORITY, azure_region=False)
+                self.addCleanup(app._get_mtls_client(app.authority)._http_client.close)
+                response = HTTPResponse(
+                    body=io.BytesIO(b"" if status == 304 else json.dumps({
+                        "access_token": "must_not_be_cached",
+                        "token_type": "mtls_pop", "expires_in": 3600,
+                    }).encode("utf-8")),
+                    status=status,
+                    headers={"Location": "https://other.example/token"},
+                    preload_content=False)
+                with patch(
+                        "urllib3.connectionpool.HTTPSConnectionPool.urlopen",
+                        autospec=True, return_value=response) as send:
+                    with self.assertRaisesRegex(
+                            HTTPError, "does not support HTTP redirects") as error:
+                        app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True,
+                            allow_redirects=True)
+                self.assertEqual(status, error.exception.response.status_code)
+                self.assertEqual(1, send.call_count)
+                self.assertEqual([], list(app.token_cache.search(
+                    msal.TokenCache.CredentialType.ACCESS_TOKEN, for_removal=True)))
 
     def test_regional_mtls_endpoint(self):
         app = ConfidentialClientApplication(

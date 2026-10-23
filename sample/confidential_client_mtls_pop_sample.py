@@ -26,7 +26,7 @@ Configuration is read from environment variables so no secrets are hard-coded::
     PFX_PASSPHRASE     (optional) passphrase protecting the .pfx
     SCOPE              e.g. https://graph.microsoft.com/.default
     RESOURCE_URL       optional mTLS resource URL to call with the acquired token
-    AZURE_REGION       (optional) e.g. westus3; omit for the global mtls endpoint
+    AZURE_REGION       (optional) e.g. westus3; omission honors MSAL_FORCE_REGION
 
 For the optional FIC sample, also configure::
 
@@ -99,7 +99,7 @@ def vanilla_sni_mtls_pop():
         client_credential=_build_cert_credential(),
         # Note: do NOT pass a custom http_client here. MSAL must own the
         # transport to present the client certificate during the TLS handshake.
-        azure_region=os.getenv("AZURE_REGION"),  # optional; None -> global endpoint
+        azure_region=os.getenv("AZURE_REGION"),  # None honors MSAL_FORCE_REGION
     )
 
     result = app.acquire_token_for_client(
