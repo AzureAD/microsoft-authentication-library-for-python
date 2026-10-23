@@ -107,7 +107,9 @@ def main():
             os.environ["SCOPE"].split(), mtls_proof_of_possession=True)
         print("Acquired mTLS-PoP token:", result.get("token_type") == "mtls_pop")
         if "error" in result:
-            print("Error code:", result["error"])
+            print(
+                "Token acquisition failed; inspect result['error'] / "
+                "result['error_description'] locally to diagnose.")
 
 
 if __name__ == "__main__":
