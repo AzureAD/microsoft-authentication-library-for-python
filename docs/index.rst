@@ -243,6 +243,20 @@ Notes and requirements:
   ``os.PathLike`` objects (including ``pathlib.Path``); these replace the default
   trust roots. ``True`` or ``None`` selects the Requests CA bundle, while
   ``False`` disables server verification.
+* For a Federated Identity Credential (FIC) exchange, configure the leg-2 client
+  with both a ``client_assertion`` callable (acquiring the leg-1 token) and an
+  ``mtls_binding_certificate`` sub-key; the leg-1 assertion is then sent as a
+  ``jwt-pop`` client assertion over mTLS using the same certificate as leg 1.
+  A fixed assertion string expires and emits a deprecation warning; the callable
+  lets the leg-1 application reuse cached tokens and acquire fresh ones as needed.
+  The target application must have a federated identity credential trusting the
+  leg-1 token's issuer, subject, and audience. See
+  ``fic_two_leg_over_mtls_pop()`` in
+  ``sample/confidential_client_mtls_pop_sample.py`` for the two-leg setup.
+  A final ``mtls_pop`` result includes an ``MtlsBindingContext`` for the
+  downstream resource connection. If leg 2 does not request PoP, its bound
+  assertion still travels as ``jwt-pop`` over mTLS, but the final Bearer token
+  is not certificate-bound and does not include ``binding_certificate``.
 
 mTLS-bound access tokens are persisted in a separate ``AccessToken_mTLS`` cache
 bucket. Older SDK versions ignore that bucket and retain their normal Bearer
