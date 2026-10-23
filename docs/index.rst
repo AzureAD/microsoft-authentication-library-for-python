@@ -241,8 +241,10 @@ Notes and requirements:
   leg-1 token's issuer, subject, and audience. See
   ``fic_two_leg_over_mtls_pop()`` in
   ``sample/confidential_client_mtls_pop_sample.py`` for the two-leg setup.
-  Both final ``mtls_pop`` and Bearer-over-mTLS results include an
-  ``MtlsBindingContext`` for the downstream resource connection.
+  A final ``mtls_pop`` result includes an ``MtlsBindingContext`` for the
+  downstream resource connection. If leg 2 does not request PoP, its bound
+  assertion still travels as ``jwt-pop`` over mTLS, but the final Bearer token
+  is not certificate-bound and does not include ``binding_certificate``.
 
 .. autoclass:: msal.MtlsBindingContext
    :members:

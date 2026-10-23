@@ -131,7 +131,8 @@ def fic_two_leg_over_mtls_pop():
            the token-exchange audience.
     Leg 2: a second confidential client presents that token as a ``jwt-pop``
            client assertion, over an mTLS connection bound by the SAME cert, to
-           obtain the final token (Bearer or mtls_pop).
+           obtain the final token. Requesting PoP produces ``mtls_pop`` and a
+           binding context; omitting PoP produces Bearer without one.
     """
     cert = _build_cert_credential()
 
@@ -167,7 +168,9 @@ def fic_two_leg_over_mtls_pop():
         azure_region=os.getenv("AZURE_REGION"),
     )
 
-    # Final token as mTLS PoP (drop mtls_proof_of_possession for Bearer-over-mTLS):
+    # Final token as mTLS PoP. Omit mtls_proof_of_possession for a final Bearer
+    # token; its assertion still travels as jwt-pop over mTLS, but the result
+    # does not contain binding_certificate.
     leg2 = leg2_app.acquire_token_for_client(
         os.environ["SCOPE"].split(), mtls_proof_of_possession=True)
     _print_result_summary(leg2, "FIC leg 2 result:")

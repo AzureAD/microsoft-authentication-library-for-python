@@ -358,26 +358,25 @@ class MtlsPopTestCase(E2eTestCase):
         except Exception:  # Opaque/non-JWT token - skip the offline binding check
             return None
 
-    def _call_graph_with_mtls_pop_token(
-            self, token, binding_certificate, token_type="mtls_pop"):
-        """Prove an mTLS token is genuinely usable: present it to the
+    def _call_graph_with_mtls_pop_token(self, token, binding_certificate):
+        """Prove an ``mtls_pop`` token is genuinely usable: present it to the
         mTLS Graph endpoint over a TLS channel bound by the SAME certificate and
         require HTTP 200. Acquiring the token is not enough - a resource only
         honors it when the binding certificate is on the TLS handshake and the
-        auth scheme matches the token type; a 401/403 means the binding was
-        lost, i.e. a real regression rather than a transient failure.
+        auth scheme is ``mtls_pop``; a 401/403 means the binding was lost, i.e.
+        a real regression rather than a transient failure.
         """
         with binding_certificate.create_requests_session() as session:
             resp = session.get(
                 self._MTLS_GRAPH_RESOURCE,
-                headers={"Authorization": token_type + " " + token},
+                headers={"Authorization": "mtls_pop " + token},
                 timeout=30)
         self.assertEqual(
             200, resp.status_code,
-            "%s token rejected by the resource (HTTP %s). A 401/403 means "
+            "mtls_pop token rejected by the resource (HTTP %s). A 401/403 means "
             "the binding certificate was not presented on the TLS handshake, or "
             "the auth scheme was wrong. Body[:500]=%s" % (
-                token_type, resp.status_code, (resp.text or "")[:500]))
+                resp.status_code, (resp.text or "")[:500]))
         return resp
 
 
@@ -565,6 +564,8 @@ class PublicCloudScenariosTestCase(MtlsPopTestCase):
 
 
 class FicTwoLegTestCase(MtlsPopTestCase):
+    _FIC_BEARER_SCOPE = ["https://storage.azure.com/.default"]
+
     def test_fic_two_leg_over_mtls_pop(self):
         from tests.lab_config import get_client_certificate
         required = (
@@ -598,13 +599,10 @@ class FicTwoLegTestCase(MtlsPopTestCase):
                 "client_assertion": lambda: leg1["access_token"],
                 "mtls_binding_certificate": cert})
         # Leg 2 -> Bearer over mTLS (implicit Bearer-over-mTLS, no flag)
-        leg2_bearer = leg2_app.acquire_token_for_client(self._MTLS_POP_SCOPE)
+        leg2_bearer = leg2_app.acquire_token_for_client(self._FIC_BEARER_SCOPE)
         self.assertIn("access_token", leg2_bearer, "Leg 2 (Bearer) failed: %s" % leg2_bearer)
         self.assertEqual("Bearer", leg2_bearer.get("token_type"))
-        bearer_binding = leg2_bearer.get("binding_certificate")
-        self.assertIsInstance(bearer_binding, msal.MtlsBindingContext)
-        self._call_graph_with_mtls_pop_token(
-            leg2_bearer["access_token"], bearer_binding, token_type="Bearer")
+        self.assertNotIn("binding_certificate", leg2_bearer)
         # Leg 2 -> mTLS PoP final token
         leg2_pop = leg2_app.acquire_token_for_client(
             self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
@@ -617,6 +615,9 @@ class FicTwoLegTestCase(MtlsPopTestCase):
                 "Final token cnf must be bound to the leg-1 cert thumbprint")
         pop_binding = leg2_pop.get("binding_certificate")
         self.assertIsInstance(pop_binding, msal.MtlsBindingContext)
+        self.assertEqual(
+            leg1_thumbprint, pop_binding.get("thumbprint_sha256"),
+            "Final binding context must carry the leg-1 certificate")
         self._call_graph_with_mtls_pop_token(
             leg2_pop["access_token"], pop_binding)
 
@@ -638,14 +639,13 @@ class FicScenarioTestCase(unittest.TestCase):
             "access_token": "leg1-token", "token_type": "mtls_pop",
             "binding_certificate": {"thumbprint_sha256": "cert-thumbprint"},
         }
-        self.bearer_binding = Mock(spec=msal.MtlsBindingContext)
         self.pop_binding = Mock(spec=msal.MtlsBindingContext)
+        self.pop_binding.get.return_value = "cert-thumbprint"
         self.leg2 = Mock()
         self.leg2.acquire_token_for_client.side_effect = [
             {
                 "access_token": "bearer-token",
                 "token_type": "Bearer",
-                "binding_certificate": self.bearer_binding,
             },
             {
                 "access_token": "opaque-pop-token",
@@ -696,7 +696,6 @@ class FicScenarioTestCase(unittest.TestCase):
             [self.config["LAB_FIC_EXCHANGE_SCOPE"]], mtls_proof_of_possession=True)
         self.assertEqual(
             [
-                call("bearer-token", self.bearer_binding, token_type="Bearer"),
                 call("opaque-pop-token", self.pop_binding),
             ],
             self.scenario._call_graph_with_mtls_pop_token.call_args_list)

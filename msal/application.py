@@ -3167,8 +3167,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             kwargs["data"] = data
         result = _clean_up(self._acquire_token_silent_with_error(
             scopes, None, claims_challenge=claims_challenge, **kwargs))
-        if ((mtls_proof_of_possession or self._mtls_is_fic_leg2)
-                and result and "access_token" in result):
+        if (mtls_proof_of_possession and result and "access_token" in result):
             # Fail closed on a token_type downgrade: if ESTS returned a
             # non-cert-bound token (e.g. a Bearer downgrade) for our mtls_pop
             # request, do not surface it as bound. The cache side is handled in
@@ -3183,8 +3182,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                         "of 'mtls_pop'; the access token is not "
                         "certificate-bound.".format(result.get("token_type"))),
                     }
-            # Attach process-local TLS capability after cache cleanup. The
-            # private key is never added to the token result or token cache.
+            # Attach process-local TLS capability only when the final token is
+            # certificate-bound. A FIC assertion can travel as jwt-pop over
+            # mTLS while the final token remains an ordinary Bearer token.
             result["binding_certificate"] = mtls.MtlsBindingContext(
                 mtls_cert["cert_pem"],
                 mtls_cert["private_key_pem"],

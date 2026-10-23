@@ -2546,8 +2546,7 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertNotIn("token_type", req["data"])
         self.assertEqual("4|730,2|", req["headers"].get(CLIENT_CURRENT_TELEMETRY))
         self.assertEqual("Bearer", result.get("token_type"))
-        self.assertIsInstance(
-            result.get("binding_certificate"), msal.MtlsBindingContext)
+        self.assertNotIn("binding_certificate", result)
 
     def test_fic_leg2_rejects_post_override(self):
         app = ConfidentialClientApplication(
