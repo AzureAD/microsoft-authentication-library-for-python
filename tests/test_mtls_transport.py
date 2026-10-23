@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import os
 import ssl
@@ -111,6 +112,23 @@ class TestMtlsSslContext(unittest.TestCase):
         # key_id is the base64url (unpadded) x5t#S256 used for cache binding
         self.assertNotIn("=", material["key_id"])
 
+    def test_pem_certificate_loader_supports_required_backend(self):
+        from cryptography import x509
+
+        material = self._material()
+        load = x509.load_pem_x509_certificate
+
+        def legacy_load(data, backend):
+            return load(data, backend=backend)
+
+        with patch("cryptography.x509.load_pem_x509_certificate",
+                   side_effect=legacy_load):
+            loaded = _load_mtls_cert_material({
+                "private_key": material["private_key_pem"].decode("ascii"),
+                "public_certificate": material["cert_pem"].decode("ascii"),
+            })
+        self.assertEqual(material["key_id"], loaded["key_id"])
+
     def test_create_ssl_context_loads_cert_and_unlinks_tempfile(self):
         material = self._material()
         created = {}
@@ -145,6 +163,30 @@ class TestMtlsSslContext(unittest.TestCase):
         # ssl_context must have been injected into the pool's connection kwargs.
         self.assertIs(
             adapter.poolmanager.connection_pool_kw.get("ssl_context"), context)
+
+    def test_selected_pool_preserves_certificate_context_on_requests_2322(self):
+        import requests
+        from requests.adapters import HTTPAdapter
+
+        material = self._material()
+        context = mtls._create_ssl_context(
+            material["cert_pem"], material["private_key_pem"])
+        adapter = mtls._make_mtls_adapter(context)
+        self.addCleanup(adapter.close)
+        request = requests.Request("GET", "https://resource.example/path").prepare()
+        preloaded = ssl.create_default_context()
+
+        def legacy_connection(adapter, request, verify, proxies=None, cert=None):
+            return adapter.poolmanager.connection_from_url(
+                request.url, pool_kwargs={"ssl_context": preloaded})
+
+        with patch.object(HTTPAdapter, "get_connection_with_tls_context",
+                          legacy_connection, create=True):
+            for proxies in (None, {"https": "http://proxy.example:8080"}):
+                with self.subTest(proxies=proxies):
+                    pool = adapter.get_connection_with_tls_context(
+                        request, verify=True, proxies=proxies)
+                    self.assertIs(context, pool.conn_kw["ssl_context"])
 
     def test_http_client_builds_session_lazily(self):
         material = self._material()
@@ -188,12 +230,8 @@ class TestMtlsSslContext(unittest.TestCase):
             material["private_key_pem"],
             material["x5c"],
             material["key_id"])
-        context = Mock(spec=ssl.SSLContext)
         adapter = Mock()
-        with patch.object(
-                MtlsBindingContext, "create_ssl_context",
-                return_value=context), \
-                patch("msal.mtls._make_mtls_adapter", return_value=adapter):
+        with patch("msal.mtls._make_mtls_adapter", return_value=adapter):
             session = binding.create_requests_session(
                 verify=False, proxies={"https": "https://proxy.example"})
         try:
@@ -203,217 +241,6 @@ class TestMtlsSslContext(unittest.TestCase):
             self.assertIs(adapter, session.adapters["https://"])
         finally:
             session.close()
-
-
-class TestMtlsCertificateChain(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        from cryptography import x509
-        from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric import rsa
-        from cryptography.x509.oid import NameOID
-
-        def make_cert(name, key, issuer, issuer_key, ca):
-            subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
-            now = datetime.now(timezone.utc)
-            return (x509.CertificateBuilder()
-                .subject_name(subject).issuer_name(issuer or subject)
-                .public_key(key.public_key()).serial_number(x509.random_serial_number())
-                .not_valid_before(now - timedelta(days=1))
-                .not_valid_after(now + timedelta(days=1))
-                .add_extension(x509.BasicConstraints(ca=ca, path_length=None), True)
-                .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), False)
-                .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(
-                    issuer_key.public_key()), False)
-                .add_extension(x509.KeyUsage(
-                    digital_signature=True, content_commitment=False,
-                    key_encipherment=False, data_encipherment=False,
-                    key_agreement=False, key_cert_sign=ca, crl_sign=ca,
-                    encipher_only=False, decipher_only=False), True)
-                .sign(issuer_key, hashes.SHA256()))
-
-        root_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        root = make_cert("root", root_key, None, root_key, True)
-        cls.root = root
-        upper_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        cls.upper_intermediate = make_cert(
-            "upper", upper_key, root.subject, root_key, True)
-        intermediate_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        cls.intermediate = make_cert(
-            "intermediate", intermediate_key, cls.upper_intermediate.subject, upper_key, True)
-        unrelated_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        cls.unrelated = make_cert("unrelated", unrelated_key, None, unrelated_key, True)
-        cls.impostor = make_cert("intermediate", unrelated_key, None, unrelated_key, True)
-        cls.leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        cls.leaf = make_cert(
-            "client", cls.leaf_key, cls.intermediate.subject, intermediate_key, False)
-        cls.chain_pem = b"".join(cert.public_bytes(serialization.Encoding.PEM)
-            for cert in (cls.leaf, cls.intermediate, cls.upper_intermediate))
-        cls.key_pem = _private_key_to_unencrypted_pem(cls.leaf_key)
-        cls.root_pem = root.public_bytes(serialization.Encoding.PEM)
-        cls.server_pem = cls.root_pem + _private_key_to_unencrypted_pem(root_key)
-        cls.key_id = base64.urlsafe_b64encode(
-            cls.leaf.fingerprint(hashes.SHA256())).rstrip(b"=").decode("ascii")
-
-    def _assert_chain_and_handshake(self, material):
-        self.assertEqual(self.chain_pem, material["cert_pem"])
-        self.assertEqual(extract_certs(self.chain_pem.decode("ascii")), material["x5c"])
-        self.assertEqual(self.key_id, material["key_id"])
-        client = mtls._create_ssl_context(
-            material["cert_pem"], material["private_key_pem"], verify=False)
-        server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        server.verify_mode = ssl.CERT_REQUIRED
-        server.load_verify_locations(cadata=self.root_pem.decode("ascii"))
-        with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "server.pem")
-            with open(path, "wb") as stream:
-                stream.write(self.server_pem)
-            server.load_cert_chain(path)
-        client_in, client_out, server_in, server_out = [
-            ssl.MemoryBIO() for _ in range(4)]
-        client_tls = client.wrap_bio(client_in, client_out, server_side=False)
-        server_tls = server.wrap_bio(server_in, server_out, server_side=True)
-        client_done = server_done = False
-        for _ in range(10):
-            if not client_done:
-                try:
-                    client_tls.do_handshake()
-                    client_done = True
-                except ssl.SSLWantReadError:
-                    pass
-            if client_out.pending:
-                server_in.write(client_out.read())
-            if not server_done:
-                try:
-                    server_tls.do_handshake()
-                    server_done = True
-                except ssl.SSLWantReadError:
-                    pass
-            if server_out.pending:
-                client_in.write(server_out.read())
-            if client_done and server_done:
-                break
-        self.assertTrue(client_done and server_done, "mTLS handshake did not complete")
-
-    def test_pem_intermediates_reach_tls_handshake(self):
-        self._assert_chain_and_handshake(_load_mtls_cert_material({
-            "private_key": self.key_pem.decode("ascii"),
-            "public_certificate": self.chain_pem.decode("ascii"),
-            }))
-
-    def test_non_mtls_assertion_preserves_pem_chain(self):
-        from cryptography.hazmat.primitives import hashes
-        from msal.application import ConfidentialClientApplication
-        from tests.http_client import MinimalResponse
-
-        endpoint = "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"
-        expected_chain = extract_certs(self.chain_pem.decode("ascii"))
-        with patch("msal.authority.tenant_discovery", return_value={
-                "authorization_endpoint": endpoint.replace("/token", "/authorize"),
-                "token_endpoint": endpoint,
-                "issuer": "https://login.microsoftonline.com/tenant/v2.0"}):
-            app = ConfidentialClientApplication(
-                "cid", authority="https://login.microsoftonline.com/tenant",
-                azure_region=False, client_credential={
-                    "private_key": self.key_pem.decode("ascii"),
-                    "thumbprint": self.leaf.fingerprint(hashes.SHA1()).hex(),
-                    "public_certificate": self.chain_pem.decode("ascii"),
-                })
-
-            def post(url, data=None, **kwargs):
-                header = data["client_assertion"].split(b".")[0]
-                decoded = json.loads(base64.urlsafe_b64decode(
-                    header + b"=" * (-len(header) % 4)))
-                self.assertEqual(expected_chain, decoded["x5c"])
-                return MinimalResponse(
-                    status_code=200, text='{"access_token": "at", "token_type": "Bearer"}')
-
-            app.acquire_token_for_client(["s1"], post=post)
-
-    def test_pfx_intermediates_reach_tls_handshake(self):
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.serialization import pkcs12
-        with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "chain.pfx")
-            with open(path, "wb") as stream:
-                stream.write(pkcs12.serialize_key_and_certificates(
-                    b"client", self.leaf_key, self.leaf,
-                    [self.intermediate, self.upper_intermediate],
-                    serialization.NoEncryption()))
-            material = _load_mtls_cert_material({"private_key_pfx_path": path})
-        self._assert_chain_and_handshake(material)
-
-    def test_unordered_pfx_chain_reaches_non_mtls_assertion(self):
-        from cryptography.hazmat.primitives import serialization
-        from msal.application import ConfidentialClientApplication
-        from tests.http_client import MinimalResponse
-
-        endpoint = "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"
-        path = os.path.join(os.path.dirname(__file__), "certificate-with-password.pfx")
-        expected_pem = (self.chain_pem + self.root_pem).decode("ascii")
-        additional = [
-            self.root, self.impostor, self.upper_intermediate,
-            self.unrelated, self.intermediate, self.leaf, self.intermediate]
-        with patch("cryptography.hazmat.primitives.serialization.pkcs12."
-                   "load_key_and_certificates",
-                   return_value=(self.leaf_key, self.leaf, additional)):
-            material = _load_mtls_cert_material({"private_key_pfx_path": path})
-            self.assertEqual(expected_pem.encode("ascii"), material["cert_pem"])
-            self.assertEqual(extract_certs(expected_pem), material["x5c"])
-            self.assertEqual(self.key_id, material["key_id"])
-            with patch("msal.authority.tenant_discovery", return_value={
-                    "authorization_endpoint": endpoint.replace("/token", "/authorize"),
-                    "token_endpoint": endpoint,
-                    "issuer": "https://login.microsoftonline.com/tenant/v2.0"}):
-                app = ConfidentialClientApplication(
-                    "cid", authority="https://login.microsoftonline.com/tenant",
-                    azure_region=False, client_credential={
-                        "private_key_pfx_path": path, "public_certificate": True})
-
-                def post(url, data=None, **kwargs):
-                    self.assertEqual(endpoint, url)
-                    header = data["client_assertion"].split(b".")[0]
-                    decoded = json.loads(base64.urlsafe_b64decode(
-                        header + b"=" * (-len(header) % 4)))
-                    self.assertEqual(extract_certs(expected_pem), decoded["x5c"])
-                    return MinimalResponse(
-                        status_code=200,
-                        text='{"access_token": "at", "token_type": "Bearer"}')
-
-                app.acquire_token_for_client(["s1"], post=post)
-
-    def test_issuer_signature_verification_on_older_cryptography(self):
-        class LegacyCertificate:
-            issuer = self.leaf.issuer
-            signature = self.leaf.signature
-            tbs_certificate_bytes = self.leaf.tbs_certificate_bytes
-            signature_algorithm_oid = self.leaf.signature_algorithm_oid
-            signature_hash_algorithm = self.leaf.signature_hash_algorithm
-
-        self.assertFalse(_is_certificate_issuer(LegacyCertificate(), self.impostor))
-        self.assertTrue(_is_certificate_issuer(LegacyCertificate(), self.intermediate))
-
-    def test_environment_ca_bundles_replace_default_roots(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "private-ca.pem")
-            with open(path, "wb") as stream:
-                stream.write(self.root_pem)
-            for variable in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
-                with self.subTest(variable=variable), patch.dict(
-                        os.environ, {"REQUESTS_CA_BUNDLE": "", "CURL_CA_BUNDLE": "",
-                                     variable: path}):
-                    client = mtls._MtlsHttpClient(self.chain_pem, self.key_pem)
-                    self.addCleanup(client.close)
-                    session = client._ensure_session("https://mtlsauth.microsoft.com")
-                    context = session.get_adapter("https://")._ssl_context
-                    self.assertEqual(1, len(context.get_ca_certs()))
-                    self.assertEqual(
-                        session, client._ensure_session("https://mtlsauth.microsoft.com"))
-                    unverified = client._ensure_session(
-                        "https://mtlsauth.microsoft.com", verify=False)
-                    self.assertIsNot(session, unverified)
-                    self.assertEqual(ssl.CERT_NONE,
-                        unverified.get_adapter("https://")._ssl_context.verify_mode)
 
 
 class TestMtlsCertificateChain(unittest.TestCase):
@@ -540,7 +367,8 @@ class TestMtlsCertificateChain(unittest.TestCase):
                         header + b"=" * (-len(header) % 4)))
                     self.assertEqual(expected_chain, decoded["x5c"])
                     return MinimalResponse(
-                        status_code=200, text='{"access_token": "at", "token_type": "Bearer"}')
+                        status_code=200,
+                        text='{"access_token": "at", "token_type": "Bearer"}')
 
                 if send_over_mtls:
                     with patch("msal.mtls._MtlsHttpClient.post", side_effect=post):
@@ -639,6 +467,47 @@ class TestMtlsCertificateChain(unittest.TestCase):
                     self.assertIsNot(session, unverified)
                     self.assertEqual(ssl.CERT_NONE,
                         unverified.get_adapter("https://")._ssl_context.verify_mode)
+
+
+    def test_binding_session_uses_only_effective_ca_bundle(self):
+        from cryptography.hazmat.primitives import serialization
+        from urllib3.response import HTTPResponse
+
+        binding = MtlsBindingContext(
+            self.chain_pem, self.key_pem,
+            extract_certs(self.chain_pem.decode("ascii")), self.key_id)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "private-ca.pem")
+            with open(path, "wb") as stream:
+                stream.write(self.root_pem)
+            for setting in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+                            "session", "request"):
+                environment = {"REQUESTS_CA_BUNDLE": "", "CURL_CA_BUNDLE": ""}
+                if setting in environment:
+                    environment[setting] = path
+                with self.subTest(setting=setting), patch.dict(
+                        os.environ, environment):
+                    contexts = []
+
+                    def urlopen(pool, *args, **kwargs):
+                        contexts.append(pool.conn_kw["ssl_context"])
+                        return HTTPResponse(
+                            body=io.BytesIO(b"ok"), status=200, preload_content=False)
+
+                    with binding.create_requests_session(
+                            verify=path if setting == "session" else True) as session:
+                        with patch("urllib3.connectionpool.HTTPSConnectionPool.urlopen",
+                                   autospec=True, side_effect=urlopen):
+                            options = {"verify": path} if setting == "request" else {}
+                            session.get("https://resource.example", **options)
+                            session.get("https://resource.example", verify=False)
+                            session.get("https://resource.example", **options)
+                    self.assertEqual(
+                        [self.root.public_bytes(serialization.Encoding.DER)],
+                        contexts[0].get_ca_certs(binary_form=True))
+                    self.assertEqual(ssl.CERT_REQUIRED, contexts[0].verify_mode)
+                    self.assertEqual(ssl.CERT_NONE, contexts[1].verify_mode)
+                    self.assertIs(contexts[0], contexts[2])
 
 
 class TestUnencryptedPemLoading(unittest.TestCase):

@@ -234,8 +234,7 @@ Notes and requirements:
 * To request Bearer-over-mTLS instead, set
   ``send_certificate_over_mtls=True`` in the certificate credential and omit
   ``mtls_proof_of_possession``. The resulting token uses the ``Bearer`` scheme,
-  and its result still includes ``binding_certificate`` for constructing the
-  downstream certificate-bearing TLS connection.
+  is not certificate-bound, and does not include ``binding_certificate``.
 
 .. autoclass:: msal.MtlsBindingContext
    :members:

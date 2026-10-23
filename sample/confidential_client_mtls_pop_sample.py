@@ -120,7 +120,7 @@ def vanilla_sni_mtls_pop():
 
 
 def bearer_over_mtls():
-    """Acquire a Bearer token while presenting the certificate over mTLS."""
+    """Acquire an ordinary Bearer token while authenticating over mTLS."""
     credential = _build_cert_credential()
     credential["send_certificate_over_mtls"] = True
     app = msal.ConfidentialClientApplication(
@@ -131,7 +131,6 @@ def bearer_over_mtls():
     )
     result = app.acquire_token_for_client(os.environ["SCOPE"].split())
     _print_result_summary(result, "SN/I -> Bearer-over-mTLS result:")
-    _call_resource(result)
     return result
 
 

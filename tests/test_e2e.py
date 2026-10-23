@@ -587,10 +587,7 @@ class PublicCloudScenariosTestCase(E2eTestCase):
             "Bearer-over-mTLS request failed: %s" % result)
         # A PLAIN Bearer token, NOT cert-bound (contrast the mtls_pop cell).
         self.assertEqual("Bearer", result.get("token_type"))
-        binding = result.get("binding_certificate")
-        self.assertIsInstance(binding, msal.MtlsBindingContext)
-        self.assertTrue(binding.x5c)
-        self.assertTrue(binding.thumbprint_sha256)
+        self.assertNotIn("binding_certificate", result)
         # The AT is an ordinary Bearer entry (no key_id/thumbprint fence), so a
         # normal flagless acquire_token_for_client lookup returns it from cache
         # -- the caller-visible proof of the feature's goal. (mtls_pop needed the
