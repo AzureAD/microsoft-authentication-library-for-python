@@ -147,7 +147,7 @@ class MtlsBindingContext(Mapping):
             session.proxies.update(proxies)
         session.mount(
             "https://",
-            _make_mtls_adapter(self.create_ssl_context(effective_verify)))
+            _make_mtls_adapter(ssl_context_factory=self.create_ssl_context))
         return session
 
     def __getitem__(self, key):
@@ -240,7 +240,7 @@ class _MtlsHttpClient(object):
                 session.close()
 
 
-def _make_mtls_adapter(ssl_context):
+def _make_mtls_adapter(ssl_context=None, ssl_context_factory=None):
     """Return a ``requests`` HTTPAdapter that injects ``ssl_context`` (with the
     client certificate loaded) into every connection pool it creates."""
     from requests.adapters import HTTPAdapter  # Lazy import
@@ -248,7 +248,25 @@ def _make_mtls_adapter(ssl_context):
     class _MtlsHTTPAdapter(HTTPAdapter):
         def __init__(self, ssl_context):
             self._ssl_context = ssl_context
+            self._adapters = {}
+            self._adapter_lock = threading.Lock()
             super(_MtlsHTTPAdapter, self).__init__(max_retries=1)
+
+        def send(self, request, **kwargs):
+            if ssl_context_factory is None:
+                return super(_MtlsHTTPAdapter, self).send(request, **kwargs)
+            verify = kwargs.get("verify", True)
+            with self._adapter_lock:
+                if verify not in self._adapters:
+                    self._adapters[verify] = _make_mtls_adapter(
+                        ssl_context_factory(verify))
+                adapter = self._adapters[verify]
+            return adapter.send(request, **kwargs)
+
+        def close(self):
+            for adapter in self._adapters.values():
+                adapter.close()
+            super(_MtlsHTTPAdapter, self).close()
 
         def init_poolmanager(self, *args, **kwargs):
             kwargs["ssl_context"] = self._ssl_context
@@ -257,6 +275,27 @@ def _make_mtls_adapter(ssl_context):
         def proxy_manager_for(self, *args, **kwargs):
             kwargs["ssl_context"] = self._ssl_context
             return super(_MtlsHTTPAdapter, self).proxy_manager_for(*args, **kwargs)
+
+        def get_connection_with_tls_context(
+                self, request, verify, proxies=None, cert=None):
+            # Requests 2.32.0-2.32.2 otherwise replace our certificate-bearing
+            # context with their preloaded, certificate-less context.
+            from requests.utils import select_proxy, prepend_scheme_if_needed
+            from requests.exceptions import InvalidProxyURL
+            from urllib3.util import parse_url
+
+            proxy = select_proxy(request.url, proxies)
+            manager = self.poolmanager
+            if proxy:
+                proxy = prepend_scheme_if_needed(proxy, "http")
+                if not parse_url(proxy).host:
+                    raise InvalidProxyURL(
+                        "Proxy URL is malformed or missing a host.")
+                manager = self.proxy_manager_for(proxy)
+            return manager.connection_from_url(
+                request.url, pool_kwargs={"ssl_context": self._ssl_context})
+
+        _get_connection = get_connection_with_tls_context  # Requests 2.32.0/1
 
     return _MtlsHTTPAdapter(ssl_context)
 
