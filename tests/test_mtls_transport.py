@@ -237,7 +237,8 @@ class TestMtlsSslContext(unittest.TestCase):
             with dependency:
                 for factory in (
                         lambda: mtls._MtlsHttpClient(b"cert", b"key"),
-                        binding.create_requests_session):
+                        binding.create_requests_session,
+                        binding.create_requests_adapter):
                     with self.subTest(factory=factory), self.assertRaisesRegex(
                             ValueError, r"mTLS requires Requests >= 2\.25\.0.*"
                                         r"python -m pip install --upgrade"):
