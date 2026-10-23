@@ -513,7 +513,8 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.app = msal.ConfidentialClientApplication(
             self._SNI_ALLOWLISTED_CLIENT_ID,
             authority=self._SNI_ALLOWLISTED_AUTHORITY,
-            client_credential=cert)
+            client_credential=cert,
+            azure_region=False)
         result = self.app.acquire_token_for_client(
             self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
         self.assertIn("access_token", result, "mTLS PoP request failed: %s" % result)

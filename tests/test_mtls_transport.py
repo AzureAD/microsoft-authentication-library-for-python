@@ -6,6 +6,7 @@ import ssl
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch, Mock
 
 from msal import mtls, MtlsBindingContext
@@ -198,6 +199,24 @@ class TestMtlsSslContext(unittest.TestCase):
         # The https adapter is our mTLS adapter (cert-bearing), not the default
         self.assertIn("https://", session.adapters)
         client.close()
+
+    def test_unsupported_mtls_dependencies_fail_with_upgrade_instructions(self):
+        binding = MtlsBindingContext(b"cert", b"key", [], "thumbprint")
+        unsupported = (
+            patch("requests.__version__", "2.0.0"),
+            patch("requests.Session.merge_environment_settings", None),
+            patch("urllib3.connection.HTTPSConnection.__init__",
+                  lambda self, host: None),
+        )
+        for dependency in unsupported:
+            with dependency:
+                for factory in (
+                        lambda: mtls._MtlsHttpClient(b"cert", b"key"),
+                        binding.create_requests_session):
+                    with self.subTest(factory=factory), self.assertRaisesRegex(
+                            ValueError, r"mTLS requires Requests >= 2\.25\.0.*"
+                                        r"python -m pip install --upgrade"):
+                        factory()
 
     def test_binding_context_exposes_metadata_without_key_material(self):
         material = self._material()
@@ -455,6 +474,30 @@ class TestMtlsCertificateChain(unittest.TestCase):
                     self.assertEqual(ssl.CERT_NONE,
                         unverified.get_adapter("https://")._ssl_context.verify_mode)
 
+    def test_pathlike_ca_bundle_replaces_roots_and_reuses_transport_session(self):
+        from cryptography.hazmat.primitives import serialization
+
+        binding = MtlsBindingContext(
+            self.chain_pem, self.key_pem,
+            extract_certs(self.chain_pem.decode("ascii")), self.key_id)
+        expected = [self.root.public_bytes(serialization.Encoding.DER)]
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+                os.environ, {"REQUESTS_CA_BUNDLE": "", "CURL_CA_BUNDLE": ""}):
+            path = Path(directory) / "private-ca.pem"
+            path.write_bytes(self.root_pem)
+            for verify in (path, os.fsencode(path)):
+                with self.subTest(verify=verify):
+                    context = binding.create_ssl_context(verify=verify)
+                    self.assertEqual(expected, context.get_ca_certs(binary_form=True))
+                    client = mtls._MtlsHttpClient(
+                        self.chain_pem, self.key_pem, verify=verify)
+                    self.addCleanup(client.close)
+                    session = client._ensure_session("https://mtlsauth.microsoft.com")
+                    self.assertEqual(
+                        expected, session.get_adapter("https://")._ssl_context
+                        .get_ca_certs(binary_form=True))
+                    self.assertIs(session, client._ensure_session(
+                        "https://mtlsauth.microsoft.com", verify=str(path)))
 
     def test_binding_session_uses_only_effective_ca_bundle(self):
         from cryptography.hazmat.primitives import serialization
@@ -468,7 +511,7 @@ class TestMtlsCertificateChain(unittest.TestCase):
             with open(path, "wb") as stream:
                 stream.write(self.root_pem)
             for setting in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
-                            "session", "request"):
+                            "session", "request", "session_path", "request_path"):
                 environment = {"REQUESTS_CA_BUNDLE": "", "CURL_CA_BUNDLE": ""}
                 if setting in environment:
                     environment[setting] = path
@@ -482,12 +525,18 @@ class TestMtlsCertificateChain(unittest.TestCase):
                             body=io.BytesIO(b"ok"), status=200, preload_content=False)
 
                     with binding.create_requests_session(
-                            verify=path if setting == "session" else True) as session:
+                            verify=(Path(path) if setting == "session_path"
+                                    else path if setting == "session"
+                                    else True)) as session:
                         with patch("urllib3.connectionpool.HTTPSConnectionPool.urlopen",
                                    autospec=True, side_effect=urlopen):
-                            options = {"verify": path} if setting == "request" else {}
+                            options = (
+                                {"verify": Path(path)} if setting == "request_path"
+                                else {"verify": path} if setting == "request" else {})
                             session.get("https://resource.example", **options)
                             session.get("https://resource.example", verify=False)
+                            if setting in ("session_path", "request_path"):
+                                options = {"verify": path}
                             session.get("https://resource.example", **options)
                     self.assertEqual(
                         [self.root.public_bytes(serialization.Encoding.DER)],

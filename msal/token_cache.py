@@ -13,6 +13,25 @@ from .oauth2cli.oauth2 import Client
 
 logger = logging.getLogger(__name__)
 _GRANT_TYPE_BROKER = "broker"
+_ACCESS_TOKEN_MTLS = "AccessToken_mTLS"
+
+
+def _token_type(entry):
+    return (entry.get("token_type") or "Bearer").lower()
+
+
+def _access_token_bucket(entry):
+    # Released readers must never enumerate an mTLS token as a bearer token.
+    return _ACCESS_TOKEN_MTLS if _token_type(entry) == "mtls_pop" else "AccessToken"
+
+
+def _access_token_identity(entry):
+    return tuple(entry.get(field) or "" for field in (
+        "home_account_id", "environment", "client_id", "realm", "ext_cache_key")
+        ) + (
+        tuple(sorted((entry.get("target") or "").split())),
+        _key_id_to_str(entry["key_id"]) if entry.get("key_id") is not None else "",
+        _token_type(entry))
 
 
 def _key_id_to_str(key_id):
@@ -27,7 +46,7 @@ def _key_id_to_str(key_id):
 
 def _make_access_token_key(
         home_account_id=None, environment=None, client_id=None, realm=None,
-        target=None, ext_cache_key=None, key_id=None):
+        target=None, ext_cache_key=None, key_id=None, token_type=None):
     components = [
         home_account_id or "", environment or "",
         "atext" if ext_cache_key else "AccessToken",
@@ -35,11 +54,11 @@ def _make_access_token_key(
         ] + ([ext_cache_key] if ext_cache_key else [])
     components = [value.lower() for value in components]
     key_id = _key_id_to_str(key_id) if key_id is not None else None
-    if key_id:
-        # A hyphen-free namespace cannot collide with the legacy joined keys.
+    if (token_type or "").lower() == "mtls_pop":
         payload = json.dumps(
             components + [key_id], separators=(",", ":"))
         return "atkey:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    # SSH keys must remain removable by released MSAL versions.
     return "-".join(components)
 
 # Fields in the request data dict that should NOT be included in the extended
@@ -256,16 +275,13 @@ class TokenCache(object):
             self.CredentialType.ACCESS_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         realm=None, target=None,
-                        ext_cache_key=None,
+                        ext_cache_key=None, token_type=None,
                         # Note: New field(s) can be added here
-                        key_id=None,  # So ATs bound to different keys/certs can
-                            # coexist (e.g. an mtls_pop AT vs a Bearer AT for the
-                            # same app+scope). key_id is absent for Bearer, which
-                            # keeps the Bearer cache key byte-for-byte unchanged.
+                        key_id=None,  # Separates mTLS certificate identities
                         **ignored_payload_from_a_real_token:
                     _make_access_token_key(
                         home_account_id, environment, client_id, realm, target,
-                        ext_cache_key, key_id),
+                        ext_cache_key, key_id, token_type),
             self.CredentialType.ID_TOKEN:
                 lambda home_account_id=None, environment=None, client_id=None,
                         realm=None, **ignored_payload_from_a_real_token:
@@ -296,9 +312,10 @@ class TokenCache(object):
         ext_cache_key=None,
         key_id=None,
         default=None,
+        token_type=None,
     ):  # O(1)
         return self._get(
-            self.CredentialType.ACCESS_TOKEN,
+            _access_token_bucket({"token_type": token_type}),
             self.key_makers[TokenCache.CredentialType.ACCESS_TOKEN](
                 home_account_id=home_account_id,
                 environment=environment,
@@ -307,6 +324,7 @@ class TokenCache(object):
                 target=" ".join(target),
                 ext_cache_key=ext_cache_key,
                 key_id=key_id,
+                token_type=token_type,
                 ),
             default=default)
 
@@ -328,9 +346,11 @@ class TokenCache(object):
         query_with_lowercase_environment = {
             # __add() canonicalized entry's environment value to lower case,
             # so we do the same here.
-            k: v.lower() if k == "environment" and isinstance(v, str) else v
+            k: v.lower() if k in ("environment", "token_type") and isinstance(v, str) else v
             for k, v in query.items()
         } if query else {}
+        if "token_type" in query_with_lowercase_environment:
+            entry = dict(entry, token_type=_token_type(entry))
         return is_subdict_of(query_with_lowercase_environment, entry) and (
             target_set <= set(entry.get("target", "").split())
             if target_set else True)
@@ -341,18 +361,17 @@ class TokenCache(object):
         It is O(1) for AT hits, and O(n) for other types.
         Note that it holds a lock during the entire search.
 
-        ``for_removal=True`` (used only by sign-out / remove_tokens_for_client)
-        disables the key_id/ext_cache_key isolation filters so those broad
-        cleanups can enumerate and delete key-bound and FMI-bound ATs. For-use
-        lookups must leave it False so a Bearer request never receives a
-        key-bound (e.g. mtls_pop) or ext-bound token, even with empty scopes.
+        Acquisition queries must specify ``token_type`` and, for mTLS, ``key_id``.
+        Queries without a token type retain public enumeration semantics,
+        including SSH certificates. The logical access-token view also includes
+        mTLS records stored separately for compatibility with released readers.
+        ``for_removal=True`` disables extended-key filtering.
         """
         target = sorted(target or [])  # Match the order sorted by add()
         assert isinstance(target, list), "Invalid parameter type"
         target_set = set(target)
         if query and query.get("key_id") is not None:
             query = dict(query, key_id=_key_id_to_str(query["key_id"]))
-
         preferred_result = None
         if (credential_type == self.CredentialType.ACCESS_TOKEN
             and isinstance(query, dict)
@@ -363,12 +382,12 @@ class TokenCache(object):
                 query["home_account_id"], query["environment"],
                 query["client_id"], query["realm"], target,
                 ext_cache_key=query.get("ext_cache_key"),
-                key_id=query.get("key_id"))
+                key_id=query.get("key_id"),
+                token_type=query.get("token_type"))
             if (preferred_result
                 and self._is_matching(preferred_result, query, target_set)
-                and (for_removal or all(
-                    not preferred_result.get(field) or query.get(field)
-                    for field in ("key_id", "ext_cache_key")))
+                and (for_removal or not preferred_result.get("ext_cache_key")
+                    or query.get("ext_cache_key"))
             ):
                 yield preferred_result
 
@@ -380,7 +399,13 @@ class TokenCache(object):
                 # stale ATs keyed by an old key_id would stay forever.
                 # Here we collect them for their removal.
             ]
-            for entry in self._cache.get(credential_type, {}).values():
+            buckets = (
+                (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS)
+                if credential_type == self.CredentialType.ACCESS_TOKEN
+                else (credential_type,))
+            for entry in (
+                    entry for bucket in buckets
+                    for entry in self._cache.get(bucket, {}).values()):
                 if (  # Automatically delete expired access tokens
                     credential_type == self.CredentialType.ACCESS_TOKEN
                     and int(entry["expires_on"]) < now
@@ -399,18 +424,6 @@ class TokenCache(object):
                         and not for_removal
                         and entry.get("ext_cache_key")
                         and not (query or {}).get("ext_cache_key")
-                    ):
-                        continue
-                    # Cache isolation for key-bound tokens (e.g. mtls_pop, SSH-cert).
-                    # An entry bound to a key_id must not satisfy a query without
-                    # one, so a Bearer lookup never returns a PoP/mtls_pop token.
-                    # Unconditional for for-use lookups; only removal callers
-                    # (sign-out / remove_tokens_for_client) pass for_removal=True
-                    # to enumerate these key-bound ATs and delete them.
-                    if (credential_type == self.CredentialType.ACCESS_TOKEN
-                        and not for_removal
-                        and entry.get("key_id")
-                        and not (query or {}).get("key_id")
                     ):
                         continue
                     yield entry
@@ -602,20 +615,33 @@ class TokenCache(object):
         # You can monkeypatch self.key_makers to support more types on-the-fly.
         key = self.key_makers[credential_type](**old_entry)
         with self._lock:
-            entries = self._cache.setdefault(credential_type, {})
+            is_at = credential_type == self.CredentialType.ACCESS_TOKEN
+            entries = self._cache.setdefault(
+                _access_token_bucket(old_entry) if is_at else credential_type, {})
             if new_key_value_pairs:  # Update with them
                 entry = dict(
                     old_entry,  # Do not use entries[key] b/c it might not exist
                     **new_key_value_pairs)
-                if (credential_type == self.CredentialType.ACCESS_TOKEN
-                        and entry.get("key_id") is not None):
-                    entry["key_id"] = _key_id_to_str(entry["key_id"])
+                if is_at:
+                    if entry.get("key_id") is not None:
+                        entry["key_id"] = _key_id_to_str(entry["key_id"])
+                    if entry.get("key_id") or _token_type(entry) == "mtls_pop":
+                        # Replace older bound-token keys, not other certificates
+                        # or authentication schemes.
+                        identity = _access_token_identity(entry)
+                        for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS):
+                            stored = self._cache.get(bucket, {})
+                            for stored_key in [
+                                    k for k, value in stored.items()
+                                    if _access_token_identity(value) == identity]:
+                                stored.pop(stored_key)
+                    entries = self._cache.setdefault(_access_token_bucket(entry), {})
+                    key = self.key_makers[credential_type](**entry)
                 entries[key] = entry
-            elif credential_type == self.CredentialType.ACCESS_TOKEN:
+            elif is_at:
                 # Persisted caches may still use an older AT key format.
-                if entries.get(key) == old_entry:
-                    entries.pop(key)
-                else:
+                for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS):
+                    entries = self._cache.get(bucket, {})
                     for stored_key in [
                             k for k, entry in entries.items() if entry == old_entry]:
                         entries.pop(stored_key)
@@ -692,10 +718,29 @@ class SerializableTokenCache(TokenCache):
 
     def deserialize(self, state):
         # type: (Optional[str]) -> None
-        """Deserialize the cache from a state previously obtained by serialize()"""
+        """Deserialize cache state, marking migrated bound-token layouts as changed."""
         with self._lock:
             self._cache = json.loads(state) if state else {}
-            self.has_state_changed = False  # reset
+            original_access_tokens = {
+                bucket: dict(self._cache.get(bucket, {}))
+                for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS)}
+            # Repair pre-release bound-token layouts before this state can be
+            # persisted again and read by a released client.
+            entries = self._cache.get(self.CredentialType.ACCESS_TOKEN, {})
+            for stored_key, entry in sorted(
+                    list(entries.items())
+                    + list(self._cache.get(_ACCESS_TOKEN_MTLS, {}).items()),
+                    key=lambda item: int(item[1].get("cached_at", 0))):
+                if _token_type(entry) == "mtls_pop":
+                    self.modify(self.CredentialType.ACCESS_TOKEN, entry, entry)
+                elif stored_key.startswith("atkey:") and entry.get("key_id"):
+                    key = self.key_makers[self.CredentialType.ACCESS_TOKEN](**entry)
+                    if (key not in entries or _access_token_identity(entries[key])
+                            == _access_token_identity(entry)):
+                        self.modify(self.CredentialType.ACCESS_TOKEN, entry, entry)
+            self.has_state_changed = any(
+                original_access_tokens[bucket] != self._cache.get(bucket, {})
+                for bucket in original_access_tokens)
 
     def serialize(self):
         # type: () -> str
