@@ -4,6 +4,9 @@ Subject Name + Issuer (SN/I) certificate as the client TLS certificate in a
 mutual-TLS (mTLS) handshake to Microsoft Entra, and obtains an mTLS-bound
 Proof-of-Possession (PoP) access token (``token_type == "mtls_pop"``).
 
+It also shows the optional two-leg Federated Identity Credential (FIC) exchange
+over mTLS PoP.
+
 Prerequisites
 -------------
 * A confidential-client app registration configured with a certificate.
@@ -24,6 +27,17 @@ Configuration is read from environment variables so no secrets are hard-coded::
     SCOPE              e.g. https://graph.microsoft.com/.default
     RESOURCE_URL       optional mTLS resource URL to call with the acquired token
     AZURE_REGION       (optional) e.g. westus3; omission honors MSAL_FORCE_REGION
+
+For the optional FIC sample, also configure::
+
+    RUN_FIC_SAMPLE     set to 1 to run the two-leg exchange
+    LEG2_CLIENT_ID     target application with a provisioned federated identity credential
+    LEG2_AUTHORITY     tenanted authority for that target application
+    FIC_EXCHANGE_SCOPE (optional) defaults to api://AzureADTokenExchange/.default
+
+The leg-1 app must be authorized for mTLS PoP at the exchange audience. The
+leg-2 app's federated identity credential must trust the leg-1 token's issuer,
+subject, and audience. Both legs use the SAME local certificate.
 
 Then run::
 
@@ -110,6 +124,79 @@ def vanilla_sni_mtls_pop():
     return result
 
 
+def fic_two_leg_over_mtls_pop():
+    """Optional: two-leg Federated Identity Credential (FIC) exchange over mTLS PoP.
+
+    Leg 1: the SN/I confidential client acquires a cert-bound mtls_pop token for
+           the token-exchange audience.
+    Leg 2: a second confidential client presents that token as a ``jwt-pop``
+           client assertion, over an mTLS connection bound by the SAME cert, to
+           obtain the final token. Requesting PoP produces ``mtls_pop`` and a
+           binding context; omitting PoP produces Bearer without one.
+    """
+    cert = _build_cert_credential()
+
+    # --- Leg 1: acquire the federated (cert-bound) assertion ---------------
+    leg1_app = msal.ConfidentialClientApplication(
+        os.environ["CLIENT_ID"],
+        authority=os.environ["AUTHORITY"],
+        client_credential=cert,
+        azure_region=os.getenv("AZURE_REGION"),
+    )
+    # The exchange audience is caller-supplied, not hard-coded by MSAL.
+    exchange_scope = os.getenv(
+        "FIC_EXCHANGE_SCOPE", "api://AzureADTokenExchange/.default")
+
+    def get_leg1_assertion():
+        # Reuse the leg-1 cache, acquiring a fresh token when the old one expires.
+        leg1 = leg1_app.acquire_token_for_client(
+            [exchange_scope], mtls_proof_of_possession=True)
+        if "access_token" not in leg1:
+            _print_result_summary(leg1, "FIC leg 1 result:")
+            raise RuntimeError(
+                "FIC leg 1 failed: {}".format(leg1.get("error")))
+        return leg1["access_token"]
+
+    # --- Leg 2: exchange the leg-1 token for the final token ---------------
+    leg2_app = msal.ConfidentialClientApplication(
+        os.environ["LEG2_CLIENT_ID"],
+        authority=os.environ["LEG2_AUTHORITY"],
+        client_credential={
+            "client_assertion": get_leg1_assertion,
+            "mtls_binding_certificate": cert,
+        },
+        azure_region=os.getenv("AZURE_REGION"),
+    )
+
+    # Final token as mTLS PoP. Omit mtls_proof_of_possession for a final Bearer
+    # token; its assertion still travels as jwt-pop over mTLS, but the result
+    # does not contain binding_certificate.
+    leg2 = leg2_app.acquire_token_for_client(
+        os.environ["SCOPE"].split(), mtls_proof_of_possession=True)
+    _print_result_summary(leg2, "FIC leg 2 result:")
+    resource_url = os.getenv("RESOURCE_URL")
+    if resource_url and "access_token" in leg2 and "binding_certificate" in leg2:
+        with leg2["binding_certificate"].create_requests_session() as session:
+            response = session.get(
+                resource_url,
+                headers={
+                    "Authorization":
+                        "{} {}".format(
+                            leg2["token_type"],
+                            leg2["access_token"],
+                        ),
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            print("  resource call status:        ", response.status_code)
+    return leg2
+
+
 if __name__ == "__main__":
     print("=== Vanilla SN/I -> mTLS PoP ===")
     vanilla_sni_mtls_pop()
+
+    if os.getenv("RUN_FIC_SAMPLE"):
+        print("\n=== FIC two-leg over mTLS PoP ===")
+        fic_two_leg_over_mtls_pop()
