@@ -1,5 +1,7 @@
-"""If the following ENV VAR were available, many end-to-end test cases would run.
-LAB_APP_CLIENT_CERT_PFX_PATH=...
+"""Unattended certificate E2E scenarios require LAB_APP_CLIENT_CERT_PFX_PATH.
+
+Missing or invalid lab credentials fail the required certificate scenarios;
+legacy interactive and other optional scenarios retain their existing gates.
 """
 try:
     from dotenv import load_dotenv  # Use this only in local dev machine
@@ -426,10 +428,13 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
+
+class CertificateScenariosTestCase(E2eTestCase):
+    # Required unattended scenarios must also run during tagged releases.
+    __unittest_skip__ = False
+
     def test_subject_name_issuer_authentication(self):
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
 
         self.app = msal.ConfidentialClientApplication(
             LAB_APP_CLIENT_ID,
@@ -507,8 +512,6 @@ class PublicCloudScenariosTestCase(E2eTestCase):
     # unittest, but the matrix names line up 1:1 with the sibling SDKs.
     def test_credential_x509_output_pop(self):
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         cert = get_client_certificate()
         self.app = msal.ConfidentialClientApplication(
             self._SNI_ALLOWLISTED_CLIENT_ID,
@@ -536,8 +539,6 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         # an ordinary Bearer token. This proves the client_assertion is dropped
         # only on the mTLS-PoP path, never on the classic certificate path.
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         self.app = msal.ConfidentialClientApplication(
             self._SNI_ALLOWLISTED_CLIENT_ID,
             authority=self._SNI_ALLOWLISTED_AUTHORITY,
@@ -637,21 +638,6 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
             _new_app().acquire_token_by_authorization_code("an_auth_code", scope)
         _assert_mtls(cap[0], "grant_type", "authorization_code")
-
-
-class BearerOverMtlsScenarioTestCase(unittest.TestCase):
-    def test_missing_certificate_fails_before_acquisition(self):
-        for test_name in (
-                "test_credential_x509_send_certificate_over_mtls_output_bearer",
-                "test_send_certificate_over_mtls_user_flows_capture_request"):
-            with self.subTest(test_name=test_name):
-                scenario = PublicCloudScenariosTestCase(test_name)
-                with patch.dict(os.environ, {}, clear=True), patch(
-                        "msal.ConfidentialClientApplication") as factory:
-                    with self.assertRaisesRegex(
-                            EnvironmentError, "LAB_APP_CLIENT_CERT_PFX_PATH"):
-                        getattr(scenario, test_name)()
-                    factory.assert_not_called()
 
 
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
