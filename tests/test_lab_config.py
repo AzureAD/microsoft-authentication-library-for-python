@@ -55,7 +55,7 @@ class TestRequiredCertificateConfiguration(unittest.TestCase):
 
     def test_required_scenarios_fail_without_credentials_instead_of_skipping(self):
         with patch.dict(os.environ, {"TRAVIS_TAG": "test-release"}, clear=True), patch.object(
-                test_e2e.E2eTestCase, "__unittest_skip__", True), patch(
+                test_e2e.E2eTestCase, "__unittest_skip__", True, create=True), patch(
                 "tests.test_e2e.msal.ConfidentialClientApplication") as application:
             suite = unittest.defaultTestLoader.loadTestsFromTestCase(
                 test_e2e.CertificateScenariosTestCase)
