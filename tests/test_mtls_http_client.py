@@ -600,7 +600,11 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
         for app in (default, custom):
             with self.subTest(custom=app is custom):
                 self.assertEqual("mtls_pop", self._acquire(app)["token_type"])
-                with self.assertRaisesRegex(ValueError, "must not redirect"):
+                error_type = (ValueError if app is custom
+                              else requests.exceptions.HTTPError)
+                error_message = ("must not redirect" if app is custom
+                                 else "does not support HTTP redirects")
+                with self.assertRaisesRegex(error_type, error_message):
                     self._acquire(app, "redirect")
         default._mtls_http_client.close()
         self.assertNotIn("/forbidden", [record["path"] for record in self.records])
