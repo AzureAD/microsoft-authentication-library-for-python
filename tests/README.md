@@ -33,6 +33,9 @@ LAB_APP_CLIENT_CERT_PFX_PATH=C:/path/to/your/cert.pfx
 Notes:
 - `tests/test_e2e.py` loads `.env` automatically when `python-dotenv` is installed.
 - For certificate auth, `LAB_APP_CLIENT_CERT_PFX_PATH` should be an absolute path.
+- Required certificate scenarios use the exportable `LabAuth.MSIDLab.com` PFX
+  from the MSID Lab `LabAuth` secret, without a PFX password. Missing, unreadable,
+  or invalid PFX files fail these scenarios; they never count as skipped coverage.
 
 ### FIC over mTLS lab parity
 
@@ -71,6 +74,20 @@ Run full E2E unattended suite:
 ```powershell
 python -m pytest -q tests/test_e2e.py
 ```
+
+Run only the required certificate scenarios:
+
+```powershell
+python -m pytest -q tests/test_e2e.py::CertificateScenariosTestCase
+```
+
+These cover ordinary SN/I certificate Bearer authentication, global X509 mTLS
+PoP acquisition with a certificate-bound Graph resource call and cache reuse,
+and ordinary certificate Bearer authentication in `westus3`. The X509 matrix
+uses client `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e` in tenant
+`bea21ebe-8b64-4d06-9f6d-6a889b120a7c`, matching the .NET and Go lab setup.
+They do not require fetching unrelated user configuration from Key Vault.
+Legacy interactive and other optional E2E skips are unchanged.
 
 ## 5) Manual-intervention E2E tests
 

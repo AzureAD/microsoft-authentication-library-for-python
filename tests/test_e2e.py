@@ -1,9 +1,9 @@
-"""If the following ENV VAR were available, many end-to-end test cases would run.
-LAB_APP_CLIENT_CERT_PFX_PATH=...
+"""Unattended certificate E2E scenarios require LAB_APP_CLIENT_CERT_PFX_PATH.
 
 The FIC two-leg tests use the same preconfigured SN/I lab app, tenant, and
 LabAuth certificate as MSAL.NET and Go. No LAB_FIC_* variables are required.
-Missing certificates and token-acquisition errors fail these tests.
+Missing or invalid lab credentials fail the required certificate scenarios;
+legacy interactive and other optional scenarios retain their existing gates.
 """
 try:
     from dotenv import load_dotenv  # Use this only in local dev machine
@@ -19,9 +19,9 @@ import unittest
 from urllib.parse import urlparse, parse_qs
 import sys
 try:
-    from unittest.mock import patch, ANY, Mock, call
+    from unittest.mock import patch, ANY, Mock, call, mock_open
 except:
-    from mock import patch, ANY, Mock, call
+    from mock import patch, ANY, Mock, call, mock_open
 
 import requests
 
@@ -466,10 +466,13 @@ class PublicCloudScenariosTestCase(MtlsPopTestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
+
+class CertificateScenariosTestCase(MtlsPopTestCase):
+    # Required unattended scenarios must also run during tagged releases.
+    __unittest_skip__ = False
+
     def test_subject_name_issuer_authentication(self):
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
 
         self.app = msal.ConfidentialClientApplication(
             LAB_APP_CLIENT_ID,
@@ -508,8 +511,6 @@ class PublicCloudScenariosTestCase(MtlsPopTestCase):
     # unittest, but the matrix names line up 1:1 with the sibling SDKs.
     def test_credential_x509_output_pop(self):
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         cert = get_client_certificate()
         self.app = msal.ConfidentialClientApplication(
             self._SNI_ALLOWLISTED_CLIENT_ID,
@@ -537,8 +538,6 @@ class PublicCloudScenariosTestCase(MtlsPopTestCase):
         # an ordinary Bearer token. This proves the client_assertion is dropped
         # only on the mTLS-PoP path, never on the classic certificate path.
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         self.app = msal.ConfidentialClientApplication(
             self._SNI_ALLOWLISTED_CLIENT_ID,
             authority=self._SNI_ALLOWLISTED_AUTHORITY,
@@ -572,8 +571,8 @@ class FicTwoLegTestCase(MtlsPopTestCase):
         from tests.lab_config import get_client_certificate
         cert = get_client_certificate()
         leg1_app = msal.ConfidentialClientApplication(
-            PublicCloudScenariosTestCase._SNI_ALLOWLISTED_CLIENT_ID,
-            authority=PublicCloudScenariosTestCase._SNI_ALLOWLISTED_AUTHORITY,
+            CertificateScenariosTestCase._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=CertificateScenariosTestCase._SNI_ALLOWLISTED_AUTHORITY,
             client_credential=cert,
             azure_region=azure_region)
         leg1 = leg1_app.acquire_token_for_client(
@@ -584,8 +583,8 @@ class FicTwoLegTestCase(MtlsPopTestCase):
 
         # Leg 2: same cert binds the TLS handshake, leg-1 token carried as jwt-pop.
         leg2_app = msal.ConfidentialClientApplication(
-            PublicCloudScenariosTestCase._SNI_ALLOWLISTED_CLIENT_ID,
-            authority=PublicCloudScenariosTestCase._SNI_ALLOWLISTED_AUTHORITY,
+            CertificateScenariosTestCase._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=CertificateScenariosTestCase._SNI_ALLOWLISTED_AUTHORITY,
             client_credential={
                 "client_assertion": lambda: leg1["access_token"],
                 "mtls_binding_certificate": cert},
@@ -647,6 +646,10 @@ class FicScenarioTestCase(unittest.TestCase):
         self.factory = Mock(side_effect=[self.leg1, self.leg2])
         patchers = (
             patch.dict(os.environ, self.config, clear=True),
+            patch("tests.lab_config.open", mock_open(read_data=b"unit-test-pfx")),
+            patch(
+                "tests.lab_config.pkcs12.load_key_and_certificates",
+                return_value=(Mock(), Mock(), [])),
             patch("msal.ConfidentialClientApplication", self.factory),
             patch.object(self.scenario, "_call_graph_with_mtls_pop_token"),
         )
