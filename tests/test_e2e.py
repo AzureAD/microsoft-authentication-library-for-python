@@ -1,5 +1,7 @@
-"""If the following ENV VAR were available, many end-to-end test cases would run.
-LAB_APP_CLIENT_CERT_PFX_PATH=...
+"""Unattended certificate E2E scenarios require LAB_APP_CLIENT_CERT_PFX_PATH.
+
+Missing or invalid lab credentials fail the required certificate scenarios;
+legacy interactive and other optional scenarios retain their existing gates.
 """
 try:
     from dotenv import load_dotenv  # Use this only in local dev machine
@@ -426,10 +428,13 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertIn('access_token', result)
         self.assertCacheWorksForApp(result, scope)
 
+
+class CertificateScenariosTestCase(E2eTestCase):
+    # Required unattended scenarios must also run during tagged releases.
+    __unittest_skip__ = False
+
     def test_subject_name_issuer_authentication(self):
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
 
         self.app = msal.ConfidentialClientApplication(
             LAB_APP_CLIENT_ID,
@@ -507,8 +512,6 @@ class PublicCloudScenariosTestCase(E2eTestCase):
     # unittest, but the matrix names line up 1:1 with the sibling SDKs.
     def test_credential_x509_output_pop(self):
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         cert = get_client_certificate()
         self.app = msal.ConfidentialClientApplication(
             self._SNI_ALLOWLISTED_CLIENT_ID,
@@ -536,8 +539,6 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         # an ordinary Bearer token. This proves the client_assertion is dropped
         # only on the mTLS-PoP path, never on the classic certificate path.
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         self.app = msal.ConfidentialClientApplication(
             self._SNI_ALLOWLISTED_CLIENT_ID,
             authority=self._SNI_ALLOWLISTED_AUTHORITY,
