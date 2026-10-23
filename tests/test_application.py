@@ -2452,22 +2452,37 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                             second._get_mtls_pop_cert()["key_id"])
 
     def test_raw_mtls_token_type_is_rejected_before_cache_lookup(self):
-        app = ConfidentialClientApplication(
-            "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
-        for cached in (False, True):
-            with self.subTest(cached=cached):
-                if cached:
-                    app.acquire_token_for_client(
-                        ["s1"], post=self._capturing_post([], token_type="Bearer"))
-                with patch.object(app, "_acquire_token_silent_with_error") as lookup:
-                    with self.assertRaisesRegex(
-                            ValueError, "mtls_proof_of_possession=True"):
-                        app.acquire_token_for_client(
-                            ["s1"], data={"token_type": "mtls_pop"})
-                    lookup.assert_not_called()
-                captured = []
+        for credential in (_MTLS_CERT_CRED, "a_secret"):
+            for cached_type in (None, "Bearer", "mtls_pop"):
+                producer = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    authority=self._AUTHORITY, azure_region=False)
+                if cached_type == "mtls_pop":
+                    with patch("msal.mtls._MtlsHttpClient.post",
+                               side_effect=self._capturing_post([])):
+                        producer.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True)
+                elif cached_type:
+                    producer.acquire_token_for_client(
+                        ["s1"], post=self._capturing_post([], token_type=cached_type))
+                app = ConfidentialClientApplication(
+                    "cid", client_credential=credential, authority=self._AUTHORITY,
+                    azure_region=False, token_cache=producer.token_cache)
+                for token_type in ("mtls_pop", "MTLS_POP", "mTlS_pOp"):
+                    with self.subTest(
+                            certificate=isinstance(credential, dict),
+                            cached_type=cached_type, token_type=token_type):
+                        with patch.object(
+                                app, "_acquire_token_silent_with_error",
+                                wraps=app._acquire_token_silent_with_error) as lookup:
+                            with self.assertRaisesRegex(
+                                    ValueError, "mtls_proof_of_possession=True"):
+                                app.acquire_token_for_client(
+                                    ["s1"], data={"token_type": token_type},
+                                    post=self._capturing_post([], token_type="Bearer"))
+                            lookup.assert_not_called()
                 ordinary = app.acquire_token_for_client(
-                    ["s1"], post=self._capturing_post(captured, token_type="Bearer"))
+                    ["s1"], post=self._capturing_post([], token_type="Bearer"))
                 self.assertEqual("Bearer", ordinary["token_type"])
                 self.assertNotIn("binding_certificate", ordinary)
 

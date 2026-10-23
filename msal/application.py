@@ -3028,8 +3028,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             raise ValueError(  # We choose to disallow force_refresh
                 "Historically, this method does not support force_refresh behavior. "
             )
+        requested_token_type = (kwargs.get("data") or {}).get("token_type")
         if (not mtls_proof_of_possession
-                and (kwargs.get("data") or {}).get("token_type") == "mtls_pop"):
+                and (requested_token_type or "").lower() == "mtls_pop"):
             raise ValueError(
                 "Request mTLS PoP using mtls_proof_of_possession=True, "
                 "not data['token_type'].")
