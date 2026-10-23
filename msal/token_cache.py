@@ -639,12 +639,15 @@ class TokenCache(object):
                     key = self.key_makers[credential_type](**entry)
                 entries[key] = entry
             elif is_at:
-                # Persisted caches may still use an older AT key format.
-                for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS):
-                    entries = self._cache.get(bucket, {})
-                    for stored_key in [
-                            k for k, entry in entries.items() if entry == old_entry]:
-                        entries.pop(stored_key)
+                if entries.get(key) == old_entry:
+                    entries.pop(key)
+                else:
+                    # Persisted caches may still use an older AT key format.
+                    for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS):
+                        entries = self._cache.get(bucket, {})
+                        for stored_key in [
+                                k for k, entry in entries.items() if entry == old_entry]:
+                            entries.pop(stored_key)
             else:  # Remove old_entry
                 entries.pop(key, None)
 
@@ -724,20 +727,26 @@ class SerializableTokenCache(TokenCache):
             original_access_tokens = {
                 bucket: dict(self._cache.get(bucket, {}))
                 for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS)}
-            # Repair pre-release bound-token layouts before this state can be
-            # persisted again and read by a released client.
-            entries = self._cache.get(self.CredentialType.ACCESS_TOKEN, {})
-            for stored_key, entry in sorted(
-                    list(entries.items())
-                    + list(self._cache.get(_ACCESS_TOKEN_MTLS, {}).items()),
-                    key=lambda item: int(item[1].get("cached_at", 0))):
-                if _token_type(entry) == "mtls_pop":
-                    self.modify(self.CredentialType.ACCESS_TOKEN, entry, entry)
-                elif stored_key.startswith("atkey:") and entry.get("key_id"):
-                    key = self.key_makers[self.CredentialType.ACCESS_TOKEN](**entry)
-                    if (key not in entries or _access_token_identity(entries[key])
-                            == _access_token_identity(entry)):
-                        self.modify(self.CredentialType.ACCESS_TOKEN, entry, entry)
+            # Migrate in memory: overridable modify() hooks may reload persistence.
+            bound_entries = {}
+            for bucket, entries in original_access_tokens.items():
+                for stored_key, entry in entries.items():
+                    if entry.get("key_id") or _token_type(entry) == "mtls_pop":
+                        bound_entries.setdefault(_access_token_identity(entry), []).append(
+                            (bucket, stored_key, entry))
+            for identity, records in bound_entries.items():
+                entry = max(
+                    reversed(records),  # Prefer the later entry when timestamps tie.
+                    key=lambda record: int(record[2].get("cached_at", 0)))[2]
+                bucket = _access_token_bucket(entry)
+                entries = self._cache.setdefault(bucket, {})
+                key = self.key_makers[self.CredentialType.ACCESS_TOKEN](**entry)
+                if (bucket != _ACCESS_TOKEN_MTLS and key in entries
+                        and _access_token_identity(entries[key]) != identity):
+                    continue  # Preserve a different SSH key already using its legacy slot.
+                for old_bucket, stored_key, _ in records:
+                    self._cache[old_bucket].pop(stored_key, None)
+                entries[key] = entry
             self.has_state_changed = any(
                 original_access_tokens[bucket] != self._cache.get(bucket, {})
                 for bucket in original_access_tokens)

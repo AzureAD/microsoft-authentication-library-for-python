@@ -4,6 +4,7 @@ import copy
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 import time
 import warnings
 from unittest.mock import Mock, patch
@@ -895,6 +896,130 @@ class ReleasedCacheCompatibilityTestCase(unittest.TestCase):
                 self.assertFalse(self.cache.has_state_changed)
                 self.cache.deserialize(persisted)
                 self.assertFalse(self.cache.has_state_changed)
+
+    def test_deserialize_does_not_invoke_persistence_hooks(self):
+        class PersistenceHookCache(SerializableTokenCache):
+            def modify(self, *args, **kwargs):
+                raise AssertionError("deserialize reentered a persistence hook")
+
+        for scheme in ("ssh-cert", "mtls_pop"):
+            self.cache = SerializableTokenCache()
+            self.cache.add(self.event(scheme, "cached"), now=1000)
+            canonical = self.cache.serialize()
+            entry = self.search(scheme, "Thumb")[0]
+            for state in (canonical, json.dumps({
+                    "AccessToken": {"atkey:old": entry}})):
+                with self.subTest(scheme=scheme, state=state):
+                    cache = PersistenceHookCache()
+                    cache.deserialize(state)
+                    self.assertEqual(["cached"], [
+                        item["secret"] for item in cache.search(
+                            "AccessToken", query={"token_type": scheme}, now=1000)])
+
+    def test_persisted_cache_reloads_canonical_and_legacy_bound_tokens(self):
+        try:
+            from msal_extensions import FilePersistence, PersistedTokenCache
+        except ImportError:
+            self.skipTest("MSAL Extensions is not installed")
+
+        for scheme in ("ssh-cert", "mtls_pop"):
+            self.cache = SerializableTokenCache()
+            self.cache.add(self.event(scheme, "cached"), now=1000)
+            canonical = self.cache.serialize()
+            entry = self.search(scheme, "Thumb")[0]
+            for state in (canonical, json.dumps({
+                    "AccessToken": {"atkey:old": entry}})):
+                with self.subTest(scheme=scheme, state=state):
+                    with tempfile.TemporaryDirectory() as directory:
+                        persistence = FilePersistence(str(Path(directory) / "cache"))
+                        persistence.save(state)
+                        cache = PersistedTokenCache(persistence)
+                        with patch.object(cache, "modify", side_effect=AssertionError(
+                                "reload must not acquire a persistence lock")):
+                            found = list(cache.search(
+                                "AccessToken", query={"token_type": scheme}, now=1000))
+                        self.assertEqual(["cached"], [item["secret"] for item in found])
+                        cache.remove_at(found[0])
+                        reloaded = PersistedTokenCache(persistence)
+                        self.assertEqual([], list(reloaded.search(
+                            "AccessToken", now=1000)))
+
+    def test_mtls_reload_identity_work_is_linear(self):
+        from msal import token_cache
+
+        self.cache.add(self.event("mtls_pop", "cached"), now=1000)
+        sample = self.search("mtls_pop", "Thumb")[0]
+        for legacy in (False, True):
+            for count in (50, 100):
+                entries = {}
+                for i in range(count):
+                    entry = dict(sample, target="scope{}".format(i))
+                    key = ("atkey:old{}".format(i) if legacy else
+                           self.cache.key_makers["AccessToken"](**entry))
+                    entries[key] = entry
+                state = json.dumps({
+                    "AccessToken" if legacy else "AccessToken_mTLS": entries})
+                with self.subTest(legacy=legacy, count=count), patch.object(
+                        token_cache, "_access_token_identity",
+                        wraps=token_cache._access_token_identity) as identity:
+                    cache = SerializableTokenCache()
+                    cache.deserialize(state)
+                    self.assertLessEqual(identity.call_count, 4 * count)
+                    self.assertEqual(legacy, cache.has_state_changed)
+                self.assertEqual(count, len(list(cache.search(
+                    "AccessToken", now=1000))))
+
+    def test_canonical_expiration_and_bulk_removal_do_not_scan_per_token(self):
+        class CountingEntries(dict):
+            scanned = 0
+
+            def items(self):
+                for item in super().items():
+                    type(self).scanned += 1
+                    yield item
+
+        for scheme in ("Bearer", "mtls_pop"):
+            self.cache = SerializableTokenCache()
+            self.cache.add(self.event(scheme, "cached"), now=1000)
+            sample = self.search(scheme, "Thumb")[0]
+            for expired in (False, True):
+                cache = TokenCache()
+                entries = CountingEntries()
+                for i in range(100):
+                    entry = dict(sample, target="scope{}".format(i))
+                    entries[cache.key_makers["AccessToken"](**entry)] = entry
+                bucket = "AccessToken_mTLS" if scheme == "mtls_pop" else "AccessToken"
+                cache._cache[bucket] = entries
+                CountingEntries.scanned = 0
+                with self.subTest(scheme=scheme, expired=expired):
+                    found = list(cache.search(
+                        "AccessToken", now=5000 if expired else 1000))
+                    for entry in found:
+                        cache.remove_at(entry)
+                    self.assertEqual({}, entries)
+                    self.assertLessEqual(CountingEntries.scanned, 300)
+
+    def test_removal_preserves_replacements_and_cleans_legacy_duplicates(self):
+        for scheme in ("ssh-cert", "mtls_pop"):
+            self.cache = SerializableTokenCache()
+            self.cache.add(self.event(scheme, "old"), now=1000)
+            old = self.search(scheme, "Thumb")[0]
+            canonical = json.loads(self.cache.serialize())
+            canonical.setdefault("AccessToken", {})["atkey:duplicate"] = old
+            self.cache.deserialize(json.dumps(canonical))
+            self.assertEqual(1, len(self.search(scheme, "Thumb")))
+            self.cache.remove_at(old)
+            self.assertEqual([], self.search())
+
+            cache = TokenCache()
+            cache._cache["AccessToken"] = {"old1": old, "old2": dict(old)}
+            cache.remove_at(old)
+            self.assertEqual([], list(cache.search("AccessToken", now=1000)))
+
+            self.cache.add(self.event(scheme, "renewed"), now=1001)
+            self.cache.remove_at(old)
+            self.assertEqual(["renewed"], [
+                entry["secret"] for entry in self.search(scheme, "Thumb")])
 
 
 class SerializableTokenCacheTestCase(unittest.TestCase):

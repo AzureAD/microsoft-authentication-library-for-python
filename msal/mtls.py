@@ -256,10 +256,10 @@ def _make_mtls_adapter(ssl_context=None, ssl_context_factory=None):
             super(_MtlsHTTPAdapter, self).__init__(max_retries=1)
 
         def send(self, request, **kwargs):
-            if ssl_context_factory is None:
-                return super(_MtlsHTTPAdapter, self).send(request, **kwargs)
             verify = _normalize_verify(kwargs.get("verify", True))
             kwargs["verify"] = verify
+            if ssl_context_factory is None:
+                return super(_MtlsHTTPAdapter, self).send(request, **kwargs)
             with self._adapter_lock:
                 if verify not in self._adapters:
                     self._adapters[verify] = _make_mtls_adapter(

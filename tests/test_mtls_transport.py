@@ -499,6 +499,43 @@ class TestMtlsCertificateChain(unittest.TestCase):
                     self.assertIs(session, client._ensure_session(
                         "https://mtlsauth.microsoft.com", verify=str(path)))
 
+    def test_token_transport_normalizes_per_request_ca_paths_before_send(self):
+        from cryptography.hazmat.primitives import serialization
+        from urllib3.response import HTTPResponse
+
+        expected = [self.root.public_bytes(serialization.Encoding.DER)]
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+                os.environ, {"REQUESTS_CA_BUNDLE": "", "CURL_CA_BUNDLE": ""}):
+            path = Path(directory) / "private-ca.pem"
+            path.write_bytes(self.root_pem)
+            for method in ("get", "post"):
+                for verify in (path, os.fsencode(path)):
+                    with self.subTest(method=method, verify=verify):
+                        observed = []
+
+                        def urlopen(pool, *args, **kwargs):
+                            self.assertIsInstance(pool.ca_certs, str)
+                            self.assertEqual(str(path), pool.ca_certs)
+                            context = pool.conn_kw["ssl_context"]
+                            context.load_verify_locations(cafile=pool.ca_certs)
+                            self.assertEqual(
+                                expected, context.get_ca_certs(binary_form=True))
+                            observed.append(context)
+                            return HTTPResponse(
+                                body=io.BytesIO(b"ok"), status=200, preload_content=False)
+
+                        client = mtls._MtlsHttpClient(self.chain_pem, self.key_pem)
+                        try:
+                            with patch(
+                                    "urllib3.connectionpool.HTTPSConnectionPool.urlopen",
+                                    autospec=True, side_effect=urlopen):
+                                response = getattr(client, method)(
+                                    "https://mtlsauth.microsoft.com/token", verify=verify)
+                            self.assertEqual(200, response.status_code)
+                            self.assertEqual(1, len(observed))
+                        finally:
+                            client.close()
+
     def test_binding_session_uses_only_effective_ca_bundle(self):
         from cryptography.hazmat.primitives import serialization
         from urllib3.response import HTTPResponse
