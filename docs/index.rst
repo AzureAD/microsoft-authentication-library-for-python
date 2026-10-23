@@ -243,6 +243,10 @@ Notes and requirements:
   ``os.PathLike`` objects (including ``pathlib.Path``); these replace the default
   trust roots. ``True`` or ``None`` selects the Requests CA bundle, while
   ``False`` disables server verification.
+* To request Bearer-over-mTLS instead, set
+  ``send_certificate_over_mtls=True`` in the certificate credential and omit
+  ``mtls_proof_of_possession``. The resulting token uses the ``Bearer`` scheme,
+  is not certificate-bound, and does not include ``binding_certificate``.
 
 mTLS-bound access tokens are persisted in a separate ``AccessToken_mTLS`` cache
 bucket. Older SDK versions ignore that bucket and retain their normal Bearer

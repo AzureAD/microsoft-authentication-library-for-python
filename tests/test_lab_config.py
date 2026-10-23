@@ -60,8 +60,8 @@ class TestRequiredCertificateConfiguration(unittest.TestCase):
             suite = unittest.defaultTestLoader.loadTestsFromTestCase(
                 test_e2e.CertificateScenariosTestCase)
             result = unittest.TextTestRunner(stream=io.StringIO()).run(suite)
-        self.assertEqual(3, result.testsRun)
-        self.assertEqual(3, len(result.errors))
+        self.assertEqual(5, result.testsRun)
+        self.assertEqual(5, len(result.errors))
         self.assertEqual([], result.skipped)
         self.assertEqual([], result.failures)
         for _, traceback in result.errors:
