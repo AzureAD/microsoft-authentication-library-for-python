@@ -56,6 +56,28 @@ def build_response(  # simulate a response from AAD
     return response
 
 
+class _CountingAccessTokenEntries(dict):
+    visits = 0
+
+    def __iter__(self):
+        for key in super().__iter__():
+            self.visits += 1
+            yield key
+
+    def keys(self):
+        return iter(self)
+
+    def items(self):
+        for item in super().items():
+            self.visits += 1
+            yield item
+
+    def values(self):
+        for value in super().values():
+            self.visits += 1
+            yield value
+
+
 class TokenCacheTestCase(unittest.TestCase):
 
     def setUp(self):
@@ -698,6 +720,25 @@ class ReleasedCacheCompatibilityTestCase(unittest.TestCase):
         return list(self.cache.search(
             "AccessToken", target=target, query=query, now=1000, **kwargs))
 
+    def canonical_cache(self, count):
+        cache = TokenCache()
+        buckets = {
+            name: _CountingAccessTokenEntries()
+            for name in ("AccessToken", "AccessToken_mTLS")}
+        for i in range(count):
+            scheme = ("Bearer", "ssh-cert", "mtls_pop")[i % 3]
+            entry = dict(
+                credential_type="AccessToken", token_type=scheme,
+                home_account_id=None, environment="login.example.com",
+                client_id="fixture{}".format(i), realm="tenant", target="s1 s2",
+                secret="fixture", cached_at="1000", expires_on="4600")
+            if scheme != "Bearer":
+                entry["key_id"] = "Thumb"
+            bucket = "AccessToken_mTLS" if scheme == "mtls_pop" else "AccessToken"
+            buckets[bucket][cache.key_makers["AccessToken"](**entry)] = entry
+        cache._cache.update(buckets)
+        return cache, buckets
+
     def released_application(self, cache):
         app = self.ReleasedApplication.__new__(self.ReleasedApplication)
         app.client_id = "client"
@@ -896,6 +937,10 @@ class ReleasedCacheCompatibilityTestCase(unittest.TestCase):
                 self.assertFalse(self.cache.has_state_changed)
                 self.cache.deserialize(persisted)
                 self.assertFalse(self.cache.has_state_changed)
+                self.cache.add(self.event(scheme, "renewed"), now=1001)
+                self.assertEqual(["renewed"], [
+                    entry["secret"] for entry in self.search(
+                        scheme, "Thumb", target=["s1"])])
 
     def test_deserialize_does_not_invoke_persistence_hooks(self):
         class PersistenceHookCache(SerializableTokenCache):
@@ -939,6 +984,10 @@ class ReleasedCacheCompatibilityTestCase(unittest.TestCase):
                             found = list(cache.search(
                                 "AccessToken", query={"token_type": scheme}, now=1000))
                         self.assertEqual(["cached"], [item["secret"] for item in found])
+                        cache.add(self.event(scheme, "renewed"), now=1001)
+                        found = list(cache.search(
+                            "AccessToken", query={"token_type": scheme}, now=1001))
+                        self.assertEqual(["renewed"], [item["secret"] for item in found])
                         cache.remove_at(found[0])
                         reloaded = PersistedTokenCache(persistence)
                         self.assertEqual([], list(reloaded.search(
@@ -968,6 +1017,122 @@ class ReleasedCacheCompatibilityTestCase(unittest.TestCase):
                     self.assertEqual(legacy, cache.has_state_changed)
                 self.assertEqual(count, len(list(cache.search(
                     "AccessToken", now=1000))))
+
+    def test_canonical_bound_writes_do_not_scan_either_bucket(self):
+        from msal import token_cache
+
+        original_identity = token_cache._access_token_identity
+        for count in (0, 100, 1000, 10000):
+            for mtls_only in (False, True):
+                with self.subTest(count=count, mtls_only=mtls_only):
+                    self.cache, buckets = self.canonical_cache(count)
+                    if mtls_only:
+                        self.cache._cache.pop("AccessToken")
+                    self.cache.add(self.event(
+                        "mtls_pop", "warmup", scopes=["warmup"]), now=1000)
+                    for entries in buckets.values():
+                        entries.visits = 0
+                    identity_calls = 0
+
+                    def counted_identity(entry):
+                        nonlocal identity_calls
+                        identity_calls += 1
+                        return original_identity(entry)
+
+                    with patch.object(token_cache, "_access_token_identity",
+                                      new=counted_identity):
+                        for scheme, key_id in (
+                                ("Bearer", None), ("ssh-cert", "Thumb"),
+                                ("mtls_pop", "Thumb")):
+                            for i in range(10):
+                                scopes = ["{}-{}".format(scheme, i)]
+                                for secret in ("inserted", "renewed"):
+                                    self.cache.add(self.event(
+                                        scheme, secret, key_id=key_id,
+                                        scopes=scopes), now=1001)
+                    self.assertEqual(
+                        0, sum(entries.visits for entries in buckets.values()))
+                    self.assertLessEqual(identity_calls, 120)
+                    for scheme in ("Bearer", "ssh-cert", "mtls_pop"):
+                        self.assertEqual(["renewed"], [
+                            entry["secret"] for entry in self.search(
+                                scheme, target=["{}-9".format(scheme)])])
+
+    def test_bound_token_population_work_is_linear(self):
+        from msal import token_cache
+
+        original_identity = token_cache._access_token_identity
+        for count in (100, 200, 400):
+            with self.subTest(count=count):
+                self.cache, buckets = self.canonical_cache(0)
+                identity_calls = 0
+
+                def counted_identity(entry):
+                    nonlocal identity_calls
+                    identity_calls += 1
+                    return original_identity(entry)
+
+                with patch.object(token_cache, "_access_token_identity",
+                                  new=counted_identity):
+                    for i in range(count):
+                        scheme = ("Bearer", "ssh-cert", "mtls_pop")[i % 3]
+                        self.cache.add(self.event(
+                            scheme, "inserted", scopes=["scope{}".format(i)],
+                            key_id=None if scheme == "Bearer" else "Thumb"),
+                            now=1000)
+                self.assertEqual(
+                    0, sum(entries.visits for entries in buckets.values()))
+                self.assertLessEqual(identity_calls, 2 * count)
+                self.assertEqual(count, sum(len(entries) for entries in buckets.values()))
+
+    def test_bound_writes_reconcile_replaced_native_cache_or_bucket(self):
+        for scheme in ("ssh-cert", "mtls_pop"):
+            for replacement in ("cache", "AccessToken", "AccessToken_mTLS"):
+                with self.subTest(scheme=scheme, replacement=replacement):
+                    self.cache = TokenCache()
+                    self.cache.add(self.event(scheme, "old"), now=1000)
+                    old = self.search(scheme, "Thumb")[0]
+                    self.cache.add(self.event(
+                        "mtls_pop", "other-certificate", key_id="thumb"), now=1000)
+                    if replacement == "cache":
+                        cache = dict(self.cache._cache)
+                        cache.setdefault("AccessToken", {})["legacy:old"] = old
+                        self.cache._cache = cache
+                    else:
+                        entries = dict(self.cache._cache.get(replacement, {}))
+                        entries["legacy:old"] = old
+                        self.cache._cache[replacement] = entries
+                    self.cache.add(self.event(scheme, "renewed"), now=1001)
+                    self.cache.remove_at(old)
+                    self.assertEqual(["renewed"], [
+                        entry["secret"] for entry in self.search(
+                            scheme, "Thumb", target=["s1"])])
+                    current = self.search(scheme, "Thumb")[0]
+                    self.cache.remove_at(current)
+                    self.assertEqual([], self.search(scheme, "Thumb"))
+                    self.cache.add(self.event(scheme, "after-removal"), now=1002)
+                    self.assertEqual(["after-removal"], [
+                        entry["secret"] for entry in self.search(scheme, "Thumb")])
+                    self.assertEqual(["other-certificate"], [
+                        entry["secret"] for entry in self.search("mtls_pop", "thumb")])
+
+    def test_bound_write_tracking_handles_shared_ssh_slots_and_stale_removal(self):
+        self.cache = TokenCache()
+        self.cache.add(self.event("ssh-cert", "old"), now=1000)
+        old = self.search("ssh-cert", "Thumb")[0]
+        for scheme, key_id in (
+                ("Bearer", None), ("ssh-cert", "thumb"), ("ssh-cert", "Thumb")):
+            self.cache.add(self.event(scheme, "replacement", key_id=key_id), now=1001)
+            self.cache.remove_at(old)
+            self.assertEqual(["replacement"], [
+                entry["secret"] for entry in self.search(scheme, key_id)])
+        self.cache.add(self.event("mtls_pop", "separate"), now=1001)
+        self.cache.add(self.event("Bearer", "ordinary", key_id=None), now=1002)
+        self.cache.add(self.event("SSH-CERT", "renewed"), now=1003)
+        self.assertEqual(["renewed"], [
+            entry["secret"] for entry in self.search("ssh-cert", "Thumb")])
+        self.assertEqual(["separate"], [
+            entry["secret"] for entry in self.search("mtls_pop", "Thumb")])
 
     def test_canonical_expiration_and_bulk_removal_do_not_scan_per_token(self):
         class CountingEntries(dict):

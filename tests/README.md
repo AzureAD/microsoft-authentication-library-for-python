@@ -134,6 +134,11 @@ Offline recorder/guard tests are separate from live evidence:
 python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_mtls_http_client.py
 ```
 
+Cache compatibility and write-scaling regressions run with
+`python -m pytest -q tests\test_token_cache.py`. They count actual access-token
+bucket visits and identity operations, requiring no steady-state bucket scans
+and linear population work while preserving legacy renewal and persistence.
+
 These checks use local fixtures or synthetic responses to verify strict
 binding, safe recording, failure gates, the exact required-method inventory,
 and real unittest-runner failure rather than skip when credentials are missing.

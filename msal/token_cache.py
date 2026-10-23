@@ -258,6 +258,8 @@ class TokenCache(object):
     def __init__(self):
         self._lock = threading.RLock()
         self._cache = {}
+        self._access_token_index = {}
+        self._access_token_index_state = None
         self.key_makers = {
             # Note: We have changed token key format before when ordering scopes;
             #       changing token key won't result in cache miss.
@@ -605,6 +607,32 @@ class TokenCache(object):
                 app_metadata["family_id"] = response.get("foci")
             self.modify(self.CredentialType.APP_METADATA, app_metadata, app_metadata)
 
+    def _get_access_token_index(self):
+        state = (
+            self._cache, self._cache.get(self.CredentialType.ACCESS_TOKEN),
+            self._cache.get(_ACCESS_TOKEN_MTLS))
+        # Persistence can replace the cache or either bucket, including legacy keys.
+        if self._access_token_index_state is None or any(
+                previous is not current for previous, current in zip(
+                    self._access_token_index_state, state)):
+            index = {}
+            for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS):
+                for key, entry in self._cache.get(bucket, {}).items():
+                    index.setdefault(_access_token_identity(entry), set()).add(
+                        (bucket, key))
+            self._access_token_index = index
+            self._access_token_index_state = state
+        return self._access_token_index
+
+    def _remove_access_token_entry(self, bucket, key):
+        entry = self._cache[bucket][key]
+        identity = _access_token_identity(entry)
+        locations = self._access_token_index[identity]
+        locations.remove((bucket, key))
+        self._cache[bucket].pop(key)
+        if not locations:
+            del self._access_token_index[identity]
+
     def modify(self, credential_type, old_entry, new_key_value_pairs=None):
         # Modify the specified old_entry with new_key_value_pairs,
         # or remove the old_entry if the new_key_value_pairs is None.
@@ -616,8 +644,10 @@ class TokenCache(object):
         key = self.key_makers[credential_type](**old_entry)
         with self._lock:
             is_at = credential_type == self.CredentialType.ACCESS_TOKEN
-            entries = self._cache.setdefault(
-                _access_token_bucket(old_entry) if is_at else credential_type, {})
+            if is_at:
+                index = self._get_access_token_index()
+            bucket = _access_token_bucket(old_entry) if is_at else credential_type
+            entries = self._cache.setdefault(bucket, {})
             if new_key_value_pairs:  # Update with them
                 entry = dict(
                     old_entry,  # Do not use entries[key] b/c it might not exist
@@ -625,31 +655,35 @@ class TokenCache(object):
                 if is_at:
                     if entry.get("key_id") is not None:
                         entry["key_id"] = _key_id_to_str(entry["key_id"])
+                    identity = _access_token_identity(entry)
                     if entry.get("key_id") or _token_type(entry) == "mtls_pop":
                         # Replace older bound-token keys, not other certificates
                         # or authentication schemes.
-                        identity = _access_token_identity(entry)
-                        for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS):
-                            stored = self._cache.get(bucket, {})
-                            for stored_key in [
-                                    k for k, value in stored.items()
-                                    if _access_token_identity(value) == identity]:
-                                stored.pop(stored_key)
-                    entries = self._cache.setdefault(_access_token_bucket(entry), {})
+                        for stored_bucket, stored_key in tuple(index.get(identity, ())):
+                            self._remove_access_token_entry(stored_bucket, stored_key)
+                    bucket = _access_token_bucket(entry)
+                    entries = self._cache.setdefault(bucket, {})
                     key = self.key_makers[credential_type](**entry)
+                    if key in entries:
+                        self._remove_access_token_entry(bucket, key)
                 entries[key] = entry
+                if is_at:
+                    index.setdefault(identity, set()).add((bucket, key))
             elif is_at:
                 if entries.get(key) == old_entry:
-                    entries.pop(key)
+                    self._remove_access_token_entry(bucket, key)
                 else:
                     # Persisted caches may still use an older AT key format.
-                    for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS):
-                        entries = self._cache.get(bucket, {})
-                        for stored_key in [
-                                k for k, entry in entries.items() if entry == old_entry]:
-                            entries.pop(stored_key)
+                    for stored_bucket, stored_key in tuple(
+                            index.get(_access_token_identity(old_entry), ())):
+                        if self._cache[stored_bucket].get(stored_key) == old_entry:
+                            self._remove_access_token_entry(stored_bucket, stored_key)
             else:  # Remove old_entry
                 entries.pop(key, None)
+            if is_at:
+                self._access_token_index_state = (
+                    self._cache, self._cache.get(self.CredentialType.ACCESS_TOKEN),
+                    self._cache.get(_ACCESS_TOKEN_MTLS))
 
     def remove_rt(self, rt_item):
         assert rt_item.get("credential_type") == self.CredentialType.REFRESH_TOKEN
@@ -724,6 +758,8 @@ class SerializableTokenCache(TokenCache):
         """Deserialize cache state, marking migrated bound-token layouts as changed."""
         with self._lock:
             self._cache = json.loads(state) if state else {}
+            self._access_token_index = {}
+            self._access_token_index_state = None
             original_access_tokens = {
                 bucket: dict(self._cache.get(bucket, {}))
                 for bucket in (self.CredentialType.ACCESS_TOKEN, _ACCESS_TOKEN_MTLS)}
