@@ -184,10 +184,10 @@ stages:
 #           certificate from Key Vault.
 #           Fork behaviour: the stage still runs on forked PRs, but the
 #           Key Vault retrieval and certificate decoding steps are skipped
-#           via `ne(System.PullRequest.IsFork, 'True')`. The pytest step then
-#           self-skips each test because LAB_APP_CLIENT_CERT_PFX_PATH is unset
-#           (see tests/test_e2e.py). Result: green stage on forks with all
-#           E2E tests reported as Skipped in the Tests tab.
+#           via `ne(System.PullRequest.IsFork, 'True')`. Required certificate
+#           scenarios then fail because LAB_APP_CLIENT_CERT_PFX_PATH is unset;
+#           missing credentials must not produce green skipped E2E coverage.
+#           Legacy optional scenarios retain their existing skips.
 # ═══════════════════════════════════════════════════════════════════════════
 - stage: E2ETests
   displayName: 'E2E tests'

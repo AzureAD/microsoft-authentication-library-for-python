@@ -35,6 +35,7 @@ from .oauth2cli.oidc import Prompt, IdTokenError
 from .sku import __version__
 from .token_cache import TokenCache, SerializableTokenCache
 from .auth_scheme import PopAuthScheme
+from .mtls import MtlsBindingContext
 from .managed_identity import (
     SystemAssignedManagedIdentity, UserAssignedManagedIdentity,
     ManagedIdentityClient,
@@ -46,4 +47,3 @@ from .managed_identity import (
 # 1. officially part of the MSAL public API, and
 # 2. can still be caught by the user code even if we change the module structure.
 from .oauth2cli.oauth2 import BrowserInteractionTimeoutError
-

@@ -2,11 +2,15 @@ import logging
 import base64
 import copy
 import json
+from pathlib import Path
+import subprocess
+import tempfile
 import time
 import warnings
+from unittest.mock import Mock, patch
 
 from msal.token_cache import (
-    TokenCache, SerializableTokenCache, _compute_ext_cache_key,
+    TokenCache, SerializableTokenCache, _compute_ext_cache_key, _key_id_to_str,
     _parse_claims_or_raise, _merge_claims,
 )
 from tests import unittest
@@ -34,7 +38,7 @@ def build_id_token(
 
 def build_response(  # simulate a response from AAD
         uid=None, utid=None,  # If present, they will form client_info
-        access_token=None, expires_in=3600, token_type="some type",
+        access_token=None, expires_in=3600, token_type="Bearer",
         **kwargs  # Pass-through: refresh_token, foci, id_token, error, refresh_in, ...
         ):
     response = {}
@@ -218,7 +222,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 'realm': 'contoso',
                 'secret': 'an access token',
                 'target': 's1 s2 s3',  # Sorted
-                'token_type': 'some type',
+                'token_type': 'Bearer',
             }
         self.assertEqual(access_token_entry, self.cache._cache["AccessToken"].get(
             self.at_key_maker(**access_token_entry)))
@@ -295,7 +299,7 @@ class TokenCacheTestCase(unittest.TestCase):
                 'realm': 'adfs',
                 'secret': 'an access token',
                 'target': 's1 s2 s3',  # Sorted
-                'token_type': 'some type',
+                'token_type': 'Bearer',
             }
         self.assertEqual(access_token_entry, self.cache._cache["AccessToken"].get(
             self.at_key_maker(**access_token_entry)))
@@ -355,7 +359,8 @@ class TokenCacheTestCase(unittest.TestCase):
         self.assertTrue(cached_at, "AT should be cached and searchable")
         return cached_at
 
-    def _test_data_should_be_saved_and_searchable_in_access_token(self, data):
+    def _test_data_should_be_saved_and_searchable_in_access_token(
+            self, data, token_type="some type"):
         scopes = ["s2", "s1", "s3"]  # Not in particular order
         now = 1000
         self.cache.add({
@@ -365,7 +370,7 @@ class TokenCacheTestCase(unittest.TestCase):
             "token_endpoint": "https://login.example.com/contoso/v2/token",
             "response": build_response(
                 uid="uid", utid="utid",  # client_info
-                expires_in=3600, access_token="an access token",
+                expires_in=3600, access_token="an access token", token_type=token_type,
                 refresh_token="a refresh token"),
             }, now=now)
         self.assertFoundAccessToken(scopes=scopes, data=data, now=now, query=dict(
@@ -380,12 +385,229 @@ class TokenCacheTestCase(unittest.TestCase):
         self._test_data_should_be_saved_and_searchable_in_access_token({"key_id": "1"})
 
     def test_access_tokens_with_different_key_id(self):
-        self._test_data_should_be_saved_and_searchable_in_access_token({"key_id": "1"})
-        self._test_data_should_be_saved_and_searchable_in_access_token({"key_id": "2"})
+        self._test_data_should_be_saved_and_searchable_in_access_token(
+            {"key_id": "1"}, token_type="mtls_pop")
+        self._test_data_should_be_saved_and_searchable_in_access_token(
+            {"key_id": "2"}, token_type="mtls_pop")
         self.assertEqual(
-            len(self.cache._cache["AccessToken"]),
-            1, """Historically, tokens are not keyed by key_id,
-so a new token overwrites the old one, and we would end up with 1 token in cache""")
+            len(list(self.cache.search("AccessToken", now=1000))),
+            2, """Access tokens are now isolated by key_id, so that a key-bound
+mTLS token never overwrites another one bound to a different
+key, nor a plain Bearer token for the same scope. We therefore keep 2 tokens.""")
+        # Each key-bound token remains independently searchable by its own key_id
+        for key_id in ("1", "2"):
+            self.assertFoundAccessToken(
+                scopes=["s1", "s2", "s3"], now=1000, query=dict(
+                    key_id=key_id,
+                    client_id="my_client_id",
+                    environment="login.example.com",
+                    realm="contoso",
+                    home_account_id="uid.utid",
+                ))
+
+    def test_key_id_is_coerced_to_str_for_cache_key(self):
+        # A bytes (or otherwise non-str) key_id must not raise a TypeError while
+        # building the AT cache key (the "-" + key_id concatenation once assumed
+        # str). This is defensive: current callers already pass an ASCII str.
+        self.assertEqual("THUMB", _key_id_to_str(b"THUMB"))
+        self.assertEqual("THUMB", _key_id_to_str("THUMB"))
+        self.assertEqual("123", _key_id_to_str(123))  # Any other type -> str()
+        # Bytes IDs are normalized before persistence and during lookup.
+        self.cache = SerializableTokenCache()
+        self.cache.add({
+            "client_id": "my_client_id", "scope": ["s1"],
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "data": {"key_id": b"THUMB"},
+            "response": build_response(access_token="bound_at"),
+            }, now=1000)
+        self.cache.deserialize(self.cache.serialize())
+        for key_id in (b"THUMB", "THUMB"):
+            entry = self.assertFoundAccessToken(
+                scopes=["s1"], now=1000, query=dict(
+                    client_id="my_client_id", environment="login.example.com",
+                    realm="contoso", home_account_id=None, key_id=key_id))
+            self.assertEqual("THUMB", entry["key_id"])
+        self.assertEqual(1, len(self.cache._cache["AccessToken"]))
+
+    def test_non_ascii_key_id_bytes_fail_explicitly(self):
+        with self.assertRaisesRegex(ValueError, "ASCII"):
+            self.cache.add({
+                "data": {"key_id": b"\xff"},
+                "response": build_response(access_token="bound_at"),
+                })
+
+    def test_bound_scope_suffix_cannot_collide_with_unbound_scope(self):
+        common = dict(
+            client_id="my_client_id",
+            token_endpoint="https://login.example.com/contoso/v2/token")
+        events = [
+            dict(common, scope=["scope"], data={"key_id": "abc"},
+                 response=build_response(access_token="bound_at", token_type="mtls_pop")),
+            dict(common, scope=["scope-abc"],
+                 response=build_response(access_token="bearer_at", token_type="Bearer")),
+            ]
+        query = dict(
+            client_id="my_client_id", environment="login.example.com",
+            realm="contoso", home_account_id=None)
+        for insertion_order in (events, list(reversed(events))):
+            with self.subTest(order=[e["scope"] for e in insertion_order]):
+                self.cache = TokenCache()
+                for event in insertion_order:
+                    self.cache.add(event, now=1000)
+                self.assertEqual(2, len(list(self.cache.search("AccessToken", now=1000))))
+                self.assertEqual("bearer_at", self.assertFoundAccessToken(
+                    scopes=["scope-abc"], query=query, now=1000)["secret"])
+                self.assertEqual("bound_at", self.assertFoundAccessToken(
+                    scopes=["scope"], query=dict(query, key_id="abc"),
+                    now=1000)["secret"])
+
+    def test_legacy_bound_entries_are_isolated_and_removable(self):
+        self.cache.add({
+            "client_id": "my_client_id", "scope": ["s1"],
+            "token_endpoint": "https://login.example.com/contoso/v2/token",
+            "data": {"key_id": "THUMB"},
+            "response": build_response(access_token="legacy_at", token_type="ssh-cert"),
+            }, now=1000)
+        entry = next(iter(self.cache._cache["AccessToken"].values()))
+        legacy_key = self.at_key_maker(**dict(entry, key_id=None))
+        for stored_key in (legacy_key, legacy_key + "-THUMB"):
+            for expired in (False, True):
+                with self.subTest(key=stored_key, expired=expired):
+                    self.cache = SerializableTokenCache()
+                    self.cache.deserialize(json.dumps({
+                        "AccessToken": {stored_key: entry}}))
+                    query = dict(
+                        client_id="my_client_id", environment="login.example.com",
+                        realm="contoso", home_account_id=None)
+                    self.assertEqual([], list(self.cache.search(
+                        "AccessToken", target=["s1"],
+                        query=dict(query, token_type="Bearer"), now=1000)))
+                    if expired:
+                        list(self.cache.search("AccessToken", now=5000))
+                    else:
+                        self.assertFoundAccessToken(
+                            scopes=["s1"], query=dict(query, key_id="THUMB"),
+                            now=1000)
+                        self.cache.remove_at(entry)
+                    self.assertEqual({}, self.cache._cache["AccessToken"])
+                    self.assertTrue(self.cache.has_state_changed)
+
+    def test_fast_lookup_checks_stored_scope(self):
+        entry = {
+            "credential_type": "AccessToken", "home_account_id": None,
+            "environment": "env", "client_id": "cid", "realm": "tenant",
+            "target": "different", "secret": "wrong_at", "expires_on": "4600",
+            }
+        query = dict(
+            home_account_id=None, environment="env", client_id="cid", realm="tenant")
+        key = self.at_key_maker(**dict(query, target="requested"))
+        self.cache._cache["AccessToken"] = {key: entry}
+        self.assertEqual([], list(self.cache.search(
+            "AccessToken", target=["requested"], query=query, now=1000)))
+
+    def test_case_distinct_key_ids_remain_distinct_after_serialization(self):
+        self.cache = SerializableTokenCache()
+        for key_id in ("Thumb", "thumb"):
+            self.cache.add({
+                "scope": ["s1"], "data": {"key_id": key_id},
+                "response": build_response(access_token=key_id, token_type="mtls_pop"),
+                }, now=1000)
+        self.cache.deserialize(self.cache.serialize())
+        for key_id in ("Thumb", "thumb"):
+            entries = list(self.cache.search(
+                "AccessToken", target=["s1"], query={"key_id": key_id}, now=1000))
+            self.assertEqual([key_id], [entry["secret"] for entry in entries])
+
+    def test_bearer_and_mtls_pop_tokens_coexist_and_isolate(self):
+        # The crux of mTLS PoP cache isolation (plan C6): a Bearer token and an
+        # mtls_pop token for the SAME app/scope/tenant must coexist, and an
+        # unkeyed (Bearer) lookup must never return the key-bound mtls_pop token.
+        scopes = ["s2", "s1", "s3"]
+        now = 1000
+        common = dict(
+            client_id="my_client_id", scope=scopes,
+            token_endpoint="https://login.example.com/contoso/v2/token")
+        # 1) Store a plain Bearer AT (no key_id)
+        self.cache.add(dict(common, data={}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="bearer_at", token_type="Bearer")), now=now)
+        # 2) Store an mtls_pop AT bound to a cert key_id, same scope
+        self.cache.add(dict(common, data={"key_id": "THUMB"}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="mtls_at", token_type="mtls_pop")), now=now)
+        self.assertEqual(
+            2, len(list(self.cache.search("AccessToken", now=now))),
+            "Bearer and mtls_pop ATs for the same scope must be separate entries")
+        base_query = dict(
+            client_id="my_client_id", environment="login.example.com",
+            realm="contoso", home_account_id="uid.utid")
+        # A Bearer lookup (no key_id) must return ONLY the Bearer token
+        bearer = self.assertFoundAccessToken(
+            scopes=scopes, now=now, query=dict(base_query, token_type="Bearer"))
+        self.assertEqual("bearer_at", bearer["secret"])
+        self.assertEqual("Bearer", bearer["token_type"])
+        # A keyed lookup must return the mtls_pop token
+        pop = self.assertFoundAccessToken(
+            scopes=scopes, now=now,
+            query=dict(base_query, key_id="THUMB", token_type="mtls_pop"))
+        self.assertEqual("mtls_at", pop["secret"])
+        self.assertEqual("mtls_pop", pop["token_type"])
+
+    def test_broad_search_without_target_enumerates_key_bound_tokens(self):
+        # Removal paths enumerate ATs by account with no target and no key_id.
+        # Such a removal search must still surface key-bound (mtls_pop) ATs;
+        # otherwise sign-out / remove_account would leave them behind. Regression
+        # guard for the key_id isolation gate.
+        scopes = ["s2", "s1", "s3"]
+        now = 1000
+        common = dict(
+            client_id="my_client_id", scope=scopes,
+            token_endpoint="https://login.example.com/contoso/v2/token")
+        self.cache.add(dict(common, data={}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="bearer_at", token_type="Bearer")), now=now)
+        self.cache.add(dict(common, data={"key_id": "THUMB"}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="mtls_at", token_type="mtls_pop")), now=now)
+        owned_by_account = dict(
+            client_id="my_client_id", environment="login.example.com",
+            realm="contoso", home_account_id="uid.utid")
+        # Public enumeration requires no opt-in to include both token types.
+        found = list(self.cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, query=owned_by_account, now=now))
+        secrets = {at["secret"] for at in found}
+        self.assertIn("mtls_at", secrets,
+            "A public search must enumerate key-bound ATs so they can be removed")
+        self.assertIn("bearer_at", secrets)
+
+    def test_empty_scopes_for_use_lookup_does_not_leak_key_bound_token(self):
+        # A for-use lookup with EMPTY scopes is also target-less, but unlike a
+        # removal enumeration (for_removal=True) it must NOT receive a key-bound
+        # (mtls_pop) token it did not ask for. Isolation is unconditional for
+        # for-use lookups, mirroring MSAL .NET (token-type isolation is never
+        # gated on scope state). Regression for the empty-scopes bypass.
+        scopes = ["s2", "s1", "s3"]
+        now = 1000
+        common = dict(
+            client_id="my_client_id", scope=scopes,
+            token_endpoint="https://login.example.com/contoso/v2/token")
+        self.cache.add(dict(common, data={}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="bearer_at", token_type="Bearer")), now=now)
+        self.cache.add(dict(common, data={"key_id": "THUMB"}, response=build_response(
+            uid="uid", utid="utid", expires_in=3600,
+            access_token="mtls_at", token_type="mtls_pop")), now=now)
+        base_query = dict(
+            client_id="my_client_id", environment="login.example.com",
+            realm="contoso", home_account_id="uid.utid", token_type="Bearer")
+        # Empty scopes (target=[]) + no key_id + no for_removal -> only the unkeyed AT
+        found = list(self.cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, target=[],
+            query=base_query, now=now))
+        secrets = {at["secret"] for at in found}
+        self.assertNotIn("mtls_at", secrets,
+            "Empty-scope for-use lookup must not leak the key-bound mtls_pop token")
+        self.assertIn("bearer_at", secrets)
 
     def test_refresh_in_should_be_recorded_as_refresh_on(self):  # Sounds weird. Yep.
         scopes = ["s2", "s1", "s3"]  # Not in particular order
@@ -424,6 +646,380 @@ so a new token overwrites the old one, and we would end up with 1 token in cache
             self.cache._cache["RefreshToken"].get(
                 'uid.utid-login.example.com-refreshtoken-my_client_id--s2 s1 s3')
             )
+
+
+class ReleasedCacheCompatibilityTestCase(unittest.TestCase):
+
+    def released_cache(self):
+        cls = type(self)
+        if hasattr(cls, "ReleasedCache"):
+            return cls.ReleasedCache()
+        try:
+            source = subprocess.check_output(
+                ["git", "show", "1.39.0:msal/token_cache.py"],
+                cwd=str(Path(__file__).resolve().parents[1]),
+                stderr=subprocess.DEVNULL).decode("utf-8-sig")
+            application_source = subprocess.check_output(
+                ["git", "show", "1.39.0:msal/application.py"],
+                cwd=str(Path(__file__).resolve().parents[1]),
+                stderr=subprocess.DEVNULL).decode("utf-8-sig")
+        except (OSError, subprocess.CalledProcessError):
+            raise unittest.SkipTest("Compatibility tests require the local 1.39.0 tag")
+        namespace = {"__name__": "msal._released_token_cache", "__package__": "msal"}
+        exec(compile(source, "1.39.0:msal/token_cache.py", "exec"), namespace)
+        cls.ReleasedCache = namespace["SerializableTokenCache"]
+        application = {"__name__": "msal._released_application", "__package__": "msal"}
+        exec(compile(application_source, "1.39.0:msal/application.py", "exec"), application)
+        application["TokenCache"] = namespace["TokenCache"]
+        cls.ReleasedApplication = application["ConfidentialClientApplication"]
+        return cls.ReleasedCache()
+
+    def setUp(self):
+        self.cache = SerializableTokenCache()
+        self.query = dict(
+            home_account_id=None, environment="login.example.com",
+            client_id="client", realm="tenant")
+
+    def event(self, scheme, secret, key_id="Thumb", scopes=None):
+        return {
+            "client_id": "client",
+            "token_endpoint": "https://login.example.com/tenant/v2/token",
+            "scope": scopes or ["s1", "s2"],
+            "data": {"key_id": key_id} if key_id is not None else {},
+            "response": build_response(access_token=secret, token_type=scheme),
+        }
+
+    def search(self, scheme=None, key_id=None, target=None, **kwargs):
+        query = dict(self.query)
+        if scheme is not None:
+            query["token_type"] = scheme
+        if key_id is not None:
+            query["key_id"] = key_id
+        return list(self.cache.search(
+            "AccessToken", target=target, query=query, now=1000, **kwargs))
+
+    def released_application(self, cache):
+        app = self.ReleasedApplication.__new__(self.ReleasedApplication)
+        app.client_id = "client"
+        app.token_cache = cache
+        app.authority = Mock(instance="login.example.com", tenant="tenant")
+        app._enable_broker = False
+        app._build_telemetry_context = Mock()
+        app._get_authority_aliases = Mock(return_value=[])
+        app._acquire_token_for_client = Mock(return_value={"access_token": "from-network"})
+        return app
+
+    def test_released_writer_and_reader_keep_legacy_keys_and_cleanup(self):
+        for scheme, key_id in (("Bearer", None), ("ssh-cert", "Thumb")):
+            with self.subTest(scheme=scheme):
+                released = self.released_cache()
+                event = self.event(scheme, "old", key_id=key_id)
+                released.add(event, now=1000)
+                released_keys = set(json.loads(released.serialize())["AccessToken"])
+                self.cache.deserialize(released.serialize())
+                self.assertFalse(self.cache.has_state_changed)
+                self.cache.add(self.event(scheme, "renewed", key_id=key_id), now=1000)
+                self.cache.add(self.event("mtls_pop", "mtls"), now=1000)
+                self.assertEqual(
+                    released_keys, set(json.loads(self.cache.serialize())["AccessToken"]))
+                released.deserialize(self.cache.serialize())
+                found = list(released.search(
+                    "AccessToken", target=["s1"], query=self.query, now=1000))
+                self.assertEqual(["renewed"], [entry["secret"] for entry in found])
+                with patch("time.time", return_value=1000):
+                    self.released_application(released).remove_tokens_for_client()
+                self.assertEqual([], list(released.search(
+                    "AccessToken", query=self.query, now=1000)))
+                self.cache.deserialize(released.serialize())
+                self.assertEqual(["mtls"], [
+                    entry["secret"] for entry in self.search("mtls_pop", "Thumb")])
+
+    def test_released_ordinary_lookups_cannot_return_mtls(self):
+        self.cache.add(self.event("mTlS_pOp", "mtls"), now=1000)
+        released = self.released_cache()
+        for with_bearer in (False, True):
+            if with_bearer:
+                self.cache.add(self.event("Bearer", "bearer", key_id=None), now=1000)
+            released.deserialize(self.cache.serialize())
+            for target in (["s1", "s2"], ["s1"], []):
+                for query in (self.query, {"client_id": "client"}):
+                    with self.subTest(bearer=with_bearer, target=target, query=query):
+                        self.assertEqual(
+                            ["bearer"] if with_bearer else [],
+                            [entry["secret"] for entry in released.search(
+                                "AccessToken", target=target, query=query, now=1000)])
+
+    def test_actual_released_ordinary_acquisition_cannot_use_mtls(self):
+        self.cache.add(self.event("mtls_pop", "mtls"), now=1000)
+        for with_bearer in (False, True):
+            if with_bearer:
+                self.cache.add(self.event("Bearer", "bearer", key_id=None), now=1000)
+            released = self.released_cache()
+            released.deserialize(self.cache.serialize())
+            for target in (["s1", "s2"], ["s1"], []):
+                app = self.released_application(released)
+                with patch("time.time", return_value=1000):
+                    result = app._acquire_token_silent_from_cache_and_possibly_refresh_it(
+                        target, None, app.authority)
+                self.assertEqual(
+                    "bearer" if with_bearer else "from-network", result["access_token"])
+                self.assertEqual(not with_bearer, app._acquire_token_for_client.called)
+
+    def test_released_ssh_renewal_and_subset_lookup_have_no_stale_duplicate(self):
+        released = self.released_cache()
+        released.add(self.event("ssh-cert", "old"), now=1000)
+        self.cache.deserialize(released.serialize())
+        self.cache.add(self.event("SSH-CERT", "renewed"), now=1001)
+        for target in (["s1", "s2"], ["s1"], []):
+            self.assertEqual(["renewed"], [
+                entry["secret"] for entry in self.search(
+                    "sSh-CeRt", "Thumb", target=target)])
+        self.assertEqual(1, len(json.loads(self.cache.serialize())["AccessToken"]))
+
+    def test_public_ssh_enumeration_and_cleanup_need_no_key_id_or_flag(self):
+        self.cache.add(self.event("SSH-CERT", "ssh"), now=1000)
+        self.cache.add(self.event("mtls_pop", "mtls"), now=1000)
+        for target in (["s1", "s2"], ["s1"], []):
+            self.assertEqual(["ssh"], [
+                entry["secret"] for entry in self.search("ssh-cert", target=target)])
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                self.assertEqual(["ssh"], [entry["secret"] for entry in self.cache.find(
+                    "AccessToken", target=target,
+                    query=dict(self.query, token_type="ssh-cert"), now=1000)])
+        found = self.search()
+        self.assertEqual({"ssh", "mtls"}, {entry["secret"] for entry in found})
+        for entry in found:
+            self.cache.remove_at(entry)
+        self.assertEqual([], self.search())
+        self.assertEqual([], self.search(for_removal=True))
+
+    def test_same_key_id_isolated_by_scheme_in_both_insertion_orders(self):
+        events = [self.event("sSh-CeRt", "ssh"), self.event("MtLs_PoP", "mtls")]
+        for ordered in (events, list(reversed(events))):
+            self.cache = SerializableTokenCache()
+            for event in ordered:
+                self.cache.add(event, now=1000)
+            self.cache.deserialize(self.cache.serialize())
+            for target in (["s1", "s2"], ["s1"], []):
+                for scheme, secret in (("SSH-CERT", "ssh"), ("MTLS_POP", "mtls")):
+                    self.assertEqual([secret], [
+                        entry["secret"] for entry in self.search(
+                            scheme, "Thumb", target=target)])
+                self.assertEqual([], self.search("Bearer", target=target))
+                self.assertEqual(["mtls"], [
+                    entry["secret"] for entry in self.search("mtls_pop", target=target)])
+            self.cache.remove_at(self.search("ssh-cert")[0])
+            self.assertEqual(["mtls"], [
+                entry["secret"] for entry in self.search("mtls_pop", "Thumb")])
+
+    def test_missing_legacy_token_type_matches_bearer_case_insensitively(self):
+        released = self.released_cache()
+        released.add(self.event("Bearer", "bearer", key_id=None), now=1000)
+        state = json.loads(released.serialize())
+        for entry in state["AccessToken"].values():
+            entry.pop("token_type")
+        self.cache.deserialize(json.dumps(state))
+        for target in (["s1", "s2"], ["s1"], []):
+            self.assertEqual(["bearer"], [
+                entry["secret"] for entry in self.search("bEaReR", target=target)])
+            self.assertEqual([], self.search("ssh-cert", target=target))
+
+    def test_pre_fix_serialized_state_migrates_and_renews_without_losing_certs(self):
+        released = self.released_cache()
+        released.add(self.event("ssh-cert", "ssh-old"), now=1000)
+        ssh = next(iter(json.loads(released.serialize())["AccessToken"].values()))
+        mtls = dict(ssh, token_type="mtls_pop", secret="mtls-old")
+        other_cert = dict(mtls, key_id="thumb", secret="other-cert")
+        newer_mtls = dict(mtls, cached_at="1002", secret="mtls-newer")
+        self.cache.deserialize(json.dumps({
+            "AccessToken": {
+                "atkey:ssh": ssh, "atkey:mtls": mtls, "atkey:other": other_cert},
+            "AccessToken_mTLS": {"atkey:newer": newer_mtls},
+        }))
+        state = json.loads(self.cache.serialize())
+        self.assertEqual(
+            {released.key_makers["AccessToken"](**ssh)}, set(state["AccessToken"]))
+        reader = self.released_cache()
+        reader.deserialize(self.cache.serialize())
+        self.assertEqual(["ssh-old"], [entry["secret"] for entry in reader.search(
+            "AccessToken", target=["s1"], query=self.query, now=1000)])
+        self.assertEqual(["mtls-newer"], [
+            entry["secret"] for entry in self.search("mtls_pop", "Thumb")])
+        self.cache.add(self.event("SSH-CERT", "ssh-renewed"), now=1003)
+        self.cache.add(self.event("MTLS_POP", "mtls-renewed"), now=1003)
+        for target in (["s1", "s2"], ["s1"], []):
+            self.assertEqual(["ssh-renewed"], [
+                entry["secret"] for entry in self.search(
+                    "ssh-cert", "Thumb", target=target)])
+            self.assertEqual(["mtls-renewed"], [
+                entry["secret"] for entry in self.search(
+                    "mtls_pop", "Thumb", target=target)])
+            self.assertEqual(["other-cert"], [
+                entry["secret"] for entry in self.search(
+                    "mtls_pop", "thumb", target=target)])
+        self.assertEqual(3, len(self.search()))
+        self.assertEqual([], list(self.cache.search("AccessToken", now=5000)))
+        self.assertEqual([], self.search())
+
+    def test_native_cache_renewal_replaces_noncanonical_bound_keys(self):
+        for scheme in ("ssh-cert", "mtls_pop"):
+            with self.subTest(scheme=scheme):
+                self.cache = TokenCache()
+                self.cache.add(self.event(scheme, "old"), now=1000)
+                old = self.search(scheme, "Thumb")[0]
+                self.cache._cache["AccessToken"] = {"atkey:old": old}
+                self.cache.add(self.event("mtls_pop", "other", key_id="thumb"), now=1000)
+                self.cache.add(self.event(scheme, "renewed"), now=1001)
+                self.assertEqual(["renewed"], [
+                    entry["secret"] for entry in self.search(
+                        scheme, "Thumb", target=["s1"])])
+                self.assertEqual(["other"], [
+                    entry["secret"] for entry in self.search(
+                        "mtls_pop", "thumb", target=["s1"])])
+                self.assertEqual(2, len(self.search()))
+
+    def test_deserialize_marks_migration_dirty_until_persisted(self):
+        for scheme in ("ssh-cert", "mtls_pop"):
+            with self.subTest(scheme=scheme):
+                self.cache = SerializableTokenCache()
+                self.cache.add(self.event(scheme, "cached"), now=1000)
+                entry = self.search(scheme, "Thumb")[0]
+                self.cache.deserialize(json.dumps({
+                    "AccessToken": {"atkey:pre-fix": entry}}))
+                self.assertTrue(self.cache.has_state_changed)
+                self.assertEqual(["cached"], [
+                    item["secret"] for item in self.search(
+                        scheme, "Thumb", target=["s1", "s2"])])
+                self.assertTrue(self.cache.has_state_changed)
+                persisted = self.cache.serialize()
+                self.assertFalse(self.cache.has_state_changed)
+                self.cache.deserialize(persisted)
+                self.assertFalse(self.cache.has_state_changed)
+
+    def test_deserialize_does_not_invoke_persistence_hooks(self):
+        class PersistenceHookCache(SerializableTokenCache):
+            def modify(self, *args, **kwargs):
+                raise AssertionError("deserialize reentered a persistence hook")
+
+        for scheme in ("ssh-cert", "mtls_pop"):
+            self.cache = SerializableTokenCache()
+            self.cache.add(self.event(scheme, "cached"), now=1000)
+            canonical = self.cache.serialize()
+            entry = self.search(scheme, "Thumb")[0]
+            for state in (canonical, json.dumps({
+                    "AccessToken": {"atkey:old": entry}})):
+                with self.subTest(scheme=scheme, state=state):
+                    cache = PersistenceHookCache()
+                    cache.deserialize(state)
+                    self.assertEqual(["cached"], [
+                        item["secret"] for item in cache.search(
+                            "AccessToken", query={"token_type": scheme}, now=1000)])
+
+    def test_persisted_cache_reloads_canonical_and_legacy_bound_tokens(self):
+        try:
+            from msal_extensions import FilePersistence, PersistedTokenCache
+        except ImportError:
+            self.skipTest("MSAL Extensions is not installed")
+
+        for scheme in ("ssh-cert", "mtls_pop"):
+            self.cache = SerializableTokenCache()
+            self.cache.add(self.event(scheme, "cached"), now=1000)
+            canonical = self.cache.serialize()
+            entry = self.search(scheme, "Thumb")[0]
+            for state in (canonical, json.dumps({
+                    "AccessToken": {"atkey:old": entry}})):
+                with self.subTest(scheme=scheme, state=state):
+                    with tempfile.TemporaryDirectory() as directory:
+                        persistence = FilePersistence(str(Path(directory) / "cache"))
+                        persistence.save(state)
+                        cache = PersistedTokenCache(persistence)
+                        with patch.object(cache, "modify", side_effect=AssertionError(
+                                "reload must not acquire a persistence lock")):
+                            found = list(cache.search(
+                                "AccessToken", query={"token_type": scheme}, now=1000))
+                        self.assertEqual(["cached"], [item["secret"] for item in found])
+                        cache.remove_at(found[0])
+                        reloaded = PersistedTokenCache(persistence)
+                        self.assertEqual([], list(reloaded.search(
+                            "AccessToken", now=1000)))
+
+    def test_mtls_reload_identity_work_is_linear(self):
+        from msal import token_cache
+
+        self.cache.add(self.event("mtls_pop", "cached"), now=1000)
+        sample = self.search("mtls_pop", "Thumb")[0]
+        for legacy in (False, True):
+            for count in (50, 100):
+                entries = {}
+                for i in range(count):
+                    entry = dict(sample, target="scope{}".format(i))
+                    key = ("atkey:old{}".format(i) if legacy else
+                           self.cache.key_makers["AccessToken"](**entry))
+                    entries[key] = entry
+                state = json.dumps({
+                    "AccessToken" if legacy else "AccessToken_mTLS": entries})
+                with self.subTest(legacy=legacy, count=count), patch.object(
+                        token_cache, "_access_token_identity",
+                        wraps=token_cache._access_token_identity) as identity:
+                    cache = SerializableTokenCache()
+                    cache.deserialize(state)
+                    self.assertLessEqual(identity.call_count, 4 * count)
+                    self.assertEqual(legacy, cache.has_state_changed)
+                self.assertEqual(count, len(list(cache.search(
+                    "AccessToken", now=1000))))
+
+    def test_canonical_expiration_and_bulk_removal_do_not_scan_per_token(self):
+        class CountingEntries(dict):
+            scanned = 0
+
+            def items(self):
+                for item in super().items():
+                    type(self).scanned += 1
+                    yield item
+
+        for scheme in ("Bearer", "mtls_pop"):
+            self.cache = SerializableTokenCache()
+            self.cache.add(self.event(scheme, "cached"), now=1000)
+            sample = self.search(scheme, "Thumb")[0]
+            for expired in (False, True):
+                cache = TokenCache()
+                entries = CountingEntries()
+                for i in range(100):
+                    entry = dict(sample, target="scope{}".format(i))
+                    entries[cache.key_makers["AccessToken"](**entry)] = entry
+                bucket = "AccessToken_mTLS" if scheme == "mtls_pop" else "AccessToken"
+                cache._cache[bucket] = entries
+                CountingEntries.scanned = 0
+                with self.subTest(scheme=scheme, expired=expired):
+                    found = list(cache.search(
+                        "AccessToken", now=5000 if expired else 1000))
+                    for entry in found:
+                        cache.remove_at(entry)
+                    self.assertEqual({}, entries)
+                    self.assertLessEqual(CountingEntries.scanned, 300)
+
+    def test_removal_preserves_replacements_and_cleans_legacy_duplicates(self):
+        for scheme in ("ssh-cert", "mtls_pop"):
+            self.cache = SerializableTokenCache()
+            self.cache.add(self.event(scheme, "old"), now=1000)
+            old = self.search(scheme, "Thumb")[0]
+            canonical = json.loads(self.cache.serialize())
+            canonical.setdefault("AccessToken", {})["atkey:duplicate"] = old
+            self.cache.deserialize(json.dumps(canonical))
+            self.assertEqual(1, len(self.search(scheme, "Thumb")))
+            self.cache.remove_at(old)
+            self.assertEqual([], self.search())
+
+            cache = TokenCache()
+            cache._cache["AccessToken"] = {"old1": old, "old2": dict(old)}
+            cache.remove_at(old)
+            self.assertEqual([], list(cache.search("AccessToken", now=1000)))
+
+            self.cache.add(self.event(scheme, "renewed"), now=1001)
+            self.cache.remove_at(old)
+            self.assertEqual(["renewed"], [
+                entry["secret"] for entry in self.search(scheme, "Thumb")])
 
 
 class SerializableTokenCacheTestCase(unittest.TestCase):
@@ -674,6 +1270,27 @@ class TestExtCacheKeyIsolation(unittest.TestCase):
                    "realm": "tenant", "home_account_id": None}))
         self.assertEqual(1, len(at_entries))
         self.assertEqual("regular_token", at_entries[0]["secret"])
+
+    def test_empty_scopes_lookup_does_not_leak_ext_bound_token(self):
+        # A for-use lookup with EMPTY scopes is target-less, but must NOT receive
+        # an ext_cache_key-bound (FMI) token it did not ask for. Isolation is
+        # unconditional for for-use lookups (for_removal defaults False).
+        cache = TokenCache()
+        cache.add(self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "fmi_token", data={"fmi_path": "some/path"}))
+        cache.add(self._build_event(
+            "cid", ["s1"], "https://login.example.com/tenant/v2/token",
+            "regular_token"))
+        # Empty scopes + no ext_cache_key + no for_removal -> only the regular token
+        at_entries = list(cache.search(
+            TokenCache.CredentialType.ACCESS_TOKEN, target=[],
+            query={"client_id": "cid", "environment": "login.example.com",
+                   "realm": "tenant", "home_account_id": None}))
+        secrets = {at["secret"] for at in at_entries}
+        self.assertNotIn("fmi_token", secrets,
+            "Empty-scope for-use lookup must not leak the ext-bound FMI token")
+        self.assertIn("regular_token", secrets)
 
 
 class TestCrossMsalCacheKeyCompatibility(unittest.TestCase):
