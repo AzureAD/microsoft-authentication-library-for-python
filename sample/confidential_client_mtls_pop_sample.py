@@ -83,12 +83,33 @@ def _print_result_summary(result, header):
     print(header)
     if "access_token" in result:
         print("  acquired:                     yes")
-        print("  token_type is mtls_pop:      ", result.get("token_type") == "mtls_pop")
+        print("  token_type:                  ", result.get("token_type"))
         print("  carries binding_certificate: ", "binding_certificate" in result)
         print("  served from cache:           ", result.get("token_source") == "cache")
     else:
         print("  acquired:                     no")
         print("  (inspect result['error'] / result['error_description'] to diagnose)")
+
+
+def _call_resource(result):
+    resource_url = os.getenv("RESOURCE_URL")
+    if not resource_url or "access_token" not in result:
+        return
+    binding = result["binding_certificate"]
+    with binding.create_requests_session() as session:
+        response = session.get(
+            resource_url,
+            headers={
+                "Authorization":
+                    "{} {}".format(
+                        result["token_type"],
+                        result["access_token"],
+                    ),
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        print("  resource call status:        ", response.status_code)
 
 
 def vanilla_sni_mtls_pop():
@@ -108,19 +129,22 @@ def vanilla_sni_mtls_pop():
     )
 
     _print_result_summary(result, "Vanilla SN/I -> mTLS PoP result:")
-    resource_url = os.getenv("RESOURCE_URL")
-    if resource_url and "access_token" in result:
-        binding = result["binding_certificate"]
-        with binding.create_requests_session() as session:
-            response = session.get(
-                resource_url,
-                headers={
-                    "Authorization": "mtls_pop " + result["access_token"],
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            print("  resource call status:        ", response.status_code)
+    _call_resource(result)
+    return result
+
+
+def bearer_over_mtls():
+    """Acquire an ordinary Bearer token while authenticating over mTLS."""
+    credential = _build_cert_credential()
+    credential["send_certificate_over_mtls"] = True
+    app = msal.ConfidentialClientApplication(
+        os.environ["CLIENT_ID"],
+        authority=os.environ["AUTHORITY"],
+        client_credential=credential,
+        azure_region=os.getenv("AZURE_REGION"),
+    )
+    result = app.acquire_token_for_client(os.environ["SCOPE"].split())
+    _print_result_summary(result, "SN/I -> Bearer-over-mTLS result:")
     return result
 
 
@@ -196,6 +220,8 @@ def fic_two_leg_over_mtls_pop():
 if __name__ == "__main__":
     print("=== Vanilla SN/I -> mTLS PoP ===")
     vanilla_sni_mtls_pop()
+    print("\n=== SN/I -> Bearer-over-mTLS ===")
+    bearer_over_mtls()
 
     if os.getenv("RUN_FIC_SAMPLE"):
         print("\n=== FIC two-leg over mTLS PoP ===")

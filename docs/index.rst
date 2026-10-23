@@ -257,6 +257,10 @@ Notes and requirements:
   downstream resource connection. If leg 2 does not request PoP, its bound
   assertion still travels as ``jwt-pop`` over mTLS, but the final Bearer token
   is not certificate-bound and does not include ``binding_certificate``.
+* To request Bearer-over-mTLS instead, set
+  ``send_certificate_over_mtls=True`` in the certificate credential and omit
+  ``mtls_proof_of_possession``. The resulting token uses the ``Bearer`` scheme,
+  is not certificate-bound, and does not include ``binding_certificate``.
 
 mTLS-bound access tokens are persisted in a separate ``AccessToken_mTLS`` cache
 bucket. Older SDK versions ignore that bucket and retain their normal Bearer

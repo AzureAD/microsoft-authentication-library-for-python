@@ -86,6 +86,11 @@ PoP acquisition with a certificate-bound Graph resource call and cache reuse,
 and ordinary certificate Bearer authentication in `westus3`. The X509 matrix
 uses client `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e` in tenant
 `bea21ebe-8b64-4d06-9f6d-6a889b120a7c`, matching the .NET and Go lab setup.
+
+Bearer-over-mTLS also has a live client-credentials case for `westus3` and
+`https://vault.azure.net/.default`. OBO, refresh-token, and authorization-code
+coverage captures request construction only, matching the reference SDKs'
+live-app enablement limitation; it does not prove live token issuance.
 They do not require fetching unrelated user configuration from Key Vault.
 Legacy interactive and other optional E2E skips are unchanged.
 

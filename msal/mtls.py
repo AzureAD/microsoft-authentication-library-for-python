@@ -236,6 +236,10 @@ class _MtlsHttpClient(object):
     def _request(self, method, url, **kwargs):
         from requests.exceptions import HTTPError
 
+        if "cert" in kwargs:
+            raise ValueError(
+                "MSAL's mTLS transport does not support a cert override. "
+                "Use the configured client certificate.")
         if self._timeout is not None:
             kwargs.setdefault("timeout", self._timeout)
         # The certificate and token request must stay at the selected authority.
