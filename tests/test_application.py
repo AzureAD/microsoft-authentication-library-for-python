@@ -2353,6 +2353,74 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertIsInstance(
             result.get("binding_certificate"), msal.MtlsBindingContext)
 
+    def test_certificate_failure_does_not_throttle_replacement(self):
+        from datetime import datetime, timedelta, timezone
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from msal.application import _load_mtls_cert_material
+
+        material = _load_mtls_cert_material(_MTLS_CERT_CRED)
+        key = serialization.load_pem_private_key(
+            material["private_key_pem"], password=None)
+        original = x509.load_pem_x509_certificate(material["cert_pem"])
+        now = datetime.now(timezone.utc)
+        replacement = (x509.CertificateBuilder()
+            .subject_name(original.subject).issuer_name(original.subject)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(days=1))
+            .not_valid_after(now + timedelta(days=1))
+            .sign(key, hashes.SHA256()))
+        credential = {
+            "private_key": material["private_key_pem"].decode("ascii"),
+            "public_certificate": replacement.public_bytes(
+                serialization.Encoding.PEM).decode("ascii"),
+            "thumbprint": replacement.fingerprint(hashes.SHA1()).hex(),
+        }
+        shared_cache = {}
+        first = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY,
+            http_cache=shared_cache, instance_discovery=False)
+        second = ConfidentialClientApplication(
+            "cid", client_credential=credential, authority=self._AUTHORITY,
+            http_cache=shared_cache, instance_discovery=False)
+        failure = MinimalResponse(
+            status_code=400, text='{"error": "invalid_client"}')
+        with patch("msal.mtls._MtlsHttpClient.post", return_value=failure) as post:
+            for _ in range(2):
+                result = first.acquire_token_for_client(
+                    ["s1"], mtls_proof_of_possession=True)
+                self.assertEqual("invalid_client", result["error"])
+            self.assertEqual(1, post.call_count, "Local throttling must remain active")
+        captured = []
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            result = second.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True)
+        self.assertEqual(1, len(captured))
+        self.assertEqual("mtls_pop", result["token_type"])
+        self.assertNotEqual(first._get_mtls_pop_cert()["key_id"],
+                            second._get_mtls_pop_cert()["key_id"])
+
+    def test_raw_mtls_token_type_is_rejected_before_cache_lookup(self):
+        app = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY)
+        for cached in (False, True):
+            with self.subTest(cached=cached):
+                if cached:
+                    app.acquire_token_for_client(
+                        ["s1"], post=self._capturing_post([], token_type="Bearer"))
+                with patch.object(app, "_acquire_token_silent_with_error") as lookup:
+                    with self.assertRaisesRegex(
+                            ValueError, "mtls_proof_of_possession=True"):
+                        app.acquire_token_for_client(
+                            ["s1"], data={"token_type": "mtls_pop"})
+                    lookup.assert_not_called()
+                captured = []
+                ordinary = app.acquire_token_for_client(
+                    ["s1"], post=self._capturing_post(captured, token_type="Bearer"))
+                self.assertEqual("Bearer", ordinary["token_type"])
+                self.assertNotIn("binding_certificate", ordinary)
+
     def test_released_positional_claims_argument_is_preserved(self):
         app = ConfidentialClientApplication(
             "cid", client_credential="a_secret", authority=self._AUTHORITY)

@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import os
 import ssl
@@ -111,6 +112,23 @@ class TestMtlsSslContext(unittest.TestCase):
         # key_id is the base64url (unpadded) x5t#S256 used for cache binding
         self.assertNotIn("=", material["key_id"])
 
+    def test_pem_certificate_loader_supports_required_backend(self):
+        from cryptography import x509
+
+        material = self._material()
+        load = x509.load_pem_x509_certificate
+
+        def legacy_load(data, backend):
+            return load(data, backend=backend)
+
+        with patch("cryptography.x509.load_pem_x509_certificate",
+                   side_effect=legacy_load):
+            loaded = _load_mtls_cert_material({
+                "private_key": material["private_key_pem"].decode("ascii"),
+                "public_certificate": material["cert_pem"].decode("ascii"),
+            })
+        self.assertEqual(material["key_id"], loaded["key_id"])
+
     def test_create_ssl_context_loads_cert_and_unlinks_tempfile(self):
         material = self._material()
         created = {}
@@ -145,6 +163,30 @@ class TestMtlsSslContext(unittest.TestCase):
         # ssl_context must have been injected into the pool's connection kwargs.
         self.assertIs(
             adapter.poolmanager.connection_pool_kw.get("ssl_context"), context)
+
+    def test_selected_pool_preserves_certificate_context_on_requests_2322(self):
+        import requests
+        from requests.adapters import HTTPAdapter
+
+        material = self._material()
+        context = mtls._create_ssl_context(
+            material["cert_pem"], material["private_key_pem"])
+        adapter = mtls._make_mtls_adapter(context)
+        self.addCleanup(adapter.close)
+        request = requests.Request("GET", "https://resource.example/path").prepare()
+        preloaded = ssl.create_default_context()
+
+        def legacy_connection(adapter, request, verify, proxies=None, cert=None):
+            return adapter.poolmanager.connection_from_url(
+                request.url, pool_kwargs={"ssl_context": preloaded})
+
+        with patch.object(HTTPAdapter, "get_connection_with_tls_context",
+                          legacy_connection, create=True):
+            for proxies in (None, {"https": "http://proxy.example:8080"}):
+                with self.subTest(proxies=proxies):
+                    pool = adapter.get_connection_with_tls_context(
+                        request, verify=True, proxies=proxies)
+                    self.assertIs(context, pool.conn_kw["ssl_context"])
 
     def test_http_client_builds_session_lazily(self):
         material = self._material()
@@ -188,12 +230,8 @@ class TestMtlsSslContext(unittest.TestCase):
             material["private_key_pem"],
             material["x5c"],
             material["key_id"])
-        context = Mock(spec=ssl.SSLContext)
         adapter = Mock()
-        with patch.object(
-                MtlsBindingContext, "create_ssl_context",
-                return_value=context), \
-                patch("msal.mtls._make_mtls_adapter", return_value=adapter):
+        with patch("msal.mtls._make_mtls_adapter", return_value=adapter):
             session = binding.create_requests_session(
                 verify=False, proxies={"https": "https://proxy.example"})
         try:
@@ -416,6 +454,47 @@ class TestMtlsCertificateChain(unittest.TestCase):
                     self.assertIsNot(session, unverified)
                     self.assertEqual(ssl.CERT_NONE,
                         unverified.get_adapter("https://")._ssl_context.verify_mode)
+
+
+    def test_binding_session_uses_only_effective_ca_bundle(self):
+        from cryptography.hazmat.primitives import serialization
+        from urllib3.response import HTTPResponse
+
+        binding = MtlsBindingContext(
+            self.chain_pem, self.key_pem,
+            extract_certs(self.chain_pem.decode("ascii")), self.key_id)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "private-ca.pem")
+            with open(path, "wb") as stream:
+                stream.write(self.root_pem)
+            for setting in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+                            "session", "request"):
+                environment = {"REQUESTS_CA_BUNDLE": "", "CURL_CA_BUNDLE": ""}
+                if setting in environment:
+                    environment[setting] = path
+                with self.subTest(setting=setting), patch.dict(
+                        os.environ, environment):
+                    contexts = []
+
+                    def urlopen(pool, *args, **kwargs):
+                        contexts.append(pool.conn_kw["ssl_context"])
+                        return HTTPResponse(
+                            body=io.BytesIO(b"ok"), status=200, preload_content=False)
+
+                    with binding.create_requests_session(
+                            verify=path if setting == "session" else True) as session:
+                        with patch("urllib3.connectionpool.HTTPSConnectionPool.urlopen",
+                                   autospec=True, side_effect=urlopen):
+                            options = {"verify": path} if setting == "request" else {}
+                            session.get("https://resource.example", **options)
+                            session.get("https://resource.example", verify=False)
+                            session.get("https://resource.example", **options)
+                    self.assertEqual(
+                        [self.root.public_bytes(serialization.Encoding.DER)],
+                        contexts[0].get_ca_certs(binary_form=True))
+                    self.assertEqual(ssl.CERT_REQUIRED, contexts[0].verify_mode)
+                    self.assertEqual(ssl.CERT_NONE, contexts[1].verify_mode)
+                    self.assertIs(contexts[0], contexts[2])
 
 
 class TestUnencryptedPemLoading(unittest.TestCase):
