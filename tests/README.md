@@ -107,6 +107,20 @@ grant-specific fields, and absence of PoP request markers. They do not claim
 successful user-token issuance. A flag-off OBO control must use the ordinary
 endpoint. Default and custom-pipeline variants run independently; a flag-off
 custom client must not invoke the mTLS factory.
+The malformed OBO assertion specifically requires HTTP 400,
+`invalid_request`, and AADSTS50027; refresh/auth-code inputs require
+HTTP 400 and `invalid_grant`, never a credential or transport failure.
+
+Graph and Key Vault resource PoP tokens require readable JWTs and matching
+`cnf` bindings, without a best-effort parsing fallback. Resource audiences can
+use their verified URI or well-known application-ID alias: Key Vault
+`cfa8b339-82a2-471a-a3c9-0fc0be7a4093` and Storage
+`e406a681-f3d4-42a8-90b6-c2b029497af1`.
+FIC's exchange-scope leg-1 value is instead an opaque federated assertion,
+as in the pinned references, not a resource JWT contract. Its requested scope,
+PoP type, returned certificate, exact unchanged `jwt-pop` handoff, and real
+leg-2 redemption are required; final resource binding/audience checks remain
+strict.
 
 All 21 required live methods (17 certificate and four FIC) run without skips,
 including tagged releases. Missing configuration, credential failures, and
@@ -156,7 +170,7 @@ from similarly named scenarios:
 | Go `TestSendCertificateOverMtls_ClientCredential_Live`; .NET `Credential_X509_Output_Bearer_TestAsync` | `C.test_credential_x509_send_certificate_over_mtls_output_bearer` | Built-in real mTLS POST, westus3 Key Vault Bearer, signed client assertion, no PoP markers/output binding, cached repeat. |
 | Go `TestTwoLegFICMtlsPoP_SNI`; .NET `Credential_Fic_Output_Pop_TestAsync` / `RunTwoLegS2sFicBothLegsPopAsync` | `F.test_credential_fic_output_pop`, `F.test_credential_fic_custom_http_output_pop` | Global exchange leg 1 to Graph leg 2, provider invoked, exact leg-1 assertion sent as `jwt-pop`, certificate continuity, final audience/type/`cnf`, resource HTTP 200. |
 | Go `TestTwoLegFICMtlsBearer_SNI`; .NET `Credential_Fic_Output_Bearer_TestAsync` | `F.test_credential_fic_output_bearer`, `F.test_credential_fic_custom_http_output_bearer` | westus3 exchange to Storage, provider and actual `jwt-pop` wire shape, certificate continuity, Storage Bearer audience, no final binding or downstream mTLS resource call. |
-| Go `TestSendCertificateOverMtls_OnBehalfOf_RequestCapture`; .NET `OboFlow_WithSendCertificateOverMtls_BothMtlsConditionsMet` | `C.test_send_certificate_over_mtls_on_behalf_of_request_capture`, `C.test_custom_http_send_certificate_over_mtls_on_behalf_of_request_capture` | Live invalid-grant rejection over real mTLS; OBO grant and `requested_token_use`, signed `jwt-bearer`, mtlsauth URL, no PoP markers. |
+| Go `TestSendCertificateOverMtls_OnBehalfOf_RequestCapture`; .NET `OboFlow_WithSendCertificateOverMtls_BothMtlsConditionsMet` | `C.test_send_certificate_over_mtls_on_behalf_of_request_capture`, `C.test_custom_http_send_certificate_over_mtls_on_behalf_of_request_capture` | Live HTTP 400 / `invalid_request` / AADSTS50027 over real mTLS; OBO grant and `requested_token_use`, signed `jwt-bearer`, mtlsauth URL, no PoP markers. |
 | .NET `RefreshTokenFlow_WithSendCertificateOverMtls_BothMtlsConditionsMet` | `C.test_send_certificate_over_mtls_refresh_token_request_capture`, `C.test_custom_http_send_certificate_over_mtls_refresh_token_request_capture` | Live invalid-grant rejection, actual refresh-token grant and signed assertion over the real selected mTLS pipeline. |
 | Go `TestSendCertificateOverMtls_AuthCode_RequestCapture`; .NET `AuthCodeFlow_WithSendCertificateOverMtls_BothMtlsConditionsMetAsync` | `C.test_send_certificate_over_mtls_auth_code_request_capture`, `C.test_custom_http_send_certificate_over_mtls_auth_code_request_capture` | Live invalid-grant rejection, authorization-code/redirect fields, signed assertion, real mTLS endpoint, no PoP markers. |
 | .NET `OboFlow_WithoutSendCertificateOverMtls_UsesRegularEndpointAsync` | `C.test_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint`, `C.test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint` | Live rejection capture at the ordinary endpoint with signed assertion; custom control creates no certificate-scoped child. |

@@ -357,13 +357,15 @@ class MtlsPopTestCase(E2eTestCase):
     _TOKEN_AUDIENCES = {
         "https://graph.microsoft.com/.default": {
             "https://graph.microsoft.com", "00000003-0000-0000-c000-000000000000"},
-        "https://vault.azure.net/.default": {"https://vault.azure.net"},
-        "api://AzureADTokenExchange/.default": {"api://AzureADTokenExchange"},
-        "https://storage.azure.com/.default": {"https://storage.azure.com"},
+        "https://vault.azure.net/.default": {
+            "https://vault.azure.net", "cfa8b339-82a2-471a-a3c9-0fc0be7a4093"},
+        "https://storage.azure.com/.default": {
+            "https://storage.azure.com", "e406a681-f3d4-42a8-90b6-c2b029497af1"},
     }
 
     @staticmethod
     def _cnf_x5t_s256(access_token):
+        __tracebackhide__ = True
         cnf = jwt_claims(access_token).get("cnf")
         if not isinstance(cnf, dict) or not isinstance(
                 cnf.get("x5t#S256"), str) or not cnf["x5t#S256"]:
@@ -386,6 +388,7 @@ class MtlsPopTestCase(E2eTestCase):
             error, codes)
 
     def _assert_audience(self, result, scope):
+        __tracebackhide__ = True
         audience = jwt_claims(result["access_token"]).get("aud")
         self.assertTrue(
             isinstance(audience, str)
@@ -393,6 +396,7 @@ class MtlsPopTestCase(E2eTestCase):
             "The token audience must identify the requested resource.")
 
     def _assert_token_result(self, result, scope, token_type, expected_binding=None):
+        __tracebackhide__ = True
         self.assertTrue(isinstance(result, dict), "MSAL must return a token result.")
         self.assertTrue(
             bool(result.get("access_token")),
@@ -407,13 +411,15 @@ class MtlsPopTestCase(E2eTestCase):
             self.assertEqual(expected_binding.x5c, binding.x5c)
             self.assertEqual(
                 expected_binding.thumbprint_sha256, binding.thumbprint_sha256)
-            self.assertEqual(
-                binding.thumbprint_sha256,
-                self._cnf_x5t_s256(result["access_token"]))
             self.assertFalse(
                 "PRIVATE KEY" in repr(binding),
                 "The binding context repr must not expose key material.")
-            self._assert_audience(result, scope)
+            # Reference FIC assertions are opaque; resource PoP JWTs require cnf.
+            if scope != ["api://AzureADTokenExchange/.default"]:
+                self.assertEqual(
+                    binding.thumbprint_sha256,
+                    self._cnf_x5t_s256(result["access_token"]))
+                self._assert_audience(result, scope)
         else:
             self.assertFalse(
                 "binding_certificate" in result,
@@ -801,10 +807,14 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
             self.assertEqual("on_behalf_of", request["requested_token_use"])
         if field == "code":
             self.assertIn("redirect_uri", request["fields"])
-        diagnostic = "Expected an invalid-grant service rejection: {!r}".format(request)
+        expected_error = "invalid_request" if field == "assertion" else "invalid_grant"
+        diagnostic = "Expected the malformed-grant service rejection: {!r}".format(request)
         self.assertEqual(400, request["status_code"], diagnostic)
-        self.assertEqual("invalid_grant", request["error"], diagnostic)
-        self.assertEqual("invalid_grant", result.get("error"), diagnostic)
+        self.assertEqual(expected_error, request["error"], diagnostic)
+        self.assertEqual(expected_error, result.get("error"), diagnostic)
+        if field == "assertion":
+            self.assertEqual((50027,), request["error_codes"], diagnostic)
+            self.assertEqual([50027], result.get("error_codes"), diagnostic)
         self.assertFalse(
             "access_token" in result, "Intentionally invalid input must not acquire a token.")
 

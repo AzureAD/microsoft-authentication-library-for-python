@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import jwt
+import pytest
 import requests
 
 from msal.application import _load_mtls_cert_material
@@ -101,6 +102,40 @@ class TestMtlsE2eHelpers(CertificateFixture):
             self.scenario._assert_token_result(
                 wrong, self.scenario._MTLS_POP_SCOPE, "mtls_pop", self.binding)
 
+    def test_key_vault_accepts_its_verified_application_id_not_another_resource(self):
+        for audience, accepted in (
+                ("https://vault.azure.net", True),
+                ("cfa8b339-82a2-471a-a3c9-0fc0be7a4093", True),
+                ("00000003-0000-0000-c000-000000000000", False)):
+            result = {
+                "token_type": "mtls_pop", "binding_certificate": self.binding,
+                "access_token": _jwt({
+                    "aud": audience,
+                    "cnf": {"x5t#S256": self.binding.thumbprint_sha256}}),
+            }
+            with self.subTest(audience=audience):
+                with (nullcontext() if accepted else self.assertRaises(AssertionError)):
+                    self.scenario._assert_token_result(
+                        result, self.scenario._KEY_VAULT_SCOPE, "mtls_pop", self.binding)
+
+    def test_failure_tracebacks_do_not_expose_token_arguments(self):
+        for token in (
+                "opaque-" + self.binding.thumbprint_sha256,
+                _jwt({"aud": "https://wrong.example", "cnf": {}}),
+                _jwt({"aud": "https://wrong.example", "cnf": {
+                    "x5t#S256": self.binding.thumbprint_sha256}})):
+            result = {
+                "access_token": token, "token_type": "mtls_pop",
+                "binding_certificate": self.binding,
+            }
+            with pytest.raises(AssertionError) as failure:
+                self.scenario._assert_token_result(
+                    result, self.scenario._MTLS_POP_SCOPE, "mtls_pop", self.binding)
+            rendered = str(failure.getrepr(
+                style="long", showlocals=False, funcargs=True))
+            self.assertNotIn(token, rendered)
+            self.assertNotIn("PRIVATE KEY", rendered)
+
     def test_unrelated_certificate_is_usable_and_not_the_fixture_certificate(self):
         binding = unrelated_binding()
         self.assertNotEqual(
@@ -184,17 +219,20 @@ class TestMtlsE2eHelpers(CertificateFixture):
         self.assertTrue(summary["signed_client_assertion"])
         self.assertEqual(regional, summary["url"])
 
-    def test_user_capture_requires_invalid_grant_not_success_or_credential_failure(self):
+    def test_user_capture_requires_exact_rejection_not_success_or_credential_failure(self):
         form = self._signed_form()
         form.update(
             grant_type="urn:ietf:params:oauth:grant-type:jwt-bearer",
             assertion="unit-user-assertion", requested_token_use="on_behalf_of")
         del form["refresh_token"]
         app = Mock()
-        for status, payload in (
-                (200, {"access_token": "must-not-be-accepted"}),
-                (400, {"error": "invalid_client", "error_codes": [700027]}),
-                (503, {"error": "invalid_grant"})):
+        for status, payload, accepted in (
+                (200, {"access_token": "must-not-be-accepted"}, False),
+                (400, {"error": "invalid_client", "error_codes": [700027]}, False),
+                (503, {"error": "invalid_grant"}, False),
+                (400, {"error": "invalid_grant", "error_codes": [50027]}, False),
+                (400, {"error": "invalid_request", "error_codes": [700027]}, False),
+                (400, {"error": "invalid_request", "error_codes": [50027]}, True)):
             response = self._response(form=form, status=status, payload=payload)
             summary = token_request_summary(
                 response, self.binding, requests.adapters.HTTPAdapter())
@@ -205,7 +243,7 @@ class TestMtlsE2eHelpers(CertificateFixture):
                     "msal.ConfidentialClientApplication", return_value=app), patch(
                     "tests.test_e2e.record_token_requests",
                     return_value=nullcontext([summary])):
-                with self.assertRaises(AssertionError):
+                with (nullcontext() if accepted else self.assertRaises(AssertionError)):
                     self.scenario.test_send_certificate_over_mtls_on_behalf_of_request_capture()
         self.scenario.doCleanups()
 
@@ -385,10 +423,15 @@ class TestFicScenarioGuards(CertificateFixture):
                         method()
         self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
 
-    def test_opaque_leg_one_cannot_bypass_binding_checks(self):
+    def test_federated_assertion_is_opaque_but_still_requires_certificate_binding(self):
         self.leg1.acquire_token_for_client.return_value["access_token"] = "opaque"
-        with self.assertRaises(AssertionError):
-            self.scenario.test_credential_fic_output_pop()
+        self.scenario.test_credential_fic_output_pop()
+        self.leg2.acquire_token_for_client.reset_mock()
+        for binding in (None, {}, unrelated_binding()):
+            self.factory.side_effect = [self.leg1, self.leg2]
+            self.leg1.acquire_token_for_client.return_value["binding_certificate"] = binding
+            with self.assertRaises(AssertionError):
+                self.scenario.test_credential_fic_output_pop()
         self.leg2.acquire_token_for_client.assert_not_called()
 
     def test_final_pop_requires_type_binding_cnf_and_audience(self):

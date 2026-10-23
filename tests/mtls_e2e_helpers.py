@@ -31,6 +31,7 @@ GRAPH_REJECTION_MARKERS = (
 
 
 def jwt_claims(token):
+    __tracebackhide__ = True
     if not isinstance(token, str) or len(token.split(".")) != 3:
         raise AssertionError("Expected a compact JWT with three segments.")
     try:
@@ -71,6 +72,7 @@ def unrelated_binding():
 
 
 def _verify_client_assertion(assertion, binding, endpoint, client_id):
+    __tracebackhide__ = True
     if binding is None:
         raise AssertionError("A certificate is required to verify the client assertion.")
     try:
@@ -95,6 +97,7 @@ def _verify_client_assertion(assertion, binding, endpoint, client_id):
 def token_request_summary(
         response, binding, adapter, expected_assertion=None, assertion_audience=None):
     """Retain only safe metadata, never tokens, assertions, or raw POST bodies."""
+    __tracebackhide__ = True
     request = response.request
     endpoint = urlparse(request.url)._replace(query="", fragment="").geturl()
     if (request.method != "POST"
