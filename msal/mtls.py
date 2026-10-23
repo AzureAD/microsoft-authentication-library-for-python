@@ -13,6 +13,7 @@ The wire contract and host mapping mirror the shipped MSAL.NET
 """
 import logging
 import threading
+import weakref
 try:
     from collections.abc import Mapping
 except ImportError:  # Python 2
@@ -26,6 +27,8 @@ except ImportError:  # Python 2
 logger = logging.getLogger(__name__)
 
 _MTLS_POP_DOC_LINK = "https://aka.ms/msal-net-pop"
+_MTLS_HTTP_CLIENT_OWNERS = weakref.WeakValueDictionary()
+_MTLS_HTTP_CLIENT_OWNERS_LOCK = threading.Lock()
 
 # The global public mTLS host. The three public "login.*" hosts all normalize to
 # this single global endpoint (ESTSR provides regional failover), matching
@@ -97,9 +100,10 @@ class MtlsBindingContext(Mapping):
     """The certificate binding and TLS helpers for an mTLS-bound access token.
 
     Instances are created by MSAL and returned as ``binding_certificate`` in a
-    successful token result. The certificate metadata remains available through
-    mapping access for compatibility, while the private key is exposed only
-    through TLS contexts and sessions created by this object.
+    successful mTLS-PoP token result. MSAL also supplies an instance to a custom
+    HTTP client's ``create_mtls_client(binding_context)`` factory before sending
+    mTLS token requests. The certificate metadata remains available through
+    mapping access, while the private key is exposed only through TLS helpers.
 
     This object is process-local and must not be serialized or persisted.
     """
@@ -133,6 +137,23 @@ class MtlsBindingContext(Mapping):
         """
         return _create_ssl_context(self.__cert_pem, self.__key_pem, verify)
 
+    def create_requests_adapter(self, **kwargs):
+        """Create a certificate-bearing ``requests.adapters.HTTPAdapter``.
+
+        Mount this on a new, dedicated session, never on a session used for
+        ordinary requests or another certificate. ``kwargs`` are HTTPAdapter
+        options, such as ``max_retries``, ``pool_connections``, ``pool_maxsize``
+        and ``pool_block``. By default, one connection retry is enabled.
+
+        Server verification follows the effective Requests ``verify`` setting,
+        including environment, session and request CA configuration. Separate
+        TLS contexts and pools are used for different verification settings.
+        A ``cert`` override is rejected to preserve the selected certificate.
+        The caller owns the adapter and its connection pools.
+        """
+        return _make_mtls_adapter(
+            ssl_context_factory=self.create_ssl_context, **kwargs)
+
     def create_requests_session(self, verify=True, proxies=None):
         """Create a ``requests.Session`` that presents the binding certificate.
 
@@ -145,9 +166,7 @@ class MtlsBindingContext(Mapping):
         session.verify = effective_verify
         if proxies:
             session.proxies.update(proxies)
-        session.mount(
-            "https://",
-            _make_mtls_adapter(ssl_context_factory=self.create_ssl_context))
+        session.mount("https://", self.create_requests_adapter())
         return session
 
     def __getitem__(self, key):
@@ -178,9 +197,8 @@ class _MtlsHttpClient(object):
     """A minimal http client (``post``/``get``/``close``) whose HTTPS
     connections present a client certificate for mutual-TLS.
 
-    MSAL owns this transport. A caller's plain custom ``http_client`` cannot
-    perform the mTLS handshake, which is why requesting mTLS PoP with a
-    non-mTLS-capable custom transport fails fast (see application.py).
+    MSAL owns this default transport. Custom pipelines instead opt in through
+    ``http_client.create_mtls_client(binding_context)`` (see application.py).
 
     The ``ssl.SSLContext`` (and its temp key file) is built lazily on first use,
     so Bearer-only certificate apps never pay the cost nor touch the disk.
@@ -240,7 +258,60 @@ class _MtlsHttpClient(object):
                 session.close()
 
 
-def _make_mtls_adapter(ssl_context=None, ssl_context_factory=None):
+def _claim_mtls_http_client(http_client, application):
+    # Values are weak: tracking direct reuse must not keep applications alive.
+    with _MTLS_HTTP_CLIENT_OWNERS_LOCK:
+        owner = _MTLS_HTTP_CLIENT_OWNERS.get(id(http_client))
+        if owner is not None and owner is not application:
+            raise ValueError(
+                "create_mtls_client must return a new, dedicated client for "
+                "each application, not a client already used by another application.")
+        _MTLS_HTTP_CLIENT_OWNERS[id(http_client)] = application
+
+
+def _validate_mtls_request(kwargs):
+    if "post" in kwargs:
+        raise ValueError(
+            "mtls_proof_of_possession=True does not support a post override. "
+            "Use the configured certificate-aware HTTP transport.")
+    if kwargs.get("cert") is not None:
+        raise ValueError(
+            "mTLS token requests do not support a cert override. "
+            "Use the application's certificate credential.")
+    if kwargs.get("allow_redirects", False) is not False:
+        raise ValueError("mTLS token requests do not support redirects.")
+
+
+class _MtlsTokenHttpClient(object):
+    """Restrict a certificate-scoped pipeline to its token endpoint."""
+
+    def __init__(self, http_client, token_endpoint):
+        if urlparse(token_endpoint).scheme != "https":
+            raise ValueError("The mTLS token endpoint must use HTTPS.")
+        self._http_client = http_client
+        self._token_endpoint = token_endpoint
+
+    def post(self, url, **kwargs):
+        if url != self._token_endpoint:
+            raise ValueError(
+                "The mTLS HTTP transport can only call its token endpoint.")
+        _validate_mtls_request(kwargs)
+        kwargs["allow_redirects"] = False
+        response = self._http_client.post(url, **kwargs)
+        response_url = getattr(response, "url", None)
+        # Request params may change the query without a redirect.
+        endpoint_changed = response_url is not None and (
+            urlparse(response_url)._replace(query="", fragment="")
+            != urlparse(url)._replace(query="", fragment=""))
+        if (300 <= response.status_code < 400
+                or getattr(response, "history", None)
+                or endpoint_changed):
+            raise ValueError("The mTLS token endpoint must not redirect.")
+        return response
+
+
+def _make_mtls_adapter(
+        ssl_context=None, ssl_context_factory=None, **adapter_kwargs):
     """Return a ``requests`` HTTPAdapter that injects ``ssl_context`` (with the
     client certificate loaded) into every connection pool it creates."""
     from requests.adapters import HTTPAdapter  # Lazy import
@@ -250,16 +321,21 @@ def _make_mtls_adapter(ssl_context=None, ssl_context_factory=None):
             self._ssl_context = ssl_context
             self._adapters = {}
             self._adapter_lock = threading.Lock()
-            super(_MtlsHTTPAdapter, self).__init__(max_retries=1)
+            options = dict(adapter_kwargs)
+            options.setdefault("max_retries", 1)
+            super(_MtlsHTTPAdapter, self).__init__(**options)
 
         def send(self, request, **kwargs):
+            if kwargs.get("cert") is not None:
+                raise ValueError(
+                    "The mTLS adapter does not support a cert override.")
             if ssl_context_factory is None:
                 return super(_MtlsHTTPAdapter, self).send(request, **kwargs)
             verify = kwargs.get("verify", True)
             with self._adapter_lock:
                 if verify not in self._adapters:
                     self._adapters[verify] = _make_mtls_adapter(
-                        ssl_context_factory(verify))
+                        ssl_context_factory(verify), **adapter_kwargs)
                 adapter = self._adapters[verify]
             return adapter.send(request, **kwargs)
 
