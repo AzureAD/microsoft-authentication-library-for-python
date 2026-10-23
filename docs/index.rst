@@ -297,6 +297,11 @@ callable ``post(url, **kwargs)`` using the normal MSAL HTTP response contract
 It must accept and honor ``allow_redirects=False``. Factory and request
 exceptions propagate; MSAL never falls back to the ordinary client.
 
+The same certificate-scoped pipeline handles mTLS PoP, Bearer-over-mTLS, and
+FIC leg-2 requests. A FIC assertion remains ``jwt-pop`` even when the final
+token is ``Bearer``; only a final ``mtls_pop`` token includes
+``binding_certificate`` in its result.
+
 For Requests-based pipelines, mount
 ``binding_context.create_requests_adapter(...)`` on a **new** session. This
 helper accepts ``HTTPAdapter`` options for retry and pooling policy, retains

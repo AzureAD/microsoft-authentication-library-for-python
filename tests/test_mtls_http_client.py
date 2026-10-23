@@ -52,11 +52,165 @@ class TestMtlsHttpClientFactory(unittest.TestCase):
             status_code=200,
             text='{"access_token": "ordinary", "token_type": "Bearer"}')
 
-    def _app(self, http_client=None, **kwargs):
+    def _app(self, http_client=None, client_credential=None, **kwargs):
         return msal.ConfidentialClientApplication(
-            "cid", authority=_AUTHORITY, client_credential=_CREDENTIAL,
+            "cid", authority=_AUTHORITY,
+            client_credential=(
+                _CREDENTIAL if client_credential is None else client_credential),
             http_client=self.ordinary if http_client is None else http_client,
             azure_region=False, instance_discovery=False, **kwargs)
+
+    def test_bearer_factory_handles_client_and_user_grants(self, discovery):
+        for grant in ("client_credentials",
+                      "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                      "authorization_code", "refresh_token"):
+            with self.subTest(grant=grant):
+                pipeline = Mock(spec=["post"])
+                pipeline.post.return_value = MinimalResponse(
+                    status_code=200, text=json.dumps({
+                        "access_token": "bearer-at", "token_type": "Bearer",
+                        "expires_in": 3600}))
+                self.ordinary.create_mtls_client.return_value = pipeline
+                self.ordinary.reset_mock()
+                app = self._app(client_credential=dict(
+                    _CREDENTIAL, send_certificate_over_mtls=True))
+                if grant == "client_credentials":
+                    result = app.acquire_token_for_client(["s1"])
+                elif grant == "authorization_code":
+                    result = app.acquire_token_by_authorization_code("code", ["s1"])
+                elif grant == "refresh_token":
+                    result = app.acquire_token_by_refresh_token("rt", ["s1"])
+                else:
+                    result = app.acquire_token_on_behalf_of("assertion", ["s1"])
+                self.assertEqual("Bearer", result["token_type"])
+                self.assertNotIn("binding_certificate", result)
+                self.ordinary.create_mtls_client.assert_called_once()
+                binding = self.ordinary.create_mtls_client.call_args.args[0]
+                self.assertIsInstance(binding, msal.MtlsBindingContext)
+                request = pipeline.post.call_args
+                self.assertEqual(
+                    "https://mtlsauth.microsoft.com/tenant/oauth2/v2.0/token",
+                    request.args[0])
+                data = request.kwargs["data"]
+                self.assertEqual(grant, data["grant_type"])
+                self.assertTrue(data["client_assertion"])
+                self.assertEqual(
+                    "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                    data["client_assertion_type"])
+                for field in ("token_type", "req_cnf", "key_id"):
+                    self.assertNotIn(field, data)
+                self.assertIs(False, request.kwargs["allow_redirects"])
+                self.ordinary.post.assert_not_called()
+
+    def test_bearer_and_pop_share_pipeline_without_sharing_token_cache_keys(
+            self, discovery):
+        app = self._app(client_credential=dict(
+            _CREDENTIAL, send_certificate_over_mtls=True))
+        self.pipeline.post.side_effect = [
+            MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "bearer-at", "token_type": "Bearer",
+                "expires_in": 3600})),
+            MinimalResponse(status_code=200, text=_TOKEN)]
+        bearer = app.acquire_token_for_client(["s1"])
+        pop = app.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
+        for bound, original in ((False, bearer), (True, pop)):
+            cached = app.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=bound)
+            self.assertEqual("cache", cached["token_source"])
+            self.assertEqual(original["access_token"], cached["access_token"])
+            self.assertEqual(bound, "binding_certificate" in cached)
+        self.ordinary.create_mtls_client.assert_called_once()
+        self.assertEqual(2, self.pipeline.post.call_count)
+        self.ordinary.post.assert_not_called()
+
+    def test_bearer_global_and_regional_clients_share_pipeline(self, discovery):
+        app = self._app(client_credential=dict(
+            _CREDENTIAL, send_certificate_over_mtls=True))
+        with patch.object(app, "_compute_region_to_use",
+                          side_effect=[None, "westus3"]):
+            central = app._get_mtls_bearer_client(app.authority)
+            regional = app._get_mtls_bearer_client(app.authority)
+        self.assertIsNot(central, regional)
+        self.assertEqual(
+            "https://westus3.mtlsauth.microsoft.com/tenant/oauth2/v2.0/token",
+            regional.configuration["token_endpoint"])
+        self.ordinary.create_mtls_client.assert_called_once()
+
+    def test_mixed_bearer_pop_creation_retains_one_pipeline(self, discovery):
+        app = self._app(client_credential=dict(
+            _CREDENTIAL, send_certificate_over_mtls=True))
+
+        def factory(binding):
+            time.sleep(0.02)
+            return self.pipeline
+
+        def client(index):
+            return (app._get_mtls_client(app.authority) if index % 2
+                    else app._get_mtls_bearer_client(app.authority))
+
+        self.ordinary.create_mtls_client.side_effect = factory
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            clients = list(executor.map(client, range(24)))
+        self.assertTrue(all(client is clients[0] for client in clients[::2]))
+        self.assertTrue(all(client is clients[1] for client in clients[1::2]))
+        self.ordinary.create_mtls_client.assert_called_once()
+
+    def test_fic_factory_keeps_jwt_pop_and_only_binds_final_pop(self, discovery):
+        for bound in (False, True):
+            with self.subTest(bound=bound):
+                pipeline = Mock(spec=["post"])
+                pipeline.post.return_value = MinimalResponse(
+                    status_code=200, text=json.dumps({
+                        "access_token": "fic-at",
+                        "token_type": "mtls_pop" if bound else "Bearer",
+                        "expires_in": 3600}))
+                self.ordinary.create_mtls_client.return_value = pipeline
+                app = self._app(client_credential={
+                    "client_assertion": lambda: "leg1-assertion",
+                    "mtls_binding_certificate": _CREDENTIAL})
+                result = app.acquire_token_for_client(
+                    ["s1"], mtls_proof_of_possession=bound)
+                self.assertEqual(bound, "binding_certificate" in result)
+                data = pipeline.post.call_args.kwargs["data"]
+                self.assertEqual("leg1-assertion", data["client_assertion"])
+                self.assertEqual(
+                    "urn:ietf:params:oauth:client-assertion-type:jwt-pop",
+                    data["client_assertion_type"])
+                self.assertEqual(
+                    "mtls_pop" if bound else None, data.get("token_type"))
+                self.assertNotIn("key_id", data)
+                self.ordinary.post.assert_not_called()
+
+    def test_bearer_factory_rejects_observable_redirects(self, discovery):
+        endpoint = "https://mtlsauth.microsoft.com/tenant/oauth2/v2.0/token"
+        for changes in ({"status_code": 307}, {"history": [object()]},
+                        {"url": "https://other.example/token"}):
+            with self.subTest(changes=changes):
+                response = SimpleNamespace(
+                    status_code=200, text='{"access_token": "must-not-cache"}',
+                    url=endpoint, headers={}, close=Mock())
+                for name, value in changes.items():
+                    setattr(response, name, value)
+                pipeline = Mock(spec=["post"])
+                pipeline.post.return_value = response
+                self.ordinary.create_mtls_client.return_value = pipeline
+                app = self._app(client_credential=dict(
+                    _CREDENTIAL, send_certificate_over_mtls=True))
+                with self.assertRaisesRegex(ValueError, "must not redirect"):
+                    app.acquire_token_for_client(["s1"])
+                response.close.assert_called_once_with()
+                self.assertEqual({}, app.token_cache._cache.get("AccessToken", {}))
+        self.ordinary.post.assert_not_called()
+
+    def test_bearer_legacy_client_has_no_transport_fallback(self, discovery):
+        legacy = Mock(spec=["get", "post"])
+        app = self._app(
+            http_client=legacy,
+            client_credential=dict(
+                _CREDENTIAL, send_certificate_over_mtls=True))
+        with self.assertRaisesRegex(ValueError, "create_mtls_client"):
+            app.acquire_token_for_client(["s1"])
+        legacy.post.assert_not_called()
 
     def test_factory_receives_selected_binding_and_request_options(self, discovery):
         app = self._app(verify=False, timeout=999,

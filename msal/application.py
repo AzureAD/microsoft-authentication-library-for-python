@@ -392,8 +392,9 @@ class _MtlsBearerClient(_ClientWithCcsRoutingInfo):
             if option in kwargs:
                 raise ValueError(
                     "send_certificate_over_mtls=True does not support a {} "
-                    "override. Omit {} to use MSAL's built-in mTLS transport "
+                    "override. Omit {} to use the certificate-aware mTLS transport "
                     "with the configured certificate.".format(option, option))
+        mtls._validate_mtls_request(kwargs)
         return super(_MtlsBearerClient, self)._obtain_token(*args, **kwargs)
 
 
@@ -1341,6 +1342,31 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 "MSAL's built-in mTLS transport.")
         return factory
 
+    def _get_mtls_http_client_locked(self, cert, factory):
+        if self._mtls_http_client is None:
+            if factory is None:
+                http_client = mtls._MtlsHttpClient(
+                    cert["cert_pem"], cert["private_key_pem"],
+                    **self._http_client_config)
+            else:
+                binding = mtls.MtlsBindingContext(
+                    cert["cert_pem"], cert["private_key_pem"],
+                    cert["x5c"], cert["key_id"])
+                http_client = factory(binding)
+                if (http_client is self._custom_http_client
+                        or http_client is self.http_client
+                        or http_client is self.http_client.http_client):
+                    raise ValueError(
+                        "create_mtls_client must return a new, dedicated "
+                        "client, not the ordinary http_client.")
+                if not callable(getattr(http_client, "post", None)):
+                    raise TypeError(
+                        "create_mtls_client must return a client with "
+                        "a callable post(url, **kwargs).")
+                mtls._claim_mtls_http_client(http_client, self)
+            self._mtls_http_client = http_client
+        return self._mtls_http_client
+
     def _get_mtls_client(self, central_authority):
         """Lazily build (and cache) the mTLS PoP client for ``central_authority``.
 
@@ -1376,30 +1402,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             cached = self._mtls_regional_client if region else self._mtls_client
             if cached is not None:
                 return cached
-            if self._mtls_http_client is None:
-                if factory is None:
-                    http_client = mtls._MtlsHttpClient(
-                        cert["cert_pem"], cert["private_key_pem"],
-                        **self._http_client_config)
-                else:
-                    binding = mtls.MtlsBindingContext(
-                        cert["cert_pem"], cert["private_key_pem"],
-                        cert["x5c"], cert["key_id"])
-                    http_client = factory(binding)
-                    if (http_client is self._custom_http_client
-                            or http_client is self.http_client
-                            or http_client is self.http_client.http_client):
-                        raise ValueError(
-                            "create_mtls_client must return a new, dedicated "
-                            "client, not the ordinary http_client.")
-                    if not callable(getattr(http_client, "post", None)):
-                        raise TypeError(
-                            "create_mtls_client must return a client with "
-                            "a callable post(url, **kwargs).")
-                    mtls._claim_mtls_http_client(http_client, self)
-                self._mtls_http_client = http_client
             http_client = ThrottledHttpClient(
-                mtls._MtlsTokenHttpClient(self._mtls_http_client, token_endpoint),
+                mtls._MtlsTokenHttpClient(
+                    self._get_mtls_http_client_locked(cert, factory),
+                    token_endpoint),
                 # The TLS credential is absent from HTTP cache keys.
                 http_cache={},
                 default_throttle_time=5,
@@ -1450,12 +1456,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         ``key_id`` / no ``req_cnf``). The result is therefore a plain Bearer
         access token whose cache entry is not fenced by the certificate.
         """
-        if self._custom_http_client is not None:
-            raise ValueError(
-                "send_certificate_over_mtls=True is not supported with a custom "
-                "http_client, because MSAL must own the TLS transport to present "
-                "the client certificate in the mutual-TLS handshake. Omit the "
-                "http_client argument to use MSAL's built-in mTLS transport.")
+        factory = self._get_mtls_http_client_factory()
         region = self._compute_region_to_use()
         cache_key = (
             central_authority.instance, central_authority.token_endpoint, region)
@@ -1473,13 +1474,14 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             "device_authorization_endpoint":
                 central_authority.device_authorization_endpoint,
             }
-        http_client = ThrottledHttpClient(
-            mtls._MtlsHttpClient(
-                cert["cert_pem"], cert["private_key_pem"],
-                **self._http_client_config),
-            http_cache=self._http_cache,
-            default_throttle_time=5,
-            )
+        with self._mtls_lock:
+            http_client = ThrottledHttpClient(
+                mtls._MtlsTokenHttpClient(
+                    self._get_mtls_http_client_locked(cert, factory),
+                    token_endpoint),
+                http_cache={},
+                default_throttle_time=5,
+                )
         # Sign a private_key_jwt assertion, FORCING the x5c chain onto the
         # header regardless of the app's public_certificate opt-in (Bearer-over-
         # mTLS always attaches the chain), so ESTS accepts the assertion on the
@@ -3281,8 +3283,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             requesting other token types, including SSH certificates, raises
             ``ValueError``.
             ``post`` and ``cert`` overrides and redirects are rejected. If the
-            provider
-            returns another token type, the result is ``token_type_mismatch``
+            provider returns another token type, the result is ``token_type_mismatch``
             and the rejected response is not cached.
 
             On success the result also contains an
