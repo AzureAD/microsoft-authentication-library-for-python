@@ -444,8 +444,9 @@ class PublicCloudScenariosTestCase(E2eTestCase):
     # ── SN/I certificate over mTLS Proof-of-Possession ─────────────────────────
     # These reuse the same lab SN/I cert as test_subject_name_issuer_authentication
     # (it is not CNG-backed, so it works as a TLS client cert on the CI agents).
-    # NOTE: MSAL must own the TLS transport for mTLS, so unlike the tests above we
-    # do NOT pass http_client=MinimalHttpClient() here.
+    # These live matrix cells exercise MSAL's default mTLS transport, not the
+    # custom HTTP factory. Custom-pipeline coverage remains local TLS coverage
+    # in test_mtls_http_client.py; these tests do not establish live factory parity.
     # ESTS gates mTLS PoP on the final resource audience (must be allow-listed,
     # e.g. MS Graph), not on the client app, so we target Microsoft Graph.
     _MTLS_POP_SCOPE = ["https://graph.microsoft.com/.default"]
