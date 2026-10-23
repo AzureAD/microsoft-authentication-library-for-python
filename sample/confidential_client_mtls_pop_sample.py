@@ -83,8 +83,8 @@ def vanilla_sni_mtls_pop():
         os.environ["CLIENT_ID"],
         authority=os.environ["AUTHORITY"],  # MUST be tenanted
         client_credential=_build_cert_credential(),
-        # Note: do NOT pass a custom http_client here. MSAL must own the
-        # transport to present the client certificate during the TLS handshake.
+        # The default transport handles mTLS automatically. For a custom
+        # pipeline, see confidential_client_mtls_http_client_sample.py.
         azure_region=os.getenv("AZURE_REGION"),  # None honors MSAL_FORCE_REGION
     )
 
