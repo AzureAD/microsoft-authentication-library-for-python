@@ -573,8 +573,6 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         # .NET live CC cell: westus3 + the Key Vault resource). Proves the cert
         # goes on the TLS handshake to mtlsauth.* yet ESTS returns a plain Bearer.
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         scope = ["https://vault.azure.net/.default"]
         self.app = msal.ConfidentialClientApplication(
             self._SNI_ALLOWLISTED_CLIENT_ID,
@@ -597,17 +595,11 @@ class PublicCloudScenariosTestCase(E2eTestCase):
         self.assertCacheWorksForApp(result, scope)
 
     def test_send_certificate_over_mtls_user_flows_capture_request(self):
-        # The allow-listed app is entitled to Bearer-over-mTLS for
-        # client-credentials only; the OBO/refresh/auth-code apps are not
-        # mTLS-enabled server-side (AADSTS700027 / AADSTS392189), exactly as
-        # MSAL .NET [Ignore]s those live. So prove MSAL builds the correct wire
-        # request for every confidential user flow -- the mtlsauth endpoint + a
-        # private_key_jwt client_assertion + the flow's own grant, with none of
-        # the mtls_pop markers -- by capturing the outgoing POST over the REAL
-        # lab SN/I certificate, without needing those apps allow-listed.
+        # Like .NET/Go, cover these flows through request capture while their
+        # apps lack live mTLS enablement (AADSTS700027 / AADSTS392189).
+        # Replacing post below proves request construction, not a TLS handshake
+        # or successful live acquisition.
         from tests.lab_config import get_client_certificate
-        if not clean_env("LAB_APP_CLIENT_CERT_PFX_PATH"):
-            self.skipTest("LAB_APP_CLIENT_CERT_PFX_PATH not set")
         cred = dict(
             get_client_certificate(), send_certificate_over_mtls=True)
         def _capture(sink):
@@ -646,17 +638,20 @@ class PublicCloudScenariosTestCase(E2eTestCase):
             _new_app().acquire_token_by_authorization_code("an_auth_code", scope)
         _assert_mtls(cap[0], "grant_type", "authorization_code")
 
-    def test_send_certificate_over_mtls_user_flows_live_acquire(self):
-        # Live OBO/refresh acquisition with Bearer-over-mTLS is pending the
-        # downstream apps being mTLS-enabled server-side; today ESTS rejects it
-        # (AADSTS700027 / AADSTS392189) -- the same class of block as the FIC
-        # leg-1 gate (AADSTS51000) and MSAL .NET's [Ignore]'d live user-flow
-        # cells. Kept as an explicit, self-documenting gate that flips to a real
-        # acquisition once the apps are enabled; the request shape is already
-        # proven by test_send_certificate_over_mtls_user_flows_capture_request.
-        self.skipTest(
-            "pending app mTLS-enablement for OBO/refresh Bearer-over-mTLS "
-            "(AADSTS700027 / AADSTS392189)")
+
+class BearerOverMtlsScenarioTestCase(unittest.TestCase):
+    def test_missing_certificate_fails_before_acquisition(self):
+        for test_name in (
+                "test_credential_x509_send_certificate_over_mtls_output_bearer",
+                "test_send_certificate_over_mtls_user_flows_capture_request"):
+            with self.subTest(test_name=test_name):
+                scenario = PublicCloudScenariosTestCase(test_name)
+                with patch.dict(os.environ, {}, clear=True), patch(
+                        "msal.ConfidentialClientApplication") as factory:
+                    with self.assertRaisesRegex(
+                            EnvironmentError, "LAB_APP_CLIENT_CERT_PFX_PATH"):
+                        getattr(scenario, test_name)()
+                    factory.assert_not_called()
 
 
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
