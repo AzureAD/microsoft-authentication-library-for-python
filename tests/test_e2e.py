@@ -11,6 +11,7 @@ try:
 except:
     pass
 import base64
+from contextlib import nullcontext
 import logging
 import os
 import json
@@ -19,9 +20,9 @@ import unittest
 from urllib.parse import urlparse, parse_qs
 import sys
 try:
-    from unittest.mock import patch, ANY, Mock, call, mock_open
+    from unittest.mock import patch, ANY
 except:
-    from mock import patch, ANY, Mock, call, mock_open
+    from mock import patch, ANY
 
 import requests
 
@@ -33,6 +34,10 @@ from tests.broker_util import is_pymsalruntime_installed
 from tests.lab_config import (
     get_user_config, get_app_config, get_user_password, get_secret,
     UserSecrets, AppSecrets, LAB_APP_CLIENT_ID, clean_env,
+)
+from tests.mtls_e2e_helpers import (
+    GRAPH_REJECTION_MARKERS, JWT_BEARER, JWT_POP, RecordingPolicyHttpClient,
+    binding_from_credential, jwt_claims, record_token_requests, unrelated_binding,
 )
 
 
@@ -344,38 +349,191 @@ class CloudShellTestCase(E2eTestCase):
 
 class MtlsPopTestCase(E2eTestCase):
     _MTLS_POP_SCOPE = ["https://graph.microsoft.com/.default"]
+    _KEY_VAULT_SCOPE = ["https://vault.azure.net/.default"]
     # Only the mTLS Graph host validates the certificate binding on the channel.
     _MTLS_GRAPH_RESOURCE = "https://mtlstb.graph.microsoft.com/v1.0/applications?$top=1"
+    _SNI_ALLOWLISTED_CLIENT_ID = "163ffef9-a313-45b4-ab2f-c7e2f5e0e23e"
+    _SNI_ALLOWLISTED_AUTHORITY = "https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c"
+    _TOKEN_AUDIENCES = {
+        "https://graph.microsoft.com/.default": {
+            "https://graph.microsoft.com", "00000003-0000-0000-c000-000000000000"},
+        "https://vault.azure.net/.default": {"https://vault.azure.net"},
+        "api://AzureADTokenExchange/.default": {"api://AzureADTokenExchange"},
+        "https://storage.azure.com/.default": {"https://storage.azure.com"},
+    }
 
     @staticmethod
     def _cnf_x5t_s256(access_token):
-        # Best-effort decode of an mtls_pop JWT's cnf.x5t#S256 binding claim.
-        try:
-            payload = json.loads(decode_part(access_token.split(".")[1]))
-            return payload.get("cnf", {}).get("x5t#S256")
-        except Exception:  # Opaque/non-JWT token - skip the offline binding check
-            return None
+        cnf = jwt_claims(access_token).get("cnf")
+        if not isinstance(cnf, dict) or not isinstance(
+                cnf.get("x5t#S256"), str) or not cnf["x5t#S256"]:
+            raise AssertionError("The PoP JWT must carry cnf['x5t#S256'].")
+        return cnf["x5t#S256"]
+
+    @staticmethod
+    def _result_summary(result):
+        error = result.get("error")
+        if error is not None and (not isinstance(error, str) or error not in {
+                "invalid_client", "invalid_grant", "invalid_request",
+                "invalid_scope", "unauthorized_client", "unsupported_grant_type",
+                "temporarily_unavailable", "server_error", "interaction_required",
+                "token_type_mismatch"}):
+            error = "<unrecognized OAuth error>"
+        codes = result.get("error_codes")
+        codes = [code for code in codes[:8] if isinstance(code, int)] if isinstance(
+            codes, list) else []
+        return "error={!r}, error_codes={!r}".format(
+            error, codes)
+
+    def _assert_audience(self, result, scope):
+        audience = jwt_claims(result["access_token"]).get("aud")
+        self.assertTrue(
+            isinstance(audience, str)
+            and audience.rstrip("/") in self._TOKEN_AUDIENCES[scope[0]],
+            "The token audience must identify the requested resource.")
+
+    def _assert_token_result(self, result, scope, token_type, expected_binding=None):
+        self.assertTrue(isinstance(result, dict), "MSAL must return a token result.")
+        self.assertTrue(
+            bool(result.get("access_token")),
+            "Token acquisition failed: " + self._result_summary(result))
+        self.assertEqual(token_type, result.get("token_type"))
+        if token_type == "mtls_pop":
+            binding = result.get("binding_certificate")
+            self.assertTrue(
+                isinstance(binding, msal.MtlsBindingContext),
+                "PoP must return a usable binding context.")
+            self.assertTrue(binding.x5c and binding.thumbprint_sha256)
+            self.assertEqual(expected_binding.x5c, binding.x5c)
+            self.assertEqual(
+                expected_binding.thumbprint_sha256, binding.thumbprint_sha256)
+            self.assertEqual(
+                binding.thumbprint_sha256,
+                self._cnf_x5t_s256(result["access_token"]))
+            self.assertFalse(
+                "PRIVATE KEY" in repr(binding),
+                "The binding context repr must not expose key material.")
+            self._assert_audience(result, scope)
+        else:
+            self.assertFalse(
+                "binding_certificate" in result,
+                "An ordinary Bearer result must not expose certificate binding.")
+
+    @staticmethod
+    def _close_default_http_clients(app):
+        app.http_client.close()
+        if app._mtls_http_client is not None:
+            app._mtls_http_client.close()
+
+    def _sni_app(self, credential, azure_region=False, http_client=None):
+        app = msal.ConfidentialClientApplication(
+            self._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=self._SNI_ALLOWLISTED_AUTHORITY,
+            client_credential=credential, azure_region=azure_region,
+            http_client=http_client, timeout=30)
+        if http_client is None:
+            self.addCleanup(self._close_default_http_clients, app)
+        return app
+
+    @staticmethod
+    def _certificate():
+        from tests.lab_config import get_client_certificate
+
+        credential = get_client_certificate()
+        return credential, binding_from_credential(credential)
+
+    def _assert_cached_result(self, app, scope, original, pop=False):
+        cached = app.acquire_token_for_client(
+            scope, mtls_proof_of_possession=pop)
+        self._assert_token_result(
+            cached, scope, original["token_type"],
+            expected_binding=original.get("binding_certificate"))
+        self.assertEqual(app._TOKEN_SOURCE_CACHE, cached.get(app._TOKEN_SOURCE))
+        self.assertTrue(
+            original["access_token"] == cached["access_token"],
+            "The cached token must be the originally acquired token.")
+
+    def _assert_token_request(
+            self, records, scope, grant, region=False, assertion_type=None,
+            regular_endpoint=False):
+        self.assertEqual(1, len(records), "Exactly one real token POST is required.")
+        request = records[0]
+        host = ("login.microsoftonline.com" if regular_endpoint
+                else ("{}.".format(region) if region else "") + "mtlsauth.microsoft.com")
+        tenant = urlparse(self._SNI_ALLOWLISTED_AUTHORITY).path.strip("/")
+        self.assertEqual(
+            "https://{}/{}/oauth2/v2.0/token".format(host, tenant),
+            request["url"])
+        self.assertEqual(grant, request["grant_type"])
+        self.assertTrue(set(scope) <= request["scope"])
+        self.assertEqual(assertion_type, request["client_assertion_type"])
+        self.assertEqual(
+            assertion_type is not None, request["client_assertion_present"])
+        self.assertEqual(
+            "HTTPAdapter" if regular_endpoint else "_MtlsHTTPAdapter",
+            request["tls_adapter"])
+        for field in ("req_cnf", "key_id"):
+            self.assertNotIn(field, request["fields"])
+        if assertion_type == JWT_BEARER:
+            self.assertTrue(
+                request["signed_client_assertion"],
+                "The private_key_jwt must verify against the configured certificate.")
+        return request
+
+    def _assert_factory_used(self, http_client, expected_binding):
+        self.assertEqual(1, len(http_client._children))
+        child = http_client._children[0]
+        self.assertIsNot(http_client, child)
+        self.assertEqual(
+            expected_binding.thumbprint_sha256,
+            child.binding_context.thumbprint_sha256)
+        self.assertEqual([], http_client.token_requests)
+        self.assertEqual(1, child.response_count)
+        self.assertEqual(1, len(child.token_requests))
+        self.assertEqual("custom-policy", child.token_requests[0]["middleware"])
+        self.assertFalse(http_client._closed or child._closed)
+        return child
+
+    def _acquire_recorded(
+            self, app, scope, binding, pop=False, http_client=None,
+            expected_assertion=None):
+        if http_client is not None:
+            result = app.acquire_token_for_client(
+                scope, mtls_proof_of_possession=pop)
+            records = self._assert_factory_used(
+                http_client, binding).token_requests
+        else:
+            with record_token_requests(
+                    binding, expected_assertion=expected_assertion) as records:
+                result = app.acquire_token_for_client(
+                    scope, mtls_proof_of_possession=pop)
+        return result, records
 
     def _call_graph_with_mtls_pop_token(self, token, binding_certificate):
-        """Prove an ``mtls_pop`` token is genuinely usable: present it to the
-        mTLS Graph endpoint over a TLS channel bound by the SAME certificate and
-        require HTTP 200. Acquiring the token is not enough - a resource only
-        honors it when the binding certificate is on the TLS handshake and the
-        auth scheme is ``mtls_pop``; a 401/403 means the binding was lost, i.e.
-        a real regression rather than a transient failure.
-        """
         with binding_certificate.create_requests_session() as session:
             resp = session.get(
                 self._MTLS_GRAPH_RESOURCE,
                 headers={"Authorization": "mtls_pop " + token},
-                timeout=30)
+                timeout=30, allow_redirects=False)
         self.assertEqual(
             200, resp.status_code,
-            "mtls_pop token rejected by the resource (HTTP %s). A 401/403 means "
-            "the binding certificate was not presented on the TLS handshake, or "
-            "the auth scheme was wrong. Body[:500]=%s" % (
-                resp.status_code, (resp.text or "")[:500]))
+            "The real Graph resource must accept the bound PoP token.")
         return resp
+
+    def _assert_graph_rejects(self, token, scheme, binding, marker):
+        with (binding.create_requests_session() if binding is not None
+                else requests.Session()) as session:
+            response = session.get(
+                self._MTLS_GRAPH_RESOURCE,
+                headers={"Authorization": scheme + " " + token},
+                timeout=30, allow_redirects=False)
+        observed = tuple(
+            candidate for candidate in GRAPH_REJECTION_MARKERS
+            if candidate in response.text)
+        diagnostic = "HTTP {}; binding markers={!r}".format(
+            response.status_code, observed)
+        self.assertIn(response.status_code, (401, 403), diagnostic)
+        self.assertEqual((marker,), observed, diagnostic)
 
 
 class PublicCloudScenariosTestCase(MtlsPopTestCase):
@@ -472,172 +630,210 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
     __unittest_skip__ = False
 
     def test_subject_name_issuer_authentication(self):
-        from tests.lab_config import get_client_certificate
-
-        self.app = msal.ConfidentialClientApplication(
+        credential, _ = self._certificate()
+        app = msal.ConfidentialClientApplication(
             LAB_APP_CLIENT_ID,
             authority="https://login.microsoftonline.com/microsoft.onmicrosoft.com",
-            client_credential=get_client_certificate(),
+            client_credential=credential,
             http_client=MinimalHttpClient())
-        scope = ["https://graph.microsoft.com/.default"]
-        result = self.app.acquire_token_for_client(scope)
-        self.assertIn('access_token', result)
-        self.assertCacheWorksForApp(result, scope)
+        self.addCleanup(app.http_client.close)
+        result = app.acquire_token_for_client(self._MTLS_POP_SCOPE)
+        self._assert_token_result(result, self._MTLS_POP_SCOPE, "Bearer")
+        self._assert_cached_result(app, self._MTLS_POP_SCOPE, result)
 
-    # ── SN/I certificate over mTLS Proof-of-Possession ─────────────────────────
-    # These reuse the same lab SN/I cert as test_subject_name_issuer_authentication
-    # (it is not CNG-backed, so it works as a TLS client cert on the CI agents).
-    # These live matrix cells exercise MSAL's default mTLS transport, not the
-    # custom HTTP factory. Custom-pipeline coverage remains local TLS coverage
-    # in test_mtls_http_client.py; these tests do not establish live factory parity.
-    # ESTS gates mTLS PoP on the final resource audience (must be allow-listed,
-    # e.g. MS Graph), not on the client app, so we target Microsoft Graph.
-    # SN/I app + tenant that ESTS allow-lists for mTLS PoP. The generic
-    # LAB_APP_CLIENT_ID + microsoft.onmicrosoft.com works for Bearer SN/I but is
-    # rejected for mTLS PoP with AADSTS700025. Mirrors the MSAL .NET/Java e2e config.
-    _SNI_ALLOWLISTED_CLIENT_ID = "163ffef9-a313-45b4-ab2f-c7e2f5e0e23e"
-    _SNI_ALLOWLISTED_AUTHORITY = "https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c"
+    def _acquire_x509(self, scope, pop=False, send=False, region=False, custom=False):
+        credential, binding = self._certificate()
+        if send:
+            credential = dict(credential, send_certificate_over_mtls=True)
+        http_client = RecordingPolicyHttpClient(
+            expected_binding=binding) if custom else None
+        if custom:
+            self.addCleanup(http_client.close)
+        app = self._sni_app(credential, azure_region=region, http_client=http_client)
+        with (nullcontext() if custom else record_token_requests(binding)) as records:
+            result = app.acquire_token_for_client(
+                scope, mtls_proof_of_possession=pop)
+            self._assert_token_result(
+                result, scope, "mtls_pop" if pop else "Bearer", binding)
+            self._assert_cached_result(app, scope, result, pop=pop)
+            if custom:
+                records = self._assert_factory_used(
+                    http_client, binding).token_requests
+        request = self._assert_token_request(
+            records, scope, "client_credentials", region=region,
+            assertion_type=None if pop else JWT_BEARER)
+        self.assertEqual(200, request["status_code"])
+        self.assertEqual("mtls_pop" if pop else None, request["token_type"])
+        self.assertEqual(1, len(records), "A cache hit must not send another POST.")
+        if custom:
+            child = self._assert_factory_used(http_client, binding)
+            http_client.close()
+            self.assertTrue(http_client._closed and child._closed)
+        return result
 
-    def _assert_pop_cache_hit(self, app, scope):
-        # A second mTLS-PoP call for the same scope must be served from cache.
-        # (assertCacheWorksForApp cannot be reused: its follow-up call omits the
-        # flag and would look up a Bearer entry, missing the mtls_pop token.)
-        again = app.acquire_token_for_client(scope, mtls_proof_of_possession=True)
-        self.assertIsNotNone(again)
-        self.assertEqual(app._TOKEN_SOURCE_CACHE, again[app._TOKEN_SOURCE])
-
-    # ── Credential x Output matrix (mirrors the MSAL .NET e2e naming) ──────────
-    # Credential_<X509|Fic>_Output_<Pop|Bearer>. Task 1 covers the two X509 cells
-    # (this file); the Fic cells live in the FIC follow-up PR. snake_case per
-    # unittest, but the matrix names line up 1:1 with the sibling SDKs.
     def test_credential_x509_output_pop(self):
-        from tests.lab_config import get_client_certificate
-        cert = get_client_certificate()
-        self.app = msal.ConfidentialClientApplication(
-            self._SNI_ALLOWLISTED_CLIENT_ID,
-            authority=self._SNI_ALLOWLISTED_AUTHORITY,
-            client_credential=cert,
-            azure_region=False)
-        result = self.app.acquire_token_for_client(
-            self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
-        self.assertIn("access_token", result, "mTLS PoP request failed: %s" % result)
-        self.assertEqual("mtls_pop", result.get("token_type"))
-        binding = result.get("binding_certificate")
-        self.assertTrue(binding and binding.get("x5c") and binding.get("thumbprint_sha256"))
-        self.assertIsInstance(binding, msal.MtlsBindingContext)
-        self.assertNotIn("private", repr(binding).lower())
-        cnf = self._cnf_x5t_s256(result["access_token"])
-        if cnf:  # When the AT is a decodable JWT, its cnf must match our cert
-            self.assertEqual(binding["thumbprint_sha256"], cnf)
-        # The token must actually work at the resource, bound to our cert.
-        self._call_graph_with_mtls_pop_token(result["access_token"], binding)
-        self._assert_pop_cache_hit(self.app, self._MTLS_POP_SCOPE)
+        credential, expected_binding = self._certificate()
+        app = self._sni_app(credential)
+        with record_token_requests(expected_binding) as records:
+            result = app.acquire_token_for_client(
+                self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
+            self._assert_token_result(
+                result, self._MTLS_POP_SCOPE, "mtls_pop", expected_binding)
+            request = self._assert_token_request(
+                records, self._MTLS_POP_SCOPE, "client_credentials")
+            self.assertEqual(200, request["status_code"])
+            self.assertEqual("mtls_pop", request["token_type"])
+            token, binding = result["access_token"], result["binding_certificate"]
+            self._call_graph_with_mtls_pop_token(token, binding)
+            for scheme, certificate, marker in (
+                    ("mtls_pop", None, GRAPH_REJECTION_MARKERS[0]),
+                    ("Bearer", binding, GRAPH_REJECTION_MARKERS[1]),
+                    ("mtls_pop", unrelated_binding(), GRAPH_REJECTION_MARKERS[2])):
+                with self.subTest(control=marker):
+                    self._assert_graph_rejects(token, scheme, certificate, marker)
+            self._assert_cached_result(app, self._MTLS_POP_SCOPE, result, pop=True)
+        self.assertEqual(1, len(records), "The PoP repeat must come from cache.")
+
+    def test_credential_x509_output_pop_regional(self):
+        # Go's regional PoP cell is westus3 + Key Vault, not global Graph.
+        self._acquire_x509(
+            self._KEY_VAULT_SCOPE, pop=True, region="westus3")
 
     def test_credential_x509_output_bearer(self):
-        # The SAME SN/I cert, but WITHOUT mtls_proof_of_possession, must still
-        # authenticate via a signed client_assertion (private_key_jwt) and yield
-        # an ordinary Bearer token. This proves the client_assertion is dropped
-        # only on the mTLS-PoP path, never on the classic certificate path.
-        from tests.lab_config import get_client_certificate
-        self.app = msal.ConfidentialClientApplication(
-            self._SNI_ALLOWLISTED_CLIENT_ID,
-            authority=self._SNI_ALLOWLISTED_AUTHORITY,
-            client_credential=get_client_certificate(),
-            # Regional is correct/desirable HERE and must stay: a Bearer
-            # token_type is deterministic, so this retains live regional-endpoint
-            # E2E coverage. Region is FORBIDDEN on the mtls_pop cell, where the
-            # regional slice intermittently downgrades PoP -> Bearer (a Bearer
-            # *token*, not a temporarily_unavailable error) - which is why all
-            # sibling SDKs (.NET/Java/JS/Go) have no regional PoP cell either.
-            azure_region="westus3")
-        result = self.app.acquire_token_for_client(self._MTLS_POP_SCOPE)
-        self.assertIn("access_token", result, "SN/I Bearer request failed: %s" % result)
-        self.assertEqual("Bearer", result.get("token_type"))
-        # Prove the cert binding is genuinely ABSENT, not merely that we skipped
-        # the flag. MSAL Python adds binding_certificate ONLY on the mtls_pop
-        # path, so assert both the SDK-internal contract (key omitted entirely)
-        # and the caller-visible one (a lookup yields None) - no cert is bound.
-        self.assertNotIn("binding_certificate", result)
-        self.assertIsNone(result.get("binding_certificate"))
-        self.assertCacheWorksForApp(result, self._MTLS_POP_SCOPE)
+        credential, binding = self._certificate()
+        app = self._sni_app(credential, azure_region="westus3")
+        # Ordinary regional certificate auth retains the central assertion audience.
+        with record_token_requests(
+                binding, assertion_audience=app.authority.token_endpoint) as records:
+            result = app.acquire_token_for_client(self._KEY_VAULT_SCOPE)
+            self._assert_token_result(result, self._KEY_VAULT_SCOPE, "Bearer")
+            self._assert_cached_result(app, self._KEY_VAULT_SCOPE, result)
+        self.assertEqual(1, len(records))
+        self.assertEqual(
+            "westus3.login.microsoft.com", urlparse(records[0]["url"]).hostname)
+        self.assertTrue(records[0]["signed_client_assertion"])
+        self.assertEqual(JWT_BEARER, records[0]["client_assertion_type"])
+        self.assertEqual("client_credentials", records[0]["grant_type"])
+        self.assertEqual(200, records[0]["status_code"])
+        self.assertTrue(set(self._KEY_VAULT_SCOPE) <= records[0]["scope"])
+        self.assertEqual("HTTPAdapter", records[0]["tls_adapter"])
 
-    # ── Bearer-over-mTLS (send_certificate_over_mtls) ──────────────────────────
-    # Present the SN/I cert as the client TLS certificate ON the handshake to the
-    # mTLS endpoint, but receive a *plain Bearer* token (the cert authenticates
-    # the transport; the token is NOT cert-bound). Opt-in via the app-level
-    # client_credential flag send_certificate_over_mtls=True. Distinct from the
-    # two cells above: mtls_pop BINDS the token; the classic X509 Bearer cell
-    # signs a private_key_jwt to the REGULAR login.* endpoint (cert never on the
-    # TLS handshake). Ports MSAL .NET CertificateOptions.SendCertificateOverMtls.
     def test_credential_x509_send_certificate_over_mtls_output_bearer(self):
-        # LIVE client-credentials acquisition, allow-listed (mirrors the MSAL
-        # .NET live CC cell: westus3 + the Key Vault resource). Proves the cert
-        # goes on the TLS handshake to mtlsauth.* yet ESTS returns a plain Bearer.
-        from tests.lab_config import get_client_certificate
-        scope = ["https://vault.azure.net/.default"]
-        self.app = msal.ConfidentialClientApplication(
-            self._SNI_ALLOWLISTED_CLIENT_ID,
-            authority=self._SNI_ALLOWLISTED_AUTHORITY,
-            azure_region="westus3",
-            client_credential=dict(
-                get_client_certificate(), send_certificate_over_mtls=True))
-        result = self.app.acquire_token_for_client(scope)
-        self.assertIn(
-            "access_token", result,
-            "Bearer-over-mTLS request failed: %s" % result)
-        # A PLAIN Bearer token, NOT cert-bound (contrast the mtls_pop cell).
-        self.assertEqual("Bearer", result.get("token_type"))
-        self.assertNotIn("binding_certificate", result)
-        # The AT is an ordinary Bearer entry (no key_id/thumbprint fence), so a
-        # normal flagless acquire_token_for_client lookup returns it from cache
-        # -- the caller-visible proof of the feature's goal. (mtls_pop needed the
-        # special _assert_pop_cache_hit because its AT is key-id-fenced; Bearer-
-        # over-mTLS deliberately is not.)
-        self.assertCacheWorksForApp(result, scope)
+        self._acquire_x509(
+            self._KEY_VAULT_SCOPE, send=True, region="westus3")
 
-    def test_send_certificate_over_mtls_user_flows_capture_request(self):
-        # Like .NET/Go, cover these flows through request capture while their
-        # apps lack live mTLS enablement (AADSTS700027 / AADSTS392189).
-        # Replacing post below proves request construction, not a TLS handshake
-        # or successful live acquisition.
-        from tests.lab_config import get_client_certificate
-        cred = dict(
-            get_client_certificate(), send_certificate_over_mtls=True)
-        def _capture(sink):
-            def post(url, headers=None, data=None, *a, **k):
-                sink.append({"url": url, "data": dict(data or {})})
-                return MinimalResponse(status_code=400, text=json.dumps({
-                    "error": "invalid_grant",
-                    "error_description": "request captured; live acquisition "
-                        "not required for this app"}))
-            return post
-        def _new_app():
-            return msal.ConfidentialClientApplication(
-                self._SNI_ALLOWLISTED_CLIENT_ID,
-                authority=self._SNI_ALLOWLISTED_AUTHORITY,
-                client_credential=cred)
-        scope = ["https://graph.microsoft.com/.default"]
-        def _assert_mtls(req, grant_key, grant_value):
+    def test_credential_x509_custom_http_output_pop(self):
+        result = self._acquire_x509(self._MTLS_POP_SCOPE, pop=True, custom=True)
+        self._call_graph_with_mtls_pop_token(
+            result["access_token"], result["binding_certificate"])
+
+    def test_credential_x509_custom_http_send_certificate_over_mtls_output_bearer(self):
+        self._acquire_x509(
+            self._KEY_VAULT_SCOPE, send=True, region="westus3", custom=True)
+
+    def _assert_cache_isolated(self, pop_first):
+        credential, binding = self._certificate()
+        app = self._sni_app(credential)
+        results = {}
+        with record_token_requests(binding) as records:
+            for pop in ((True, False) if pop_first else (False, True)):
+                result = app.acquire_token_for_client(
+                    self._KEY_VAULT_SCOPE, mtls_proof_of_possession=pop)
+                self._assert_token_result(
+                    result, self._KEY_VAULT_SCOPE,
+                    "mtls_pop" if pop else "Bearer", binding)
+                self.assertEqual(
+                    app._TOKEN_SOURCE_IDP, result.get(app._TOKEN_SOURCE))
+                results[pop] = result
             self.assertTrue(
-                req["url"].startswith("https://mtlsauth.microsoft.com/"),
-                "Expected the mTLS endpoint, got %s" % req["url"])
-            self.assertEqual(grant_value, req["data"].get(grant_key))
-            self.assertTrue(req["data"].get("client_assertion"))
-            self.assertNotEqual("mtls_pop", req["data"].get("token_type"))
-            self.assertNotIn("key_id", req["data"])
-            self.assertNotIn("req_cnf", req["data"])
-        cap = []
-        with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
-            _new_app().acquire_token_on_behalf_of("a_user_assertion", scope)
-        _assert_mtls(cap[0], "requested_token_use", "on_behalf_of")
-        cap = []
-        with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
-            _new_app().acquire_token_by_refresh_token("a_refresh_token", scope)
-        _assert_mtls(cap[0], "grant_type", "refresh_token")
-        cap = []
-        with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
-            _new_app().acquire_token_by_authorization_code("an_auth_code", scope)
-        _assert_mtls(cap[0], "grant_type", "authorization_code")
+                results[False]["access_token"] != results[True]["access_token"],
+                "Bearer and PoP must not reuse the same access token.")
+            for pop, original in results.items():
+                self._assert_cached_result(
+                    app, self._KEY_VAULT_SCOPE, original, pop=pop)
+        self.assertEqual(2, len(records), "Both token types must remain cached.")
+
+    def test_bearer_then_mtls_pop_cache_isolated(self):
+        self._assert_cache_isolated(pop_first=False)
+
+    def test_mtls_pop_then_bearer_cache_isolated(self):
+        self._assert_cache_isolated(pop_first=True)
+
+    def _capture_invalid_grant(self, grant, send=True, custom=False):
+        credential, binding = self._certificate()
+        credential = dict(credential, send_certificate_over_mtls=send)
+        http_client = RecordingPolicyHttpClient(
+            expected_binding=binding) if custom else None
+        if custom:
+            self.addCleanup(http_client.close)
+        app = self._sni_app(credential, http_client=http_client)
+
+        def redeem():
+            if grant == "urn:ietf:params:oauth:grant-type:jwt-bearer":
+                return app.acquire_token_on_behalf_of(
+                    "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
+            if grant == "refresh_token":
+                return app.acquire_token_by_refresh_token(
+                    "fake-refresh-token-for-request-capture", self._KEY_VAULT_SCOPE)
+            return app.acquire_token_by_authorization_code(
+                "fake-auth-code-for-request-capture", self._KEY_VAULT_SCOPE,
+                redirect_uri="https://localhost/redirect")
+
+        if custom:
+            result = redeem()
+            records = (self._assert_factory_used(http_client, binding).token_requests
+                       if send else http_client.token_requests)
+            if not send:
+                self.assertEqual([], http_client._children)
+        else:
+            with record_token_requests(binding) as records:
+                result = redeem()
+        request = self._assert_token_request(
+            records, self._KEY_VAULT_SCOPE, grant,
+            assertion_type=JWT_BEARER, regular_endpoint=not send)
+        self.assertNotIn("token_type", request["fields"])
+        field = {
+            "urn:ietf:params:oauth:grant-type:jwt-bearer": "assertion",
+            "refresh_token": "refresh_token", "authorization_code": "code",
+        }[grant]
+        self.assertIn(field, request["fields"])
+        if field == "assertion":
+            self.assertEqual("on_behalf_of", request["requested_token_use"])
+        if field == "code":
+            self.assertIn("redirect_uri", request["fields"])
+        diagnostic = "Expected an invalid-grant service rejection: {!r}".format(request)
+        self.assertEqual(400, request["status_code"], diagnostic)
+        self.assertEqual("invalid_grant", request["error"], diagnostic)
+        self.assertEqual("invalid_grant", result.get("error"), diagnostic)
+        self.assertFalse(
+            "access_token" in result, "Intentionally invalid input must not acquire a token.")
+
+    def test_send_certificate_over_mtls_on_behalf_of_request_capture(self):
+        self._capture_invalid_grant("urn:ietf:params:oauth:grant-type:jwt-bearer")
+
+    def test_send_certificate_over_mtls_refresh_token_request_capture(self):
+        self._capture_invalid_grant("refresh_token")
+
+    def test_send_certificate_over_mtls_auth_code_request_capture(self):
+        self._capture_invalid_grant("authorization_code")
+
+    def test_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint(self):
+        self._capture_invalid_grant(
+            "urn:ietf:params:oauth:grant-type:jwt-bearer", send=False)
+
+    def test_custom_http_send_certificate_over_mtls_on_behalf_of_request_capture(self):
+        self._capture_invalid_grant(
+            "urn:ietf:params:oauth:grant-type:jwt-bearer", custom=True)
+
+    def test_custom_http_send_certificate_over_mtls_refresh_token_request_capture(self):
+        self._capture_invalid_grant("refresh_token", custom=True)
+
+    def test_custom_http_send_certificate_over_mtls_auth_code_request_capture(self):
+        self._capture_invalid_grant("authorization_code", custom=True)
+
+    def test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint(self):
+        self._capture_invalid_grant(
+            "urn:ietf:params:oauth:grant-type:jwt-bearer", send=False, custom=True)
 
 
 class FicTwoLegTestCase(MtlsPopTestCase):
@@ -646,223 +842,89 @@ class FicTwoLegTestCase(MtlsPopTestCase):
     _FIC_BEARER_SCOPE = ["https://storage.azure.com/.default"]
 
     def _acquire_fic_token(
-            self, scope, azure_region, mtls_proof_of_possession=False):
-        from tests.lab_config import get_client_certificate
-        cert = get_client_certificate()
-        leg1_app = msal.ConfidentialClientApplication(
-            CertificateScenariosTestCase._SNI_ALLOWLISTED_CLIENT_ID,
-            authority=CertificateScenariosTestCase._SNI_ALLOWLISTED_AUTHORITY,
-            client_credential=cert,
-            azure_region=azure_region)
-        leg1 = leg1_app.acquire_token_for_client(
-            self._FIC_EXCHANGE_SCOPE, mtls_proof_of_possession=True)
-        self.assertIn("access_token", leg1, "FIC leg 1 failed: %s" % leg1)
-        self.assertEqual("mtls_pop", leg1.get("token_type"), "Leg 1 must be mtls_pop")
-        leg1_thumbprint = leg1["binding_certificate"]["thumbprint_sha256"]
+            self, scope, azure_region, mtls_proof_of_possession=False, custom=False):
+        credential, binding = self._certificate()
+        leg1_http = RecordingPolicyHttpClient(
+            expected_binding=binding) if custom else None
+        if custom:
+            self.addCleanup(leg1_http.close)
+        leg1_app = self._sni_app(
+            credential, azure_region=azure_region, http_client=leg1_http)
+        leg1, leg1_requests = self._acquire_recorded(
+            leg1_app, self._FIC_EXCHANGE_SCOPE, binding, pop=True,
+            http_client=leg1_http)
+        self._assert_token_result(
+            leg1, self._FIC_EXCHANGE_SCOPE, "mtls_pop", binding)
+        first_request = self._assert_token_request(
+            leg1_requests, self._FIC_EXCHANGE_SCOPE, "client_credentials",
+            region=azure_region)
+        self.assertEqual("mtls_pop", first_request["token_type"])
+        self.assertEqual(200, first_request["status_code"])
 
-        # Leg 2: same cert binds the TLS handshake, leg-1 token carried as jwt-pop.
-        leg2_app = msal.ConfidentialClientApplication(
-            CertificateScenariosTestCase._SNI_ALLOWLISTED_CLIENT_ID,
-            authority=CertificateScenariosTestCase._SNI_ALLOWLISTED_AUTHORITY,
-            client_credential={
-                "client_assertion": lambda: leg1["access_token"],
-                "mtls_binding_certificate": cert},
-            azure_region=azure_region)
-        result = leg2_app.acquire_token_for_client(
-            scope, mtls_proof_of_possession=mtls_proof_of_possession)
-        return leg1_thumbprint, result
+        provider_calls = []
+
+        def assertion_provider():
+            provider_calls.append(True)
+            return leg1["access_token"]
+
+        leg2_http = RecordingPolicyHttpClient(
+            expected_binding=binding,
+            expected_assertion=leg1["access_token"]) if custom else None
+        if custom:
+            self.addCleanup(leg2_http.close)
+        leg2_app = self._sni_app(
+            azure_region=azure_region, http_client=leg2_http,
+            credential={
+                "client_assertion": assertion_provider,
+                "mtls_binding_certificate": credential})
+        result, leg2_requests = self._acquire_recorded(
+            leg2_app, scope, binding, pop=mtls_proof_of_possession,
+            http_client=leg2_http, expected_assertion=leg1["access_token"])
+        self.assertTrue(provider_calls, "The assertion provider must actually be invoked.")
+        self._assert_token_result(
+            result, scope, "mtls_pop" if mtls_proof_of_possession else "Bearer",
+            binding)
+        self._assert_audience(result, scope)
+        second_request = self._assert_token_request(
+            leg2_requests, scope, "client_credentials", region=azure_region,
+            assertion_type=JWT_POP)
+        self.assertTrue(
+            second_request["assertion_matches"],
+            "The actual jwt-pop POST must carry the leg-1 assertion unchanged.")
+        self.assertEqual(
+            "mtls_pop" if mtls_proof_of_possession else None,
+            second_request["token_type"])
+        self.assertEqual(200, second_request["status_code"])
+        if custom:
+            children = [
+                self._assert_factory_used(owner, binding)
+                for owner in (leg1_http, leg2_http)]
+            self.assertIsNot(children[0], children[1])
+            for owner, child in zip((leg1_http, leg2_http), children):
+                owner.close()
+                self.assertTrue(owner._closed and child._closed)
+        return leg1["binding_certificate"].thumbprint_sha256, result
 
     def test_credential_fic_output_bearer(self):
-        _, leg2_bearer = self._acquire_fic_token(
-            self._FIC_BEARER_SCOPE, azure_region="westus3")
-        self.assertIn("access_token", leg2_bearer, "Leg 2 (Bearer) failed: %s" % leg2_bearer)
-        self.assertEqual("Bearer", leg2_bearer.get("token_type"))
-        self.assertNotIn("binding_certificate", leg2_bearer)
+        self._acquire_fic_token(self._FIC_BEARER_SCOPE, azure_region="westus3")
 
     def test_credential_fic_output_pop(self):
-        leg1_thumbprint, leg2_pop = self._acquire_fic_token(
+        _, result = self._acquire_fic_token(
             self._MTLS_POP_SCOPE, azure_region=False,
             mtls_proof_of_possession=True)
-        self.assertIn("access_token", leg2_pop, "Leg 2 (PoP) failed: %s" % leg2_pop)
-        self.assertEqual("mtls_pop", leg2_pop.get("token_type"))
-        # The final PoP token must be bound to the leg-1 certificate thumbprint
-        cnf = self._cnf_x5t_s256(leg2_pop["access_token"])
-        if cnf:
-            self.assertEqual(leg1_thumbprint, cnf,
-                "Final token cnf must be bound to the leg-1 cert thumbprint")
-        pop_binding = leg2_pop.get("binding_certificate")
-        self.assertIsInstance(pop_binding, msal.MtlsBindingContext)
-        self.assertEqual(
-            leg1_thumbprint, pop_binding.get("thumbprint_sha256"),
-            "Final binding context must carry the leg-1 certificate")
         self._call_graph_with_mtls_pop_token(
-            leg2_pop["access_token"], pop_binding)
+            result["access_token"], result["binding_certificate"])
 
+    def test_credential_fic_custom_http_output_bearer(self):
+        self._acquire_fic_token(
+            self._FIC_BEARER_SCOPE, azure_region="westus3", custom=True)
 
-class FicScenarioTestCase(unittest.TestCase):
-    """Exercise the FIC integration test's failure gates without lab access."""
-
-    def setUp(self):
-        self.config = {
-            "LAB_APP_CLIENT_CERT_PFX_PATH": "configured.pfx",
-        }
-        self.leg1 = Mock()
-        self.leg1.acquire_token_for_client.return_value = {
-            "access_token": "leg1-token", "token_type": "mtls_pop",
-            "binding_certificate": {"thumbprint_sha256": "cert-thumbprint"},
-        }
-        self.pop_binding = Mock(spec=msal.MtlsBindingContext)
-        self.pop_binding.get.return_value = "cert-thumbprint"
-        self.leg2 = Mock()
-        self.leg2.acquire_token_for_client.return_value = {
-            "access_token": "opaque-pop-token",
-            "token_type": "mtls_pop",
-            "binding_certificate": self.pop_binding,
-        }
-        self.scenario = FicTwoLegTestCase("test_credential_fic_output_pop")
-        self.cert = {
-            "private_key_pfx_path": "configured.pfx", "public_certificate": True}
-        self.factory = Mock(side_effect=[self.leg1, self.leg2])
-        patchers = (
-            patch.dict(os.environ, self.config, clear=True),
-            patch("tests.lab_config.open", mock_open(read_data=b"unit-test-pfx")),
-            patch(
-                "tests.lab_config.pkcs12.load_key_and_certificates",
-                return_value=(Mock(), Mock(), [])),
-            patch("msal.ConfidentialClientApplication", self.factory),
-            patch.object(self.scenario, "_call_graph_with_mtls_pop_token"),
-        )
-        for patcher in patchers:
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def test_missing_certificate_fails_before_acquisition(self):
-        for method in (
-                self.scenario.test_credential_fic_output_pop,
-                self.scenario.test_credential_fic_output_bearer):
-            for value in ("", "$(LAB_APP_CLIENT_CERT_PFX_PATH)"):
-                with self.subTest(method=method.__name__, value=value):
-                    with patch.dict(
-                            os.environ, {"LAB_APP_CLIENT_CERT_PFX_PATH": value}):
-                        with self.assertRaisesRegex(
-                                EnvironmentError, "LAB_APP_CLIENT_CERT_PFX_PATH"):
-                            method()
-        self.factory.assert_not_called()
-
-    def test_missing_certificate_is_a_runner_error_even_on_tagged_releases(self):
-        with patch.object(E2eTestCase, "__unittest_skip__", True, create=True):
-            with patch.dict(os.environ, {}, clear=True):
-                for name in (
-                        "test_credential_fic_output_pop",
-                        "test_credential_fic_output_bearer"):
-                    with self.subTest(name=name):
-                        result = unittest.TestResult()
-                        FicTwoLegTestCase(name).run(result)
-                        self.assertEqual(1, result.testsRun)
-                        self.assertEqual([], result.skipped)
-                        self.assertEqual(1, len(result.errors))
-                        self.assertIn(
-                            "LAB_APP_CLIENT_CERT_PFX_PATH", result.errors[0][1])
-        self.factory.assert_not_called()
-
-    def test_configured_leg1_errors_fail_instead_of_skipping(self):
-        for method in (
-                self.scenario.test_credential_fic_output_pop,
-                self.scenario.test_credential_fic_output_bearer):
-            for error in ("token_type_mismatch", "invalid_client", "invalid_grant"):
-                with self.subTest(method=method.__name__, error=error):
-                    self.factory.side_effect = [self.leg1, self.leg2]
-                    self.leg1.acquire_token_for_client.return_value = {
-                        "error": error}
-                    with self.assertRaisesRegex(AssertionError, error):
-                        method()
-        self.leg2.acquire_token_for_client.assert_not_called()
-
-    def test_shared_lab_defaults_and_opaque_token_resource_validation(self):
-        self.scenario.test_credential_fic_output_pop()
-        calls = self.factory.call_args_list
-        self.assertEqual(2, len(calls))
-        for app_call in calls:
-            self.assertEqual(
-                "163ffef9-a313-45b4-ab2f-c7e2f5e0e23e", app_call.args[0])
-            self.assertEqual(
-                "https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c",
-                app_call.kwargs["authority"])
-            self.assertIs(False, app_call.kwargs["azure_region"])
-        self.assertEqual(self.cert, calls[0].kwargs["client_credential"])
-        credential = calls[1].kwargs["client_credential"]
-        self.assertIs(
-            calls[0].kwargs["client_credential"],
-            credential["mtls_binding_certificate"])
-        self.assertEqual("leg1-token", credential["client_assertion"]())
-        self.leg1.acquire_token_for_client.assert_called_once_with(
-            ["api://AzureADTokenExchange/.default"], mtls_proof_of_possession=True)
-        self.leg2.acquire_token_for_client.assert_called_once_with(
-            ["https://graph.microsoft.com/.default"], mtls_proof_of_possession=True)
-        self.assertEqual(
-            [
-                call("opaque-pop-token", self.pop_binding),
-            ],
-            self.scenario._call_graph_with_mtls_pop_token.call_args_list)
-
-    def test_bearer_uses_regional_shared_lab_without_downstream_mtls(self):
-        self.leg2.acquire_token_for_client.return_value = {
-            "access_token": "bearer-token", "token_type": "Bearer"}
-        self.scenario.test_credential_fic_output_bearer()
-        calls = self.factory.call_args_list
-        self.assertEqual(2, len(calls))
-        for app_call in calls:
-            self.assertEqual(
-                "163ffef9-a313-45b4-ab2f-c7e2f5e0e23e", app_call.args[0])
-            self.assertEqual(
-                "https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c",
-                app_call.kwargs["authority"])
-            self.assertEqual("westus3", app_call.kwargs["azure_region"])
-        credential = calls[1].kwargs["client_credential"]
-        self.assertIs(
-            calls[0].kwargs["client_credential"],
-            credential["mtls_binding_certificate"])
-        self.assertEqual("leg1-token", credential["client_assertion"]())
-        self.leg1.acquire_token_for_client.assert_called_once_with(
-            ["api://AzureADTokenExchange/.default"], mtls_proof_of_possession=True)
-        self.leg2.acquire_token_for_client.assert_called_once_with(
-            ["https://storage.azure.com/.default"], mtls_proof_of_possession=False)
-        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
-
-    def test_leg2_errors_fail_instead_of_skipping(self):
-        for method in (
-                self.scenario.test_credential_fic_output_pop,
-                self.scenario.test_credential_fic_output_bearer):
-            for error in ("invalid_client", "invalid_grant", "temporarily_unavailable"):
-                with self.subTest(method=method.__name__, error=error):
-                    self.factory.side_effect = [self.leg1, self.leg2]
-                    self.leg2.acquire_token_for_client.return_value = {
-                        "error": error}
-                    with self.assertRaisesRegex(AssertionError, error):
-                        method()
-        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
-
-    def test_bearer_contract_is_checked(self):
-        for response in (
-                {"access_token": "token", "token_type": "mtls_pop"},
-                {"access_token": "token", "token_type": "Bearer",
-                 "binding_certificate": {}}):
-            with self.subTest(response=response):
-                self.factory.side_effect = [self.leg1, self.leg2]
-                self.leg2.acquire_token_for_client.return_value = response
-                with self.assertRaises(AssertionError):
-                    self.scenario.test_credential_fic_output_bearer()
-
-    def test_pop_requires_matching_final_binding_certificate(self):
-        for binding in (None, {}, Mock(spec=msal.MtlsBindingContext)):
-            with self.subTest(binding=binding):
-                self.factory.side_effect = [self.leg1, self.leg2]
-                self.leg2.acquire_token_for_client.return_value = {
-                    "access_token": "opaque-pop-token", "token_type": "mtls_pop",
-                    "binding_certificate": binding}
-                with self.assertRaises(AssertionError):
-                    self.scenario.test_credential_fic_output_pop()
-        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
+    def test_credential_fic_custom_http_output_pop(self):
+        _, result = self._acquire_fic_token(
+            self._MTLS_POP_SCOPE, azure_region=False,
+            mtls_proof_of_possession=True, custom=True)
+        self._call_graph_with_mtls_pop_token(
+            result["access_token"], result["binding_certificate"])
 
 
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once

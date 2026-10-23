@@ -11,6 +11,41 @@ from tests import test_e2e
 
 
 class TestRequiredCertificateConfiguration(unittest.TestCase):
+    _REQUIRED_SCENARIOS = {
+        test_e2e.CertificateScenariosTestCase: {
+            "test_subject_name_issuer_authentication",
+            "test_credential_x509_output_pop",
+            "test_credential_x509_output_pop_regional",
+            "test_credential_x509_output_bearer",
+            "test_credential_x509_send_certificate_over_mtls_output_bearer",
+            "test_credential_x509_custom_http_output_pop",
+            "test_credential_x509_custom_http_send_certificate_over_mtls_output_bearer",
+            "test_bearer_then_mtls_pop_cache_isolated",
+            "test_mtls_pop_then_bearer_cache_isolated",
+            "test_send_certificate_over_mtls_on_behalf_of_request_capture",
+            "test_send_certificate_over_mtls_refresh_token_request_capture",
+            "test_send_certificate_over_mtls_auth_code_request_capture",
+            "test_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint",
+            "test_custom_http_send_certificate_over_mtls_on_behalf_of_request_capture",
+            "test_custom_http_send_certificate_over_mtls_refresh_token_request_capture",
+            "test_custom_http_send_certificate_over_mtls_auth_code_request_capture",
+            "test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint",
+        },
+        test_e2e.FicTwoLegTestCase: {
+            "test_credential_fic_output_pop",
+            "test_credential_fic_output_bearer",
+            "test_credential_fic_custom_http_output_pop",
+            "test_credential_fic_custom_http_output_bearer",
+        },
+    }
+
+    def test_required_scenario_inventory_is_complete(self):
+        for case, expected in self._REQUIRED_SCENARIOS.items():
+            with self.subTest(case=case.__name__):
+                self.assertEqual(
+                    expected,
+                    set(unittest.defaultTestLoader.getTestCaseNames(case)))
+
     def test_missing_certificate_configuration_fails(self):
         for value in (None, "", "$(LAB_APP_CLIENT_CERT_PFX_PATH)"):
             with self.subTest(value=value), patch.dict(os.environ, {}, clear=True):
@@ -57,11 +92,12 @@ class TestRequiredCertificateConfiguration(unittest.TestCase):
         with patch.dict(os.environ, {"TRAVIS_TAG": "test-release"}, clear=True), patch.object(
                 test_e2e.E2eTestCase, "__unittest_skip__", True, create=True), patch(
                 "tests.test_e2e.msal.ConfidentialClientApplication") as application:
-            suite = unittest.defaultTestLoader.loadTestsFromTestCase(
-                test_e2e.CertificateScenariosTestCase)
+            suite = unittest.TestSuite(
+                unittest.defaultTestLoader.loadTestsFromTestCase(case)
+                for case in self._REQUIRED_SCENARIOS)
             result = unittest.TextTestRunner(stream=io.StringIO()).run(suite)
-        self.assertEqual(5, result.testsRun)
-        self.assertEqual(5, len(result.errors))
+        self.assertEqual(21, result.testsRun)
+        self.assertEqual(21, len(result.errors))
         self.assertEqual([], result.skipped)
         self.assertEqual([], result.failures)
         for _, traceback in result.errors:
@@ -69,6 +105,7 @@ class TestRequiredCertificateConfiguration(unittest.TestCase):
         application.assert_not_called()
 
     def test_required_scenarios_override_legacy_release_skip(self):
-        self.assertIn(
-            "__unittest_skip__", test_e2e.CertificateScenariosTestCase.__dict__)
-        self.assertFalse(test_e2e.CertificateScenariosTestCase.__unittest_skip__)
+        for case in self._REQUIRED_SCENARIOS:
+            with self.subTest(case=case.__name__):
+                self.assertIn("__unittest_skip__", case.__dict__)
+                self.assertFalse(case.__unittest_skip__)
