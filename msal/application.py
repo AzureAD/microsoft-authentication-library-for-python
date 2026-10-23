@@ -128,8 +128,7 @@ def _extract_cert_and_thumbprints(cert):
 
 def _is_certificate_issuer(cert, issuer):
     from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
-    from cryptography.hazmat.primitives.asymmetric import (
-        rsa, ec, dsa, ed25519, ed448, padding)
+    from cryptography.hazmat.primitives.asymmetric import rsa, ec, dsa, padding
     from cryptography.x509.oid import SignatureAlgorithmOID
 
     if cert.issuer != issuer.subject:
@@ -156,10 +155,12 @@ def _is_certificate_issuer(cert, issuer):
                 key.verify(
                     cert.signature, cert.tbs_certificate_bytes,
                     cert.signature_hash_algorithm)
-            elif isinstance(key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
-                key.verify(cert.signature, cert.tbs_certificate_bytes)
             else:
-                raise UnsupportedAlgorithm("Unsupported certificate issuer key")
+                from cryptography.hazmat.primitives.asymmetric import ed25519, ed448
+                if isinstance(key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+                    key.verify(cert.signature, cert.tbs_certificate_bytes)
+                else:
+                    raise UnsupportedAlgorithm("Unsupported certificate issuer key")
     except (InvalidSignature, ValueError):
         return False
     return True
@@ -386,10 +387,12 @@ class _ClientWithCcsRoutingInfo(Client):
 
 class _MtlsBearerClient(_ClientWithCcsRoutingInfo):
     def _obtain_token(self, *args, **kwargs):
-        if "post" in kwargs:
-            raise ValueError(
-                "send_certificate_over_mtls=True does not support a post "
-                "override. Omit post to use MSAL's built-in mTLS transport.")
+        for option in ("post", "cert"):
+            if option in kwargs:
+                raise ValueError(
+                    "send_certificate_over_mtls=True does not support a {} "
+                    "override. Omit {} to use MSAL's built-in mTLS transport "
+                    "with the configured certificate.".format(option, option))
         return super(_MtlsBearerClient, self)._obtain_token(*args, **kwargs)
 
 
@@ -657,14 +660,17 @@ class ClientApplication(object):
                 (:func:`~acquire_token_for_client`,
                 :func:`~acquire_token_on_behalf_of`,
                 :func:`~acquire_token_by_auth_code_flow`,
-                :func:`~acquire_token_by_authorization_code`, and
-                :func:`~acquire_token_by_refresh_token`), including refresh-token
-                redemption during :func:`~acquire_token_silent`. It defaults to
+                :func:`~acquire_token_by_authorization_code`,
+                :func:`~acquire_token_by_refresh_token`,
+                :func:`~acquire_token_by_username_password`, and
+                :func:`~acquire_token_by_user_federated_identity_credential`),
+                including refresh-token redemption during
+                :func:`~acquire_token_silent`. It defaults to
                 ``False`` (so leaving it unset changes no behavior) and requires
                 a certificate credential -- otherwise construction raises
                 ``ValueError``. Custom ``http_client`` instances and per-request
-                ``post`` overrides are rejected when making an mTLS token request,
-                because MSAL must own the certificate-bearing transport.
+                ``post`` or ``cert`` overrides are rejected when making an mTLS
+                token request, because MSAL must own the certificate-bearing transport.
                 A per-request ``mtls_proof_of_possession=True`` on
                 :func:`~acquire_token_for_client` always takes precedence, yielding
                 a cert-bound ``mtls_pop`` token instead of a Bearer one.
@@ -1379,10 +1385,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         return client
 
     def _client_for_confidential_request(self):
-        """Pick the OAuth2 client for a confidential-client user flow (OBO,
-        refresh-token, auth-code): the Bearer-over-mTLS client when the
-        app-level send_certificate_over_mtls flag is set, else the regular
-        client. (Client-credentials routing lives in _acquire_token_for_client,
+        """Pick the Bearer-over-mTLS client for a confidential-client user flow
+        when the app-level send_certificate_over_mtls flag is set, else the
+        regular client. (Client-credentials routing lives in _acquire_token_for_client,
         which additionally honors a per-request mtls_pop that wins over the flag.)
         """
         if self._send_certificate_over_mtls:
@@ -1417,7 +1422,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 if client_credential.get("private_key_pfx_path"):
                     private_key, sha256_thumbprint, sha1_thumbprint, x5c, _ = _parse_pfx(
                         client_credential["private_key_pfx_path"],
-                        passphrase_bytes, include_chain=True)
+                        passphrase_bytes)
                     if client_credential.get("public_certificate") is True and x5c:
                         headers["x5c"] = x5c
                 elif client_credential.get("private_key"):  # PEM blob
@@ -2570,7 +2575,7 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     data=data,
                     headers=headers, **kwargs))
         if response is None:  # Either ADFS or not federated
-            response = _clean_up(self.client.obtain_token_by_username_password(
+            response = _clean_up(self._client_for_confidential_request().obtain_token_by_username_password(
                 username, password, scope=scopes,
                 headers=headers,
                 data=data,
@@ -2612,9 +2617,10 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         if not grant_type:
             raise RuntimeError(
                 "RSTR returned unknown token type: %s", wstrust_result.get("type"))
-        self.client.grant_assertion_encoders.setdefault(  # Register a non-standard type
-            grant_type, self.client.encode_saml_assertion)
-        return self.client.obtain_token_by_assertion(
+        client = self._client_for_confidential_request()
+        client.grant_assertion_encoders.setdefault(  # Register a non-standard type
+            grant_type, client.encode_saml_assertion)
+        return client.obtain_token_by_assertion(
             wstrust_result["token"], grant_type, scope=scopes,
             on_obtaining_tokens=lambda event: self.token_cache.add(dict(
                 event,
@@ -3441,7 +3447,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
                 user_object_id, self.authority.tenant)
         _data = kwargs.pop("data", {})
         _stash_client_claims(forwarded_client_claims, _data)
-        response = _clean_up(self.client.obtain_token_by_user_fic(
+        response = _clean_up(self._client_for_confidential_request().obtain_token_by_user_fic(
             scope=self._decorate_scope(scopes),
             assertion=assertion,
             username=username,

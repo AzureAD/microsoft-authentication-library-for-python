@@ -214,6 +214,17 @@ class TestMtlsSslContext(unittest.TestCase):
                         method.upper(), "https://mtlsauth.microsoft.com/token",
                         allow_redirects=False, timeout=30)
 
+    def test_owned_transport_rejects_certificate_overrides_before_session_access(self):
+        client = mtls._MtlsHttpClient(b"cert", b"key")
+        with patch.object(client, "_ensure_session") as ensure_session:
+            for method in ("get", "post"):
+                for cert in (None, "replacement.pem", ("cert.pem", "key.pem")):
+                    with self.subTest(method=method, cert=cert):
+                        with self.assertRaisesRegex(ValueError, "cert override"):
+                            getattr(client, method)(
+                                "https://mtlsauth.microsoft.com/token", cert=cert)
+            ensure_session.assert_not_called()
+
     def test_unsupported_mtls_dependencies_fail_with_upgrade_instructions(self):
         binding = MtlsBindingContext(b"cert", b"key", [], "thumbprint")
         unsupported = (
@@ -457,7 +468,9 @@ class TestMtlsCertificateChain(unittest.TestCase):
                         header = data["client_assertion"].split(b".")[0]
                         decoded = json.loads(base64.urlsafe_b64decode(
                             header + b"=" * (-len(header) % 4)))
-                        self.assertEqual(expected_x5c, decoded["x5c"])
+                        self.assertEqual(
+                            expected_x5c if send_over_mtls else expected_x5c[:1],
+                            decoded["x5c"])
                         return MinimalResponse(
                             status_code=200,
                             text='{"access_token": "at", "token_type": "Bearer"}')
@@ -468,7 +481,54 @@ class TestMtlsCertificateChain(unittest.TestCase):
                     else:
                         app.acquire_token_for_client(["s1"], post=post)
 
+    def test_flagless_pfx_does_not_require_issuer_signature_verification(self):
+        from cryptography.exceptions import UnsupportedAlgorithm
+        from msal.application import ConfidentialClientApplication
+        from tests.http_client import MinimalResponse
+
+        endpoint = "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"
+        path = os.path.join(os.path.dirname(__file__), "certificate-with-password.pfx")
+        with patch("cryptography.hazmat.primitives.serialization.pkcs12."
+                   "load_key_and_certificates",
+                   return_value=(self.leaf_key, self.leaf, [self.intermediate])), \
+                patch("msal.application._is_certificate_issuer", side_effect=UnsupportedAlgorithm(
+                    "Upgrade cryptography to verify RSA-PSS certificate chains")), \
+                patch("msal.authority.tenant_discovery", return_value={
+                    "authorization_endpoint": endpoint.replace("/token", "/authorize"),
+                    "token_endpoint": endpoint,
+                    "issuer": "https://login.microsoftonline.com/tenant/v2.0"}):
+            for public_certificate in (False, True):
+                with self.subTest(public_certificate=public_certificate):
+                    app = ConfidentialClientApplication(
+                        "cid", authority="https://login.microsoftonline.com/tenant",
+                        azure_region=False, client_credential={
+                            "private_key_pfx_path": path,
+                            "public_certificate": public_certificate})
+                    captured = []
+
+                    def post(url, data=None, **kwargs):
+                        captured.append(data["client_assertion"])
+                        return MinimalResponse(
+                            status_code=200,
+                            text='{"access_token": "at", "token_type": "Bearer"}')
+
+                    result = app.acquire_token_for_client(["s1"], post=post)
+                    self.assertEqual("at", result["access_token"])
+                    header = captured[0].split(b".")[0]
+                    decoded = json.loads(base64.urlsafe_b64decode(
+                        header + b"=" * (-len(header) % 4)))
+                    if public_certificate:
+                        self.assertEqual(
+                            extract_certs(self.chain_pem.decode("ascii"))[:1],
+                            decoded["x5c"])
+                    else:
+                        self.assertNotIn("x5c", decoded)
+            with self.assertRaises(UnsupportedAlgorithm):
+                _load_mtls_cert_material({"private_key_pfx_path": path})
+
     def test_issuer_signature_verification_on_older_cryptography(self):
+        import builtins
+
         class LegacyCertificate:
             issuer = self.leaf.issuer
             signature = self.leaf.signature
@@ -476,8 +536,17 @@ class TestMtlsCertificateChain(unittest.TestCase):
             signature_algorithm_oid = self.leaf.signature_algorithm_oid
             signature_hash_algorithm = self.leaf.signature_hash_algorithm
 
-        self.assertFalse(_is_certificate_issuer(LegacyCertificate(), self.impostor))
-        self.assertTrue(_is_certificate_issuer(LegacyCertificate(), self.intermediate))
+        import_module = builtins.__import__
+
+        def legacy_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "cryptography.hazmat.primitives.asymmetric" and any(
+                    module in fromlist for module in ("ed25519", "ed448")):
+                raise ImportError("EdDSA modules require cryptography 2.6")
+            return import_module(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=legacy_import):
+            self.assertFalse(_is_certificate_issuer(LegacyCertificate(), self.impostor))
+            self.assertTrue(_is_certificate_issuer(LegacyCertificate(), self.intermediate))
 
     def test_environment_ca_bundles_replace_default_roots(self):
         with tempfile.TemporaryDirectory() as directory:

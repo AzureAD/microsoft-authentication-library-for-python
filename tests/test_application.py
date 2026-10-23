@@ -2847,6 +2847,53 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         self.assertTrue(req["data"].get("client_assertion"))
         self.assertNotEqual("mtls_pop", req["data"].get("token_type"))
 
+    def test_password_and_user_fic_flows_honor_mtls_flag(self):
+        from msal.wstrust_response import SAML_TOKEN_TYPE_V1
+
+        saml_grant = "urn:ietf:params:oauth:grant-type:saml1_1-bearer"
+        for send_over_mtls in (False, True):
+            for grant in ("password", saml_grant, "user_fic"):
+                with self.subTest(send_over_mtls=send_over_mtls, grant=grant):
+                    app = ConfidentialClientApplication(
+                        "cid", authority=self._AUTHORITY, azure_region=False,
+                        client_credential=dict(
+                            _MTLS_CERT_CRED,
+                            send_certificate_over_mtls=send_over_mtls))
+                    regular, mtls = [], []
+                    realm = {"account_type": (
+                        "Federated" if grant == saml_grant else "Managed"),
+                        "federation_active_auth_url": "https://federation.example"}
+                    with patch.object(
+                            app.authority, "user_realm_discovery", return_value=realm), \
+                            patch("msal.application.wst_send_request", return_value={
+                                "token": b"saml_assertion", "type": SAML_TOKEN_TYPE_V1}), \
+                            patch.object(app.http_client, "post",
+                                         side_effect=self._capturing_post(regular)), \
+                            patch("msal.mtls._MtlsHttpClient.post",
+                                  side_effect=self._capturing_post(mtls)):
+                        if grant == "user_fic":
+                            result = app.acquire_token_by_user_federated_identity_credential(
+                                ["s1"], "fic_assertion", user_object_id="uid")
+                        else:
+                            result = app.acquire_token_by_username_password(
+                                "user@example.com", "password", ["s1"])
+                    requests = mtls if send_over_mtls else regular
+                    self.assertEqual([], regular if send_over_mtls else mtls)
+                    self.assertEqual(1, len(requests))
+                    self.assertEqual(
+                        "https://{}/my_tenant/oauth2/v2.0/token".format(
+                            "mtlsauth.microsoft.com" if send_over_mtls
+                            else "login.microsoftonline.com"),
+                        requests[0]["url"])
+                    self.assertEqual(grant, requests[0]["data"]["grant_type"])
+                    self.assertTrue(requests[0]["data"]["client_assertion"])
+                    self.assertEqual("Bearer", result["token_type"])
+                    self.assertNotIn("binding_certificate", result)
+                    if grant == saml_grant:
+                        self.assertEqual(
+                            base64.urlsafe_b64encode(b"saml_assertion").rstrip(b"="),
+                            requests[0]["data"]["assertion"])
+
     def test_auth_code_flag_uses_global_mtls_and_auth_code_grant(self):
         app = ConfidentialClientApplication(
             "cid", authority=self._AUTHORITY, client_credential=dict(
@@ -3036,41 +3083,58 @@ class TestSendCertificateOverMtls(unittest.TestCase):
         self.assertEqual("Bearer", result.get("token_type"))
         self.assertNotIn("binding_certificate", result)
 
-    def test_post_override_rejected_for_all_mtls_bearer_grants(self):
+    def test_transport_overrides_rejected_for_all_mtls_bearer_grants(self):
         for grant in ("client_credentials", "obo", "auth_code", "auth_code_flow",
-                      "refresh", "silent_refresh"):
-            with self.subTest(grant=grant):
-                app = ConfidentialClientApplication(
-                    "cid", authority=self._AUTHORITY, client_credential=dict(
-                        _MTLS_CERT_CRED, send_certificate_over_mtls=True))
-                with patch("msal.mtls._MtlsHttpClient.post",
-                           return_value=MinimalResponse(
-                               status_code=200, text=_build_user_token_response(
-                                   client_id="cid", refresh_token="a_rt"))):
-                    app.acquire_token_on_behalf_of("assertion", ["s1"])
-                account = next(app.token_cache.search(
-                    msal.TokenCache.CredentialType.ACCOUNT))
-                with patch("msal.mtls._MtlsHttpClient.post") as transport, \
-                        patch.object(app.http_client, "post") as regular_transport, \
-                        patch.object(app, "_get_authority_aliases", return_value=[]):
-                    override = Mock()
-                    with self.assertRaisesRegex(ValueError, "does not support a post"):
-                        if grant == "client_credentials":
-                            app.acquire_token_for_client(["s2"], post=override)
-                        elif grant == "obo":
-                            app.acquire_token_on_behalf_of("assertion", ["s2"], post=override)
-                        elif grant == "auth_code":
-                            app.acquire_token_by_authorization_code("code", ["s2"], post=override)
-                        elif grant == "auth_code_flow":
-                            flow = app.initiate_auth_code_flow(["s2"])
-                            app.acquire_token_by_auth_code_flow(
-                                flow, {"code": "code", "state": flow["state"]},
-                                post=override)
-                        elif grant == "refresh":
-                            app.acquire_token_by_refresh_token("a_rt", ["s2"], post=override)
-                        else:
-                            app.acquire_token_silent_with_error(
-                                ["s1"], account, force_refresh=True, post=override)
-                    override.assert_not_called()
-                    transport.assert_not_called()
-                    regular_transport.assert_not_called()
+                      "refresh", "silent_refresh", "password", "federated", "user_fic"):
+            for option in ("post", "cert"):
+                with self.subTest(grant=grant, option=option):
+                    self._assert_transport_override_rejected(grant, option)
+
+    def _assert_transport_override_rejected(self, grant, option):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, client_credential=dict(
+                _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   return_value=MinimalResponse(
+                       status_code=200, text=_build_user_token_response(
+                           client_id="cid", refresh_token="a_rt"))):
+            app.acquire_token_on_behalf_of("assertion", ["s1"])
+        account = next(app.token_cache.search(
+            msal.TokenCache.CredentialType.ACCOUNT))
+        with patch("msal.mtls._MtlsHttpClient.post") as transport, \
+                patch.object(app.http_client, "post") as regular_transport, \
+                patch.object(app, "_get_authority_aliases", return_value=[]), \
+                patch.object(app.authority, "user_realm_discovery", return_value={
+                    "account_type": "Federated" if grant == "federated" else "Managed",
+                    "federation_active_auth_url": "https://federation.example"}), \
+                patch("msal.application.wst_send_request", return_value={
+                    "token": b"assertion",
+                    "type": msal.application.SAML_TOKEN_TYPE_V1}):
+            override = Mock()
+            kwargs = {option: override}
+            with self.assertRaisesRegex(
+                    ValueError, "does not support a {} override".format(option)):
+                if grant == "client_credentials":
+                    app.acquire_token_for_client(["s2"], **kwargs)
+                elif grant == "obo":
+                    app.acquire_token_on_behalf_of("assertion", ["s2"], **kwargs)
+                elif grant == "auth_code":
+                    app.acquire_token_by_authorization_code("code", ["s2"], **kwargs)
+                elif grant == "auth_code_flow":
+                    flow = app.initiate_auth_code_flow(["s2"])
+                    app.acquire_token_by_auth_code_flow(
+                        flow, {"code": "code", "state": flow["state"]}, **kwargs)
+                elif grant == "refresh":
+                    app.acquire_token_by_refresh_token("a_rt", ["s2"], **kwargs)
+                elif grant in ("password", "federated"):
+                    app.acquire_token_by_username_password(
+                        "user@example.com", "password", ["s2"], **kwargs)
+                elif grant == "user_fic":
+                    app.acquire_token_by_user_federated_identity_credential(
+                        ["s2"], "assertion", user_object_id="uid", **kwargs)
+                else:
+                    app.acquire_token_silent_with_error(
+                        ["s1"], account, force_refresh=True, **kwargs)
+            override.assert_not_called()
+            transport.assert_not_called()
+            regular_transport.assert_not_called()
