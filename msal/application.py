@@ -386,15 +386,14 @@ class _ClientWithCcsRoutingInfo(Client):
             username, password, headers=headers, **kwargs)
 
 
-def _validate_mtls_pop_response(response):
+def _validate_mtls_response(response, expected_token_type="mtls_pop"):
     if (response and "access_token" in response
-            and (response.get("token_type") or "").lower() != "mtls_pop"):
+            and (response.get("token_type") or "").lower() != expected_token_type):
         return {
             "error": "token_type_mismatch",
             "error_description": (
                 "The identity provider returned token_type {!r} instead "
-                "of 'mtls_pop'; the access token is not "
-                "certificate-bound.".format(response.get("token_type"))),
+                "of {!r}.".format(response.get("token_type"), expected_token_type)),
         }
     return response
 
@@ -414,6 +413,7 @@ class _MtlsClient(_ClientWithCcsRoutingInfo):
     def obtain_token_for_client(self, scope=None, **kwargs):
         data = kwargs.pop("data", {})
         key_id = data.pop("key_id", None)  # Keep key_id OFF the wire
+        expected_token_type = (data.get("token_type") or "Bearer").lower()
         if key_id:
             outer = kwargs.pop("on_obtaining_tokens", None)
 
@@ -429,11 +429,18 @@ class _MtlsClient(_ClientWithCcsRoutingInfo):
                     (outer or self.on_obtaining_tokens)(event)
 
             kwargs["on_obtaining_tokens"] = _reinject_key_id
+        else:
+            outer = kwargs.pop("on_obtaining_tokens", None)
+
+            def _cache_bearer_response(event):
+                response = event.get("response") or {}
+                if (response.get("token_type") or "").lower() == "bearer":
+                    (outer or self.on_obtaining_tokens)(event)
+
+            kwargs["on_obtaining_tokens"] = _cache_bearer_response
         response = super(_MtlsClient, self).obtain_token_for_client(
             scope=scope, data=data, **kwargs)
-        return (_validate_mtls_pop_response(response)
-                if (data.get("token_type") or "").lower() == "mtls_pop"
-                else response)
+        return _validate_mtls_response(response, expected_token_type)
 
 
 def _msal_extension_check():
@@ -1006,9 +1013,6 @@ class ClientApplication(object):
         self._region_detected = None
         self._region_resolved = False
         self._region_to_use = None
-        self.client, self._regional_client = self._build_client(
-            client_credential, self.authority)
-
         # mTLS Proof-of-Possession state. The certificate material and the
         # dedicated mTLS client(s) are parsed/built lazily on the first
         # mtls_proof_of_possession request (see _get_mtls_pop_cert /
@@ -1048,6 +1052,9 @@ class ClientApplication(object):
         else:  # No certificate available to present over mTLS
             self._mtls_cert_credential = None
             self._mtls_is_fic_leg2 = False
+
+        self.client, self._regional_client = self._build_client(
+            client_credential, self.authority)
 
         # Warn if using a static string/bytes client_assertion (discouraged for long-running apps)
         if isinstance(client_credential, dict) and isinstance(
@@ -3085,6 +3092,9 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             ``/common`` or ``/organizations``); and MSAL's built-in HTTP
             transport must be in use (a custom ``http_client`` cannot perform
             the mTLS handshake). Any of these unmet raises ``ValueError``.
+            FIC exchanges only support final ``Bearer`` or ``mtls_pop`` tokens;
+            requesting other token types, including SSH certificates, raises
+            ``ValueError``.
             A ``post`` transport override is also rejected. If the provider
             returns another token type, the result is ``token_type_mismatch``
             and the rejected response is not cached.
@@ -3137,6 +3147,13 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             raise ValueError(
                 "Request mTLS PoP using mtls_proof_of_possession=True, "
                 "not data['token_type'].")
+        if (self._mtls_is_fic_leg2
+                and (requested_token_type or "").lower() not in (
+                    "", "bearer", "mtls_pop")):
+            raise ValueError(
+                "FIC leg-2 exchanges only support Bearer or mtls_pop final "
+                "tokens; token_type {!r} is not supported.".format(
+                    requested_token_type))
         if fmi_path is not None:
             if not isinstance(fmi_path, str):
                 raise ValueError(
@@ -3202,7 +3219,7 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             # _MtlsClient, which does not cache downgraded responses.
             # Mirrors the fail-closed behavior of MSAL .NET and MSAL Go.
             if (result.get("token_type") or "").lower() != "mtls_pop":
-                return _validate_mtls_pop_response(result)
+                return _validate_mtls_response(result)
             # Attach process-local TLS capability only when the final token is
             # certificate-bound. A FIC assertion can travel as jwt-pop over
             # mTLS while the final token remains an ordinary Bearer token.

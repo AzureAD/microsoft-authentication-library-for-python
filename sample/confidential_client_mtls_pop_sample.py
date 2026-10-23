@@ -175,7 +175,7 @@ def fic_two_leg_over_mtls_pop():
         os.environ["SCOPE"].split(), mtls_proof_of_possession=True)
     _print_result_summary(leg2, "FIC leg 2 result:")
     resource_url = os.getenv("RESOURCE_URL")
-    if resource_url and "access_token" in leg2:
+    if resource_url and "access_token" in leg2 and "binding_certificate" in leg2:
         with leg2["binding_certificate"].create_requests_session() as session:
             response = session.get(
                 resource_url,
