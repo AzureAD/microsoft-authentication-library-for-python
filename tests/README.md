@@ -34,6 +34,30 @@ Notes:
 - `tests/test_e2e.py` loads `.env` automatically when `python-dotenv` is installed.
 - For certificate auth, `LAB_APP_CLIENT_CERT_PFX_PATH` should be an absolute path.
 
+### FIC over mTLS lab parity
+
+The FIC tests reuse the existing MSAL.NET/Go SN/I lab configuration for both
+legs: app `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e`, authority
+`https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c`,
+and the shared LabAuth certificate supplied through
+`LAB_APP_CLIENT_CERT_PFX_PATH`. No Python-only `LAB_FIC_*` configuration or
+new app provisioning is needed.
+
+Leg 1 requests `api://AzureADTokenExchange/.default` as an mTLS PoP assertion.
+The PoP-output cell uses global endpoints for both legs, requests
+`https://graph.microsoft.com/.default`, and calls the mTLS Graph resource with
+the final token's `binding_certificate`. The Bearer-output cell uses `westus3`
+for both legs and requests `https://storage.azure.com/.default`; its final
+token must not contain `binding_certificate` or trigger a downstream mTLS call.
+Missing or invalid certificates and real token-acquisition errors fail the
+FIC tests rather than skipping or accepting an error as success.
+
+Run these two live cells with:
+
+```powershell
+python -m pytest -q tests\test_e2e.py::FicTwoLegTestCase
+```
+
 ## 4) Run unit/integration tests
 
 Run all non-E2E tests quickly:

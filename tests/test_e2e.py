@@ -1,11 +1,9 @@
 """If the following ENV VAR were available, many end-to-end test cases would run.
 LAB_APP_CLIENT_CERT_PFX_PATH=...
 
-The FIC two-leg test additionally requires LAB_FIC_LEG1_CLIENT_ID,
-LAB_FIC_LEG1_AUTHORITY, LAB_FIC_LEG2_CLIENT_ID, LAB_FIC_LEG2_AUTHORITY, and
-LAB_FIC_EXCHANGE_SCOPE. Provision the leg-1 app for mTLS PoP at the exchange
-audience, and a federated identity credential on the leg-2 app trusting the
-leg-1 token's issuer, subject, and audience. Both legs use the lab certificate.
+The FIC two-leg tests use the same preconfigured SN/I lab app, tenant, and
+LabAuth certificate as MSAL.NET and Go. No LAB_FIC_* variables are required.
+Missing certificates and token-acquisition errors fail these tests.
 """
 try:
     from dotenv import load_dotenv  # Use this only in local dev machine
@@ -565,48 +563,48 @@ class PublicCloudScenariosTestCase(MtlsPopTestCase):
 
 
 class FicTwoLegTestCase(MtlsPopTestCase):
+    __unittest_skip__ = False  # Required cells must also run on tagged releases.
+    _FIC_EXCHANGE_SCOPE = ["api://AzureADTokenExchange/.default"]
     _FIC_BEARER_SCOPE = ["https://storage.azure.com/.default"]
 
-    def test_fic_two_leg_over_mtls_pop(self):
+    def _acquire_fic_token(
+            self, scope, azure_region, mtls_proof_of_possession=False):
         from tests.lab_config import get_client_certificate
-        required = (
-            "LAB_APP_CLIENT_CERT_PFX_PATH",
-            "LAB_FIC_LEG1_CLIENT_ID", "LAB_FIC_LEG1_AUTHORITY",
-            "LAB_FIC_LEG2_CLIENT_ID", "LAB_FIC_LEG2_AUTHORITY",
-            "LAB_FIC_EXCHANGE_SCOPE",
-        )
-        config = {name: clean_env(name) for name in required}
-        missing = [name for name, value in config.items() if not value]
-        if missing:
-            self.skipTest("FIC configuration missing: " + ", ".join(missing))
         cert = get_client_certificate()
-        # Leg 1: SN/I cert -> cert-bound (mtls_pop) federated assertion for the
-        # caller-supplied token-exchange audience.
         leg1_app = msal.ConfidentialClientApplication(
-            config["LAB_FIC_LEG1_CLIENT_ID"],
-            authority=config["LAB_FIC_LEG1_AUTHORITY"],
-            client_credential=cert)
+            PublicCloudScenariosTestCase._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=PublicCloudScenariosTestCase._SNI_ALLOWLISTED_AUTHORITY,
+            client_credential=cert,
+            azure_region=azure_region)
         leg1 = leg1_app.acquire_token_for_client(
-            [config["LAB_FIC_EXCHANGE_SCOPE"]], mtls_proof_of_possession=True)
+            self._FIC_EXCHANGE_SCOPE, mtls_proof_of_possession=True)
         self.assertIn("access_token", leg1, "FIC leg 1 failed: %s" % leg1)
         self.assertEqual("mtls_pop", leg1.get("token_type"), "Leg 1 must be mtls_pop")
         leg1_thumbprint = leg1["binding_certificate"]["thumbprint_sha256"]
 
         # Leg 2: same cert binds the TLS handshake, leg-1 token carried as jwt-pop.
         leg2_app = msal.ConfidentialClientApplication(
-            config["LAB_FIC_LEG2_CLIENT_ID"],
-            authority=config["LAB_FIC_LEG2_AUTHORITY"],
+            PublicCloudScenariosTestCase._SNI_ALLOWLISTED_CLIENT_ID,
+            authority=PublicCloudScenariosTestCase._SNI_ALLOWLISTED_AUTHORITY,
             client_credential={
                 "client_assertion": lambda: leg1["access_token"],
-                "mtls_binding_certificate": cert})
-        # Leg 2 -> Bearer over mTLS (implicit Bearer-over-mTLS, no flag)
-        leg2_bearer = leg2_app.acquire_token_for_client(self._FIC_BEARER_SCOPE)
+                "mtls_binding_certificate": cert},
+            azure_region=azure_region)
+        result = leg2_app.acquire_token_for_client(
+            scope, mtls_proof_of_possession=mtls_proof_of_possession)
+        return leg1_thumbprint, result
+
+    def test_credential_fic_output_bearer(self):
+        _, leg2_bearer = self._acquire_fic_token(
+            self._FIC_BEARER_SCOPE, azure_region="westus3")
         self.assertIn("access_token", leg2_bearer, "Leg 2 (Bearer) failed: %s" % leg2_bearer)
         self.assertEqual("Bearer", leg2_bearer.get("token_type"))
         self.assertNotIn("binding_certificate", leg2_bearer)
-        # Leg 2 -> mTLS PoP final token
-        leg2_pop = leg2_app.acquire_token_for_client(
-            self._MTLS_POP_SCOPE, mtls_proof_of_possession=True)
+
+    def test_credential_fic_output_pop(self):
+        leg1_thumbprint, leg2_pop = self._acquire_fic_token(
+            self._MTLS_POP_SCOPE, azure_region=False,
+            mtls_proof_of_possession=True)
         self.assertIn("access_token", leg2_pop, "Leg 2 (PoP) failed: %s" % leg2_pop)
         self.assertEqual("mtls_pop", leg2_pop.get("token_type"))
         # The final PoP token must be bound to the leg-1 certificate thumbprint
@@ -629,11 +627,6 @@ class FicScenarioTestCase(unittest.TestCase):
     def setUp(self):
         self.config = {
             "LAB_APP_CLIENT_CERT_PFX_PATH": "configured.pfx",
-            "LAB_FIC_LEG1_CLIENT_ID": "leg1-client",
-            "LAB_FIC_LEG1_AUTHORITY": "https://login.microsoftonline.com/leg1-tenant",
-            "LAB_FIC_LEG2_CLIENT_ID": "leg2-client",
-            "LAB_FIC_LEG2_AUTHORITY": "https://login.microsoftonline.com/leg2-tenant",
-            "LAB_FIC_EXCHANGE_SCOPE": "api://exchange/.default",
         }
         self.leg1 = Mock()
         self.leg1.acquire_token_for_client.return_value = {
@@ -643,23 +636,17 @@ class FicScenarioTestCase(unittest.TestCase):
         self.pop_binding = Mock(spec=msal.MtlsBindingContext)
         self.pop_binding.get.return_value = "cert-thumbprint"
         self.leg2 = Mock()
-        self.leg2.acquire_token_for_client.side_effect = [
-            {
-                "access_token": "bearer-token",
-                "token_type": "Bearer",
-            },
-            {
-                "access_token": "opaque-pop-token",
-                "token_type": "mtls_pop",
-                "binding_certificate": self.pop_binding,
-            },
-        ]
-        self.scenario = FicTwoLegTestCase("test_fic_two_leg_over_mtls_pop")
-        self.cert = {"private_key_pfx_path": "configured.pfx"}
+        self.leg2.acquire_token_for_client.return_value = {
+            "access_token": "opaque-pop-token",
+            "token_type": "mtls_pop",
+            "binding_certificate": self.pop_binding,
+        }
+        self.scenario = FicTwoLegTestCase("test_credential_fic_output_pop")
+        self.cert = {
+            "private_key_pfx_path": "configured.pfx", "public_certificate": True}
         self.factory = Mock(side_effect=[self.leg1, self.leg2])
         patchers = (
             patch.dict(os.environ, self.config, clear=True),
-            patch("tests.lab_config.get_client_certificate", return_value=self.cert),
             patch("msal.ConfidentialClientApplication", self.factory),
             patch.object(self.scenario, "_call_graph_with_mtls_pop_token"),
         )
@@ -667,39 +654,111 @@ class FicScenarioTestCase(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_missing_configuration_skips_before_acquisition(self):
-        for name in self.config:
-            with self.subTest(name=name), patch.dict(os.environ, {name: ""}):
-                with self.assertRaisesRegex(unittest.SkipTest, name):
-                    self.scenario.test_fic_two_leg_over_mtls_pop()
+    def test_missing_certificate_fails_before_acquisition(self):
+        for method in (
+                self.scenario.test_credential_fic_output_pop,
+                self.scenario.test_credential_fic_output_bearer):
+            for value in ("", "$(LAB_APP_CLIENT_CERT_PFX_PATH)"):
+                with self.subTest(method=method.__name__, value=value):
+                    with patch.dict(
+                            os.environ, {"LAB_APP_CLIENT_CERT_PFX_PATH": value}):
+                        with self.assertRaisesRegex(
+                                EnvironmentError, "LAB_APP_CLIENT_CERT_PFX_PATH"):
+                            method()
+        self.factory.assert_not_called()
+
+    def test_missing_certificate_is_a_runner_error_even_on_tagged_releases(self):
+        with patch.object(E2eTestCase, "__unittest_skip__", True, create=True):
+            with patch.dict(os.environ, {}, clear=True):
+                for name in (
+                        "test_credential_fic_output_pop",
+                        "test_credential_fic_output_bearer"):
+                    with self.subTest(name=name):
+                        result = unittest.TestResult()
+                        FicTwoLegTestCase(name).run(result)
+                        self.assertEqual(1, result.testsRun)
+                        self.assertEqual([], result.skipped)
+                        self.assertEqual(1, len(result.errors))
+                        self.assertIn(
+                            "LAB_APP_CLIENT_CERT_PFX_PATH", result.errors[0][1])
         self.factory.assert_not_called()
 
     def test_configured_leg1_errors_fail_instead_of_skipping(self):
-        self.leg1.acquire_token_for_client.return_value = {
-            "error": "token_type_mismatch"}
-        with self.assertRaisesRegex(AssertionError, "token_type_mismatch"):
-            self.scenario.test_fic_two_leg_over_mtls_pop()
+        for method in (
+                self.scenario.test_credential_fic_output_pop,
+                self.scenario.test_credential_fic_output_bearer):
+            for error in ("token_type_mismatch", "invalid_client", "invalid_grant"):
+                with self.subTest(method=method.__name__, error=error):
+                    self.factory.side_effect = [self.leg1, self.leg2]
+                    self.leg1.acquire_token_for_client.return_value = {
+                        "error": error}
+                    with self.assertRaisesRegex(AssertionError, error):
+                        method()
         self.leg2.acquire_token_for_client.assert_not_called()
 
-    def test_explicit_configuration_and_opaque_token_resource_validation(self):
-        self.scenario.test_fic_two_leg_over_mtls_pop()
+    def test_shared_lab_defaults_and_opaque_token_resource_validation(self):
+        self.scenario.test_credential_fic_output_pop()
         calls = self.factory.call_args_list
-        self.assertEqual("leg1-client", calls[0].args[0])
-        self.assertEqual(self.config["LAB_FIC_LEG1_AUTHORITY"],
-                         calls[0].kwargs["authority"])
-        self.assertEqual("leg2-client", calls[1].args[0])
-        self.assertEqual(self.config["LAB_FIC_LEG2_AUTHORITY"],
-                         calls[1].kwargs["authority"])
+        self.assertEqual(2, len(calls))
+        for app_call in calls:
+            self.assertEqual(
+                "163ffef9-a313-45b4-ab2f-c7e2f5e0e23e", app_call.args[0])
+            self.assertEqual(
+                "https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c",
+                app_call.kwargs["authority"])
+            self.assertIs(False, app_call.kwargs["azure_region"])
+        self.assertEqual(self.cert, calls[0].kwargs["client_credential"])
         credential = calls[1].kwargs["client_credential"]
-        self.assertIs(self.cert, credential["mtls_binding_certificate"])
+        self.assertIs(
+            calls[0].kwargs["client_credential"],
+            credential["mtls_binding_certificate"])
         self.assertEqual("leg1-token", credential["client_assertion"]())
         self.leg1.acquire_token_for_client.assert_called_once_with(
-            [self.config["LAB_FIC_EXCHANGE_SCOPE"]], mtls_proof_of_possession=True)
+            ["api://AzureADTokenExchange/.default"], mtls_proof_of_possession=True)
+        self.leg2.acquire_token_for_client.assert_called_once_with(
+            ["https://graph.microsoft.com/.default"], mtls_proof_of_possession=True)
         self.assertEqual(
             [
                 call("opaque-pop-token", self.pop_binding),
             ],
             self.scenario._call_graph_with_mtls_pop_token.call_args_list)
+
+    def test_bearer_uses_regional_shared_lab_without_downstream_mtls(self):
+        self.leg2.acquire_token_for_client.return_value = {
+            "access_token": "bearer-token", "token_type": "Bearer"}
+        self.scenario.test_credential_fic_output_bearer()
+        calls = self.factory.call_args_list
+        self.assertEqual(2, len(calls))
+        for app_call in calls:
+            self.assertEqual(
+                "163ffef9-a313-45b4-ab2f-c7e2f5e0e23e", app_call.args[0])
+            self.assertEqual(
+                "https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c",
+                app_call.kwargs["authority"])
+            self.assertEqual("westus3", app_call.kwargs["azure_region"])
+        credential = calls[1].kwargs["client_credential"]
+        self.assertIs(
+            calls[0].kwargs["client_credential"],
+            credential["mtls_binding_certificate"])
+        self.assertEqual("leg1-token", credential["client_assertion"]())
+        self.leg1.acquire_token_for_client.assert_called_once_with(
+            ["api://AzureADTokenExchange/.default"], mtls_proof_of_possession=True)
+        self.leg2.acquire_token_for_client.assert_called_once_with(
+            ["https://storage.azure.com/.default"], mtls_proof_of_possession=False)
+        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
+
+    def test_leg2_errors_fail_instead_of_skipping(self):
+        for method in (
+                self.scenario.test_credential_fic_output_pop,
+                self.scenario.test_credential_fic_output_bearer):
+            for error in ("invalid_client", "invalid_grant", "temporarily_unavailable"):
+                with self.subTest(method=method.__name__, error=error):
+                    self.factory.side_effect = [self.leg1, self.leg2]
+                    self.leg2.acquire_token_for_client.return_value = {
+                        "error": error}
+                    with self.assertRaisesRegex(AssertionError, error):
+                        method()
+        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
 
     def test_bearer_contract_is_checked(self):
         for response in (
@@ -708,9 +767,20 @@ class FicScenarioTestCase(unittest.TestCase):
                  "binding_certificate": {}}):
             with self.subTest(response=response):
                 self.factory.side_effect = [self.leg1, self.leg2]
-                self.leg2.acquire_token_for_client.side_effect = [response]
+                self.leg2.acquire_token_for_client.return_value = response
                 with self.assertRaises(AssertionError):
-                    self.scenario.test_fic_two_leg_over_mtls_pop()
+                    self.scenario.test_credential_fic_output_bearer()
+
+    def test_pop_requires_matching_final_binding_certificate(self):
+        for binding in (None, {}, Mock(spec=msal.MtlsBindingContext)):
+            with self.subTest(binding=binding):
+                self.factory.side_effect = [self.leg1, self.leg2]
+                self.leg2.acquire_token_for_client.return_value = {
+                    "access_token": "opaque-pop-token", "token_type": "mtls_pop",
+                    "binding_certificate": binding}
+                with self.assertRaises(AssertionError):
+                    self.scenario.test_credential_fic_output_pop()
+        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
 
 
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
