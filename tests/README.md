@@ -137,6 +137,9 @@ python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py test
 These checks use local fixtures or synthetic responses to verify strict
 binding, safe recording, failure gates, the exact required-method inventory,
 and real unittest-runner failure rather than skip when credentials are missing.
+They render failure tracebacks with argument display enabled and locals disabled
+to check cache, FIC recording/factory, Graph, and recorder POST/setup helpers for
+tokens, client assertions, refresh credentials, and truncated token fragments.
 The existing custom-HTTP loopback TLS tests remain in
 `tests\test_mtls_http_client.py`; they complement, not replace, live factory
 coverage. Recorders retain bounded status/error metadata, never raw forms,

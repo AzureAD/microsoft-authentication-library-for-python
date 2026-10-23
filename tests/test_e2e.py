@@ -449,6 +449,7 @@ class MtlsPopTestCase(E2eTestCase):
         return credential, binding_from_credential(credential)
 
     def _assert_cached_result(self, app, scope, original, pop=False):
+        __tracebackhide__ = True
         cached = app.acquire_token_for_client(
             scope, mtls_proof_of_possession=pop)
         self._assert_token_result(
@@ -503,6 +504,7 @@ class MtlsPopTestCase(E2eTestCase):
     def _acquire_recorded(
             self, app, scope, binding, pop=False, http_client=None,
             expected_assertion=None):
+        __tracebackhide__ = True
         if http_client is not None:
             result = app.acquire_token_for_client(
                 scope, mtls_proof_of_possession=pop)
@@ -516,6 +518,7 @@ class MtlsPopTestCase(E2eTestCase):
         return result, records
 
     def _call_graph_with_mtls_pop_token(self, token, binding_certificate):
+        __tracebackhide__ = True
         with binding_certificate.create_requests_session() as session:
             resp = session.get(
                 self._MTLS_GRAPH_RESOURCE,
@@ -527,6 +530,7 @@ class MtlsPopTestCase(E2eTestCase):
         return resp
 
     def _assert_graph_rejects(self, token, scheme, binding, marker):
+        __tracebackhide__ = True
         with (binding.create_requests_session() if binding is not None
                 else requests.Session()) as session:
             response = session.get(

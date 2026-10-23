@@ -78,6 +78,21 @@ class TestMtlsE2eHelpers(CertificateFixture):
         self.scenario = test_e2e.CertificateScenariosTestCase(
             "test_credential_x509_output_pop")
 
+    def _assert_private_traceback(self, failure, *secrets):
+        rendered = str(failure.getrepr(
+            style="long", showlocals=False, funcargs=True))
+        self.assertIn(type(failure.value).__name__, rendered)
+        self.assertFalse(
+            "PRIVATE KEY" in rendered,
+            "Rendered tracebacks must not expose private key material.")
+        for secret in secrets:
+            fragments = (secret,) + (
+                (secret[:32], secret[-32:]) if len(secret) > 64 else ())
+            for fragment in fragments:
+                self.assertFalse(
+                    fragment in rendered,
+                    "Sensitive arguments must not appear in rendered tracebacks.")
+
     def test_cnf_check_rejects_opaque_malformed_and_unbound_tokens(self):
         for token in (
                 "opaque", "a.invalid-json.c", _jwt([]), _jwt({}),
@@ -131,10 +146,94 @@ class TestMtlsE2eHelpers(CertificateFixture):
             with pytest.raises(AssertionError) as failure:
                 self.scenario._assert_token_result(
                     result, self.scenario._MTLS_POP_SCOPE, "mtls_pop", self.binding)
-            rendered = str(failure.getrepr(
-                style="long", showlocals=False, funcargs=True))
-            self.assertNotIn(token, rendered)
-            self.assertNotIn("PRIVATE KEY", rendered)
+            self._assert_private_traceback(failure, token)
+
+    def test_cached_result_failure_traceback_hides_original_token(self):
+        claims = {
+            "aud": "https://graph.microsoft.com",
+            "cnf": {"x5t#S256": self.binding.thumbprint_sha256},
+        }
+        token = _jwt(dict(claims, nonce="original"))
+        cached_token = _jwt(dict(claims, nonce="cached"))
+        original = {
+            "access_token": token, "token_type": "mtls_pop",
+            "binding_certificate": self.binding,
+        }
+        app = Mock(_TOKEN_SOURCE_CACHE="cache", _TOKEN_SOURCE="token_source")
+        app.acquire_token_for_client.return_value = dict(
+            original, access_token=cached_token, token_source="cache")
+        with pytest.raises(AssertionError) as failure:
+            self.scenario._assert_cached_result(
+                app, self.scenario._MTLS_POP_SCOPE, original, pop=True)
+        self._assert_private_traceback(failure, token, cached_token)
+
+    def test_fic_capture_failure_tracebacks_hide_the_expected_assertion(self):
+        assertion = _jwt({"aud": "api://AzureADTokenExchange"})
+        for custom in (False, True):
+            with self.subTest(custom=custom):
+                app = Mock()
+                client = RecordingPolicyHttpClient(
+                    expected_binding=self.binding,
+                    expected_assertion=assertion) if custom else None
+                if custom:
+                    self.addCleanup(client.close)
+                    app.acquire_token_for_client.return_value = {"access_token": assertion}
+                else:
+                    app.acquire_token_for_client.side_effect = AssertionError(
+                        "Unit acquisition failed before receiving a response.")
+                with pytest.raises(AssertionError) as failure:
+                    self.scenario._acquire_recorded(
+                        app, self.scenario._MTLS_POP_SCOPE, self.binding,
+                        pop=True, http_client=client, expected_assertion=assertion)
+                self._assert_private_traceback(failure, assertion)
+
+    def test_graph_success_failure_traceback_hides_the_access_token(self):
+        token = _jwt({"aud": "https://graph.microsoft.com"})
+        session = Mock()
+        session.__enter__ = Mock(return_value=session)
+        session.__exit__ = Mock(return_value=False)
+        session.get.return_value = Mock(status_code=403)
+        binding = Mock(spec=["create_requests_session"])
+        binding.create_requests_session.return_value = session
+        with pytest.raises(AssertionError) as failure:
+            self.scenario._call_graph_with_mtls_pop_token(token, binding)
+        self._assert_private_traceback(failure, token)
+
+    def test_graph_rejection_failure_traceback_hides_the_access_token(self):
+        token = _jwt({"aud": "https://graph.microsoft.com"})
+        session = Mock()
+        session.__enter__ = Mock(return_value=session)
+        session.__exit__ = Mock(return_value=False)
+        session.get.return_value = Mock(status_code=401, text="Unexpected marker")
+        with patch("tests.test_e2e.requests.Session", return_value=session):
+            with pytest.raises(AssertionError) as failure:
+                self.scenario._assert_graph_rejects(
+                    token, "mtls_pop", None, GRAPH_REJECTION_MARKERS[0])
+        self._assert_private_traceback(failure, token)
+
+    def test_custom_recorder_failure_traceback_hides_posted_credentials(self):
+        form = self._signed_form()
+
+        def send(adapter, request, **kwargs):
+            response = self._response(payload=[])
+            response.request = request
+            return response
+
+        with RecordingPolicyHttpClient(expected_binding=self.binding) as owner:
+            child = owner.create_mtls_client(self.binding)
+            with patch.object(requests.adapters.HTTPAdapter, "send",
+                              autospec=True, side_effect=send):
+                with pytest.raises(AssertionError) as failure:
+                    child.post(_ENDPOINT, data=form)
+            self._assert_private_traceback(
+                failure, form["client_assertion"], form["refresh_token"])
+
+    def test_recorder_setup_failure_traceback_hides_the_expected_assertion(self):
+        assertion = _jwt({"aud": "api://AzureADTokenExchange"})
+        with pytest.raises(TypeError) as failure:
+            RecordingPolicyHttpClient(
+                expected_assertion=assertion, unexpected_option=True)
+        self._assert_private_traceback(failure, assertion)
 
     def test_unrelated_certificate_is_usable_and_not_the_fixture_certificate(self):
         binding = unrelated_binding()

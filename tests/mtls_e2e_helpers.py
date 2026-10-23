@@ -151,6 +151,7 @@ def token_request_summary(
 @contextmanager
 def record_token_requests(binding, expected_assertion=None, assertion_audience=None):
     """Delegate Session.send unchanged, including MSAL's built-in TLS adapter."""
+    __tracebackhide__ = True
     records = []
     send = requests.Session.send
 
@@ -173,6 +174,7 @@ class RecordingPolicyHttpClient(PolicyHttpClient):
 
     def __init__(self, binding_context=None, expected_binding=None,
                  expected_assertion=None, **kwargs):
+        __tracebackhide__ = True
         self.binding_context = binding_context
         self.expected_binding = expected_binding or binding_context
         self.expected_assertion = expected_assertion
@@ -190,6 +192,7 @@ class RecordingPolicyHttpClient(PolicyHttpClient):
             return child
 
     def post(self, url, **kwargs):
+        __tracebackhide__ = True
         response = super().post(url, **kwargs)
         summary = token_request_summary(
             response, self.expected_binding,
