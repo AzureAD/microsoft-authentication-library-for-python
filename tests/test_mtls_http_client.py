@@ -265,6 +265,53 @@ class TestMtlsHttpClientFactory(unittest.TestCase):
                 self.assertEqual({}, app.token_cache._cache.get("AccessToken", {}))
         self.ordinary.post.assert_not_called()
 
+    def test_rejected_responses_are_closed_without_closing_pipeline(self, discovery):
+        endpoint = "https://mtlsauth.microsoft.com/tenant/oauth2/v2.0/token"
+        for changes in ({"status_code": 307}, {"history": [object()]},
+                        {"url": "https://other.example/token"}):
+            with self.subTest(changes=changes):
+                response = SimpleNamespace(
+                    status_code=200, text=_TOKEN, url=endpoint, headers={},
+                    close=Mock())
+                for name, value in changes.items():
+                    setattr(response, name, value)
+                pipeline = Mock(spec=["post", "close"])
+                pipeline.post.return_value = response
+                self.ordinary.create_mtls_client.return_value = pipeline
+                app = self._app()
+                with self.assertRaisesRegex(ValueError, "must not redirect"):
+                    app.acquire_token_for_client(
+                        ["s1"], mtls_proof_of_possession=True)
+                response.close.assert_called_once_with()
+                pipeline.close.assert_not_called()
+                self.ordinary.close.assert_not_called()
+                self.assertEqual({}, app.token_cache._cache.get("AccessToken", {}))
+
+    def test_url_objects_preserve_endpoint_and_redirect_validation(self, discovery):
+        from urllib3.util import parse_url
+
+        endpoint = "https://mtlsauth.microsoft.com/tenant/oauth2/v2.0/token"
+        for url in (endpoint + "?extra=value", "https://other.example/token"):
+            with self.subTest(url=url):
+                response = SimpleNamespace(
+                    status_code=200, text=_TOKEN, headers={},
+                    url=parse_url(url), close=Mock())
+                pipeline = Mock(spec=["post"])
+                pipeline.post.return_value = response
+                self.ordinary.create_mtls_client.return_value = pipeline
+                app = self._app()
+                if url.startswith(endpoint):
+                    result = app.acquire_token_for_client(
+                        ["s1"], mtls_proof_of_possession=True)
+                    self.assertEqual("mtls_pop", result["token_type"])
+                    response.close.assert_not_called()
+                else:
+                    with self.assertRaisesRegex(ValueError, "must not redirect"):
+                        app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True)
+                    self.assertEqual(
+                        {}, app.token_cache._cache.get("AccessToken", {}))
+
     def test_downgraded_custom_response_has_no_binding_or_cache_entry(self, discovery):
         app = self._app()
         self.pipeline.post.return_value = self.ordinary.post.return_value
@@ -285,6 +332,17 @@ class TestMtlsHttpClientFactory(unittest.TestCase):
 
 
 class TestMtlsPipelineHelpers(unittest.TestCase):
+    def test_noncallable_response_close_does_not_mask_redirect_error(self):
+        endpoint = "https://token.example/token"
+        for close in (None, 42):
+            with self.subTest(close=close):
+                pipeline = Mock(spec=["post"])
+                pipeline.post.return_value = SimpleNamespace(
+                    status_code=307, url=endpoint, close=close)
+                client = mtls._MtlsTokenHttpClient(pipeline, endpoint)
+                with self.assertRaisesRegex(ValueError, "must not redirect"):
+                    client.post(endpoint)
+
     def test_token_transport_is_restricted_to_https_token_endpoint(self):
         pipeline = Mock(spec=["post"])
         with self.assertRaisesRegex(ValueError, "HTTPS"):
@@ -444,6 +502,9 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
                 elif data.get("scope") == ["redirect"]:
                     status = 307
                     response = {}
+                elif data.get("scope") == ["redirect-without-location"]:
+                    status = 307
+                    response = {}
                 elif self.path == _TOKEN_PATH:
                     if not certificate or (data.get("scope") == ["reject-first"]
                             and certificate == owner.client_der[0]):
@@ -452,7 +513,7 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
                         response["token_type"] = "mtls_pop"
                 payload = json.dumps(response).encode("utf-8")
                 self.send_response(status)
-                if status == 307:
+                if status == 307 and data.get("scope") != ["redirect-without-location"]:
                     self.send_header("Location", owner.url + "/forbidden")
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
@@ -628,6 +689,35 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "closed"):
             self.http_client.create_mtls_client(None)
         self.assertTrue(child._closed)
+
+    def test_rejected_streamed_response_releases_blocking_pool_slot(self):
+        app = self._app()
+        binding = self._acquire(app)["binding_certificate"]
+        child = self.http_client._children[0]
+        adapter = binding.create_requests_adapter(
+            pool_connections=1, pool_maxsize=1, pool_block=True)
+        self.addCleanup(adapter.close)
+        child._session.adapters["https://"].close()
+        child._session.mount("https://", adapter)
+        responses = []
+
+        def capture(response, **kwargs):
+            responses.append(response)
+            self.addCleanup(response.close)
+            return response
+
+        child._session.hooks["response"].append(capture)
+        with self.assertRaisesRegex(ValueError, "must not redirect"):
+            self._acquire(app, "redirect-without-location", stream=True)
+        response = responses[0]
+        self.assertFalse(response._content_consumed)
+        self.assertIsNone(response.raw._connection)
+        verified = adapter._adapters[self.ca_path]
+        pool = verified.poolmanager.connection_from_url(
+            self.url, pool_kwargs={"ssl_context": verified._ssl_context})
+        self.assertEqual(1, pool.pool.qsize())
+        self.assertEqual("mtls_pop", self._acquire(app, "after-redirect")["token_type"])
+        self.assertFalse(child._closed)
 
     def test_https_proxy_preserves_custom_pipeline_and_certificate(self):
         target = self.server.server_address

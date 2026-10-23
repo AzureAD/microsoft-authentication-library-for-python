@@ -152,6 +152,7 @@ class MtlsBindingContext(Mapping):
         A ``cert`` override is rejected to preserve the selected certificate.
         The caller owns the adapter and its connection pools.
         """
+        _require_mtls_dependencies()
         return _make_mtls_adapter(
             ssl_context_factory=self.create_ssl_context, **kwargs)
 
@@ -317,11 +318,14 @@ class _MtlsTokenHttpClient(object):
         response_url = getattr(response, "url", None)
         # Request params may change the query without a redirect.
         endpoint_changed = response_url is not None and (
-            urlparse(response_url)._replace(query="", fragment="")
+            urlparse(str(response_url))._replace(query="", fragment="")
             != urlparse(url)._replace(query="", fragment=""))
         if (300 <= response.status_code < 400
                 or getattr(response, "history", None)
                 or endpoint_changed):
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
             raise ValueError("The mTLS token endpoint must not redirect.")
         return response
 
