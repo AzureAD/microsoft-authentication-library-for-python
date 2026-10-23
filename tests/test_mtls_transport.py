@@ -200,6 +200,20 @@ class TestMtlsSslContext(unittest.TestCase):
         self.assertIn("https://", session.adapters)
         client.close()
 
+    def test_owned_transport_disables_redirects_even_with_override(self):
+        client = mtls._MtlsHttpClient(b"cert", b"key", timeout=30)
+        session = Mock()
+        session.request.return_value = Mock(status_code=200)
+        with patch.object(client, "_ensure_session", return_value=session):
+            for method in ("get", "post"):
+                with self.subTest(method=method):
+                    response = getattr(client, method)(
+                        "https://mtlsauth.microsoft.com/token", allow_redirects=True)
+                    self.assertIs(session.request.return_value, response)
+                    session.request.assert_called_with(
+                        method.upper(), "https://mtlsauth.microsoft.com/token",
+                        allow_redirects=False, timeout=30)
+
     def test_unsupported_mtls_dependencies_fail_with_upgrade_instructions(self):
         binding = MtlsBindingContext(b"cert", b"key", [], "thumbprint")
         unsupported = (

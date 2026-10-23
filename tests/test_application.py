@@ -2566,6 +2566,38 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertEqual("token_type_mismatch", result["error"])
         self.assertEqual({}, app.token_cache._cache.get("AccessToken", {}))
 
+    def test_mtls_redirect_is_not_followed_or_cached(self):
+        import io
+        from requests.exceptions import HTTPError
+        from urllib3.response import HTTPResponse
+
+        for status in (300, 301, 302, 303, 304, 307, 308, 399):
+            with self.subTest(status=status):
+                app = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    authority=self._AUTHORITY, azure_region=False)
+                self.addCleanup(app._get_mtls_client(app.authority)._http_client.close)
+                response = HTTPResponse(
+                    body=io.BytesIO(b"" if status == 304 else json.dumps({
+                        "access_token": "must_not_be_cached",
+                        "token_type": "mtls_pop", "expires_in": 3600,
+                    }).encode("utf-8")),
+                    status=status,
+                    headers={"Location": "https://other.example/token"},
+                    preload_content=False)
+                with patch(
+                        "urllib3.connectionpool.HTTPSConnectionPool.urlopen",
+                        autospec=True, return_value=response) as send:
+                    with self.assertRaisesRegex(
+                            HTTPError, "does not support HTTP redirects") as error:
+                        app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True,
+                            allow_redirects=True)
+                self.assertEqual(status, error.exception.response.status_code)
+                self.assertEqual(1, send.call_count)
+                self.assertEqual([], list(app.token_cache.search(
+                    msal.TokenCache.CredentialType.ACCESS_TOKEN, for_removal=True)))
+
     def test_regional_mtls_endpoint(self):
         app = ConfidentialClientApplication(
             "cid", client_credential=_MTLS_CERT_CRED, authority=self._AUTHORITY,

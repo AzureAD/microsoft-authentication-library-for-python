@@ -228,14 +228,27 @@ class _MtlsHttpClient(object):
             return self._sessions[effective_verify]
 
     def post(self, url, **kwargs):
-        if self._timeout is not None:
-            kwargs.setdefault("timeout", self._timeout)
-        return self._ensure_session(url, kwargs.get("verify")).post(url, **kwargs)
+        return self._request("POST", url, **kwargs)
 
     def get(self, url, **kwargs):
+        return self._request("GET", url, **kwargs)
+
+    def _request(self, method, url, **kwargs):
+        from requests.exceptions import HTTPError
+
         if self._timeout is not None:
             kwargs.setdefault("timeout", self._timeout)
-        return self._ensure_session(url, kwargs.get("verify")).get(url, **kwargs)
+        # The certificate and token request must stay at the selected authority.
+        kwargs["allow_redirects"] = False
+        response = self._ensure_session(url, kwargs.get("verify")).request(
+            method, url, **kwargs)
+        if 300 <= response.status_code < 400:
+            response.close()
+            raise HTTPError(
+                "mTLS token transport does not support HTTP redirects "
+                "(status {}).".format(response.status_code),
+                response=response)
+        return response
 
     def close(self):
         with self._session_lock:

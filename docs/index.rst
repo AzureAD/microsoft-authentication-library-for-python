@@ -214,6 +214,8 @@ Notes and requirements:
 * MSAL must own the TLS transport, so a custom ``http_client`` is not supported
   together with ``mtls_proof_of_possession=True``.
   Per-request ``post`` and ``cert`` overrides are also rejected.
+  The owned mTLS token transport never follows redirects; HTTP 3xx responses
+  raise ``requests.exceptions.HTTPError`` and are not cached as tokens.
 * mTLS transport and ``binding.create_requests_session()`` require
   Requests >= 2.25.0 with a compatible urllib3 that supports ``SSLContext``.
   Missing transport capabilities raise ``ValueError`` with upgrade instructions.
