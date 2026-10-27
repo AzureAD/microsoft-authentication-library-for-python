@@ -322,7 +322,7 @@ class TestMtlsSampleLogging(unittest.TestCase):
 
 
 class TestDefaultHttpClientCleanup(unittest.TestCase):
-    def test_base_application_closes_ordinary_global_and_regional_clients(self):
+    def test_application_closes_ordinary_and_owned_mtls_clients(self):
         authority = test_e2e.MtlsPopTestCase._SNI_ALLOWLISTED_AUTHORITY
         metadata = {
             "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
@@ -338,21 +338,21 @@ class TestDefaultHttpClientCleanup(unittest.TestCase):
             global_client = app._get_mtls_client(app.authority)
             app._region_configured = "westus3"
             regional_client = app._get_mtls_client(app.authority)
-        shared = getattr(app, "_mtls_http_client", None)
         with patch.object(app.http_client, "close") as ordinary_close, patch.object(
                 global_client._http_client, "close") as global_close, patch.object(
-                regional_client._http_client, "close") as regional_close, (
-                patch.object(shared, "close") if shared is not None
-                else nullcontext()) as shared_close:
-            test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+                regional_client._http_client, "close") as regional_close:
+            shared = getattr(app, "_mtls_http_client", None)
+            if shared is None:
+                test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+                global_close.assert_called_once_with()
+                regional_close.assert_called_once_with()
+            else:
+                with patch.object(shared, "close") as shared_close:
+                    test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+                shared_close.assert_called_once_with()
+                global_close.assert_not_called()
+                regional_close.assert_not_called()
         ordinary_close.assert_called_once_with()
-        if shared is None:
-            global_close.assert_called_once_with()
-            regional_close.assert_called_once_with()
-        else:
-            shared_close.assert_called_once_with()
-            global_close.assert_not_called()
-            regional_close.assert_not_called()
 
     def test_default_bearer_clients_are_closed_once_without_shared_transport(self):
         ordinary, pop, bearer = Mock(), Mock(), Mock()
