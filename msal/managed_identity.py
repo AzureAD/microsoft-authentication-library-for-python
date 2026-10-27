@@ -102,6 +102,12 @@ def _valid_service_fabric_proxy(value, *, selection_key=False, allow_default_sch
         # The transport's IDNA parser is stricter than Python's builtin codec.
         # Consume its potentially credential-bearing errors only in this helper.
         parse_url(value)
+        username, password = requests.utils.get_auth_from_url(value)
+        if username:  # Requests only sends proxy authentication for nonempty usernames.
+            username.encode("latin-1")
+            password.encode("latin-1")
+            # Azure Identity Python's default synchronous transport also uses
+            # Requests' Latin-1 encoding for Basic proxy authentication.
         return (not parsed.netloc.endswith(":")
             and (parsed.port is None or 0 < parsed.port <= 65535))
     except (ValueError, UnicodeError):

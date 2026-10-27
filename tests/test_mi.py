@@ -985,6 +985,39 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                     self.assertEqual("cached", app.acquire_token_for_client(resource="R")["access_token"])
                 allocation.assert_not_called()
 
+    def test_invalid_proxy_credentials_are_private_and_preallocation(self):
+        private = "synthetic-proxy-credential"
+        for scheme in ("http", "https"):
+            for credentials in (
+                    private + "\u2603:password", private + "%E2%98%83:password",
+                    "user:" + private + "\u2603", "user:" + private + "%E2%98%83"):
+                for cached in (False, True):
+                    with self.subTest(scheme=scheme, credentials=credentials, cached=cached), patch(
+                            "msal.managed_identity.requests.Session", wraps=requests.Session
+                            ) as allocation, patch.object(
+                            HTTPSConnection, "_new_conn",
+                            side_effect=AssertionError("Unexpected network connection")) as connect, self.assertLogs(
+                            level="DEBUG") as logs:
+                        app = self._app({"proxies": {
+                            "https": "{}://{}@localhost:8080".format(scheme, credentials)}})
+                        if cached:
+                            self._seed_cache(app)
+                            self.assertEqual("cached", app.acquire_token_for_client(
+                                resource="R")["access_token"])
+                            allocation.assert_not_called()
+                            self._seed_cache(app, refresh=True)
+                        with self.assertRaisesRegex(
+                                ManagedIdentityError, "^Invalid Service Fabric proxies configuration\\.$") as error:
+                            app.acquire_token_for_client(resource="R")
+                        self.assertIsNone(error.exception.__cause__)
+                        self.assertIsNone(error.exception.__context__)
+                        self.assertNotIn(private, "".join(traceback.format_exception(
+                            type(error.exception), error.exception, error.exception.__traceback__)))
+                        allocation.assert_not_called()
+                        connect.assert_not_called()
+                    self.assertNotIn(private, "\n".join(logs.output))
+        self.assertEqual([], self.server.requests)
+
     def test_matching_pin_normalization(self):
         for pin in (self.thumbprint, self.thumbprint.upper(),
                 " \t" + ":".join(self.thumbprint[i:i+2].upper()
@@ -1419,6 +1452,22 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
                     connect.assert_not_called()
         self.assertEqual([], self.server.requests)
 
+    def test_latin1_proxy_credentials_are_preserved(self):
+        for tls in (False, True):
+            proxy, address = self._proxy(tls=tls)
+            for credentials in ("caf\u00e9:p\u00e4ss", "caf%C3%A9:p%C3%A4ss"):
+                with self.subTest(tls=tls, credentials=credentials), (
+                        patch("requests.adapters.DEFAULT_CA_BUNDLE_PATH", proxy.ca_path)
+                        if tls else nullcontext()):
+                    self.assertEqual("AT", self._app({"proxies": {
+                        "https": address.replace("://", "://{}@".format(credentials))}
+                        }).acquire_token_for_client(resource="R")["access_token"])
+                    self.assertEqual(requests.auth._basic_auth_str("caf\u00e9", "p\u00e4ss"),
+                        proxy.connects[-1][1]["Proxy-Authorization"])
+                    self.assertNotIn("Proxy-Authorization", self.server.requests[-1]["headers"])
+            self.assertEqual(2, len(proxy.connects))
+        self.assertEqual(4, len(self.server.requests))
+
     def test_environment_routing_and_netrc_are_explicit_opt_in(self):
         proxy, address = self._proxy()
         for variable in ("HTTPS_PROXY", "ALL_PROXY"):
@@ -1449,13 +1498,22 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
         private = "synthetic-env-proxy-password"
         factory = requests.Session
         original_send = HTTPAdapter.send
+        invalid_proxies = [
+            "user:{}@{}".format(private, authority)
+            for authority in ("localhost:invalid", "[::1", "\u2603.example")]
+        invalid_proxies += [
+            "{}{}:password@localhost:8080".format(private, character)
+            for character in ("\u2603", "%E2%98%83")]
+        invalid_proxies += [
+            "user:{}{}@localhost:8080".format(private, character)
+            for character in ("\u2603", "%E2%98%83")]
         for variable in ("HTTPS_PROXY", "ALL_PROXY"):
             for scheme in ("http", "https"):
-                for authority in ("localhost:invalid", "[::1", "\u2603.example"):
+                for authority in invalid_proxies:
                     for cached in (False, True):
                         with self.subTest(variable=variable, scheme=scheme,
                                 authority=authority, cached=cached), patch.dict(os.environ, {
-                                variable: "{}://user:{}@{}".format(scheme, private, authority)
+                                variable: "{}://{}".format(scheme, authority)
                                 }), patch.object(HTTPSConnection, "_new_conn") as connect, patch.object(
                                 HTTPAdapter, "send", autospec=True, side_effect=original_send
                                 ) as send, self.assertLogs(

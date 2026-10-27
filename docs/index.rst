@@ -242,7 +242,9 @@ are invalid; omission is different from ``None``.
        URLs require a transport-valid hostname (including IDNA validation)
        and valid explicit port, if supplied, and
        cannot contain queries, fragments, or non-root paths. Proxy credentials
-       are allowed. SOCKS and forwarding without endpoint authentication are
+       are allowed; credentials used for Basic authentication must be
+       Latin-1 encodable after URL decoding.
+       SOCKS and forwarding without endpoint authentication are
        unsupported. HTTPS endpoints use CONNECT tunnels and retain pinning.
    * - ``trust_env``
      - ``False``
