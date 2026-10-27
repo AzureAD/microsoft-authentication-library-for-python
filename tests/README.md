@@ -55,11 +55,36 @@ token must not contain `binding_certificate` or trigger a downstream mTLS call.
 Missing or invalid certificates and real token-acquisition errors fail the
 FIC tests rather than skipping or accepting an error as success.
 
+Both default-transport cells require real token POST evidence for each leg,
+the expected global or `westus3` mTLS endpoint, and the same lab certificate.
+Leg 2 must invoke the assertion provider and send its exact, unchanged leg-1
+value as a `jwt-pop` client assertion. The exchange assertion may be opaque;
+it is not assumed to be a resource JWT. Final resource tokens must be JWTs
+with the Graph or Storage audience. Final Graph PoP additionally requires a
+matching SHA256 `cnf` and returned `MtlsBindingContext`, then HTTP 200 from the
+mTLS Graph resource using that context.
+
+The required FIC inventory is exactly these two methods in
+`tests.test_e2e.FicTwoLegTestCase`:
+
+- `test_credential_fic_output_bearer`
+- `test_credential_fic_output_pop`
+
+They run without skips, including on tagged releases. Custom HTTP-factory
+acquisitions are not part of this default-FIC branch.
+
 Run these two live cells with:
 
 ```powershell
 python -m pytest -q tests\test_e2e.py::FicTwoLegTestCase
 ```
+
+The offline `tests\test_fic_e2e_helpers.py` checks the two-leg provider/wire
+contract, opaque exchange assertions, strict final binding/audience, and exact
+assertion handoff. Its privacy regression uses pytest's actual traceback
+renderer with arguments shown and locals disabled, and rejects full tokens
+and truncated token fragments. These mock-driven guards are not evidence of
+live acquisition or a custom HTTP factory.
 
 ## 4) Run unit/integration tests
 
