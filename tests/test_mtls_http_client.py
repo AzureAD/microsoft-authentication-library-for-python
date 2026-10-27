@@ -1,4 +1,5 @@
 import ipaddress
+import io
 import json
 import os
 import select
@@ -9,6 +10,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -38,6 +40,28 @@ _CREDENTIAL = {
 _TOKEN = '{"access_token": "at", "token_type": "mtls_pop", "expires_in": 3600}'
 _TOKEN_PATH = "/tenant/oauth2/v2.0/token"
 _ORDINARY_PATH = "/tenant/oauth2/v2.0/ordinary"
+
+
+class TestMtlsSampleLogging(unittest.TestCase):
+    def test_custom_http_sample_reports_failure_without_dynamic_error_values(self):
+        from sample.confidential_client_mtls_http_client_sample import main
+
+        sensitive = "sensitive-unit-result-value"
+        app = Mock()
+        app.acquire_token_for_client.return_value = {
+            "token_type": sensitive, "error": sensitive, "error_description": sensitive}
+        environment = {
+            "PFX_PATH": _CREDENTIAL["private_key_pfx_path"],
+            "PFX_PASSPHRASE": _CREDENTIAL["passphrase"],
+            "CLIENT_ID": "sample-client", "AUTHORITY": _AUTHORITY,
+            "SCOPE": "https://vault.azure.net/.default",
+        }
+        with patch.dict(os.environ, environment), patch(
+                "msal.ConfidentialClientApplication", return_value=app), redirect_stdout(
+                io.StringIO()) as output:
+            main()
+        self.assertNotIn(sensitive, output.getvalue())
+        self.assertIn("Token acquisition failed", output.getvalue())
 
 
 @patch("msal.authority.tenant_discovery", return_value=_METADATA)
@@ -521,6 +545,7 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
                 self.wfile.write(payload)
 
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(server_path)
         context.load_verify_locations(cafile=self.ca_path)
         context.verify_mode = ssl.CERT_OPTIONAL
