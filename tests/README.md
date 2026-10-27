@@ -128,6 +128,14 @@ DNS/TLS failures are failures, not acceptable rejection evidence. They do not
 fetch unrelated user configuration from Key Vault. Legacy interactive and
 other optional E2E skips are unchanged.
 
+Feature-owned coverage is inherited from #938 (six base certificate methods
+and cache compatibility/scaling), #939 (two default FIC methods), #947 (five
+default Bearer-transport methods), and #974 (two custom-client methods).
+The combined suite retains six sibling-dependent live methods, seven
+cross-feature factory regressions, and the complete 21-method no-skip
+inventory. Core, FIC, Bearer, and custom-client offline guards are collected
+once from their feature-owned modules.
+
 Offline recorder/guard tests are separate from live evidence:
 
 ```powershell

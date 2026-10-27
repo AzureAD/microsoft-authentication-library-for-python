@@ -43,18 +43,6 @@ _ORDINARY_PATH = "/tenant/oauth2/v2.0/ordinary"
 
 
 class TestMtlsSampleLogging(unittest.TestCase):
-    def test_pop_summary_never_prints_dynamic_result_values(self):
-        from sample.confidential_client_mtls_pop_sample import _print_result_summary
-
-        sensitive = "sensitive-unit-result-value"
-        for result in (
-                {"access_token": sensitive, "token_type": sensitive},
-                {"error": sensitive, "error_description": sensitive}):
-            with self.subTest(fields=tuple(result)), redirect_stdout(io.StringIO()) as output:
-                _print_result_summary(result, "Acquisition result")
-            self.assertNotIn(sensitive, output.getvalue())
-            self.assertIn("acquired:", output.getvalue())
-
     def test_custom_http_sample_reports_failure_without_dynamic_error_values(self):
         from sample.confidential_client_mtls_http_client_sample import main
 
