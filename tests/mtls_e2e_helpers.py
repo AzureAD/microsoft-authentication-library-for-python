@@ -17,7 +17,6 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 import msal
 from msal.application import _load_mtls_cert_material
 from msal.oauth2cli.oidc import decode_part
-from sample.confidential_client_mtls_http_client_sample import PolicyHttpClient
 
 
 JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
@@ -167,37 +166,3 @@ def record_token_requests(binding, expected_assertion=None, assertion_audience=N
 
     with patch.object(requests.Session, "send", new=recording_send):
         yield records
-
-
-class RecordingPolicyHttpClient(PolicyHttpClient):
-    """Add safe recording to the existing sample's real certificate pipeline."""
-
-    def __init__(self, binding_context=None, expected_binding=None,
-                 expected_assertion=None, **kwargs):
-        __tracebackhide__ = True
-        self.binding_context = binding_context
-        self.expected_binding = expected_binding or binding_context
-        self.expected_assertion = expected_assertion
-        self.token_requests = []
-        super().__init__(binding_context=binding_context, **kwargs)
-
-    def create_mtls_client(self, binding_context):
-        with self._lock:
-            self._check_open()
-            child = RecordingPolicyHttpClient(
-                binding_context=binding_context,
-                expected_binding=self.expected_binding,
-                expected_assertion=self.expected_assertion, **self._config)
-            self._children.append(child)
-            return child
-
-    def post(self, url, **kwargs):
-        __tracebackhide__ = True
-        response = super().post(url, **kwargs)
-        summary = token_request_summary(
-            response, self.expected_binding,
-            self._session.get_adapter(response.request.url),
-            expected_assertion=self.expected_assertion)
-        if summary is not None:
-            self.token_requests.append(summary)
-        return response

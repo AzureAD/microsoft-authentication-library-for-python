@@ -36,9 +36,10 @@ from tests.lab_config import (
     UserSecrets, AppSecrets, LAB_APP_CLIENT_ID, clean_env,
 )
 from tests.mtls_e2e_helpers import (
-    GRAPH_REJECTION_MARKERS, JWT_BEARER, JWT_POP, RecordingPolicyHttpClient,
+    GRAPH_REJECTION_MARKERS, JWT_BEARER, JWT_POP,
     binding_from_credential, jwt_claims, record_token_requests, unrelated_binding,
 )
+from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
 
 
 logger = logging.getLogger(__name__)

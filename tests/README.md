@@ -139,7 +139,7 @@ once from their feature-owned modules.
 Offline recorder/guard tests are separate from live evidence:
 
 ```powershell
-python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_mtls_http_client.py
+python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_fic_e2e_helpers.py tests\test_bearer_mtls_e2e_helpers.py tests\test_mtls_http_e2e_helpers.py tests\test_mtls_http_client.py
 ```
 
 Cache compatibility and write-scaling regressions run with
