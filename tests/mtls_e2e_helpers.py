@@ -33,6 +33,10 @@ class _TokenTransportError(AssertionError):
     pass
 
 
+class _TokenValidationError(AssertionError):
+    pass
+
+
 def jwt_claims(token):
     __tracebackhide__ = True
     if not isinstance(token, str) or len(token.split(".")) != 3:
@@ -166,10 +170,16 @@ def record_token_requests(binding, expected_assertion=None, assertion_audience=N
             raise _TokenTransportError(
                 "The real token request transport failed before receiving a response."
             ) from None
-        summary = token_request_summary(
-            response, binding, session.get_adapter(request.url),
-            expected_assertion=expected_assertion,
-            assertion_audience=assertion_audience)
+        adapter = session.get_adapter(request.url)
+        try:
+            summary = token_request_summary(
+                response, binding, adapter,
+                expected_assertion=expected_assertion,
+                assertion_audience=assertion_audience)
+        except AssertionError:
+            raise _TokenValidationError(
+                "The real token exchange failed recording validation."
+            ) from None
         if summary is not None:
             records.append(summary)
         return response
@@ -181,4 +191,8 @@ def record_token_requests(binding, expected_assertion=None, assertion_audience=N
             # Drop upper Requests frames whose arguments include the POST body.
             raise AssertionError(
                 "The real token request transport failed before receiving a response."
+            ) from None
+        except _TokenValidationError:
+            raise AssertionError(
+                "The real token exchange failed recording validation."
             ) from None
