@@ -108,13 +108,16 @@ These checks use local fixtures or synthetic responses to verify strict
 binding, safe recording, Graph rejection gates, the exact required-method
 inventory, and real unittest-runner failure rather than skip when credentials
 are missing. They render failure tracebacks with argument display enabled and
-locals disabled to check token-result, cache, and Graph helpers for complete
-tokens and truncated token fragments. The sample-output guard rejects dynamic
-result values in printed summaries.
+locals disabled to check token-result, cache, Graph, and real Requests POST
+failures for complete tokens and truncated token fragments. Recorder guards
+cover transport failures, malformed JSON, and invalid assertion signatures.
+The sample-output guard rejects dynamic result values in printed summaries.
 
 Cache compatibility and write-scaling regressions count actual access-token
 bucket visits and identity operations, requiring no steady-state bucket scans
 and linear population work while preserving legacy renewal and persistence.
+Native removal must delete equal canonical and legacy copies without a reload,
+while preserving renewed replacements and other certificates.
 
 ### Pinned certificate and Bearer transport parity mapping
 

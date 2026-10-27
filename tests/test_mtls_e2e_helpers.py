@@ -243,6 +243,46 @@ class TestMtlsE2eHelpers(CertificateFixture):
         self.assertEqual([], records)
         resolve.assert_called_once()
 
+    def test_default_recorder_validation_tracebacks_hide_posted_credentials(self):
+        for invalid_response in (True, False):
+            with self.subTest(invalid_response=invalid_response):
+                form = self._signed_form()
+                form["refresh_token"] = "unit-refresh-secret-" + "sensitive" * 20
+                if not invalid_response:
+                    parts = form["client_assertion"].split(".")
+                    parts[2] = ("A" if parts[2][0] != "A" else "B") + parts[2][1:]
+                    form["client_assertion"] = ".".join(parts)
+                response = self._response(form=form)
+                if invalid_response:
+                    response._content = b"not-json"
+
+                def send(request, **kwargs):
+                    response.request = request
+                    return response
+
+                with requests.Session() as session:
+                    session.trust_env = False
+                    adapter = session.get_adapter(_ENDPOINT)
+                    with patch.object(adapter, "send", side_effect=send) as sent:
+                        with pytest.raises(AssertionError) as failure:
+                            with record_token_requests(self.binding) as records:
+                                session.post(_ENDPOINT, data=form)
+                self._assert_private_traceback(
+                    failure, form["client_assertion"], form["refresh_token"])
+                self.assertEqual(
+                    "The real token exchange failed recording validation.",
+                    str(failure.value))
+                self.assertTrue(failure.value.__suppress_context__)
+                self.assertEqual([], records)
+                sent.assert_called_once()
+
+    def test_default_recorder_preserves_unrelated_assertion_failures(self):
+        original = AssertionError("Unrelated caller assertion.")
+        with pytest.raises(AssertionError) as failure:
+            with record_token_requests(self.binding):
+                raise original
+        self.assertIs(original, failure.value)
+
     def test_unrelated_certificate_is_usable_and_not_the_fixture_certificate(self):
         binding = unrelated_binding()
         self.assertNotEqual(
