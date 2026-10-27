@@ -6,6 +6,7 @@ import io
 import json
 import os
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -13,6 +14,7 @@ import jwt
 import pytest
 import requests
 
+import msal
 from msal.application import _load_mtls_cert_material
 from tests import test_e2e
 from tests.mtls_e2e_helpers import (
@@ -317,3 +319,70 @@ class TestMtlsSampleLogging(unittest.TestCase):
                 _print_result_summary(result, "Acquisition result")
             self.assertNotIn(sensitive, output.getvalue())
             self.assertIn("acquired:", output.getvalue())
+
+
+class TestDefaultHttpClientCleanup(unittest.TestCase):
+    def test_base_application_closes_ordinary_global_and_regional_clients(self):
+        authority = test_e2e.MtlsPopTestCase._SNI_ALLOWLISTED_AUTHORITY
+        metadata = {
+            "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
+            "token_endpoint": authority + "/oauth2/v2.0/token",
+            "issuer": authority + "/v2.0",
+        }
+        with patch("msal.authority.tenant_discovery", return_value=metadata), patch(
+                "msal.application._detect_region", return_value=None):
+            app = msal.ConfidentialClientApplication(
+                "client", authority=authority, client_credential=_CREDENTIAL,
+                azure_region=False, instance_discovery=False)
+            self.addCleanup(test_e2e.MtlsPopTestCase._close_default_http_clients, app)
+            global_client = app._get_mtls_client(app.authority)
+            app._region_configured = "westus3"
+            regional_client = app._get_mtls_client(app.authority)
+        with patch.object(app.http_client, "close") as ordinary_close, patch.object(
+                global_client._http_client, "close") as global_close, patch.object(
+                regional_client._http_client, "close") as regional_close:
+            shared = getattr(app, "_mtls_http_client", None)
+            if shared is None:
+                test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+            else:
+                with patch.object(shared, "close") as shared_close:
+                    test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+                shared_close.assert_called_once_with()
+        ordinary_close.assert_called_once_with()
+        if shared is None:
+            global_close.assert_called_once_with()
+            regional_close.assert_called_once_with()
+        else:
+            global_close.assert_not_called()
+            regional_close.assert_not_called()
+
+    def test_default_bearer_clients_are_closed_once_without_shared_transport(self):
+        ordinary, pop, bearer = Mock(), Mock(), Mock()
+        app = SimpleNamespace(
+            http_client=ordinary, _mtls_client=SimpleNamespace(_http_client=pop),
+            _mtls_regional_client=None,
+            _mtls_bearer_clients={
+                "global": SimpleNamespace(_http_client=bearer),
+                "regional": SimpleNamespace(_http_client=bearer)})
+        test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+        for client in (ordinary, pop, bearer):
+            client.close.assert_called_once_with()
+
+    def test_shared_transport_cleanup_does_not_close_endpoint_wrappers(self):
+        ordinary, shared, endpoint = Mock(), Mock(), Mock()
+        app = SimpleNamespace(
+            http_client=ordinary, _mtls_http_client=shared,
+            _mtls_client=SimpleNamespace(_http_client=endpoint),
+            _mtls_regional_client=SimpleNamespace(_http_client=endpoint),
+            _mtls_bearer_clients={"global": SimpleNamespace(_http_client=endpoint)})
+        test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+        ordinary.close.assert_called_once_with()
+        shared.close.assert_called_once_with()
+        endpoint.close.assert_not_called()
+
+    def test_ordinary_application_without_mtls_transport_closes_normally(self):
+        ordinary = Mock()
+        app = SimpleNamespace(
+            http_client=ordinary, _mtls_client=None, _mtls_regional_client=None)
+        test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+        ordinary.close.assert_called_once_with()

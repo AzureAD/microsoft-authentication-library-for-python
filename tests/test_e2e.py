@@ -428,9 +428,20 @@ class MtlsPopTestCase(E2eTestCase):
 
     @staticmethod
     def _close_default_http_clients(app):
-        app.http_client.close()
-        if app._mtls_http_client is not None:
-            app._mtls_http_client.close()
+        http_clients = [app.http_client]
+        shared = getattr(app, "_mtls_http_client", None)
+        if shared is not None:
+            http_clients.append(shared)
+        else:
+            clients = [app._mtls_client, app._mtls_regional_client]
+            clients.extend(getattr(app, "_mtls_bearer_clients", {}).values())
+            http_clients.extend(
+                client._http_client for client in clients if client is not None)
+        closed = set()
+        for http_client in http_clients:
+            if id(http_client) not in closed:
+                http_client.close()
+                closed.add(id(http_client))
 
     def _sni_app(self, credential, azure_region=False, http_client=None):
         app = msal.ConfidentialClientApplication(
