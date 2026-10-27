@@ -86,6 +86,10 @@ renderer with arguments shown and locals disabled, and rejects full tokens
 and truncated token fragments. These mock-driven guards are not evidence of
 live acquisition or a custom HTTP factory.
 
+```powershell
+python -m pytest -q tests\test_fic_e2e_helpers.py tests\test_lab_config.py tests\test_e2e.py::FicScenarioTestCase
+```
+
 ## 4) Run unit/integration tests
 
 Run all non-E2E tests quickly:
