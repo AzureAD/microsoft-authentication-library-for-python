@@ -146,13 +146,17 @@ Cache compatibility and write-scaling regressions run with
 `python -m pytest -q tests\test_token_cache.py`. They count actual access-token
 bucket visits and identity operations, requiring no steady-state bucket scans
 and linear population work while preserving legacy renewal and persistence.
+Native removal must delete equal canonical and legacy copies without a reload,
+while preserving renewed replacements and other certificates.
 
 These checks use local fixtures or synthetic responses to verify strict
-binding, safe recording, failure gates, the exact required-method inventory,
+binding, safe recording, Graph rejection gates, the exact required-method inventory,
 and real unittest-runner failure rather than skip when credentials are missing.
 They render failure tracebacks with argument display enabled and locals disabled
-to check cache, FIC recording/factory, Graph, and recorder POST/setup helpers for
+to check token-result, cache, FIC recording/factory, Graph, and recorder POST/setup helpers for
 tokens, client assertions, refresh credentials, and truncated token fragments.
+Recorder guards cover transport failures, malformed JSON, and invalid assertion
+signatures. Sample-output guards reject dynamic result values in printed summaries.
 The existing custom-HTTP loopback TLS tests remain in
 `tests\test_mtls_http_client.py`; they complement, not replace, live factory
 coverage. Recorders retain bounded status/error metadata, never raw forms,
