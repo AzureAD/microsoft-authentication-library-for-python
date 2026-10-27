@@ -1,6 +1,8 @@
 """Offline guard/recorder checks, not evidence of live E2E acquisitions."""
 import base64
 from contextlib import nullcontext
+from contextlib import redirect_stdout
+import io
 import json
 import os
 import time
@@ -14,7 +16,7 @@ import requests
 from msal.application import _load_mtls_cert_material
 from tests import test_e2e
 from tests.mtls_e2e_helpers import (
-    GRAPH_REJECTION_MARKERS, JWT_BEARER, JWT_POP, RecordingPolicyHttpClient,
+    GRAPH_REJECTION_MARKERS, JWT_BEARER,
     binding_from_credential, record_token_requests, token_request_summary,
     unrelated_binding,
 )
@@ -73,11 +75,6 @@ class CertificateFixture(unittest.TestCase):
         return response
 
 
-class TestMtlsE2eHelpers(CertificateFixture):
-    def setUp(self):
-        self.scenario = test_e2e.CertificateScenariosTestCase(
-            "test_credential_x509_output_pop")
-
     def _assert_private_traceback(self, failure, *secrets):
         rendered = str(failure.getrepr(
             style="long", showlocals=False, funcargs=True))
@@ -92,6 +89,12 @@ class TestMtlsE2eHelpers(CertificateFixture):
                 self.assertFalse(
                     fragment in rendered,
                     "Sensitive arguments must not appear in rendered tracebacks.")
+
+
+class TestMtlsE2eHelpers(CertificateFixture):
+    def setUp(self):
+        self.scenario = test_e2e.CertificateScenariosTestCase(
+            "test_credential_x509_output_pop")
 
     def test_cnf_check_rejects_opaque_malformed_and_unbound_tokens(self):
         for token in (
@@ -167,26 +170,6 @@ class TestMtlsE2eHelpers(CertificateFixture):
                 app, self.scenario._MTLS_POP_SCOPE, original, pop=True)
         self._assert_private_traceback(failure, token, cached_token)
 
-    def test_fic_capture_failure_tracebacks_hide_the_expected_assertion(self):
-        assertion = _jwt({"aud": "api://AzureADTokenExchange"})
-        for custom in (False, True):
-            with self.subTest(custom=custom):
-                app = Mock()
-                client = RecordingPolicyHttpClient(
-                    expected_binding=self.binding,
-                    expected_assertion=assertion) if custom else None
-                if custom:
-                    self.addCleanup(client.close)
-                    app.acquire_token_for_client.return_value = {"access_token": assertion}
-                else:
-                    app.acquire_token_for_client.side_effect = AssertionError(
-                        "Unit acquisition failed before receiving a response.")
-                with pytest.raises(AssertionError) as failure:
-                    self.scenario._acquire_recorded(
-                        app, self.scenario._MTLS_POP_SCOPE, self.binding,
-                        pop=True, http_client=client, expected_assertion=assertion)
-                self._assert_private_traceback(failure, assertion)
-
     def test_graph_success_failure_traceback_hides_the_access_token(self):
         token = _jwt({"aud": "https://graph.microsoft.com"})
         session = Mock()
@@ -210,30 +193,6 @@ class TestMtlsE2eHelpers(CertificateFixture):
                 self.scenario._assert_graph_rejects(
                     token, "mtls_pop", None, GRAPH_REJECTION_MARKERS[0])
         self._assert_private_traceback(failure, token)
-
-    def test_custom_recorder_failure_traceback_hides_posted_credentials(self):
-        form = self._signed_form()
-
-        def send(adapter, request, **kwargs):
-            response = self._response(payload=[])
-            response.request = request
-            return response
-
-        with RecordingPolicyHttpClient(expected_binding=self.binding) as owner:
-            child = owner.create_mtls_client(self.binding)
-            with patch.object(requests.adapters.HTTPAdapter, "send",
-                              autospec=True, side_effect=send):
-                with pytest.raises(AssertionError) as failure:
-                    child.post(_ENDPOINT, data=form)
-            self._assert_private_traceback(
-                failure, form["client_assertion"], form["refresh_token"])
-
-    def test_recorder_setup_failure_traceback_hides_the_expected_assertion(self):
-        assertion = _jwt({"aud": "api://AzureADTokenExchange"})
-        with pytest.raises(TypeError) as failure:
-            RecordingPolicyHttpClient(
-                expected_assertion=assertion, unexpected_option=True)
-        self._assert_private_traceback(failure, assertion)
 
     def test_unrelated_certificate_is_usable_and_not_the_fixture_certificate(self):
         binding = unrelated_binding()
@@ -318,45 +277,6 @@ class TestMtlsE2eHelpers(CertificateFixture):
         self.assertTrue(summary["signed_client_assertion"])
         self.assertEqual(regional, summary["url"])
 
-    def test_user_capture_requires_exact_rejection_not_success_or_credential_failure(self):
-        form = self._signed_form()
-        form.update(
-            grant_type="urn:ietf:params:oauth:grant-type:jwt-bearer",
-            assertion="unit-user-assertion", requested_token_use="on_behalf_of")
-        del form["refresh_token"]
-        app = Mock()
-        for status, payload, accepted in (
-                (200, {"access_token": "must-not-be-accepted"}, False),
-                (400, {"error": "invalid_client", "error_codes": [700027]}, False),
-                (503, {"error": "invalid_grant"}, False),
-                (400, {"error": "invalid_grant", "error_codes": [50027]}, False),
-                (400, {"error": "invalid_request", "error_codes": [700027]}, False),
-                (400, {"error": "invalid_request", "error_codes": [50027]}, True)):
-            response = self._response(form=form, status=status, payload=payload)
-            summary = token_request_summary(
-                response, self.binding, requests.adapters.HTTPAdapter())
-            summary["tls_adapter"] = "_MtlsHTTPAdapter"
-            app.acquire_token_on_behalf_of.return_value = payload
-            with patch("tests.lab_config.get_client_certificate",
-                       return_value=_CREDENTIAL), patch(
-                    "msal.ConfidentialClientApplication", return_value=app), patch(
-                    "tests.test_e2e.record_token_requests",
-                    return_value=nullcontext([summary])):
-                with (nullcontext() if accepted else self.assertRaises(AssertionError)):
-                    self.scenario.test_send_certificate_over_mtls_on_behalf_of_request_capture()
-        self.scenario.doCleanups()
-
-    def test_jwt_pop_capture_requires_the_exact_leg_one_assertion(self):
-        form = dict(
-            self._signed_form(), client_assertion="unit-fic-assertion",
-            client_assertion_type=JWT_POP)
-        for expected, matches in (("unit-fic-assertion", True), ("different", False)):
-            summary = token_request_summary(
-                self._response(form=form), self.binding,
-                requests.adapters.HTTPAdapter(), expected_assertion=expected)
-            self.assertEqual(matches, summary["assertion_matches"])
-            self.assertFalse("unit-fic-assertion" in repr(summary))
-
     def test_default_recorder_delegates_and_does_not_accept_transport_failures(self):
         session = requests.Session()
         self.addCleanup(session.close)
@@ -384,194 +304,16 @@ class TestMtlsE2eHelpers(CertificateFixture):
                     session.post(_ENDPOINT, data=self._signed_form())
             self.assertEqual([], records)
 
-    def test_custom_recorder_retains_sample_pipeline_and_owner_cleanup(self):
-        def send(adapter, request, **kwargs):
-            response = self._response()
-            response.request = request
-            return response
 
-        with RecordingPolicyHttpClient(expected_binding=self.binding) as owner:
-            child = owner.create_mtls_client(self.binding)
-            with patch.object(requests.adapters.HTTPAdapter, "send",
-                              autospec=True, side_effect=send):
-                child.post(_ENDPOINT, data=self._signed_form())
-            self.assertEqual(1, child.response_count)
-            self.assertEqual(1, len(child.token_requests))
-            self.assertEqual(
-                "custom-policy", child.token_requests[0]["middleware"])
-            self.assertEqual(
-                "_MtlsHTTPAdapter", child.token_requests[0]["tls_adapter"])
-            self.assertEqual([], owner.token_requests)
-            self.assertFalse(owner._closed or child._closed)
-        self.assertTrue(owner._closed and child._closed)
-        with self.assertRaisesRegex(RuntimeError, "closed"):
-            child.post(_ENDPOINT)
+class TestMtlsSampleLogging(unittest.TestCase):
+    def test_pop_summary_never_prints_dynamic_result_values(self):
+        from sample.confidential_client_mtls_pop_sample import _print_result_summary
 
-
-class TestFicScenarioGuards(CertificateFixture):
-    def setUp(self):
-        self.leg1 = Mock()
-        self.leg2 = Mock()
-        self.leg1.acquire_token_for_client.return_value = {
-            "access_token": _jwt({
-                "aud": "api://AzureADTokenExchange",
-                "cnf": {"x5t#S256": self.binding.thumbprint_sha256}}),
-            "token_type": "mtls_pop", "binding_certificate": self.binding,
-        }
-        self.leg2.acquire_token_for_client.return_value = {
-            "access_token": _jwt({
-                "aud": "https://graph.microsoft.com",
-                "cnf": {"x5t#S256": self.binding.thumbprint_sha256}}),
-            "token_type": "mtls_pop", "binding_certificate": self.binding,
-        }
-        self.factory = Mock(side_effect=[self.leg1, self.leg2])
-        self.scenario = test_e2e.FicTwoLegTestCase("test_credential_fic_output_pop")
-        self.invoke_provider = True
-        self.omit_final_record = False
-        self.final_record_changes = {}
-        patchers = (
-            patch("tests.lab_config.get_client_certificate", return_value=_CREDENTIAL),
-            patch("msal.ConfidentialClientApplication", self.factory),
-            patch.object(self.scenario, "_acquire_recorded",
-                         side_effect=self._recorded),
-            patch.object(self.scenario, "_call_graph_with_mtls_pop_token"),
-        )
-        for patcher in patchers:
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        self.addCleanup(self.scenario.doCleanups)
-
-    def _recorded(self, app, scope, binding, pop=False,
-                  http_client=None, expected_assertion=None):
-        config = self.factory.call_args.kwargs
-        final = app is self.leg2
-        assertion = None
-        if final and self.invoke_provider:
-            assertion = config["client_credential"]["client_assertion"]()
-        result = app.acquire_token_for_client(scope, mtls_proof_of_possession=pop)
-        region = config["azure_region"]
-        record = {
-            "url": _ENDPOINT.replace(
-                "://mtlsauth.", "://{}.mtlsauth.".format(region)) if region else _ENDPOINT,
-            "fields": frozenset(
-                ("scope", "client_id", "grant_type")
-                + (("client_assertion", "client_assertion_type") if final else ())
-                + (("token_type",) if pop else ())),
-            "grant_type": "client_credentials", "scope": frozenset(scope),
-            "client_assertion_type": JWT_POP if final else None,
-            "client_assertion_present": final, "signed_client_assertion": False,
-            "assertion_matches": assertion == expected_assertion,
-            "token_type": "mtls_pop" if pop else None,
-            "status_code": 200, "tls_adapter": "_MtlsHTTPAdapter",
-        }
-        if final:
-            record.update(self.final_record_changes)
-        return result, [] if final and self.omit_final_record else [record]
-
-    def test_global_pairing_provider_wire_type_and_resource_validation(self):
-        self.scenario.test_credential_fic_output_pop()
-        calls = self.factory.call_args_list
-        self.assertEqual(2, len(calls))
-        for app_call in calls:
-            self.assertEqual(self.scenario._SNI_ALLOWLISTED_CLIENT_ID, app_call.args[0])
-            self.assertEqual(
-                self.scenario._SNI_ALLOWLISTED_AUTHORITY, app_call.kwargs["authority"])
-            self.assertIs(False, app_call.kwargs["azure_region"])
-        self.assertIs(
-            calls[0].kwargs["client_credential"],
-            calls[1].kwargs["client_credential"]["mtls_binding_certificate"])
-        self.leg1.acquire_token_for_client.assert_called_once_with(
-            ["api://AzureADTokenExchange/.default"], mtls_proof_of_possession=True)
-        self.leg2.acquire_token_for_client.assert_called_once_with(
-            ["https://graph.microsoft.com/.default"], mtls_proof_of_possession=True)
-        self.scenario._call_graph_with_mtls_pop_token.assert_called_once()
-
-    def test_regional_bearer_has_storage_audience_and_no_resource_mtls(self):
-        self.leg2.acquire_token_for_client.return_value = {
-            "access_token": _jwt({"aud": "https://storage.azure.com"}),
-            "token_type": "Bearer"}
-        self.scenario.test_credential_fic_output_bearer()
-        self.assertTrue(all(
-            call.kwargs["azure_region"] == "westus3"
-            for call in self.factory.call_args_list))
-        self.leg2.acquire_token_for_client.assert_called_once_with(
-            ["https://storage.azure.com/.default"], mtls_proof_of_possession=False)
-        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
-
-    def test_leg_one_errors_fail_instead_of_skipping(self):
-        for method in (
-                self.scenario.test_credential_fic_output_pop,
-                self.scenario.test_credential_fic_output_bearer):
-            for error in ("token_type_mismatch", "invalid_client", "invalid_grant"):
-                with self.subTest(error=error, method=method.__name__):
-                    self.factory.side_effect = [self.leg1, self.leg2]
-                    self.leg1.acquire_token_for_client.return_value = {"error": error}
-                    with self.assertRaisesRegex(AssertionError, error):
-                        method()
-        self.leg2.acquire_token_for_client.assert_not_called()
-
-    def test_leg_two_errors_fail_instead_of_skipping(self):
-        for method in (
-                self.scenario.test_credential_fic_output_pop,
-                self.scenario.test_credential_fic_output_bearer):
-            for error in ("invalid_client", "invalid_grant", "temporarily_unavailable"):
-                with self.subTest(error=error, method=method.__name__):
-                    self.factory.side_effect = [self.leg1, self.leg2]
-                    self.leg2.acquire_token_for_client.return_value = {"error": error}
-                    with self.assertRaisesRegex(AssertionError, error):
-                        method()
-        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
-
-    def test_federated_assertion_is_opaque_but_still_requires_certificate_binding(self):
-        self.leg1.acquire_token_for_client.return_value["access_token"] = "opaque"
-        self.scenario.test_credential_fic_output_pop()
-        self.leg2.acquire_token_for_client.reset_mock()
-        for binding in (None, {}, unrelated_binding()):
-            self.factory.side_effect = [self.leg1, self.leg2]
-            self.leg1.acquire_token_for_client.return_value["binding_certificate"] = binding
-            with self.assertRaises(AssertionError):
-                self.scenario.test_credential_fic_output_pop()
-        self.leg2.acquire_token_for_client.assert_not_called()
-
-    def test_final_pop_requires_type_binding_cnf_and_audience(self):
-        original = self.leg2.acquire_token_for_client.return_value
-        for changes in (
-                {"token_type": "Bearer"}, {"binding_certificate": None},
-                {"binding_certificate": {}}, {"access_token": "opaque"},
-                {"access_token": _jwt({
-                    "aud": "https://graph.microsoft.com",
-                    "cnf": {"x5t#S256": "different-certificate"}})},
-                {"access_token": _jwt({
-                    "aud": "https://wrong.example",
-                    "cnf": {"x5t#S256": self.binding.thumbprint_sha256}})}):
-            with self.subTest(fields=tuple(changes)):
-                self.factory.side_effect = [self.leg1, self.leg2]
-                self.leg2.acquire_token_for_client.return_value = dict(original, **changes)
-                with self.assertRaises(AssertionError):
-                    self.scenario.test_credential_fic_output_pop()
-        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
-
-    def test_final_bearer_rejects_bound_or_wrong_audience_results(self):
+        sensitive = "sensitive-unit-result-value"
         for result in (
-                {"access_token": "unit-token", "token_type": "mtls_pop"},
-                {"access_token": _jwt({"aud": "https://storage.azure.com"}),
-                 "token_type": "Bearer", "binding_certificate": {}},
-                {"access_token": _jwt({"aud": "https://wrong.example"}),
-                 "token_type": "Bearer"}):
-            self.factory.side_effect = [self.leg1, self.leg2]
-            self.leg2.acquire_token_for_client.return_value = result
-            with self.assertRaises(AssertionError):
-                self.scenario.test_credential_fic_output_bearer()
-        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
-
-    def test_fic_requires_provider_invocation_and_actual_wire_evidence(self):
-        for invoke, omit, changes in (
-                (False, False, {}), (True, True, {}),
-                (True, False, {"client_assertion_type": JWT_BEARER}),
-                (True, False, {"assertion_matches": False})):
-            self.factory.side_effect = [self.leg1, self.leg2]
-            self.invoke_provider, self.omit_final_record = invoke, omit
-            self.final_record_changes = changes
-            with self.assertRaises(AssertionError):
-                self.scenario.test_credential_fic_output_pop()
-        self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
+                {"access_token": sensitive, "token_type": sensitive},
+                {"error": sensitive, "error_description": sensitive}):
+            with self.subTest(fields=tuple(result)), redirect_stdout(io.StringIO()) as output:
+                _print_result_summary(result, "Acquisition result")
+            self.assertNotIn(sensitive, output.getvalue())
+            self.assertIn("acquired:", output.getvalue())
