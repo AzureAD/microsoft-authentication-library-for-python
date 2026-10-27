@@ -1186,6 +1186,56 @@ class ReleasedCacheCompatibilityTestCase(unittest.TestCase):
             self.assertEqual(["renewed"], [
                 entry["secret"] for entry in self.search(scheme, "Thumb")])
 
+    def test_native_removal_cleans_canonical_and_equal_legacy_duplicates(self):
+        for scheme in ("ssh-cert", "mtls_pop"):
+            for renewed in (False, True):
+                with self.subTest(scheme=scheme, renewed=renewed):
+                    self.cache = TokenCache()
+                    self.cache.add(self.event(scheme, "old"), now=1000)
+                    old = self.search(scheme, "Thumb")[0]
+                    self.cache.add(self.event(
+                        scheme, "other-certificate", key_id="thumb",
+                        scopes=["other-scope"]), now=1000)
+                    if renewed:
+                        self.cache.add(self.event(scheme, "renewed"), now=1001)
+                    entries = dict(self.cache._cache.get("AccessToken", {}))
+                    entries["legacy:duplicate"] = dict(old)
+                    self.cache._cache["AccessToken"] = entries
+                    self.cache.remove_at(old)
+                    self.assertEqual(
+                        ["renewed"] if renewed else [],
+                        [entry["secret"] for entry in self.search(scheme, "Thumb")])
+                    self.assertEqual(["other-certificate"], [
+                        entry["secret"] for entry in self.search(
+                            scheme, "thumb", target=["other-scope"])])
+                    self.assertNotIn("legacy:duplicate", entries)
+
+    def test_native_duplicate_removal_uses_only_indexed_identity_locations(self):
+        from msal import token_cache
+
+        for scheme in ("ssh-cert", "mtls_pop"):
+            for count in (100, 1000, 10000):
+                with self.subTest(scheme=scheme, count=count):
+                    self.cache, buckets = self.canonical_cache(count)
+                    self.cache.add(self.event(scheme, "old"), now=1000)
+                    old = self.search(scheme, "Thumb")[0]
+                    entries = _CountingAccessTokenEntries(
+                        self.cache._cache["AccessToken"])
+                    entries["legacy:duplicate"] = dict(old)
+                    self.cache._cache["AccessToken"] = entries
+                    buckets["AccessToken"] = entries
+                    self.cache._get_access_token_index()
+                    for bucket in buckets.values():
+                        bucket.visits = 0
+                    with patch.object(
+                            token_cache, "_access_token_identity",
+                            wraps=token_cache._access_token_identity) as identity:
+                        self.cache.remove_at(old)
+                    self.assertEqual(
+                        0, sum(bucket.visits for bucket in buckets.values()))
+                    self.assertLessEqual(identity.call_count, 3)
+                    self.assertEqual([], self.search(scheme, "Thumb"))
+
 
 class SerializableTokenCacheTestCase(unittest.TestCase):
     # Run all inherited test methods, and have extra check in tearDown()
