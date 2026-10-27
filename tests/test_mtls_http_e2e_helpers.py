@@ -11,6 +11,7 @@ import requests
 import urllib3
 
 from tests import test_e2e
+from tests.mtls_e2e_helpers import unrelated_binding
 from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
 from tests.test_mtls_e2e_helpers import CertificateFixture, _CREDENTIAL, _ENDPOINT, _jwt
 
@@ -130,6 +131,63 @@ class TestCustomMtlsE2eHelpers(CertificateFixture):
             RecordingPolicyHttpClient(
                 expected_assertion=assertion, unexpected_option=True)
         self._assert_private_traceback(failure, assertion)
+
+    def _assert_custom_summary_validation_privacy(self, invalid_json):
+        authority = self.scenario._SNI_ALLOWLISTED_AUTHORITY
+        metadata = {
+            "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
+            "token_endpoint": authority + "/oauth2/v2.0/token",
+            "issuer": authority + "/v2.0",
+        }
+        posted = []
+
+        def send(adapter, request, **kwargs):
+            posted.append(parse_qs(request.body))
+            response = requests.Response()
+            response.status_code = 400
+            response._content = (
+                b"not-json" if invalid_json else b'{"error":"invalid_grant"}')
+            response.request = request
+            return response
+
+        with RecordingPolicyHttpClient(
+                expected_binding=self.binding if invalid_json else unrelated_binding(),
+                trust_env=False) as owner, patch(
+                "msal.authority.tenant_discovery", return_value=metadata):
+            app = msal.ConfidentialClientApplication(
+                "client", authority=authority, client_credential=_CREDENTIAL,
+                http_client=owner, azure_region=False, instance_discovery=False)
+            for operation in ("recorded", "obo"):
+                with self.subTest(operation=operation), patch.object(
+                        requests.adapters.HTTPAdapter, "send",
+                        autospec=True, side_effect=send):
+                    with pytest.raises(AssertionError) as failure:
+                        if operation == "recorded":
+                            self.scenario._acquire_recorded(
+                                app, self.scenario._KEY_VAULT_SCOPE,
+                                self.binding, http_client=owner)
+                        else:
+                            self.scenario._acquire_custom_http_obo_invalid_grant(app)
+                    form = posted[-1]
+                    self._assert_private_traceback(
+                        failure, form["client_assertion"][0],
+                        *form.get("assertion", []))
+                    self.assertEqual(
+                        "The real token exchange failed recording validation.",
+                        str(failure.value))
+                    self.assertTrue(failure.value.__suppress_context__)
+                    self.assertEqual(
+                        "_TokenValidationError",
+                        type(failure.value.__context__).__name__)
+            self.assertEqual([], owner.token_requests)
+            self.assertEqual({}, app.token_cache._cache.get("AccessToken", {}))
+            self.assertEqual(len(posted), owner.response_count)
+
+    def test_custom_acquisition_bad_json_traceback_hides_oauth_arguments(self):
+        self._assert_custom_summary_validation_privacy(invalid_json=True)
+
+    def test_custom_acquisition_invalid_signed_assertion_traceback_hides_oauth_arguments(self):
+        self._assert_custom_summary_validation_privacy(invalid_json=False)
 
     def test_custom_recorder_retains_sample_pipeline_and_owner_cleanup(self):
         def send(adapter, request, **kwargs):
