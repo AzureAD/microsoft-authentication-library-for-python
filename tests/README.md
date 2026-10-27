@@ -37,6 +37,75 @@ Notes:
   from the MSID Lab `LabAuth` secret, without a PFX password. Missing, unreadable,
   or invalid PFX files fail these scenarios; they never count as skipped coverage.
 
+### FIC over mTLS lab parity
+
+The FIC tests reuse the existing MSAL.NET/Go SN/I lab configuration for both
+legs: app `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e`, authority
+`https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c`,
+and the shared LabAuth certificate supplied through
+`LAB_APP_CLIENT_CERT_PFX_PATH`. No Python-only `LAB_FIC_*` configuration or
+new app provisioning is needed.
+
+Leg 1 requests `api://AzureADTokenExchange/.default` as an mTLS PoP assertion.
+The PoP-output cell uses global endpoints for both legs, requests
+`https://graph.microsoft.com/.default`, and calls the mTLS Graph resource with
+the final token's `binding_certificate`. The Bearer-output cell uses `westus3`
+for both legs and requests `https://storage.azure.com/.default`; its final
+token must not contain `binding_certificate` or trigger a downstream mTLS call.
+Missing or invalid certificates and real token-acquisition errors fail the
+FIC tests rather than skipping or accepting an error as success.
+
+Both default-transport cells require real token POST evidence for each leg,
+the expected global or `westus3` mTLS endpoint, and the same lab certificate.
+Leg 2 must invoke the assertion provider and send its exact, unchanged leg-1
+value as a `jwt-pop` client assertion. The exchange assertion may be opaque;
+it is not assumed to be a resource JWT. Final resource tokens must be JWTs
+with the Graph or Storage audience. Final Graph PoP additionally requires a
+matching SHA256 `cnf` and returned `MtlsBindingContext`, then HTTP 200 from the
+mTLS Graph resource using that context.
+
+The required FIC inventory is exactly these two methods in
+`tests.test_e2e.FicTwoLegTestCase`:
+
+- `test_credential_fic_output_bearer`
+- `test_credential_fic_output_pop`
+
+They run without skips, including on tagged releases. Custom HTTP-factory
+acquisitions are not part of this default-FIC branch.
+This branch's required live inventory totals eight methods: the six inherited
+`CertificateScenariosTestCase` cells documented below and these two FIC cells.
+`tests\test_lab_config.py` checks the exact method sets and proves that all
+eight produce credential errors, not skips, when the certificate is missing.
+
+The FIC mapping reuses the already pinned .NET
+`c8b90e9de5bc4974de9928835532faac5c88e2d2` [client-credentials cases][dotnet-cc]
+and Go `30f4770ffcbd9c4c51d278cdab6dbda71a0f7337`
+[two-leg integration cases][go-fic]:
+
+| Active reference case(s) | Python FIC method | Required observation |
+| --- | --- | --- |
+| Go `TestTwoLegFICMtlsPoP_SNI`; .NET `Credential_Fic_Output_Pop_TestAsync` / `RunTwoLegS2sFicBothLegsPopAsync` | `test_credential_fic_output_pop` | Global exchange to Graph; invoked provider, unchanged `jwt-pop` assertion, certificate continuity, strict final audience/type/`cnf`, resource HTTP 200. |
+| Go `TestTwoLegFICMtlsBearer_SNI`; .NET `Credential_Fic_Output_Bearer_TestAsync` | `test_credential_fic_output_bearer` | `westus3` exchange to Storage; provider and real `jwt-pop` POST, certificate continuity, Storage Bearer, no output binding or downstream resource mTLS. |
+
+Run these two live cells with:
+
+```powershell
+python -m pytest -q tests\test_e2e.py::FicTwoLegTestCase
+```
+
+The offline `tests\test_fic_e2e_helpers.py` checks the two-leg provider/wire
+contract, opaque exchange assertions, strict final binding/audience, and exact
+assertion handoff. Its privacy regression uses pytest's actual traceback
+renderer with arguments shown and locals disabled, and rejects full tokens
+and truncated token fragments. These mock-driven guards are not evidence of
+live acquisition or a custom HTTP factory.
+
+```powershell
+python -m pytest -q tests\test_fic_e2e_helpers.py tests\test_lab_config.py tests\test_e2e.py::FicScenarioTestCase
+```
+
+[go-fic]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/30f4770ffcbd9c4c51d278cdab6dbda71a0f7337/apps/tests/integration/mtls_pop_integration_test.go
+
 ## 4) Run unit/integration tests
 
 Run all non-E2E tests quickly:

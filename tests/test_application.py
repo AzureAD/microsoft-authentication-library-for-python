@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import pickle
+import runpy
 import sys
 import time
 import warnings
@@ -2287,6 +2288,7 @@ _MTLS_OIDC_MOCK = Mock(return_value={
     "issuer": "https://login.microsoftonline.com/my_tenant/v2.0",
 })
 _JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+_JWT_POP = "urn:ietf:params:oauth:client-assertion-type:jwt-pop"
 
 
 @patch(_OIDC_DISCOVERY, new=_MTLS_OIDC_MOCK)
@@ -2610,9 +2612,256 @@ class TestMtlsProofOfPossession(unittest.TestCase):
             captured[0]["url"],
             "https://westus3.mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
 
+    def test_fic_leg2_pop_sends_jwt_pop_over_mtls(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY,
+            client_credential={
+                "client_assertion": "LEG1_TOKEN",
+                "mtls_binding_certificate": _MTLS_CERT_CRED})
+        captured = []
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(captured)):
+            result = app.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True)
+        req = captured[0]
+        self.assertTrue(req["url"].startswith("https://mtlsauth.microsoft.com/"))
+        self.assertEqual("LEG1_TOKEN", req["data"].get("client_assertion"))
+        self.assertEqual(_JWT_POP, req["data"].get("client_assertion_type"))
+        self.assertEqual("mtls_pop", req["data"].get("token_type"))
+        self.assertEqual("mtls_pop", result.get("token_type"))
+        self.assertIsInstance(
+            result.get("binding_certificate"), msal.MtlsBindingContext)
+
+    def test_fic_leg2_bearer_still_travels_over_mtls(self):
+        # No flag -> Bearer final token, but the cert-bound leg-1 assertion still
+        # requires the mTLS endpoint and jwt-pop ("implicit Bearer-over-mTLS").
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY,
+            client_credential={
+                "client_assertion": "LEG1_TOKEN",
+                "mtls_binding_certificate": _MTLS_CERT_CRED})
+        captured = []
+        with patch("msal.mtls._MtlsHttpClient.post",
+                   side_effect=self._capturing_post(
+                       captured, token_type="Bearer")):
+            result = app.acquire_token_for_client(["s1"])
+        req = captured[0]
+        self.assertTrue(req["url"].startswith("https://mtlsauth.microsoft.com/"))
+        self.assertEqual(_JWT_POP, req["data"].get("client_assertion_type"))
+        self.assertNotIn("token_type", req["data"])
+        self.assertEqual("4|730,2|", req["headers"].get(CLIENT_CURRENT_TELEMETRY))
+        self.assertEqual("Bearer", result.get("token_type"))
+        self.assertNotIn("binding_certificate", result)
+
+    def test_fic_leg2_rejects_post_override(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY,
+            client_credential={
+                "client_assertion": "LEG1_TOKEN",
+                "mtls_binding_certificate": _MTLS_CERT_CRED})
+        with self.assertRaisesRegex(ValueError, "post override"):
+            app.acquire_token_for_client(
+                ["s1"], post=self._capturing_post([]))
+
+    def test_fic_leg2_bearer_rejects_unexpected_response_type(self):
+        for token_type in ("mtls_pop", "ssh-cert", None):
+            with self.subTest(token_type=token_type):
+                app = ConfidentialClientApplication(
+                    "cid", authority=self._AUTHORITY,
+                    client_credential={
+                        "client_assertion": lambda: "LEG1_TOKEN",
+                        "mtls_binding_certificate": _MTLS_CERT_CRED})
+                with patch(
+                        "msal.mtls._MtlsHttpClient.post",
+                        side_effect=self._capturing_post(
+                            [], token_type=token_type)):
+                    result = app.acquire_token_for_client(["s1"])
+                self.assertEqual("token_type_mismatch", result.get("error"))
+                self.assertNotIn("access_token", result)
+                self.assertEqual([], list(app.token_cache.search(
+                    msal.TokenCache.CredentialType.ACCESS_TOKEN,
+                    for_removal=True)))
+
+    def test_fic_leg2_rejects_unsupported_final_token_types_before_cache_lookup(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY,
+            client_credential={
+                "client_assertion": lambda: "LEG1_TOKEN",
+                "mtls_binding_certificate": _MTLS_CERT_CRED})
+        for token_type in ("ssh-cert", "pop", "unknown"):
+            for request_pop in (False, True):
+                with self.subTest(token_type=token_type, request_pop=request_pop):
+                    with patch.object(
+                            app, "_acquire_token_silent_with_error") as lookup:
+                        with self.assertRaisesRegex(
+                                ValueError, "only support Bearer or mtls_pop"):
+                            app.acquire_token_for_client(
+                                ["s1"], mtls_proof_of_possession=request_pop,
+                                data={
+                                    "token_type": token_type,
+                                    "key_id": "ssh-key", "req_cnf": "{}"})
+                        lookup.assert_not_called()
+
+    def test_fic_leg2_bearer_and_pop_cache_entries_are_isolated(self):
+        for order in ((False, True), (True, False)):
+            with self.subTest(order=order):
+                assertion = Mock(return_value="LEG1_TOKEN")
+                app = ConfidentialClientApplication(
+                    "cid", authority=self._AUTHORITY,
+                    client_credential={
+                        "client_assertion": assertion,
+                        "mtls_binding_certificate": _MTLS_CERT_CRED})
+                for request_pop in order:
+                    captured = []
+                    token_type = "mtls_pop" if request_pop else "Bearer"
+                    with patch(
+                            "msal.mtls._MtlsHttpClient.post",
+                            side_effect=self._capturing_post(
+                                captured, token_type=token_type)):
+                        result = app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=request_pop)
+                    self.assertEqual(1, len(captured))
+                    self.assertEqual(token_type, result["token_type"])
+                with patch("msal.mtls._MtlsHttpClient.post") as post:
+                    for request_pop in order:
+                        cached = app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=request_pop)
+                        self.assertEqual(
+                            app._TOKEN_SOURCE_CACHE, cached[app._TOKEN_SOURCE])
+                        self.assertEqual(
+                            "mtls_pop" if request_pop else "Bearer",
+                            cached["token_type"])
+                        self.assertEqual(
+                            request_pop, "binding_certificate" in cached)
+                    post.assert_not_called()
+                self.assertEqual(2, assertion.call_count)
+
+    def test_fic_sample_skips_resource_call_for_bearer_result(self):
+        sample = runpy.run_path(os.path.join(
+            os.path.dirname(__file__), os.pardir, "sample",
+            "confidential_client_mtls_pop_sample.py"))
+        result = {"access_token": "token", "token_type": "Bearer"}
+        app = Mock()
+        app.acquire_token_for_client.return_value = result
+        with patch.dict(os.environ, {
+                "CLIENT_ID": "leg1", "AUTHORITY": self._AUTHORITY,
+                "LEG2_CLIENT_ID": "leg2", "LEG2_AUTHORITY": self._AUTHORITY,
+                "PFX_PATH": "unused.pfx", "SCOPE": "s1",
+                "RESOURCE_URL": "https://resource.invalid"}), patch(
+                    "msal.ConfidentialClientApplication",
+                    return_value=app), patch("builtins.print"), patch(
+                        "msal.MtlsBindingContext.create_requests_session") as session:
+            self.assertIs(result, sample["fic_two_leg_over_mtls_pop"]())
+        session.assert_not_called()
+
+    def test_binding_cert_without_client_assertion_raises(self):
+        # FIC leg 2 needs the binding cert AND the leg-1 assertion. A binding
+        # cert with no client_assertion must fail fast at construction with a
+        # clear ValueError, not a later KeyError when the request is built.
+        with self.assertRaisesRegex(
+                ValueError, "also requires a client_assertion"):
+            ConfidentialClientApplication(
+                "cid", authority=self._AUTHORITY,
+                client_credential={"mtls_binding_certificate": _MTLS_CERT_CRED})
+
+    def test_invalid_binding_certificate_is_rejected(self):
+        for certificate in (
+                {}, None, "", [], ["certificate"], True, 1, "certificate",
+                {"passphrase": "password"}, {"private_key": "key"},
+                {"private_key": "key", "public_certificate": True}):
+            with self.subTest(certificate=certificate):
+                with self.assertRaisesRegex(ValueError, "mtls_binding_certificate"):
+                    ConfidentialClientApplication(
+                        "cid", authority=self._AUTHORITY,
+                        client_credential={
+                            "client_assertion": lambda: "LEG1_TOKEN",
+                            "mtls_binding_certificate": certificate})
+
+    def test_fic_callable_renews_assertion_without_deprecation_warning(self):
+        assertion = Mock(side_effect=["LEG1_TOKEN", "RENEWED_LEG1_TOKEN"])
+        captured = []
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            app = ConfidentialClientApplication(
+                "cid", authority=self._AUTHORITY,
+                client_credential={
+                    "client_assertion": assertion,
+                    "mtls_binding_certificate": _MTLS_CERT_CRED})
+            with patch(
+                    "msal.mtls._MtlsHttpClient.post",
+                    side_effect=self._capturing_post(captured)):
+                first = app.acquire_token_for_client(
+                    ["s1"], mtls_proof_of_possession=True)
+                self.assertIn("access_token", first)
+                cached = app.acquire_token_for_client(
+                    ["s1"], mtls_proof_of_possession=True)
+                self.assertEqual(app._TOKEN_SOURCE_CACHE, cached[app._TOKEN_SOURCE])
+                self.assertIsInstance(
+                    cached.get("binding_certificate"), msal.MtlsBindingContext)
+                self.assertEqual(1, assertion.call_count)
+                self.assertEqual(1, len(captured))
+                for token in list(app.token_cache.search(
+                        msal.TokenCache.CredentialType.ACCESS_TOKEN,
+                        for_removal=True)):
+                    app.token_cache.modify(
+                        msal.TokenCache.CredentialType.ACCESS_TOKEN, token,
+                        {"expires_on": "0"})
+                renewed = app.acquire_token_for_client(
+                    ["s1"], mtls_proof_of_possession=True)
+                self.assertIn("access_token", renewed)
+                self.assertEqual(app._TOKEN_SOURCE_IDP, renewed[app._TOKEN_SOURCE])
+        self.assertEqual(
+            ["LEG1_TOKEN", "RENEWED_LEG1_TOKEN"],
+            [request["data"]["client_assertion"] for request in captured])
+        self.assertTrue(all(
+            request["data"]["client_assertion_type"] == _JWT_POP
+            and request["url"].startswith("https://mtlsauth.microsoft.com/")
+            for request in captured))
+
+    def test_fic_leg2_app_rejects_non_client_credential_flows(self):
+        # A FIC leg-2 app (client_assertion + mtls_binding_certificate) is only
+        # valid via acquire_token_for_client over mTLS. Any other flow would put
+        # the cert-bound leg-1 assertion on a non-mTLS jwt-bearer request, so it
+        # must fail fast with a clear ValueError rather than a confusing 4xx.
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY,
+            client_credential={
+                "client_assertion": "LEG1_TOKEN",
+                "mtls_binding_certificate": _MTLS_CERT_CRED})
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_authorization_code("code", ["s1"])
+        with self.assertRaises(ValueError):
+            app.acquire_token_on_behalf_of("user_token", ["s1"])
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_refresh_token("refresh_token", ["s1"])
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_username_password("user", "password", ["s1"])
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_auth_code_flow({}, {})
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_user_federated_identity_credential(
+                ["s1"], "assertion_token", username="user@contoso.com")
+        # Silent flows are also unsupported: a shared cache could hold user RTs
+        # whose redemption would put the cert-bound assertion on a non-mTLS
+        # jwt-bearer request. Guard both silent entry points (they call the
+        # private _acquire_token_silent_with_error directly, not each other).
+        account = {"home_account_id": "uid.utid",
+                   "environment": "login.microsoftonline.com", "username": "u"}
+        with self.assertRaises(ValueError):
+            app.acquire_token_silent(["s1"], account)
+        with self.assertRaises(ValueError):
+            app.acquire_token_silent_with_error(["s1"], account)
+
     def test_secret_credential_with_flag_raises(self):
         app = ConfidentialClientApplication(
             "cid", client_credential="a_secret", authority=self._AUTHORITY)
+        with self.assertRaises(ValueError):
+            app.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
+
+    def test_string_assertion_without_binding_cert_with_flag_raises(self):
+        app = ConfidentialClientApplication(
+            "cid", client_credential={"client_assertion": "just_a_string"},
+            authority=self._AUTHORITY)
         with self.assertRaises(ValueError):
             app.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
 

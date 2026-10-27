@@ -20,6 +20,10 @@ class TestRequiredCertificateConfiguration(unittest.TestCase):
             "test_bearer_then_mtls_pop_cache_isolated",
             "test_mtls_pop_then_bearer_cache_isolated",
         },
+        test_e2e.FicTwoLegTestCase: {
+            "test_credential_fic_output_pop",
+            "test_credential_fic_output_bearer",
+        },
     }
 
     def test_required_scenario_inventory_is_complete(self):
@@ -79,8 +83,8 @@ class TestRequiredCertificateConfiguration(unittest.TestCase):
                 unittest.defaultTestLoader.loadTestsFromTestCase(case)
                 for case in self._REQUIRED_SCENARIOS)
             result = unittest.TextTestRunner(stream=io.StringIO()).run(suite)
-        self.assertEqual(6, result.testsRun)
-        self.assertEqual(6, len(result.errors))
+        self.assertEqual(8, result.testsRun)
+        self.assertEqual(8, len(result.errors))
         self.assertEqual([], result.skipped)
         self.assertEqual([], result.failures)
         for _, traceback in result.errors:
