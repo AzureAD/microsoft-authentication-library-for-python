@@ -719,9 +719,11 @@ class ClientApplication(object):
                 :func:`~acquire_token_silent`. It defaults to
                 ``False`` (so leaving it unset changes no behavior) and requires
                 a certificate credential -- otherwise construction raises
-                ``ValueError``. Custom ``http_client`` instances and per-request
-                ``post`` or ``cert`` overrides are rejected when making an mTLS
-                token request, because MSAL must own the certificate-bearing transport.
+                ``ValueError``. Custom ``http_client`` instances must implement
+                ``create_mtls_client(binding_context)`` to support these requests.
+                Per-request ``post`` overrides and non-``None`` ``cert`` overrides
+                are rejected, because token requests must use the application's
+                configured certificate-bearing transport.
                 A per-request ``mtls_proof_of_possession=True`` on
                 :func:`~acquire_token_for_client` always takes precedence, yielding
                 a cert-bound ``mtls_pop`` token instead of a Bearer one.
