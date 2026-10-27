@@ -3359,6 +3359,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             # and stripped from the wire body by the oauth2 layer.
             kwargs["data"] = kwargs.get("data", {})
             _stash_client_claims(forwarded_client_claims, kwargs["data"])
+        if self._send_certificate_over_mtls and kwargs.get("cert") is not None:
+            raise ValueError(
+                "send_certificate_over_mtls=True does not support a cert override. "
+                "Use the configured client certificate.")
         if mtls_proof_of_possession or self._mtls_is_fic_leg2:
             mtls._validate_mtls_request(kwargs)
             self._get_mtls_http_client_factory()

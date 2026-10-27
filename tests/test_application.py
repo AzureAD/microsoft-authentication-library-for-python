@@ -3385,6 +3385,12 @@ class TestSendCertificateOverMtls(unittest.TestCase):
                             first["access_token"], cached["access_token"])
                         self.assertEqual(
                             app._TOKEN_SOURCE_CACHE, cached[app._TOKEN_SOURCE])
+                    with patch.object(
+                            app, "_acquire_token_silent_with_error") as lookup:
+                        with self.assertRaisesRegex(ValueError, "cert override"):
+                            app.acquire_token_for_client(
+                                ["s1"], cert=("other.pem", "other-key.pem"))
+                        lookup.assert_not_called()
                 self.assertEqual(1, session.request.call_count)
 
     def _assert_transport_override_rejected(self, grant, option):
