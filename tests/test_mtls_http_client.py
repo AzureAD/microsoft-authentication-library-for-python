@@ -160,6 +160,39 @@ class TestMtlsHttpClientFactory(unittest.TestCase):
             regional.configuration["token_endpoint"])
         self.ordinary.create_mtls_client.assert_called_once()
 
+    def test_custom_cert_none_preserves_cold_and_cached_bearer_and_pop(
+            self, discovery):
+        for pop in (False, True):
+            with self.subTest(pop=pop):
+                token_type = "mtls_pop" if pop else "Bearer"
+                pipeline = Mock(spec=["post"])
+                pipeline.post.return_value = MinimalResponse(
+                    status_code=200, text=json.dumps({
+                        "access_token": "cert-none-at", "token_type": token_type,
+                        "expires_in": 3600}))
+                self.ordinary.create_mtls_client.return_value = pipeline
+                self.ordinary.reset_mock()
+                app = self._app(client_credential=dict(
+                    _CREDENTIAL, send_certificate_over_mtls=True))
+                acquired = app.acquire_token_for_client(
+                    ["s1"], mtls_proof_of_possession=pop, cert=None)
+                cached = app.acquire_token_for_client(
+                    ["s1"], mtls_proof_of_possession=pop, cert=None)
+                self.assertEqual(token_type, acquired["token_type"])
+                self.assertEqual(token_type, cached["token_type"])
+                self.assertEqual(acquired["access_token"], cached["access_token"])
+                self.assertEqual("cache", cached["token_source"])
+                self.assertEqual(pop, "binding_certificate" in acquired)
+                self.assertEqual(pop, "binding_certificate" in cached)
+                with self.assertRaisesRegex(ValueError, "cert override"):
+                    app.acquire_token_for_client(
+                        ["s1"], mtls_proof_of_possession=pop,
+                        cert=("other.pem", "other.key"))
+                self.ordinary.create_mtls_client.assert_called_once()
+                pipeline.post.assert_called_once()
+                self.assertIs(False, pipeline.post.call_args.kwargs["allow_redirects"])
+                self.ordinary.post.assert_not_called()
+
     def test_mixed_bearer_pop_creation_retains_one_pipeline(self, discovery):
         app = self._app(client_credential=dict(
             _CREDENTIAL, send_certificate_over_mtls=True))
