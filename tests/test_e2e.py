@@ -749,6 +749,70 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
         self.assertTrue(set(self._KEY_VAULT_SCOPE) <= records[0]["scope"])
         self.assertEqual("HTTPAdapter", records[0]["tls_adapter"])
 
+    # ── Bearer-over-mTLS (send_certificate_over_mtls) ──────────────────────────
+    # Present the SN/I cert as the client TLS certificate ON the handshake to the
+    # mTLS endpoint, but receive a *plain Bearer* token (the cert authenticates
+    # the transport; the token is NOT cert-bound). Opt-in via the app-level
+    # client_credential flag send_certificate_over_mtls=True. Distinct from the
+    # two cells above: mtls_pop BINDS the token; the classic X509 Bearer cell
+    # signs a private_key_jwt to the REGULAR login.* endpoint (cert never on the
+    # TLS handshake). Ports MSAL .NET CertificateOptions.SendCertificateOverMtls.
+    def test_credential_x509_send_certificate_over_mtls_output_bearer(self):
+        self._acquire_x509(
+            self._KEY_VAULT_SCOPE, send=True, region="westus3")
+
+    def _capture_invalid_grant(self, grant, send=True):
+        credential, binding = self._certificate()
+        credential = dict(credential, send_certificate_over_mtls=send)
+        app = self._sni_app(credential)
+        with record_token_requests(binding) as records:
+            if grant == "urn:ietf:params:oauth:grant-type:jwt-bearer":
+                result = app.acquire_token_on_behalf_of(
+                    "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
+            elif grant == "refresh_token":
+                result = app.acquire_token_by_refresh_token(
+                    "fake-refresh-token-for-request-capture", self._KEY_VAULT_SCOPE)
+            else:
+                result = app.acquire_token_by_authorization_code(
+                    "fake-auth-code-for-request-capture", self._KEY_VAULT_SCOPE,
+                    redirect_uri="https://localhost/redirect")
+        request = self._assert_token_request(
+            records, self._KEY_VAULT_SCOPE, grant,
+            assertion_type=JWT_BEARER, regular_endpoint=not send)
+        self.assertNotIn("token_type", request["fields"])
+        field = {
+            "urn:ietf:params:oauth:grant-type:jwt-bearer": "assertion",
+            "refresh_token": "refresh_token", "authorization_code": "code",
+        }[grant]
+        self.assertIn(field, request["fields"])
+        if field == "assertion":
+            self.assertEqual("on_behalf_of", request["requested_token_use"])
+        if field == "code":
+            self.assertIn("redirect_uri", request["fields"])
+        expected_error = "invalid_request" if field == "assertion" else "invalid_grant"
+        diagnostic = "Expected the malformed-grant service rejection: {!r}".format(request)
+        self.assertEqual(400, request["status_code"], diagnostic)
+        self.assertEqual(expected_error, request["error"], diagnostic)
+        self.assertEqual(expected_error, result.get("error"), diagnostic)
+        if field == "assertion":
+            self.assertEqual((50027,), request["error_codes"], diagnostic)
+            self.assertEqual([50027], result.get("error_codes"), diagnostic)
+        self.assertFalse(
+            "access_token" in result, "Intentionally invalid input must not acquire a token.")
+
+    def test_send_certificate_over_mtls_on_behalf_of_request_capture(self):
+        self._capture_invalid_grant("urn:ietf:params:oauth:grant-type:jwt-bearer")
+
+    def test_send_certificate_over_mtls_refresh_token_request_capture(self):
+        self._capture_invalid_grant("refresh_token")
+
+    def test_send_certificate_over_mtls_auth_code_request_capture(self):
+        self._capture_invalid_grant("authorization_code")
+
+    def test_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint(self):
+        self._capture_invalid_grant(
+            "urn:ietf:params:oauth:grant-type:jwt-bearer", send=False)
+
     def _assert_cache_isolated(self, pop_first):
         credential, binding = self._certificate()
         app = self._sni_app(credential)

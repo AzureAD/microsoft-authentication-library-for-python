@@ -57,9 +57,21 @@ Run only the required certificate scenarios:
 python -m pytest -q tests/test_e2e.py::CertificateScenariosTestCase
 ```
 
-The six required certificate methods use the MSID Lab certificate and the
+The eleven required certificate methods use the MSID Lab certificate and the
 preconfigured client `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e` in tenant
 `bea21ebe-8b64-4d06-9f6d-6a889b120a7c`, matching the .NET and Go lab setup.
+
+Bearer-over-mTLS also has a live client-credentials case for `westus3` and
+`https://vault.azure.net/.default`. OBO, refresh-token, and authorization-code
+captures delegate to the shipped TLS transport and require real service
+responses, verified signed client assertions, grant-specific fields, and exact
+OAuth rejection/status checks. The OBO flag-off control requires the ordinary
+endpoint. Transport, credential, and configuration failures cannot pass as
+successful captures. These deliberately invalid grants do not prove successful
+user-token issuance; the reference SDKs also leave those acquisitions disabled.
+They do not require fetching unrelated user configuration from Key Vault.
+Legacy interactive and other optional E2E skips are unchanged.
+
 Global Graph PoP and regional `westus3` Key Vault PoP are separate cases.
 Ordinary regional signed-certificate Bearer authentication is not
 Bearer-over-mTLS: it uses the ordinary endpoint and retains the central
@@ -81,7 +93,7 @@ adapter, and verify signed certificate assertions against the certificate,
 client, and expected audience. They retain bounded status/error metadata,
 never raw forms, tokens, private keys, or client assertions.
 
-All six methods run without skips, including tagged releases. Missing
+All eleven methods run without skips, including tagged releases. Missing
 configuration, credential failures, and DNS/TLS failures are failures, not
 acceptable rejection evidence. They do not fetch unrelated user configuration
 from Key Vault. Legacy interactive and other optional E2E skips are unchanged.
@@ -89,7 +101,7 @@ from Key Vault. Legacy interactive and other optional E2E skips are unchanged.
 Offline guards are separate from live evidence:
 
 ```powershell
-python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_token_cache.py
+python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_bearer_mtls_e2e_helpers.py tests\test_token_cache.py
 ```
 
 These checks use local fixtures or synthetic responses to verify strict
@@ -107,7 +119,7 @@ and linear population work while preserving legacy renewal and persistence.
 Native removal must delete equal canonical and legacy copies without a reload,
 while preserving renewed replacements and other certificates.
 
-### Pinned core certificate parity mapping
+### Pinned certificate and Bearer transport parity mapping
 
 The applicable active reference cases below are pinned:
 
@@ -125,14 +137,27 @@ The applicable active reference cases below are pinned:
 | Go `TestCredential_X509_Output_Pop_Regional` | `C.test_credential_x509_output_pop_regional` | westus3 Key Vault PoP, certificate/JWT binding, same cached token and type; not a redirected global Graph cell. |
 | Go `TestConfidentialClientSNIBearerAndMtlsPoPCacheIsolated` | `C.test_bearer_then_mtls_pop_cache_isolated` | One app/cache/scope, Bearer then PoP, distinct tokens and schemes, no Bearer binding, both cache results preserved. |
 | Go `TestConfidentialClientSNIMtlsPoPThenBearerCacheIsolated` | `C.test_mtls_pop_then_bearer_cache_isolated` | Reverse acquisition order with the same isolation and reusable PoP result. |
+| .NET live client-credentials Bearer-over-mTLS | `C.test_credential_x509_send_certificate_over_mtls_output_bearer` | westus3 Key Vault Bearer over the real mTLS transport, verified signed assertion, no output binding, cached repeat. |
+| Go/.NET active OBO recording | `C.test_send_certificate_over_mtls_on_behalf_of_request_capture` | Actual mTLS POST, signed assertion and grant fields; HTTP 400, `invalid_request`, AADSTS50027. |
+| .NET active refresh recording | `C.test_send_certificate_over_mtls_refresh_token_request_capture` | Actual mTLS POST with the refresh field; HTTP 400 and `invalid_grant`. |
+| Go/.NET active authorization-code recording | `C.test_send_certificate_over_mtls_auth_code_request_capture` | Actual mTLS POST with code/redirect fields; HTTP 400 and `invalid_grant`. |
+| .NET flag-off OBO control | `C.test_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint` | Ordinary endpoint and adapter, signed assertion, no PoP fields; exact malformed-OBO rejection. |
 
 `C.test_subject_name_issuer_authentication` remains an additional required
-legacy SN/I lab cell. FIC, Bearer-over-mTLS, and custom HTTP pipeline scenarios
-belong to their feature PRs, not this core inventory. This suite does not
+legacy SN/I lab cell. FIC and custom HTTP pipeline scenarios
+belong to their feature PRs, not this inventory. This suite does not
 provision apps or claim repository-wide skip elimination.
+
+The Bearer transport references are the pinned .NET
+[transport cases][dotnet-transport] and Go
+`903eb9f1e54e361525025ea27040ac9644b64358` [Bearer cases][go-bearer].
+The offline rejection guard explicitly rejects token success, invalid-client
+errors, wrong statuses and wrong AADSTS codes as capture evidence.
 
 [dotnet-cc]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/tests/Microsoft.Identity.Test.Integration.netcore/HeadlessTests/ClientCredentialsMtlsPopTests.cs
 [go-pop]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/903eb9f1e54e361525025ea27040ac9644b64358/apps/tests/integration/mtls_pop_integration_test.go
+[dotnet-transport]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/tests/Microsoft.Identity.Test.Integration.netcore/HeadlessTests/MtlsTransportUserFlowTests.cs
+[go-bearer]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/903eb9f1e54e361525025ea27040ac9644b64358/apps/tests/integration/bearer_mtls_integration_test.go
 
 ## 5) Manual-intervention E2E tests
 
