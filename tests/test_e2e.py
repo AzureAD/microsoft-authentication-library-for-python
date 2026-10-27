@@ -794,6 +794,12 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
     def test_mtls_pop_then_bearer_cache_isolated(self):
         self._assert_cache_isolated(pop_first=True)
 
+    def _acquire_custom_http_obo_invalid_grant(self, app):
+        __tracebackhide__ = True
+        with record_custom_transport_failures():
+            return app.acquire_token_on_behalf_of(
+                "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
+
     def _capture_invalid_grant(self, grant, send=True, custom=False):
         __tracebackhide__ = True
         credential, binding = self._certificate()
@@ -806,6 +812,8 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
 
         def redeem():
             if grant == "urn:ietf:params:oauth:grant-type:jwt-bearer":
+                if custom:
+                    return self._acquire_custom_http_obo_invalid_grant(app)
                 return app.acquire_token_on_behalf_of(
                     "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
             if grant == "refresh_token":
