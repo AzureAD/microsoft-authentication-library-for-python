@@ -670,14 +670,11 @@ class TokenCache(object):
                 if is_at:
                     index.setdefault(identity, set()).add((bucket, key))
             elif is_at:
-                if entries.get(key) == old_entry:
-                    self._remove_access_token_entry(bucket, key)
-                else:
-                    # Persisted caches may still use an older AT key format.
-                    for stored_bucket, stored_key in tuple(
-                            index.get(_access_token_identity(old_entry), ())):
-                        if self._cache[stored_bucket].get(stored_key) == old_entry:
-                            self._remove_access_token_entry(stored_bucket, stored_key)
+                # Equal copies can coexist under canonical and older AT keys.
+                for stored_bucket, stored_key in tuple(
+                        index.get(_access_token_identity(old_entry), ())):
+                    if self._cache[stored_bucket].get(stored_key) == old_entry:
+                        self._remove_access_token_entry(stored_bucket, stored_key)
             else:  # Remove old_entry
                 entries.pop(key, None)
             if is_at:
