@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 import io
 import json
 import os
+import socket
 import time
 from types import SimpleNamespace
 import unittest
@@ -13,6 +14,7 @@ from unittest.mock import Mock, patch
 import jwt
 import pytest
 import requests
+from urllib3.exceptions import MaxRetryError
 
 import msal
 from msal.application import _load_mtls_cert_material
@@ -196,6 +198,51 @@ class TestMtlsE2eHelpers(CertificateFixture):
                     token, "mtls_pop", None, GRAPH_REJECTION_MARKERS[0])
         self._assert_private_traceback(failure, token)
 
+    def test_graph_dns_failure_tracebacks_hide_tokens_and_fragments(self):
+        token = _jwt({"aud": "https://graph.microsoft.com", "nonce": "dns-privacy"})
+        with patch.dict(os.environ, {"NO_PROXY": "*"}), patch(
+                "socket.getaddrinfo",
+                side_effect=socket.gaierror("offline DNS failure")) as resolve:
+            with pytest.raises(AssertionError) as failure:
+                self.scenario._call_graph_with_mtls_pop_token(token, self.binding)
+            self._assert_private_traceback(failure, token)
+            self.assertTrue(failure.value.__suppress_context__)
+            self.assertIsInstance(
+                failure.value.__context__, requests.exceptions.ConnectionError)
+            self.assertIsInstance(failure.value.__context__.__context__, MaxRetryError)
+            for binding in (None, self.binding):
+                with self.subTest(binding=binding is not None):
+                    with pytest.raises(AssertionError) as failure:
+                        self.scenario._assert_graph_rejects(
+                            token, "mtls_pop", binding, GRAPH_REJECTION_MARKERS[0])
+                    self._assert_private_traceback(failure, token)
+                    self.assertTrue(failure.value.__suppress_context__)
+                    self.assertIsInstance(
+                        failure.value.__context__, requests.exceptions.ConnectionError)
+                    self.assertIsInstance(
+                        failure.value.__context__.__context__, MaxRetryError)
+        self.assertGreaterEqual(resolve.call_count, 3)
+
+    def test_default_recorder_dns_traceback_hides_posted_credentials(self):
+        form = self._signed_form()
+        form["refresh_token"] = "unit-refresh-secret-" + "sensitive" * 20
+        with requests.Session() as session:
+            session.trust_env = False
+            with patch("socket.getaddrinfo", side_effect=socket.gaierror(
+                    "offline DNS failure")) as resolve:
+                with pytest.raises(AssertionError) as failure:
+                    with record_token_requests(self.binding) as records:
+                        session.post(_ENDPOINT, data=form, timeout=1)
+        self._assert_private_traceback(
+            failure, form["client_assertion"], form["refresh_token"])
+        self.assertTrue(failure.value.__suppress_context__)
+        self.assertIsInstance(
+            failure.value.__context__.__context__, requests.exceptions.ConnectionError)
+        self.assertIsInstance(
+            failure.value.__context__.__context__.__context__, MaxRetryError)
+        self.assertEqual([], records)
+        resolve.assert_called_once()
+
     def test_unrelated_certificate_is_usable_and_not_the_fixture_certificate(self):
         binding = unrelated_binding()
         self.assertNotEqual(
@@ -301,8 +348,8 @@ class TestMtlsE2eHelpers(CertificateFixture):
                 requests.exceptions.SSLError("offline TLS failure"),
                 requests.exceptions.Timeout("offline timeout")):
             adapter.send.side_effect = error
-            with record_token_requests(self.binding) as records:
-                with self.assertRaises(type(error)):
+            with self.assertRaisesRegex(AssertionError, "token request transport failed"):
+                with record_token_requests(self.binding) as records:
                     session.post(_ENDPOINT, data=self._signed_form())
             self.assertEqual([], records)
 
@@ -322,7 +369,7 @@ class TestMtlsSampleLogging(unittest.TestCase):
 
 
 class TestDefaultHttpClientCleanup(unittest.TestCase):
-    def test_base_application_closes_ordinary_global_and_regional_clients(self):
+    def test_application_closes_ordinary_and_owned_mtls_clients(self):
         authority = test_e2e.MtlsPopTestCase._SNI_ALLOWLISTED_AUTHORITY
         metadata = {
             "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
@@ -341,10 +388,18 @@ class TestDefaultHttpClientCleanup(unittest.TestCase):
         with patch.object(app.http_client, "close") as ordinary_close, patch.object(
                 global_client._http_client, "close") as global_close, patch.object(
                 regional_client._http_client, "close") as regional_close:
-            test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+            shared = getattr(app, "_mtls_http_client", None)
+            if shared is None:
+                test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+                global_close.assert_called_once_with()
+                regional_close.assert_called_once_with()
+            else:
+                with patch.object(shared, "close") as shared_close:
+                    test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+                shared_close.assert_called_once_with()
+                global_close.assert_not_called()
+                regional_close.assert_not_called()
         ordinary_close.assert_called_once_with()
-        global_close.assert_called_once_with()
-        regional_close.assert_called_once_with()
 
     def test_default_bearer_clients_are_closed_once_without_shared_transport(self):
         ordinary, pop, bearer = Mock(), Mock(), Mock()
