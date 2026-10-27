@@ -322,7 +322,7 @@ class TestMtlsSampleLogging(unittest.TestCase):
 
 
 class TestDefaultHttpClientCleanup(unittest.TestCase):
-    def test_base_application_closes_ordinary_global_and_regional_clients(self):
+    def test_application_closes_ordinary_and_owned_mtls_clients(self):
         authority = test_e2e.MtlsPopTestCase._SNI_ALLOWLISTED_AUTHORITY
         metadata = {
             "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
@@ -344,17 +344,15 @@ class TestDefaultHttpClientCleanup(unittest.TestCase):
             shared = getattr(app, "_mtls_http_client", None)
             if shared is None:
                 test_e2e.MtlsPopTestCase._close_default_http_clients(app)
+                global_close.assert_called_once_with()
+                regional_close.assert_called_once_with()
             else:
                 with patch.object(shared, "close") as shared_close:
                     test_e2e.MtlsPopTestCase._close_default_http_clients(app)
                 shared_close.assert_called_once_with()
+                global_close.assert_not_called()
+                regional_close.assert_not_called()
         ordinary_close.assert_called_once_with()
-        if shared is None:
-            global_close.assert_called_once_with()
-            regional_close.assert_called_once_with()
-        else:
-            global_close.assert_not_called()
-            regional_close.assert_not_called()
 
     def test_default_bearer_clients_are_closed_once_without_shared_transport(self):
         ordinary, pop, bearer = Mock(), Mock(), Mock()
