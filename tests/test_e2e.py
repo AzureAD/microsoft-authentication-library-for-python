@@ -759,18 +759,23 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
         self._call_graph_with_mtls_pop_token(
             result["access_token"], result["binding_certificate"])
 
+    def _acquire_custom_http_obo_invalid_grant(self, app):
+        __tracebackhide__ = True
+        from tests.mtls_http_e2e_helpers import record_custom_transport_failures
+
+        with record_custom_transport_failures():
+            return app.acquire_token_on_behalf_of(
+                "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
+
     def test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint(self):
-        from tests.mtls_http_e2e_helpers import (
-            RecordingPolicyHttpClient, record_custom_transport_failures)
+        from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
 
         credential, binding = self._certificate()
         credential = dict(credential, send_certificate_over_mtls=False)
         http_client = RecordingPolicyHttpClient(expected_binding=binding)
         self.addCleanup(http_client.close)
         app = self._sni_app(credential, http_client=http_client)
-        with record_custom_transport_failures():
-            result = app.acquire_token_on_behalf_of(
-                "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
+        result = self._acquire_custom_http_obo_invalid_grant(app)
         self.assertEqual([], http_client._children)
         request = self._assert_token_request(
             http_client.token_requests, self._KEY_VAULT_SCOPE,
