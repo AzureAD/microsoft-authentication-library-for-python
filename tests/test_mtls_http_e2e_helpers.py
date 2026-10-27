@@ -16,21 +16,6 @@ class TestCustomMtlsE2eHelpers(CertificateFixture):
         self.scenario = test_e2e.CertificateScenariosTestCase(
             "test_credential_x509_custom_http_output_pop")
 
-    def _assert_private_traceback(self, failure, *secrets):
-        rendered = str(failure.getrepr(
-            style="long", showlocals=False, funcargs=True))
-        self.assertIn(type(failure.value).__name__, rendered)
-        self.assertFalse(
-            "PRIVATE KEY" in rendered,
-            "Rendered tracebacks must not expose private key material.")
-        for secret in secrets:
-            fragments = (secret,) + (
-                (secret[:32], secret[-32:]) if len(secret) > 64 else ())
-            for fragment in fragments:
-                self.assertFalse(
-                    fragment in rendered,
-                    "Sensitive arguments must not appear in rendered tracebacks.")
-
     def test_custom_capture_failure_traceback_hides_the_expected_assertion(self):
         assertion = _jwt({"aud": "api://AzureADTokenExchange"})
         app = Mock()
