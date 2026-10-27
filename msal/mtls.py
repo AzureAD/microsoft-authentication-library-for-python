@@ -255,7 +255,7 @@ class _MtlsHttpClient(object):
     def _request(self, method, url, **kwargs):
         from requests.exceptions import HTTPError
 
-        if "cert" in kwargs:
+        if kwargs.get("cert") is not None:
             raise ValueError(
                 "MSAL's mTLS transport does not support a cert override. "
                 "Use the configured client certificate.")

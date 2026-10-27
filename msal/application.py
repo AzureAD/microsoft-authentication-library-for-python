@@ -389,7 +389,8 @@ class _ClientWithCcsRoutingInfo(Client):
 class _MtlsBearerClient(_ClientWithCcsRoutingInfo):
     def _obtain_token(self, *args, **kwargs):
         for option in ("post", "cert"):
-            if option in kwargs:
+            if option in kwargs and (
+                    option != "cert" or kwargs[option] is not None):
                 raise ValueError(
                     "send_certificate_over_mtls=True does not support a {} "
                     "override. Omit {} to use the certificate-aware mTLS transport "
@@ -724,6 +725,8 @@ class ClientApplication(object):
                 Per-request ``post`` overrides and non-``None`` ``cert`` overrides
                 are rejected, because token requests must use the application's
                 configured certificate-bearing transport.
+                Passing ``cert=None`` is equivalent to omitting ``cert`` and
+                does not replace the configured client certificate.
                 A per-request ``mtls_proof_of_possession=True`` on
                 :func:`~acquire_token_for_client` always takes precedence, yielding
                 a cert-bound ``mtls_pop`` token instead of a Bearer one.

@@ -2323,6 +2323,30 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                             cert=("other-cert.pem", "other-key.pem"))
                     lookup.assert_not_called()
 
+    def test_none_certificate_matches_omission_on_network_and_cache(self):
+        for first_kwargs in ({}, {"cert": None}):
+            with self.subTest(first_kwargs=first_kwargs):
+                app = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    authority=self._AUTHORITY, azure_region=False)
+                session = Mock()
+                session.request.return_value = MinimalResponse(
+                    status_code=200, text=json.dumps({
+                        "access_token": "an_at", "expires_in": 3600,
+                        "token_type": "mtls_pop"}))
+                with patch("msal.mtls._MtlsHttpClient._ensure_session",
+                           return_value=session):
+                    first = app.acquire_token_for_client(
+                        ["s1"], mtls_proof_of_possession=True, **first_kwargs)
+                    for kwargs in ({}, {"cert": None}):
+                        cached = app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True, **kwargs)
+                        self.assertEqual(
+                            first["access_token"], cached["access_token"])
+                        self.assertEqual(
+                            app._TOKEN_SOURCE_CACHE, cached[app._TOKEN_SOURCE])
+                self.assertEqual(1, session.request.call_count)
+
     def test_failed_region_discovery_is_not_repeated(self):
         for region in ("westus3", True):
             with self.subTest(region=region), patch(
@@ -3338,6 +3362,30 @@ class TestSendCertificateOverMtls(unittest.TestCase):
             for option in ("post", "cert"):
                 with self.subTest(grant=grant, option=option):
                     self._assert_transport_override_rejected(grant, option)
+
+    def test_none_certificate_matches_omission_on_network_and_cache(self):
+        for first_kwargs in ({}, {"cert": None}):
+            with self.subTest(first_kwargs=first_kwargs):
+                app = ConfidentialClientApplication(
+                    "cid", authority=self._AUTHORITY, azure_region=False,
+                    client_credential=dict(
+                        _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+                session = Mock()
+                session.request.return_value = MinimalResponse(
+                    status_code=200, text=json.dumps({
+                        "access_token": "an_at", "expires_in": 3600,
+                        "token_type": "Bearer"}))
+                with patch("msal.mtls._MtlsHttpClient._ensure_session",
+                           return_value=session):
+                    first = app.acquire_token_for_client(
+                        ["s1"], **first_kwargs)
+                    for kwargs in ({}, {"cert": None}):
+                        cached = app.acquire_token_for_client(["s1"], **kwargs)
+                        self.assertEqual(
+                            first["access_token"], cached["access_token"])
+                        self.assertEqual(
+                            app._TOKEN_SOURCE_CACHE, cached[app._TOKEN_SOURCE])
+                self.assertEqual(1, session.request.call_count)
 
     def _assert_transport_override_rejected(self, grant, option):
         app = ConfidentialClientApplication(
