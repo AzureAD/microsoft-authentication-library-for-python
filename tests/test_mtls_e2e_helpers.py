@@ -338,13 +338,21 @@ class TestDefaultHttpClientCleanup(unittest.TestCase):
             global_client = app._get_mtls_client(app.authority)
             app._region_configured = "westus3"
             regional_client = app._get_mtls_client(app.authority)
+        shared = getattr(app, "_mtls_http_client", None)
         with patch.object(app.http_client, "close") as ordinary_close, patch.object(
                 global_client._http_client, "close") as global_close, patch.object(
-                regional_client._http_client, "close") as regional_close:
+                regional_client._http_client, "close") as regional_close, (
+                patch.object(shared, "close") if shared is not None
+                else nullcontext()) as shared_close:
             test_e2e.MtlsPopTestCase._close_default_http_clients(app)
         ordinary_close.assert_called_once_with()
-        global_close.assert_called_once_with()
-        regional_close.assert_called_once_with()
+        if shared is None:
+            global_close.assert_called_once_with()
+            regional_close.assert_called_once_with()
+        else:
+            shared_close.assert_called_once_with()
+            global_close.assert_not_called()
+            regional_close.assert_not_called()
 
     def test_default_bearer_clients_are_closed_once_without_shared_transport(self):
         ordinary, pop, bearer = Mock(), Mock(), Mock()
