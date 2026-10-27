@@ -218,12 +218,25 @@ class TestMtlsSslContext(unittest.TestCase):
         client = mtls._MtlsHttpClient(b"cert", b"key")
         with patch.object(client, "_ensure_session") as ensure_session:
             for method in ("get", "post"):
-                for cert in (None, "replacement.pem", ("cert.pem", "key.pem")):
+                for cert in ("replacement.pem", ("cert.pem", "key.pem")):
                     with self.subTest(method=method, cert=cert):
                         with self.assertRaisesRegex(ValueError, "cert override"):
                             getattr(client, method)(
                                 "https://mtlsauth.microsoft.com/token", cert=cert)
             ensure_session.assert_not_called()
+
+    def test_owned_transport_treats_none_certificate_as_unspecified(self):
+        client = mtls._MtlsHttpClient(b"cert", b"key")
+        session = Mock()
+        session.request.return_value = Mock(status_code=200)
+        with patch.object(client, "_ensure_session", return_value=session):
+            for method in ("get", "post"):
+                with self.subTest(method=method):
+                    getattr(client, method)(
+                        "https://mtlsauth.microsoft.com/token", cert=None)
+                    session.request.assert_called_with(
+                        method.upper(), "https://mtlsauth.microsoft.com/token",
+                        cert=None, allow_redirects=False)
 
     def test_unsupported_mtls_dependencies_fail_with_upgrade_instructions(self):
         binding = MtlsBindingContext(b"cert", b"key", [], "thumbprint")
