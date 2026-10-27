@@ -5,7 +5,7 @@ from contextlib import contextmanager
 import requests
 
 from sample.confidential_client_mtls_http_client_sample import PolicyHttpClient
-from tests.mtls_e2e_helpers import token_request_summary
+from tests.mtls_e2e_helpers import _TokenValidationError, token_request_summary
 
 
 class _CustomTokenTransportError(AssertionError):
@@ -14,13 +14,17 @@ class _CustomTokenTransportError(AssertionError):
 
 @contextmanager
 def record_custom_transport_failures():
-    """Drop upper OAuth frames only for this recorder's transport failures."""
+    """Drop upper OAuth frames only for private recorder failures."""
     __tracebackhide__ = True
     try:
         yield
     except _CustomTokenTransportError:
         raise AssertionError(
             "The custom token request transport failed before receiving a response."
+        ) from None
+    except _TokenValidationError:
+        raise AssertionError(
+            "The real token exchange failed recording validation."
         ) from None
 
 
@@ -54,10 +58,15 @@ class RecordingPolicyHttpClient(PolicyHttpClient):
             raise _CustomTokenTransportError(
                 "The custom token request transport failed before receiving a response."
             ) from None
-        summary = token_request_summary(
-            response, self.expected_binding,
-            self._session.get_adapter(response.request.url),
-            expected_assertion=self.expected_assertion)
+        adapter = self._session.get_adapter(response.request.url)
+        try:
+            summary = token_request_summary(
+                response, self.expected_binding, adapter,
+                expected_assertion=self.expected_assertion)
+        except AssertionError:
+            raise _TokenValidationError(
+                "The real token exchange failed recording validation."
+            ) from None
         if summary is not None:
             self.token_requests.append(summary)
         return response
