@@ -531,11 +531,16 @@ class MtlsPopTestCase(E2eTestCase):
 
     def _call_graph_with_mtls_pop_token(self, token, binding_certificate):
         __tracebackhide__ = True
-        with binding_certificate.create_requests_session() as session:
-            resp = session.get(
-                self._MTLS_GRAPH_RESOURCE,
-                headers={"Authorization": "mtls_pop " + token},
-                timeout=30, allow_redirects=False)
+        try:
+            with binding_certificate.create_requests_session() as session:
+                resp = session.get(
+                    self._MTLS_GRAPH_RESOURCE,
+                    headers={"Authorization": "mtls_pop " + token},
+                    timeout=30, allow_redirects=False)
+        except requests.exceptions.RequestException:
+            raise AssertionError(
+                "The real Graph transport failed before receiving a response."
+            ) from None
         self.assertEqual(
             200, resp.status_code,
             "The real Graph resource must accept the bound PoP token.")
@@ -543,12 +548,17 @@ class MtlsPopTestCase(E2eTestCase):
 
     def _assert_graph_rejects(self, token, scheme, binding, marker):
         __tracebackhide__ = True
-        with (binding.create_requests_session() if binding is not None
-                else requests.Session()) as session:
-            response = session.get(
-                self._MTLS_GRAPH_RESOURCE,
-                headers={"Authorization": scheme + " " + token},
-                timeout=30, allow_redirects=False)
+        try:
+            with (binding.create_requests_session() if binding is not None
+                    else requests.Session()) as session:
+                response = session.get(
+                    self._MTLS_GRAPH_RESOURCE,
+                    headers={"Authorization": scheme + " " + token},
+                    timeout=30, allow_redirects=False)
+        except requests.exceptions.RequestException:
+            raise AssertionError(
+                "The real Graph transport failed before receiving a response."
+            ) from None
         observed = tuple(
             candidate for candidate in GRAPH_REJECTION_MARKERS
             if candidate in response.text)
