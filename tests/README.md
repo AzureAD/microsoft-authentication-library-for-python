@@ -57,13 +57,79 @@ Run only the required certificate scenarios:
 python -m pytest -q tests/test_e2e.py::CertificateScenariosTestCase
 ```
 
-These cover ordinary SN/I certificate Bearer authentication, global X509 mTLS
-PoP acquisition with a certificate-bound Graph resource call and cache reuse,
-and ordinary certificate Bearer authentication in `westus3`. The X509 matrix
-uses client `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e` in tenant
+The six inherited core certificate methods use the MSID Lab certificate and the
+preconfigured client `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e` in tenant
 `bea21ebe-8b64-4d06-9f6d-6a889b120a7c`, matching the .NET and Go lab setup.
-They do not require fetching unrelated user configuration from Key Vault.
-Legacy interactive and other optional E2E skips are unchanged.
+Global Graph PoP and regional `westus3` Key Vault PoP are separate cases.
+Ordinary regional signed-certificate Bearer authentication is not
+Bearer-over-mTLS: it uses the ordinary endpoint and retains the central
+authority's signed-assertion audience.
+
+The global Graph case reuses the same real token for bound-certificate success
+and three 401/403 controls: no certificate (`MissingClientCertificate`), the
+correct certificate with the Bearer scheme (`Cnf claim not supported over`),
+and an unrelated locally generated certificate
+(`MtlsCnfClaimRequestDataValidationFailed`). It then verifies a cached repeat.
+Both acquisition orders also verify Bearer/PoP isolation in the same
+application, cache, and Key Vault scope.
+
+Graph and Key Vault PoP tokens require readable JWTs, matching SHA256 `cnf`
+bindings, and the requested resource audience. Key Vault accepts its verified
+URI or application-ID alias `cfa8b339-82a2-471a-a3c9-0fc0be7a4093`.
+Recorders delegate to the real default `Session.send`, preserving the TLS
+adapter, and verify signed certificate assertions against the certificate,
+client, and expected audience. They retain bounded status/error metadata,
+never raw forms, tokens, private keys, or client assertions.
+
+All six inherited core methods run without skips, including tagged releases. Missing
+configuration, credential failures, and DNS/TLS failures are failures, not
+acceptable rejection evidence. They do not fetch unrelated user configuration
+from Key Vault. Legacy interactive and other optional E2E skips are unchanged.
+
+Offline guards are separate from live evidence:
+
+```powershell
+python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_token_cache.py
+```
+
+These checks use local fixtures or synthetic responses to verify strict
+binding, safe recording, Graph rejection gates, the exact required-method
+inventory, and real unittest-runner failure rather than skip when credentials
+are missing. They render failure tracebacks with argument display enabled and
+locals disabled to check token-result, cache, and Graph helpers for complete
+tokens and truncated token fragments. The sample-output guard rejects dynamic
+result values in printed summaries.
+
+Cache compatibility and write-scaling regressions count actual access-token
+bucket visits and identity operations, requiring no steady-state bucket scans
+and linear population work while preserving legacy renewal and persistence.
+
+### Pinned core certificate parity mapping
+
+The applicable active reference cases below are pinned:
+
+- .NET `c8b90e9de5bc4974de9928835532faac5c88e2d2`:
+  [client-credentials cases][dotnet-cc].
+- Go `903eb9f1e54e361525025ea27040ac9644b64358`:
+  [PoP, ordinary certificate, cache, and regional cases][go-pop].
+
+`C` means `tests.test_e2e.CertificateScenariosTestCase`. Every row is live.
+
+| Active reference case(s) | Python method | Required observation |
+| --- | --- | --- |
+| Go `TestCredential_X509_Output_Pop`; .NET `Credential_X509_Output_Pop_TestAsync` | `C.test_credential_x509_output_pop` | Graph PoP, returned certificate and JWT SHA256 `cnf`, resource HTTP 200, all three same-token rejection markers, cached repeat. |
+| Go `TestCredential_X509_Output_Bearer` | `C.test_credential_x509_output_bearer` | Ordinary westus3 Key Vault Bearer, no output binding, signed certificate assertion with central audience, cached repeat. |
+| Go `TestCredential_X509_Output_Pop_Regional` | `C.test_credential_x509_output_pop_regional` | westus3 Key Vault PoP, certificate/JWT binding, same cached token and type; not a redirected global Graph cell. |
+| Go `TestConfidentialClientSNIBearerAndMtlsPoPCacheIsolated` | `C.test_bearer_then_mtls_pop_cache_isolated` | One app/cache/scope, Bearer then PoP, distinct tokens and schemes, no Bearer binding, both cache results preserved. |
+| Go `TestConfidentialClientSNIMtlsPoPThenBearerCacheIsolated` | `C.test_mtls_pop_then_bearer_cache_isolated` | Reverse acquisition order with the same isolation and reusable PoP result. |
+
+`C.test_subject_name_issuer_authentication` remains an additional required
+legacy SN/I lab cell. FIC, Bearer-over-mTLS, and custom HTTP pipeline scenarios
+belong to their feature PRs, not this core inventory. This suite does not
+provision apps or claim repository-wide skip elimination.
+
+[dotnet-cc]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/tests/Microsoft.Identity.Test.Integration.netcore/HeadlessTests/ClientCredentialsMtlsPopTests.cs
+[go-pop]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/903eb9f1e54e361525025ea27040ac9644b64358/apps/tests/integration/mtls_pop_integration_test.go
 
 ### Custom HTTP coverage in the extensibility follow-up
 
@@ -92,9 +158,9 @@ privacy/lifecycle guards and existing loopback suite with:
 python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_mtls_http_e2e_helpers.py tests\test_mtls_http_client.py
 ```
 
-The four custom-recorder guards render actual pytest failures with argument
-display enabled and locals disabled, check constructor/POST/capture redaction,
-and retain the sample's response middleware and owner/child cleanup.
+The custom-recorder privacy guards render actual pytest failures with argument
+display enabled and locals disabled to check constructor/POST/capture redaction.
+The lifecycle guard retains the sample's response middleware and owner/child cleanup.
 `test_custom_capture_failure_traceback_hides_the_expected_assertion` mocks
 acquisition: it checks generic recorder privacy, not real FIC support.
 The custom sample's output guard prevents dynamic error values from being
