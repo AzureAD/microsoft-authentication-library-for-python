@@ -17,6 +17,8 @@ class TestRequiredCertificateConfiguration(unittest.TestCase):
             "test_credential_x509_output_pop",
             "test_credential_x509_output_pop_regional",
             "test_credential_x509_output_bearer",
+            "test_credential_x509_custom_http_output_pop",
+            "test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint",
             "test_bearer_then_mtls_pop_cache_isolated",
             "test_mtls_pop_then_bearer_cache_isolated",
         },
@@ -79,8 +81,8 @@ class TestRequiredCertificateConfiguration(unittest.TestCase):
                 unittest.defaultTestLoader.loadTestsFromTestCase(case)
                 for case in self._REQUIRED_SCENARIOS)
             result = unittest.TextTestRunner(stream=io.StringIO()).run(suite)
-        self.assertEqual(6, result.testsRun)
-        self.assertEqual(6, len(result.errors))
+        self.assertEqual(8, result.testsRun)
+        self.assertEqual(8, len(result.errors))
         self.assertEqual([], result.skipped)
         self.assertEqual([], result.failures)
         for _, traceback in result.errors:

@@ -515,8 +515,11 @@ class MtlsPopTestCase(E2eTestCase):
             expected_assertion=None):
         __tracebackhide__ = True
         if http_client is not None:
-            result = app.acquire_token_for_client(
-                scope, mtls_proof_of_possession=pop)
+            from tests.mtls_http_e2e_helpers import record_custom_transport_failures
+
+            with record_custom_transport_failures():
+                result = app.acquire_token_for_client(
+                    scope, mtls_proof_of_possession=pop)
             records = self._assert_factory_used(
                 http_client, binding).token_requests
         else:
@@ -676,12 +679,14 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
             credential = dict(credential, send_certificate_over_mtls=True)
         http_client = None
         if custom:
-            from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
+            from tests.mtls_http_e2e_helpers import (
+                RecordingPolicyHttpClient, record_custom_transport_failures)
 
             http_client = RecordingPolicyHttpClient(expected_binding=binding)
             self.addCleanup(http_client.close)
         app = self._sni_app(credential, azure_region=region, http_client=http_client)
-        with (nullcontext() if custom else record_token_requests(binding)) as records:
+        with (record_custom_transport_failures() if custom
+                else record_token_requests(binding)) as records:
             result = app.acquire_token_for_client(
                 scope, mtls_proof_of_possession=pop)
             self._assert_token_result(
@@ -748,6 +753,45 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
         self.assertEqual(200, records[0]["status_code"])
         self.assertTrue(set(self._KEY_VAULT_SCOPE) <= records[0]["scope"])
         self.assertEqual("HTTPAdapter", records[0]["tls_adapter"])
+
+    def test_credential_x509_custom_http_output_pop(self):
+        result = self._acquire_x509(self._MTLS_POP_SCOPE, pop=True, custom=True)
+        self._call_graph_with_mtls_pop_token(
+            result["access_token"], result["binding_certificate"])
+
+    def _acquire_custom_http_obo_invalid_grant(self, app):
+        __tracebackhide__ = True
+        from tests.mtls_http_e2e_helpers import record_custom_transport_failures
+
+        with record_custom_transport_failures():
+            return app.acquire_token_on_behalf_of(
+                "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
+
+    def test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint(self):
+        from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
+
+        credential, binding = self._certificate()
+        credential = dict(credential, send_certificate_over_mtls=False)
+        http_client = RecordingPolicyHttpClient(expected_binding=binding)
+        self.addCleanup(http_client.close)
+        app = self._sni_app(credential, http_client=http_client)
+        result = self._acquire_custom_http_obo_invalid_grant(app)
+        self.assertEqual([], http_client._children)
+        request = self._assert_token_request(
+            http_client.token_requests, self._KEY_VAULT_SCOPE,
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            assertion_type=JWT_BEARER, regular_endpoint=True)
+        self.assertNotIn("token_type", request["fields"])
+        self.assertIn("assertion", request["fields"])
+        self.assertEqual("on_behalf_of", request["requested_token_use"])
+        diagnostic = "Expected the malformed-grant service rejection: {!r}".format(request)
+        self.assertEqual(400, request["status_code"], diagnostic)
+        self.assertEqual("invalid_request", request["error"], diagnostic)
+        self.assertEqual((50027,), request["error_codes"], diagnostic)
+        self.assertEqual("invalid_request", result.get("error"), diagnostic)
+        self.assertEqual([50027], result.get("error_codes"), diagnostic)
+        self.assertFalse(
+            "access_token" in result, "Intentionally invalid input must not acquire a token.")
 
     def _assert_cache_isolated(self, pop_first):
         credential, binding = self._certificate()

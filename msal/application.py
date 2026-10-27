@@ -687,6 +687,23 @@ class ClientApplication(object):
             If you are providing your own http_client,
             it will be your http_client's duty to decide whether to perform retry.
 
+            To support mTLS token requests, it must also implement
+            ``create_mtls_client(binding_context)``. MSAL passes an
+            :py:class:`msal.MtlsBindingContext`; the factory returns a new,
+            dedicated client with a callable ``post(url, **kwargs)`` that uses
+            that certificate's TLS configuration and honors
+            ``allow_redirects=False``. The factory must preserve its networking
+            policy and middleware, isolate connection pools and TLS sessions
+            from ordinary traffic and other certificates, and own cleanup of
+            its returned clients. MSAL reuses one returned client per
+            application, including regional token endpoints. Creating a new
+            application is required to rotate the certificate.
+
+            MSAL validates the returned interface and rejects reuse of the
+            ordinary client or a client assigned to another live application,
+            but cannot prove that arbitrary custom code uses the supplied TLS
+            configuration or disables redirects.
+
         :param verify: (optional)
             It will be passed to the
             `verify parameter in the underlying requests library
@@ -886,11 +903,8 @@ class ClientApplication(object):
                 'Invalid exclude_scopes={}. You can not opt out "openid" scope'.format(
                 repr(exclude_scopes)))
 
-        # Retained for the mTLS PoP transport, which needs its own dedicated
-        # requests.Session carrying the client certificate (see msal/mtls.py).
-        # A user-supplied http_client cannot perform the mTLS handshake, so
-        # requesting mtls_proof_of_possession=True with one fails fast.
-        self._http_client_is_custom = bool(http_client)
+        # A custom pipeline must explicitly opt in to certificate-aware TLS.
+        self._custom_http_client = http_client if http_client else None
         self._http_client_config = {
             "verify": verify, "proxies": proxies, "timeout": timeout}
         self._http_cache = http_cache  # Reused by the lazily-built mTLS client
@@ -974,6 +988,7 @@ class ClientApplication(object):
         self._mtls_pop_cert_material = None  # Cached parse of the cert below
         self._mtls_client = None  # Lazily built global mTLS client
         self._mtls_regional_client = None  # Lazily built regional mTLS client
+        self._mtls_http_client = None  # Shared by this certificate's endpoints
         self._mtls_lock = Lock()
         if isinstance(client_credential, dict) and not client_credential.get(
                 "client_assertion") and (
@@ -1173,6 +1188,17 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     self._mtls_cert_credential)
             return self._mtls_pop_cert_material
 
+    def _get_mtls_http_client_factory(self):
+        if self._custom_http_client is None:
+            return None
+        factory = getattr(self._custom_http_client, "create_mtls_client", None)
+        if not callable(factory):
+            raise ValueError(
+                "mTLS requires a custom http_client to implement "
+                "create_mtls_client(binding_context). Omit http_client to use "
+                "MSAL's built-in mTLS transport.")
+        return factory
+
     def _get_mtls_client(self, central_authority):
         """Lazily build (and cache) the mTLS PoP client for ``central_authority``.
 
@@ -1180,17 +1206,8 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
         (region honored when configured, global otherwise), and the client
         presents the configured certificate over mutual-TLS.
         """
-        if self._http_client_is_custom:
-            raise ValueError(
-                "mtls_proof_of_possession=True is not supported with a custom "
-                "http_client, because MSAL must own the TLS transport to present "
-                "the client certificate in the mutual-TLS handshake. Omit the "
-                "http_client argument to use MSAL's built-in mTLS transport.")
+        factory = self._get_mtls_http_client_factory()
         region = self._compute_region_to_use()
-        with self._mtls_lock:
-            cached = self._mtls_regional_client if region else self._mtls_client
-        if cached is not None:
-            return cached
         cert = self._get_mtls_pop_cert()  # May raise ValueError (no cert configured)
         token_endpoint = mtls.transform_token_endpoint(  # login.* -> mtlsauth.*
             central_authority.token_endpoint, central_authority.instance, region)
@@ -1201,44 +1218,53 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             "device_authorization_endpoint":
                 central_authority.device_authorization_endpoint,
             }
-        http_client = ThrottledHttpClient(
-            mtls._MtlsHttpClient(
-                cert["cert_pem"], cert["private_key_pem"],
-                **self._http_client_config),
-            # The TLS credential is absent from HTTP cache keys.
-            http_cache={},
-            default_throttle_time=5,
-            )
-        # Vanilla SN/I: the TLS certificate alone authenticates the client, so
-        # this mTLS path sends NO signed client_assertion. (The classic, non-mTLS
-        # certificate path still signs a private_key_jwt client_assertion; only
-        # mTLS PoP replaces that assertion with the mutual-TLS handshake.)
-        client = _MtlsClient(
-            configuration,
-            self.client_id,
-            http_client=http_client,
-            default_headers=self._default_client_headers(),
-            default_body={"client_info": 1},
-            # Cache under the ORIGINAL login.* host, never the mtlsauth.* host,
-            # so mtls_pop ATs share the environment with the rest of the app.
-            on_obtaining_tokens=lambda event: self.token_cache.add(dict(
-                event, environment=central_authority.instance)),
-            on_removing_rt=self.token_cache.remove_rt,
-            on_updating_rt=self.token_cache.update_rt)
         with self._mtls_lock:
-            # Double-check under the lock: another thread may have built and
-            # cached a client while we were building ours (we released the lock
-            # to build). If so, keep the already-cached instance and let ours be
-            # discarded, so every caller shares one client instead of orphaning
-            # a redundant build.
+            cached = self._mtls_regional_client if region else self._mtls_client
+            if cached is not None:
+                return cached
+            if self._mtls_http_client is None:
+                if factory is None:
+                    http_client = mtls._MtlsHttpClient(
+                        cert["cert_pem"], cert["private_key_pem"],
+                        **self._http_client_config)
+                else:
+                    binding = mtls.MtlsBindingContext(
+                        cert["cert_pem"], cert["private_key_pem"],
+                        cert["x5c"], cert["key_id"])
+                    http_client = factory(binding)
+                    if (http_client is self._custom_http_client
+                            or http_client is self.http_client
+                            or http_client is self.http_client.http_client):
+                        raise ValueError(
+                            "create_mtls_client must return a new, dedicated "
+                            "client, not the ordinary http_client.")
+                    if not callable(getattr(http_client, "post", None)):
+                        raise TypeError(
+                            "create_mtls_client must return a client with "
+                            "a callable post(url, **kwargs).")
+                    mtls._claim_mtls_http_client(http_client, self)
+                self._mtls_http_client = http_client
+            http_client = ThrottledHttpClient(
+                mtls._MtlsTokenHttpClient(self._mtls_http_client, token_endpoint),
+                # The TLS credential is absent from HTTP cache keys.
+                http_cache={},
+                default_throttle_time=5,
+                )
+            # The TLS certificate authenticates this path; no client assertion.
+            client = _MtlsClient(
+                configuration,
+                self.client_id,
+                http_client=http_client,
+                default_headers=self._default_client_headers(),
+                default_body={"client_info": 1},
+                on_obtaining_tokens=lambda event: self.token_cache.add(dict(
+                    event, environment=central_authority.instance)),
+                on_removing_rt=self.token_cache.remove_rt,
+                on_updating_rt=self.token_cache.update_rt)
             if region:
-                if self._mtls_regional_client is None:
-                    self._mtls_regional_client = client
-                client = self._mtls_regional_client
+                self._mtls_regional_client = client
             else:
-                if self._mtls_client is None:
-                    self._mtls_client = client
-                client = self._mtls_client
+                self._mtls_client = client
         return client
 
     def _build_client(self, client_credential, authority, skip_regional_client=False):
@@ -2979,12 +3005,13 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             Requirements: the app must be configured with a certificate
             credential (``private_key_pfx_path``, or ``private_key`` +
             ``public_certificate``); the ``authority`` must be tenanted (not
-            ``/common`` or ``/organizations``); and MSAL's built-in HTTP
-            transport must be in use (a custom ``http_client`` cannot perform
-            the mTLS handshake). Any of these unmet raises ``ValueError``.
-            A ``post`` transport override is also rejected. If the provider
-            returns another token type, the result is ``token_type_mismatch``
-            and the rejected response is not cached.
+            ``/common`` or ``/organizations``); and a custom ``http_client``
+            must implement ``create_mtls_client(binding_context)`` as described
+            in :py:class:`msal.ClientApplication`. Any of these unmet raises
+            ``ValueError``. The default transport needs no extra configuration.
+            ``post`` and ``cert`` overrides and redirects are rejected. If the
+            provider returns another token type, the result is
+            ``token_type_mismatch`` and the rejected response is not cached.
 
             On success the result also contains an
             :py:class:`msal.MtlsBindingContext` as ``binding_certificate``. It
@@ -3048,23 +3075,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             kwargs["data"] = kwargs.get("data", {})
             _stash_client_claims(forwarded_client_claims, kwargs["data"])
         if mtls_proof_of_possession:
-            if kwargs.get("cert") is not None:
-                raise ValueError(
-                    "mtls_proof_of_possession=True does not support a cert "
-                    "override. MSAL must present the configured binding certificate.")
-            if "post" in kwargs:
-                raise ValueError(
-                    "mtls_proof_of_possession=True does not support a post "
-                    "override. Omit post to use MSAL's built-in mTLS transport.")
-            # An mTLS transport is required to present the certificate for a
-            # cert-bound PoP request.
-            if self._http_client_is_custom:
-                raise ValueError(
-                    "mtls_proof_of_possession=True is not supported with a "
-                    "custom http_client, because MSAL must own the TLS transport "
-                    "to present the client certificate in the mutual-TLS "
-                    "handshake. Omit the http_client argument to use MSAL's "
-                    "built-in mTLS transport.")
+            mtls._validate_mtls_request(kwargs)
+            self._get_mtls_http_client_factory()
             if self.authority.tenant.lower() in ("common", "organizations"):
                 raise ValueError(
                     "mtls_proof_of_possession=True requires a tenanted authority. "

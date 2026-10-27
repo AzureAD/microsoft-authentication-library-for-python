@@ -211,12 +211,14 @@ certificate credential and pass ``mtls_proof_of_possession=True`` to
 Notes and requirements:
 
 * The ``authority`` must be **tenanted** (not ``/common`` or ``/organizations``).
-* MSAL must own the TLS transport, so a custom ``http_client`` is not supported
-  together with ``mtls_proof_of_possession=True``.
-  Per-request ``post`` and ``cert`` overrides are also rejected.
-  The owned mTLS token transport never follows redirects; HTTP 3xx responses
+* The default HTTP transport handles mTLS automatically. A custom
+  ``http_client`` must explicitly implement the certificate-aware factory
+  described below; legacy custom clients fail with ``ValueError`` for mTLS.
+  Per-request ``post`` and ``cert`` overrides and redirects are rejected for
+  mTLS token requests, including when a token could otherwise come from cache.
+  The built-in mTLS token transport never follows redirects; HTTP 3xx responses
   raise ``requests.exceptions.HTTPError`` and are not cached as tokens.
-* mTLS transport and ``binding.create_requests_session()`` require
+* MSAL's built-in mTLS transport and ``binding.create_requests_session()`` require
   Requests >= 2.25.0 with a compatible urllib3 that supports ``SSLContext``.
   Missing transport capabilities raise ``ValueError`` with upgrade instructions.
   This requirement does not change support for ordinary Bearer authentication.
@@ -252,6 +254,110 @@ MSAL version or clear the entire persisted cache. An older version's
 
 .. autoclass:: msal.MtlsBindingContext
    :members:
+
+Custom HTTP pipelines for mTLS token requests
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An application that does not supply ``http_client`` needs no new configuration.
+MSAL owns its certificate-bearing Requests transport, separate from discovery
+and ordinary token traffic.
+
+A custom HTTP client opts in by implementing this additional method::
+
+    def create_mtls_client(self, binding_context):
+        # binding_context is an MSAL-created msal.MtlsBindingContext.
+        # Return a NEW pipeline with the same middleware and network policy,
+        # but isolated certificate-bearing connections.
+        ...
+
+There is no marker class to inherit and no additional constructor parameter.
+The ordinary client's ``get`` and ``post`` still handle discovery and non-mTLS
+requests. On the first mTLS token network request, MSAL calls the factory with
+the application's selected certificate. The returned object must have a
+callable ``post(url, **kwargs)`` using the normal MSAL HTTP response contract
+(``status_code``, ``text``, optional ``headers``, and ``raise_for_status()``).
+It must accept and honor ``allow_redirects=False``. Factory and request
+exceptions propagate; MSAL never falls back to the ordinary client.
+
+For Requests-based pipelines, mount
+``binding_context.create_requests_adapter(...)`` on a **new** session. This
+helper accepts ``HTTPAdapter`` options for retry and pooling policy, retains
+MSAL's Requests-version compatibility handling, and selects separate
+certificate-bearing TLS contexts and pools using the effective Requests
+``verify`` value. Session/request CA paths, ``REQUESTS_CA_BUNDLE`` and
+``CURL_CA_BUNDLE`` (when ``session.trust_env`` allows them), and HTTPS proxies
+retain their Requests semantics. For other HTTP libraries,
+``binding_context.create_ssl_context(verify=...)`` creates the certificate-bearing
+``ssl.SSLContext``; the implementer must resolve its own library's effective
+server verification and proxy settings before using it.
+
+For example, inside a Requests-based factory::
+
+    session = MyPolicySession()  # A fresh session retaining your middleware
+    session.verify = self.ca_bundle
+    session.trust_env = self.trust_env
+    session.proxies.update(self.proxies)
+    session.mount("https://", binding_context.create_requests_adapter(
+        max_retries=self.retries,
+        pool_connections=self.pool_connections,
+        pool_maxsize=self.pool_maxsize,
+        pool_block=True,
+    ))
+    # Set the pipeline's timeout, hooks and other policy as for ordinary traffic.
+    # Keep session alive until all applications using this factory have finished.
+    return session
+
+The runnable ``sample/confidential_client_mtls_http_client_sample.py`` shows a
+factory that retains response middleware, a header policy, CA/proxy/environment
+settings, timeouts and pooling, and closes its derived pipelines explicitly.
+It uses the same certificate and environment configuration as the default
+mTLS-PoP sample.
+
+Trust, isolation and lifetime contract
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* Return a fresh pipeline for every factory call. Do not mutate or return the
+  ordinary client, its shared transport, or a previously returned pipeline.
+  Never share certificate-bearing connection pools, adapters, mutable TLS
+  contexts or TLS session caches with another certificate or ordinary traffic.
+  Shared immutable policy is fine.
+* Preserve all required middleware and networking policy explicitly: MSAL cannot
+  clone an opaque client. Constructor ``verify``, ``proxies`` and ``timeout``
+  options still do not override a custom HTTP client's settings.
+* MSAL serializes factory creation within each application and caches one
+  returned pipeline for that application's certificate. Global and regional
+  token endpoints reuse it. Separate applications invoke the factory separately,
+  even when they share an HTTP factory or caches. The factory must be safe to
+  call concurrently from different applications, and its returned pipelines
+  must support the application's concurrency requirements.
+* Certificate credentials are fixed for the application's lifetime. To rotate,
+  create a new application and pipeline, stop in-flight work using the old
+  application, then release its pipelines. Do not mutate a supplied binding
+  context or a TLS context already used by a connection pool.
+* The custom factory owns and must retain/close every client it creates,
+  including partial constructions when its own code raises. MSAL does not
+  close caller-owned clients or the ordinary pipeline. Close them only after
+  all applications and in-flight requests using them have finished.
+* MSAL rejects a missing/non-callable factory, a return value without callable
+  ``post``, returning the ordinary client itself, and returning a client already
+  assigned to another live application. This identity check does not keep
+  applications alive or require custom clients to support weak references.
+  MSAL restricts its token calls to the configured HTTPS endpoint, passes
+  ``allow_redirects=False``,
+  and rejects redirect responses or observable redirect history/final-endpoint
+  changes (excluding query parameters). These checks cannot undo a redirect
+  already followed by a faulty custom implementation.
+* This is a **trusted implementation contract**, not proof that arbitrary code
+  uses the supplied certificate. MSAL cannot inspect nested transports, detect
+  all shared pools (or all reuse after an application is collected), enforce an
+  opaque client's verification/proxy policy, or prevent custom middleware from
+  ignoring TLS or redirect instructions. The implementer is responsible for
+  those behaviors; do not opt in unless the complete pipeline honors them.
+
+The factory receives a process-local certificate capability, not a successful
+token result. ``binding_certificate`` remains present only on a final
+``mtls_pop`` result, never on an ordinary Bearer result. This extension does not
+change downstream resource TLS or the requirements for mTLS PoP.
 
 
 Exceptions

@@ -57,7 +57,7 @@ Run only the required certificate scenarios:
 python -m pytest -q tests/test_e2e.py::CertificateScenariosTestCase
 ```
 
-The six required certificate methods use the MSID Lab certificate and the
+The six inherited core certificate methods use the MSID Lab certificate and the
 preconfigured client `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e` in tenant
 `bea21ebe-8b64-4d06-9f6d-6a889b120a7c`, matching the .NET and Go lab setup.
 Global Graph PoP and regional `westus3` Key Vault PoP are separate cases.
@@ -81,7 +81,7 @@ adapter, and verify signed certificate assertions against the certificate,
 client, and expected audience. They retain bounded status/error metadata,
 never raw forms, tokens, private keys, or client assertions.
 
-All six methods run without skips, including tagged releases. Missing
+All six inherited core methods run without skips, including tagged releases. Missing
 configuration, credential failures, and DNS/TLS failures are failures, not
 acceptable rejection evidence. They do not fetch unrelated user configuration
 from Key Vault. Legacy interactive and other optional E2E skips are unchanged.
@@ -133,6 +133,41 @@ provision apps or claim repository-wide skip elimination.
 
 [dotnet-cc]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/tests/Microsoft.Identity.Test.Integration.netcore/HeadlessTests/ClientCredentialsMtlsPopTests.cs
 [go-pop]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/903eb9f1e54e361525025ea27040ac9644b64358/apps/tests/integration/mtls_pop_integration_test.go
+
+### Custom HTTP coverage in the extensibility follow-up
+
+This branch adds two required cells to the six inherited X.509/default-transport
+cells, for **eight required certificate scenarios**, not the combined suite's
+21-cell inventory. They run in `CertificateScenariosTestCase` and fail, rather
+than skip, when the required lab certificate is missing or invalid.
+
+| Required method | Observation |
+| --- | --- |
+| `test_credential_x509_custom_http_output_pop` | Real Graph PoP acquisition through the derived certificate-aware factory pipeline, returned/JWT certificate binding, the same cached token, resource HTTP 200, preserved sample middleware, and caller-owned cleanup. |
+| `test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint` | Ordinary custom-client OBO POST with the mTLS flag off, signed certificate assertion and exact HTTP 400 / `invalid_request` / AADSTS50027 rejection; no derived certificate-bearing child is created. This is a malformed-user-assertion request capture, not a successful OBO acquisition. |
+
+These are source-specific tests of the existing factory API. They do not add
+Bearer-over-mTLS or FIC APIs, and do not claim live custom-Bearer or real
+custom-FIC integration coverage; those combined cases remain in the combined
+follow-up. Collecting these tests or passing the offline guards is not evidence
+that a live service run passed.
+
+The custom recorder is isolated in `tests\mtls_http_e2e_helpers.py`; generic
+recording/binding helpers remain in `tests\mtls_e2e_helpers.py`, without a
+dependency on the custom sample in the foundation branch. Run its offline
+privacy/lifecycle guards and existing loopback suite with:
+
+```powershell
+python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_mtls_http_e2e_helpers.py tests\test_mtls_http_client.py
+```
+
+The custom-recorder privacy guards render actual pytest failures with argument
+display enabled and locals disabled to check constructor/POST/capture redaction.
+The lifecycle guard retains the sample's response middleware and owner/child cleanup.
+`test_custom_capture_failure_traceback_hides_the_expected_assertion` mocks
+acquisition: it checks generic recorder privacy, not real FIC support.
+The custom sample's output guard prevents dynamic error values from being
+printed, and the real loopback TLS fixture explicitly requires TLS 1.2 or newer.
 
 ## 5) Manual-intervention E2E tests
 
