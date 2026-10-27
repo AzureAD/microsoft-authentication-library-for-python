@@ -1,10 +1,12 @@
 """Offline custom-recorder guards, not evidence of live E2E acquisitions."""
 
+import socket
 import unittest
 from unittest.mock import Mock, patch
 
 import pytest
 import requests
+import urllib3
 
 from tests import test_e2e
 from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
@@ -44,6 +46,33 @@ class TestCustomMtlsE2eHelpers(CertificateFixture):
                     child.post(_ENDPOINT, data=form)
             self._assert_private_traceback(
                 failure, form["client_assertion"], form["refresh_token"])
+
+    def test_custom_dns_failure_traceback_hides_posted_credentials(self):
+        form = self._signed_form()
+        form["assertion"] = _jwt({"sub": "unit-user-assertion-secret"})
+        form["refresh_token"] = "unit-refresh-secret-" * 8
+        secrets = tuple(form[key] for key in (
+            "client_assertion", "assertion", "refresh_token"))
+        for mtls in (False, True):
+            with self.subTest(mtls=mtls), RecordingPolicyHttpClient(
+                    expected_binding=self.binding, trust_env=False) as owner:
+                client = owner.create_mtls_client(self.binding) if mtls else owner
+                with patch("socket.getaddrinfo", side_effect=socket.gaierror(
+                        socket.EAI_NONAME, "offline DNS resolution failure")) as resolve:
+                    with pytest.raises((
+                            AssertionError, requests.exceptions.RequestException)) as failure:
+                        client.post(_ENDPOINT, data=form)
+                self._assert_private_traceback(failure, *secrets)
+                self.assertIsInstance(failure.value, AssertionError)
+                self.assertEqual(
+                    "The custom token request transport failed before receiving a response.",
+                    str(failure.value))
+                original = failure.value.__context__
+                self.assertIsInstance(original, requests.exceptions.ConnectionError)
+                self.assertIsInstance(original.args[0], urllib3.exceptions.MaxRetryError)
+                self.assertTrue(failure.value.__suppress_context__)
+                self.assertTrue(resolve.called)
+                self.assertEqual([], client.token_requests)
 
     def test_recorder_setup_failure_traceback_hides_the_expected_assertion(self):
         assertion = _jwt({"aud": "api://AzureADTokenExchange"})

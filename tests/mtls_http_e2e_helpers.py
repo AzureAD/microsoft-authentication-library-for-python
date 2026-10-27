@@ -1,5 +1,7 @@
 """Custom-pipeline recording for the mTLS HTTP factory E2E tests."""
 
+import requests
+
 from sample.confidential_client_mtls_http_client_sample import PolicyHttpClient
 from tests.mtls_e2e_helpers import token_request_summary
 
@@ -28,7 +30,12 @@ class RecordingPolicyHttpClient(PolicyHttpClient):
 
     def post(self, url, **kwargs):
         __tracebackhide__ = True
-        response = super().post(url, **kwargs)
+        try:
+            response = super().post(url, **kwargs)
+        except requests.exceptions.RequestException:
+            raise AssertionError(
+                "The custom token request transport failed before receiving a response."
+            ) from None
         summary = token_request_summary(
             response, self.expected_binding,
             self._session.get_adapter(response.request.url),
