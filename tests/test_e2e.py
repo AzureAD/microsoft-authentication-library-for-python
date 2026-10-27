@@ -515,8 +515,11 @@ class MtlsPopTestCase(E2eTestCase):
             expected_assertion=None):
         __tracebackhide__ = True
         if http_client is not None:
-            result = app.acquire_token_for_client(
-                scope, mtls_proof_of_possession=pop)
+            from tests.mtls_http_e2e_helpers import record_custom_transport_failures
+
+            with record_custom_transport_failures():
+                result = app.acquire_token_for_client(
+                    scope, mtls_proof_of_possession=pop)
             records = self._assert_factory_used(
                 http_client, binding).token_requests
         else:
@@ -676,12 +679,14 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
             credential = dict(credential, send_certificate_over_mtls=True)
         http_client = None
         if custom:
-            from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
+            from tests.mtls_http_e2e_helpers import (
+                RecordingPolicyHttpClient, record_custom_transport_failures)
 
             http_client = RecordingPolicyHttpClient(expected_binding=binding)
             self.addCleanup(http_client.close)
         app = self._sni_app(credential, azure_region=region, http_client=http_client)
-        with (nullcontext() if custom else record_token_requests(binding)) as records:
+        with (record_custom_transport_failures() if custom
+                else record_token_requests(binding)) as records:
             result = app.acquire_token_for_client(
                 scope, mtls_proof_of_possession=pop)
             self._assert_token_result(
@@ -755,15 +760,17 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
             result["access_token"], result["binding_certificate"])
 
     def test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint(self):
-        from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
+        from tests.mtls_http_e2e_helpers import (
+            RecordingPolicyHttpClient, record_custom_transport_failures)
 
         credential, binding = self._certificate()
         credential = dict(credential, send_certificate_over_mtls=False)
         http_client = RecordingPolicyHttpClient(expected_binding=binding)
         self.addCleanup(http_client.close)
         app = self._sni_app(credential, http_client=http_client)
-        result = app.acquire_token_on_behalf_of(
-            "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
+        with record_custom_transport_failures():
+            result = app.acquire_token_on_behalf_of(
+                "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
         self.assertEqual([], http_client._children)
         request = self._assert_token_request(
             http_client.token_requests, self._KEY_VAULT_SCOPE,

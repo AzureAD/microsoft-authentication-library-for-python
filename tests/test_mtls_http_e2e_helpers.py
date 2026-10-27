@@ -3,14 +3,16 @@
 import socket
 import unittest
 from unittest.mock import Mock, patch
+from urllib.parse import parse_qs
 
+import msal
 import pytest
 import requests
 import urllib3
 
 from tests import test_e2e
 from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
-from tests.test_mtls_e2e_helpers import CertificateFixture, _ENDPOINT, _jwt
+from tests.test_mtls_e2e_helpers import CertificateFixture, _CREDENTIAL, _ENDPOINT, _jwt
 
 
 class TestCustomMtlsE2eHelpers(CertificateFixture):
@@ -73,6 +75,54 @@ class TestCustomMtlsE2eHelpers(CertificateFixture):
                 self.assertTrue(failure.value.__suppress_context__)
                 self.assertTrue(resolve.called)
                 self.assertEqual([], client.token_requests)
+
+    def test_custom_acquisition_dns_traceback_hides_oauth_arguments(self):
+        authority = self.scenario._SNI_ALLOWLISTED_AUTHORITY
+        metadata = {
+            "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
+            "token_endpoint": authority + "/oauth2/v2.0/token",
+            "issuer": authority + "/v2.0",
+        }
+        bodies = []
+        prepare = requests.Session.prepare_request
+
+        def capture(session, request):
+            prepared = prepare(session, request)
+            bodies.append(prepared.body)
+            return prepared
+
+        with RecordingPolicyHttpClient(
+                expected_binding=self.binding, trust_env=False) as owner, patch(
+                "msal.authority.tenant_discovery", return_value=metadata):
+            app = msal.ConfidentialClientApplication(
+                "client", authority=authority, client_credential=_CREDENTIAL,
+                http_client=owner, azure_region=False, instance_discovery=False)
+            for operation in ("recorded", "obo"):
+                with self.subTest(operation=operation), patch.object(
+                        requests.Session, "prepare_request",
+                        autospec=True, side_effect=capture), patch(
+                        "socket.getaddrinfo", side_effect=socket.gaierror(
+                            socket.EAI_NONAME, "offline DNS resolution failure")):
+                    with pytest.raises(AssertionError) as failure:
+                        if operation == "recorded":
+                            self.scenario._acquire_recorded(
+                                app, self.scenario._KEY_VAULT_SCOPE,
+                                self.binding, http_client=owner)
+                        else:
+                            with patch.object(self.scenario, "_certificate",
+                                    return_value=(_CREDENTIAL, self.binding)), patch.object(
+                                    self.scenario, "_sni_app", return_value=app):
+                                try:
+                                    self.scenario.test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint()
+                                finally:
+                                    self.scenario.doCleanups()
+                    form = parse_qs(bodies[-1])
+                    self._assert_private_traceback(
+                        failure, form["client_assertion"][0],
+                        *form.get("assertion", []))
+                    self.assertTrue(failure.value.__suppress_context__)
+            self.assertEqual([], owner.token_requests)
+            self.assertEqual([], owner._children)
 
     def test_recorder_setup_failure_traceback_hides_the_expected_assertion(self):
         assertion = _jwt({"aud": "api://AzureADTokenExchange"})
