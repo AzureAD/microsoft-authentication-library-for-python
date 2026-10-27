@@ -336,6 +336,25 @@ class TestMtlsHttpClientFactory(unittest.TestCase):
                       regional.configuration["token_endpoint"])
         self.ordinary.create_mtls_client.assert_called_once()
 
+    def test_custom_factory_cert_none_works_on_cold_and_cached_pop(self, discovery):
+        app = self._app()
+        original = app.acquire_token_for_client(
+            ["s1"], mtls_proof_of_possession=True, cert=None)
+        cached = app.acquire_token_for_client(
+            ["s1"], mtls_proof_of_possession=True, cert=None)
+        binding = self.ordinary.create_mtls_client.call_args.args[0]
+        for result in (original, cached):
+            self.assertEqual("mtls_pop", result["token_type"])
+            self.assertEqual(
+                binding.thumbprint_sha256,
+                result["binding_certificate"].thumbprint_sha256)
+        self.assertEqual("cache", cached["token_source"])
+        self.assertEqual(original["access_token"], cached["access_token"])
+        self.ordinary.create_mtls_client.assert_called_once()
+        self.pipeline.post.assert_called_once()
+        self.assertIsNone(self.pipeline.post.call_args.kwargs["cert"])
+        self.ordinary.post.assert_not_called()
+
     def test_concurrent_creation_does_not_orphan_pipelines(self, discovery):
         app = self._app()
 

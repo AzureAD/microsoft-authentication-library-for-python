@@ -39,7 +39,8 @@ from tests.mtls_e2e_helpers import (
     GRAPH_REJECTION_MARKERS, JWT_BEARER, JWT_POP,
     binding_from_credential, jwt_claims, record_token_requests, unrelated_binding,
 )
-from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
+from tests.mtls_http_e2e_helpers import (
+    RecordingPolicyHttpClient, record_custom_transport_failures)
 
 
 logger = logging.getLogger(__name__)
@@ -518,8 +519,9 @@ class MtlsPopTestCase(E2eTestCase):
             expected_assertion=None):
         __tracebackhide__ = True
         if http_client is not None:
-            result = app.acquire_token_for_client(
-                scope, mtls_proof_of_possession=pop)
+            with record_custom_transport_failures():
+                result = app.acquire_token_for_client(
+                    scope, mtls_proof_of_possession=pop)
             records = self._assert_factory_used(
                 http_client, binding).token_requests
         else:
@@ -682,7 +684,8 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
         if custom:
             self.addCleanup(http_client.close)
         app = self._sni_app(credential, azure_region=region, http_client=http_client)
-        with (nullcontext() if custom else record_token_requests(binding)) as records:
+        with (record_custom_transport_failures() if custom
+                else record_token_requests(binding)) as records:
             result = app.acquire_token_for_client(
                 scope, mtls_proof_of_possession=pop)
             self._assert_token_result(
@@ -792,6 +795,7 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
         self._assert_cache_isolated(pop_first=True)
 
     def _capture_invalid_grant(self, grant, send=True, custom=False):
+        __tracebackhide__ = True
         credential, binding = self._certificate()
         credential = dict(credential, send_certificate_over_mtls=send)
         http_client = RecordingPolicyHttpClient(
@@ -812,7 +816,8 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
                 redirect_uri="https://localhost/redirect")
 
         if custom:
-            result = redeem()
+            with record_custom_transport_failures():
+                result = redeem()
             records = (self._assert_factory_used(http_client, binding).token_requests
                        if send else http_client.token_requests)
             if not send:
