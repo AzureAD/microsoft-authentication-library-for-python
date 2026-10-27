@@ -29,6 +29,10 @@ GRAPH_REJECTION_MARKERS = (
 )
 
 
+class _TokenTransportError(AssertionError):
+    pass
+
+
 def jwt_claims(token):
     __tracebackhide__ = True
     if not isinstance(token, str) or len(token.split(".")) != 3:
@@ -155,7 +159,13 @@ def record_token_requests(binding, expected_assertion=None, assertion_audience=N
     send = requests.Session.send
 
     def recording_send(session, request, **kwargs):
-        response = send(session, request, **kwargs)
+        __tracebackhide__ = True
+        try:
+            response = send(session, request, **kwargs)
+        except requests.exceptions.RequestException:
+            raise _TokenTransportError(
+                "The real token request transport failed before receiving a response."
+            ) from None
         summary = token_request_summary(
             response, binding, session.get_adapter(request.url),
             expected_assertion=expected_assertion,
@@ -165,4 +175,10 @@ def record_token_requests(binding, expected_assertion=None, assertion_audience=N
         return response
 
     with patch.object(requests.Session, "send", new=recording_send):
-        yield records
+        try:
+            yield records
+        except _TokenTransportError:
+            # Drop upper Requests frames whose arguments include the POST body.
+            raise AssertionError(
+                "The real token request transport failed before receiving a response."
+            ) from None
