@@ -11,6 +11,26 @@ from tests import test_e2e
 
 
 class TestRequiredCertificateConfiguration(unittest.TestCase):
+    _REQUIRED_SCENARIOS = {
+        "test_subject_name_issuer_authentication",
+        "test_credential_x509_output_pop",
+        "test_credential_x509_output_pop_regional",
+        "test_credential_x509_output_bearer",
+        "test_bearer_then_mtls_pop_cache_isolated",
+        "test_mtls_pop_then_bearer_cache_isolated",
+        "test_credential_x509_send_certificate_over_mtls_output_bearer",
+        "test_send_certificate_over_mtls_on_behalf_of_request_capture",
+        "test_send_certificate_over_mtls_refresh_token_request_capture",
+        "test_send_certificate_over_mtls_auth_code_request_capture",
+        "test_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint",
+    }
+
+    def test_required_scenario_inventory_is_complete(self):
+        self.assertEqual(
+            self._REQUIRED_SCENARIOS,
+            set(unittest.defaultTestLoader.getTestCaseNames(
+                test_e2e.CertificateScenariosTestCase)))
+
     def test_missing_certificate_configuration_fails(self):
         for value in (None, "", "$(LAB_APP_CLIENT_CERT_PFX_PATH)"):
             with self.subTest(value=value), patch.dict(os.environ, {}, clear=True):
@@ -60,8 +80,8 @@ class TestRequiredCertificateConfiguration(unittest.TestCase):
             suite = unittest.defaultTestLoader.loadTestsFromTestCase(
                 test_e2e.CertificateScenariosTestCase)
             result = unittest.TextTestRunner(stream=io.StringIO()).run(suite)
-        self.assertEqual(5, result.testsRun)
-        self.assertEqual(5, len(result.errors))
+        self.assertEqual(11, result.testsRun)
+        self.assertEqual(11, len(result.errors))
         self.assertEqual([], result.skipped)
         self.assertEqual([], result.failures)
         for _, traceback in result.errors:

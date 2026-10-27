@@ -69,7 +69,7 @@ def _print_result_summary(result, header):
     print(header)
     if "access_token" in result:
         print("  acquired:                     yes")
-        print("  token_type:                  ", result.get("token_type"))
+        print("  token_type is mtls_pop:       ", result.get("token_type") == "mtls_pop")
         print("  carries binding_certificate: ", "binding_certificate" in result)
         print("  served from cache:           ", result.get("token_source") == "cache")
     else:

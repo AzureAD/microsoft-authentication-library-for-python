@@ -65,8 +65,12 @@ uses client `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e` in tenant
 
 Bearer-over-mTLS also has a live client-credentials case for `westus3` and
 `https://vault.azure.net/.default`. OBO, refresh-token, and authorization-code
-coverage captures request construction only, matching the reference SDKs'
-live-app enablement limitation; it does not prove live token issuance.
+captures delegate to the shipped TLS transport and require real service
+responses, verified signed client assertions, grant-specific fields, and exact
+OAuth rejection/status checks. The OBO flag-off control requires the ordinary
+endpoint. Transport, credential, and configuration failures cannot pass as
+successful captures. These deliberately invalid grants do not prove successful
+user-token issuance; the reference SDKs also leave those acquisitions disabled.
 They do not require fetching unrelated user configuration from Key Vault.
 Legacy interactive and other optional E2E skips are unchanged.
 

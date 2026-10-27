@@ -570,74 +570,60 @@ class CertificateScenariosTestCase(E2eTestCase):
     # signs a private_key_jwt to the REGULAR login.* endpoint (cert never on the
     # TLS handshake). Ports MSAL .NET CertificateOptions.SendCertificateOverMtls.
     def test_credential_x509_send_certificate_over_mtls_output_bearer(self):
-        # LIVE client-credentials acquisition, allow-listed (mirrors the MSAL
-        # .NET live CC cell: westus3 + the Key Vault resource). Proves the cert
-        # goes on the TLS handshake to mtlsauth.* yet ESTS returns a plain Bearer.
-        from tests.lab_config import get_client_certificate
-        scope = ["https://vault.azure.net/.default"]
-        self.app = msal.ConfidentialClientApplication(
-            self._SNI_ALLOWLISTED_CLIENT_ID,
-            authority=self._SNI_ALLOWLISTED_AUTHORITY,
-            azure_region="westus3",
-            client_credential=dict(
-                get_client_certificate(), send_certificate_over_mtls=True))
-        result = self.app.acquire_token_for_client(scope)
-        self.assertIn(
-            "access_token", result,
-            "Bearer-over-mTLS request failed: %s" % result)
-        # A PLAIN Bearer token, NOT cert-bound (contrast the mtls_pop cell).
-        self.assertEqual("Bearer", result.get("token_type"))
-        self.assertNotIn("binding_certificate", result)
-        # The AT is an ordinary Bearer entry (no key_id/thumbprint fence), so a
-        # normal flagless acquire_token_for_client lookup returns it from cache
-        # -- the caller-visible proof of the feature's goal. (mtls_pop needed the
-        # special _assert_pop_cache_hit because its AT is key-id-fenced; Bearer-
-        # over-mTLS deliberately is not.)
-        self.assertCacheWorksForApp(result, scope)
+        self._acquire_x509(
+            self._KEY_VAULT_SCOPE, send=True, region="westus3")
 
-    def test_send_certificate_over_mtls_user_flows_capture_request(self):
-        # Like .NET/Go, cover these flows through request capture while their
-        # apps lack live mTLS enablement (AADSTS700027 / AADSTS392189).
-        # Replacing post below proves request construction, not a TLS handshake
-        # or successful live acquisition.
-        from tests.lab_config import get_client_certificate
-        cred = dict(
-            get_client_certificate(), send_certificate_over_mtls=True)
-        def _capture(sink):
-            def post(url, headers=None, data=None, *a, **k):
-                sink.append({"url": url, "data": dict(data or {})})
-                return MinimalResponse(status_code=400, text=json.dumps({
-                    "error": "invalid_grant",
-                    "error_description": "request captured; live acquisition "
-                        "not required for this app"}))
-            return post
-        def _new_app():
-            return msal.ConfidentialClientApplication(
-                self._SNI_ALLOWLISTED_CLIENT_ID,
-                authority=self._SNI_ALLOWLISTED_AUTHORITY,
-                client_credential=cred)
-        scope = ["https://graph.microsoft.com/.default"]
-        def _assert_mtls(req, grant_key, grant_value):
-            self.assertTrue(
-                req["url"].startswith("https://mtlsauth.microsoft.com/"),
-                "Expected the mTLS endpoint, got %s" % req["url"])
-            self.assertEqual(grant_value, req["data"].get(grant_key))
-            self.assertTrue(req["data"].get("client_assertion"))
-            self.assertNotEqual("mtls_pop", req["data"].get("token_type"))
-            self.assertNotIn("key_id", req["data"])
-            self.assertNotIn("req_cnf", req["data"])
-        cap = []
-        with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
-            _new_app().acquire_token_on_behalf_of("a_user_assertion", scope)
-        _assert_mtls(cap[0], "requested_token_use", "on_behalf_of")
-        cap = []
-        with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
-            _new_app().acquire_token_by_refresh_token("a_refresh_token", scope)
-        _assert_mtls(cap[0], "grant_type", "refresh_token")
-        cap = []
-        with patch("msal.mtls._MtlsHttpClient.post", side_effect=_capture(cap)):
-            _new_app().acquire_token_by_authorization_code("an_auth_code", scope)
-        _assert_mtls(cap[0], "grant_type", "authorization_code")
+    def _capture_invalid_grant(self, grant, send=True):
+        credential, binding = self._certificate()
+        credential = dict(credential, send_certificate_over_mtls=send)
+        app = self._sni_app(credential)
+        with record_token_requests(binding) as records:
+            if grant == "urn:ietf:params:oauth:grant-type:jwt-bearer":
+                result = app.acquire_token_on_behalf_of(
+                    "fake-user-assertion-for-request-capture", self._KEY_VAULT_SCOPE)
+            elif grant == "refresh_token":
+                result = app.acquire_token_by_refresh_token(
+                    "fake-refresh-token-for-request-capture", self._KEY_VAULT_SCOPE)
+            else:
+                result = app.acquire_token_by_authorization_code(
+                    "fake-auth-code-for-request-capture", self._KEY_VAULT_SCOPE,
+                    redirect_uri="https://localhost/redirect")
+        request = self._assert_token_request(
+            records, self._KEY_VAULT_SCOPE, grant,
+            assertion_type=JWT_BEARER, regular_endpoint=not send)
+        self.assertNotIn("token_type", request["fields"])
+        field = {
+            "urn:ietf:params:oauth:grant-type:jwt-bearer": "assertion",
+            "refresh_token": "refresh_token", "authorization_code": "code",
+        }[grant]
+        self.assertIn(field, request["fields"])
+        if field == "assertion":
+            self.assertEqual("on_behalf_of", request["requested_token_use"])
+        if field == "code":
+            self.assertIn("redirect_uri", request["fields"])
+        expected_error = "invalid_request" if field == "assertion" else "invalid_grant"
+        diagnostic = "Expected the malformed-grant service rejection: {!r}".format(request)
+        self.assertEqual(400, request["status_code"], diagnostic)
+        self.assertEqual(expected_error, request["error"], diagnostic)
+        self.assertEqual(expected_error, result.get("error"), diagnostic)
+        if field == "assertion":
+            self.assertEqual((50027,), request["error_codes"], diagnostic)
+            self.assertEqual([50027], result.get("error_codes"), diagnostic)
+        self.assertFalse(
+            "access_token" in result, "Intentionally invalid input must not acquire a token.")
+
+    def test_send_certificate_over_mtls_on_behalf_of_request_capture(self):
+        self._capture_invalid_grant("urn:ietf:params:oauth:grant-type:jwt-bearer")
+
+    def test_send_certificate_over_mtls_refresh_token_request_capture(self):
+        self._capture_invalid_grant("refresh_token")
+
+    def test_send_certificate_over_mtls_auth_code_request_capture(self):
+        self._capture_invalid_grant("authorization_code")
+
+    def test_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint(self):
+        self._capture_invalid_grant(
+            "urn:ietf:params:oauth:grant-type:jwt-bearer", send=False)
 
 
 class DeviceFlowTestCase(E2eTestCase):  # A leaf class so it will be run only once
