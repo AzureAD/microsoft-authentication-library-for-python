@@ -21,6 +21,11 @@ MIIC5jCCAc6gAwIBAgIJALdYQVsVsNZHMA0GCSqGSIb3DQEBCwUAMBYxFDASBgNV
 BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
 -----END CERTIFICATE-----"""
 
+    # Test thumbprint values
+    test_sha1_thumbprint = "A1B2C3D4E5F6"
+    test_sha256_thumbprint = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"
+
+
     def _setup_mocks(self, mock_authority_class, authority="https://login.microsoftonline.com/common"):
         """Helper to setup Authority mock"""
         # Setup Authority mock
@@ -71,6 +76,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         if expected_thumbprint_type == 'sha256':
             self.assertIn('sha256_thumbprint', call_args[1])
             self.assertNotIn('sha1_thumbprint', call_args[1])
+            if expected_thumbprint_value:
+                self.assertEqual(call_args[1]['sha256_thumbprint'], expected_thumbprint_value)
         elif expected_thumbprint_type == 'sha1':
             self.assertIn('sha1_thumbprint', call_args[1])
             self.assertNotIn('sha256_thumbprint', call_args[1])
@@ -90,7 +97,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             self, mock_extract, mock_load_cert, mock_jwt_creator_class, mock_authority_class):
         """Test that providing only public_certificate (no thumbprint) uses SHA-256"""
         authority = "https://login.microsoftonline.com/common"
-        self._setup_mocks(mock_authority_class, authority)
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_oidc = False  # AAD is not OIDC generic
         self._setup_certificate_mocks(mock_extract, mock_load_cert)
 
         # Create app with certificate credential WITHOUT thumbprint
@@ -119,12 +127,11 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._setup_mocks(mock_authority_class, authority)
 
         # Create app with manual thumbprint (legacy approach)
-        manual_thumbprint = "A1B2C3D4E5F6"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint": manual_thumbprint,
+                "thumbprint": self.test_sha1_thumbprint,
                 # Note: NO public_certificate provided
             },
             authority=authority
@@ -135,7 +142,7 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             mock_jwt_creator_class,
             expected_algorithm='RS256',
             expected_thumbprint_type='sha1',
-            expected_thumbprint_value=manual_thumbprint
+            expected_thumbprint_value=self.test_sha1_thumbprint
         )
 
     def test_pem_with_both_uses_manual_thumbprint_as_sha1(
@@ -145,12 +152,11 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         self._setup_mocks(mock_authority_class, authority)
 
         # Create app with BOTH thumbprint and certificate
-        manual_thumbprint = "A1B2C3D4E5F6"
         app = ConfidentialClientApplication(
             client_id="my_client_id",
             client_credential={
                 "private_key": self.test_private_key,
-                "thumbprint": manual_thumbprint,
+                "thumbprint": self.test_sha1_thumbprint,
                 "public_certificate": self.test_certificate,
             },
             authority=authority
@@ -161,7 +167,7 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             mock_jwt_creator_class,
             expected_algorithm='RS256',
             expected_thumbprint_type='sha1',
-            expected_thumbprint_value=manual_thumbprint,
+            expected_thumbprint_value=self.test_sha1_thumbprint,
             has_x5c=True  # x5c should still be present
         )
 
@@ -209,6 +215,470 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
 
         self.assertIn("thumbprint", str(context.exception).lower())
         self.assertIn("public_certificate", str(context.exception).lower())
+
+    def test_pem_with_thumbprint_sha256_only_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that providing only thumbprint_sha256 uses SHA-256"""
+        authority = "https://login.microsoftonline.com/common"
+        self._setup_mocks(mock_authority_class, authority)
+
+        # Create app with only SHA256 thumbprint
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # Verify SHA-256 with PS256 algorithm is used
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    def test_pem_with_both_thumbprints_aad_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that with both thumbprints, AAD authority uses SHA-256"""
+        authority = "https://login.microsoftonline.com/common"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_oidc = False  # AAD is not OIDC generic
+
+        # Create app with BOTH thumbprints for AAD
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # For AAD, should use SHA-256 when both are provided
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    def test_pem_with_both_thumbprints_adfs_uses_sha1(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that with both thumbprints, ADFS authority uses SHA-1"""
+        authority = "https://adfs.contoso.com/adfs"
+        self._setup_mocks(mock_authority_class, authority)
+
+        # Create app with BOTH thumbprints for ADFS
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # For ADFS, should use SHA-1 when both are provided
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='RS256',
+            expected_thumbprint_type='sha1',
+            expected_thumbprint_value=self.test_sha1_thumbprint
+        )
+
+    def test_pem_with_both_thumbprints_b2c_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that with both thumbprints, B2C authority uses SHA-256"""
+        authority = "https://contoso.b2clogin.com/contoso.onmicrosoft.com/B2C_1_susi"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_b2c = True  # Manually set _is_b2c to True for this B2C authority
+        mock_authority._is_oidc = False  # B2C is not OIDC generic
+
+        # Create app with BOTH thumbprints for B2C
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # For B2C, should use SHA-256 when both are provided
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    def test_pem_with_both_thumbprints_ciam_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that with both thumbprints, CIAM authority uses SHA-256"""
+        authority = "https://contoso.ciamlogin.com/contoso.onmicrosoft.com"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_b2c = True  # CIAM sets _is_b2c to True
+        mock_authority._is_oidc = False  # CIAM is not OIDC generic
+
+        # Create app with BOTH thumbprints for CIAM
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # For CIAM, should use SHA-256 when both are provided
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    def test_pem_with_both_thumbprints_generic_uses_sha1(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that with both thumbprints, OIDC generic authority uses SHA-1"""
+        authority = "https://custom.oidc.authority.com/tenant"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        
+        # Set up as an OIDC generic authority
+        mock_authority.is_adfs = False
+        mock_authority._is_b2c = True  # OIDC sets this but it's not truly B2C
+        mock_authority._is_oidc = True  # This distinguishes OIDC from B2C/CIAM
+
+        # Create app with BOTH thumbprints for OIDC generic authority
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # For OIDC generic authorities, should use SHA-1 when both are provided
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='RS256',
+            expected_thumbprint_type='sha1',
+            expected_thumbprint_value=self.test_sha1_thumbprint
+        )
+
+    def test_pem_with_both_thumbprints_dsts_uses_sha1(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that with both thumbprints, dSTS authority uses SHA-1"""
+        authority = "https://test-instance1-dsts.dsts.core.azure-test.net/dstsv2/common"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        
+        # Set up as a dSTS authority (dSTS is treated as OIDC)
+        mock_authority.is_adfs = False
+        mock_authority._is_b2c = True  # OIDC sets this but it's not truly B2C
+        mock_authority._is_oidc = True  # dSTS is treated as OIDC generic
+
+        # Create app with BOTH thumbprints for dSTS authority
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # For dSTS authorities, should use SHA-1 when both are provided
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='RS256',
+            expected_thumbprint_type='sha1',
+            expected_thumbprint_value=self.test_sha1_thumbprint
+        )
+
+    def test_pem_with_both_thumbprints_unknown_aad_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that with both thumbprints, unknown AAD authority (e.g., sovereign cloud) uses SHA-256"""
+        authority = "https://login.microsoftonline.de/tenant"  # Example of sovereign cloud not in known list
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        
+        # Set up as an AAD authority (not ADFS, not B2C, not OIDC)
+        mock_authority.is_adfs = False
+        mock_authority._is_b2c = False
+        mock_authority._is_oidc = False
+
+        # Create app with BOTH thumbprints for unknown AAD authority
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # For AAD authorities (even unknown ones), should use SHA-256 when both are provided
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    # Additional tests for SHA256-only with different authority types
+    def test_pem_with_thumbprint_sha256_only_b2c_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that B2C with only SHA256 thumbprint uses SHA-256"""
+        authority = "https://contoso.b2clogin.com/contoso.onmicrosoft.com/B2C_1_susi"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_b2c = True
+        mock_authority._is_oidc = False
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    def test_pem_with_thumbprint_sha256_only_ciam_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that CIAM with only SHA256 thumbprint uses SHA-256"""
+        authority = "https://contoso.ciamlogin.com/contoso.onmicrosoft.com"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_b2c = True
+        mock_authority._is_oidc = False
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    def test_pem_with_thumbprint_sha256_only_adfs_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that ADFS with only SHA256 thumbprint uses SHA-256 (even though ADFS prefers SHA1)"""
+        authority = "https://adfs.contoso.com/adfs"
+        self._setup_mocks(mock_authority_class, authority)
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # When only SHA256 is provided, it should be used even for ADFS
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    def test_pem_with_thumbprint_sha256_only_oidc_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that OIDC generic with only SHA256 thumbprint uses SHA-256"""
+        authority = "https://custom.oidc.authority.com/tenant"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority.is_adfs = False
+        mock_authority._is_b2c = True
+        mock_authority._is_oidc = True
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # When only SHA256 is provided, it should be used even for OIDC
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    def test_pem_with_thumbprint_sha256_only_dsts_uses_sha256(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that dSTS with only SHA256 thumbprint uses SHA-256"""
+        authority = "https://test-instance1-dsts.dsts.core.azure-test.net/dstsv2/common"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority.is_adfs = False
+        mock_authority._is_b2c = True
+        mock_authority._is_oidc = True
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint_sha256": self.test_sha256_thumbprint,
+            },
+            authority=authority
+        )
+
+        # When only SHA256 is provided, it should be used even for dSTS
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='PS256',
+            expected_thumbprint_type='sha256',
+            expected_thumbprint_value=self.test_sha256_thumbprint
+        )
+
+    # Tests for SHA1-only with different authority types
+    def test_pem_with_thumbprint_sha1_only_b2c_uses_sha1(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that B2C with only SHA1 thumbprint uses SHA-1"""
+        authority = "https://contoso.b2clogin.com/contoso.onmicrosoft.com/B2C_1_susi"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_b2c = True
+        mock_authority._is_oidc = False
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+            },
+            authority=authority
+        )
+
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='RS256',
+            expected_thumbprint_type='sha1',
+            expected_thumbprint_value=self.test_sha1_thumbprint
+        )
+
+    def test_pem_with_thumbprint_sha1_only_ciam_uses_sha1(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that CIAM with only SHA1 thumbprint uses SHA-1"""
+        authority = "https://contoso.ciamlogin.com/contoso.onmicrosoft.com"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority._is_b2c = True
+        mock_authority._is_oidc = False
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+            },
+            authority=authority
+        )
+
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='RS256',
+            expected_thumbprint_type='sha1',
+            expected_thumbprint_value=self.test_sha1_thumbprint
+        )
+
+    def test_pem_with_thumbprint_sha1_only_adfs_uses_sha1(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that ADFS with only SHA1 thumbprint uses SHA-1"""
+        authority = "https://adfs.contoso.com/adfs"
+        self._setup_mocks(mock_authority_class, authority)
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+            },
+            authority=authority
+        )
+
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='RS256',
+            expected_thumbprint_type='sha1',
+            expected_thumbprint_value=self.test_sha1_thumbprint
+        )
+
+    def test_pem_with_thumbprint_sha1_only_oidc_uses_sha1(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that OIDC generic with only SHA1 thumbprint uses SHA-1"""
+        authority = "https://custom.oidc.authority.com/tenant"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority.is_adfs = False
+        mock_authority._is_b2c = True
+        mock_authority._is_oidc = True
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+            },
+            authority=authority
+        )
+
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='RS256',
+            expected_thumbprint_type='sha1',
+            expected_thumbprint_value=self.test_sha1_thumbprint
+        )
+
+    def test_pem_with_thumbprint_sha1_only_dsts_uses_sha1(
+            self, mock_jwt_creator_class, mock_authority_class):
+        """Test that dSTS with only SHA1 thumbprint uses SHA-1"""
+        authority = "https://test-instance1-dsts.dsts.core.azure-test.net/dstsv2/common"
+        mock_authority = self._setup_mocks(mock_authority_class, authority)
+        mock_authority.is_adfs = False
+        mock_authority._is_b2c = True
+        mock_authority._is_oidc = True
+
+        app = ConfidentialClientApplication(
+            client_id="my_client_id",
+            client_credential={
+                "private_key": self.test_private_key,
+                "thumbprint": self.test_sha1_thumbprint,
+            },
+            authority=authority
+        )
+
+        self._verify_assertion_params(
+            mock_jwt_creator_class,
+            expected_algorithm='RS256',
+            expected_thumbprint_type='sha1',
+            expected_thumbprint_value=self.test_sha1_thumbprint
+        )
 
 
 if __name__ == "__main__":
