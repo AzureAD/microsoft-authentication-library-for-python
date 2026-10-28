@@ -164,6 +164,10 @@ class ThrottledHttpClient(ThrottledHttpClientBase):
                     isinstance(kwargs.get("data"), dict)
                     and kwargs["data"].get("grant_type") == DEVICE_AUTH_GRANT
                     )
+                and not(  # Exclude ROPC, otherwise its key would be a password hash
+                    isinstance(kwargs.get("data"), dict)
+                    and kwargs["data"].get("grant_type") == "password"
+                    )
                 and RetryAfterParser.FIELD_NAME_LOWER not in set(  # Otherwise leave it to the Retry-After decorator
                     h.lower() for h in _get_headers(result))
                 else 0,
