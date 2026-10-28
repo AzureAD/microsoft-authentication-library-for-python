@@ -54,7 +54,8 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         mock_extract.return_value = (
             "mock_sha256_thumbprint",  # sha256_thumbprint
             "mock_sha1_thumbprint",     # sha1_thumbprint
-            ["mock_x5c_value"]          # x5c
+            ["mock_x5c_value"],         # x5c
+            "-----BEGIN CERTIFICATE-----\nmock\n-----END CERTIFICATE-----\n",  # cert_pem
         )
 
     def _verify_assertion_params(self, mock_jwt_creator_class, expected_algorithm,

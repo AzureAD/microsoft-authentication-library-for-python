@@ -1,0 +1,217 @@
+"""Offline custom-recorder guards, not evidence of live E2E acquisitions."""
+
+import socket
+import unittest
+from unittest.mock import Mock, patch
+from urllib.parse import parse_qs
+
+import msal
+import pytest
+import requests
+import urllib3
+
+from tests import test_e2e
+from tests.mtls_e2e_helpers import unrelated_binding
+from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
+from tests.test_mtls_e2e_helpers import CertificateFixture, _CREDENTIAL, _ENDPOINT, _jwt
+
+
+class TestCustomMtlsE2eHelpers(CertificateFixture):
+    def setUp(self):
+        self.scenario = test_e2e.CertificateScenariosTestCase(
+            "test_credential_x509_custom_http_output_pop")
+
+    def test_custom_capture_failure_traceback_hides_the_expected_assertion(self):
+        assertion = _jwt({"aud": "api://AzureADTokenExchange"})
+        app = Mock()
+        with RecordingPolicyHttpClient(
+                expected_binding=self.binding, expected_assertion=assertion) as client:
+            app.acquire_token_for_client.return_value = {"access_token": assertion}
+            with pytest.raises(AssertionError) as failure:
+                self.scenario._acquire_recorded(
+                    app, self.scenario._MTLS_POP_SCOPE, self.binding,
+                    pop=True, http_client=client, expected_assertion=assertion)
+            self._assert_private_traceback(failure, assertion)
+
+    def test_custom_recorder_failure_traceback_hides_posted_credentials(self):
+        form = self._signed_form()
+
+        def send(adapter, request, **kwargs):
+            response = self._response(payload=[])
+            response.request = request
+            return response
+
+        with RecordingPolicyHttpClient(expected_binding=self.binding) as owner:
+            child = owner.create_mtls_client(self.binding)
+            with patch.object(requests.adapters.HTTPAdapter, "send",
+                              autospec=True, side_effect=send):
+                with pytest.raises(AssertionError) as failure:
+                    child.post(_ENDPOINT, data=form)
+            self._assert_private_traceback(
+                failure, form["client_assertion"], form["refresh_token"])
+
+    def test_custom_dns_failure_traceback_hides_posted_credentials(self):
+        form = self._signed_form()
+        form["assertion"] = _jwt({"sub": "unit-user-assertion-secret"})
+        form["refresh_token"] = "unit-refresh-secret-" * 8
+        secrets = tuple(form[key] for key in (
+            "client_assertion", "assertion", "refresh_token"))
+        for mtls in (False, True):
+            with self.subTest(mtls=mtls), RecordingPolicyHttpClient(
+                    expected_binding=self.binding, trust_env=False) as owner:
+                client = owner.create_mtls_client(self.binding) if mtls else owner
+                with patch("socket.getaddrinfo", side_effect=socket.gaierror(
+                        socket.EAI_NONAME, "offline DNS resolution failure")) as resolve:
+                    with pytest.raises((
+                            AssertionError, requests.exceptions.RequestException)) as failure:
+                        client.post(_ENDPOINT, data=form)
+                self._assert_private_traceback(failure, *secrets)
+                self.assertIsInstance(failure.value, AssertionError)
+                self.assertEqual(
+                    "The custom token request transport failed before receiving a response.",
+                    str(failure.value))
+                original = failure.value.__context__
+                self.assertIsInstance(original, requests.exceptions.ConnectionError)
+                self.assertIsInstance(original.args[0], urllib3.exceptions.MaxRetryError)
+                self.assertTrue(failure.value.__suppress_context__)
+                self.assertTrue(resolve.called)
+                self.assertEqual([], client.token_requests)
+
+    def test_custom_acquisition_dns_traceback_hides_oauth_arguments(self):
+        authority = self.scenario._SNI_ALLOWLISTED_AUTHORITY
+        metadata = {
+            "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
+            "token_endpoint": authority + "/oauth2/v2.0/token",
+            "issuer": authority + "/v2.0",
+        }
+        bodies = []
+        prepare = requests.Session.prepare_request
+
+        def capture(session, request):
+            prepared = prepare(session, request)
+            bodies.append(prepared.body)
+            return prepared
+
+        with RecordingPolicyHttpClient(
+                expected_binding=self.binding, trust_env=False) as owner, patch(
+                "msal.authority.tenant_discovery", return_value=metadata):
+            app = msal.ConfidentialClientApplication(
+                "client", authority=authority, client_credential=_CREDENTIAL,
+                http_client=owner, azure_region=False, instance_discovery=False)
+            for operation in ("recorded", "obo"):
+                with self.subTest(operation=operation), patch.object(
+                        requests.Session, "prepare_request",
+                        autospec=True, side_effect=capture), patch(
+                        "socket.getaddrinfo", side_effect=socket.gaierror(
+                            socket.EAI_NONAME, "offline DNS resolution failure")):
+                    with pytest.raises(AssertionError) as failure:
+                        if operation == "recorded":
+                            self.scenario._acquire_recorded(
+                                app, self.scenario._KEY_VAULT_SCOPE,
+                                self.binding, http_client=owner)
+                        else:
+                            with patch.object(self.scenario, "_certificate",
+                                    return_value=(_CREDENTIAL, self.binding)), patch.object(
+                                    self.scenario, "_sni_app", return_value=app):
+                                try:
+                                    self.scenario.test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint()
+                                finally:
+                                    self.scenario.doCleanups()
+                    form = parse_qs(bodies[-1])
+                    self._assert_private_traceback(
+                        failure, form["client_assertion"][0],
+                        *form.get("assertion", []))
+                    self.assertTrue(failure.value.__suppress_context__)
+            self.assertEqual([], owner.token_requests)
+            self.assertEqual([], owner._children)
+
+    def test_recorder_setup_failure_traceback_hides_the_expected_assertion(self):
+        assertion = _jwt({"aud": "api://AzureADTokenExchange"})
+        with pytest.raises(TypeError) as failure:
+            RecordingPolicyHttpClient(
+                expected_assertion=assertion, unexpected_option=True)
+        self._assert_private_traceback(failure, assertion)
+
+    def _assert_custom_summary_validation_privacy(self, invalid_json):
+        authority = self.scenario._SNI_ALLOWLISTED_AUTHORITY
+        metadata = {
+            "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
+            "token_endpoint": authority + "/oauth2/v2.0/token",
+            "issuer": authority + "/v2.0",
+        }
+        posted = []
+
+        def send(adapter, request, **kwargs):
+            posted.append(parse_qs(request.body))
+            response = requests.Response()
+            response.status_code = 400
+            response._content = (
+                b"not-json" if invalid_json else b'{"error":"invalid_grant"}')
+            response.request = request
+            return response
+
+        with RecordingPolicyHttpClient(
+                expected_binding=self.binding if invalid_json else unrelated_binding(),
+                trust_env=False) as owner, patch(
+                "msal.authority.tenant_discovery", return_value=metadata):
+            app = msal.ConfidentialClientApplication(
+                "client", authority=authority, client_credential=_CREDENTIAL,
+                http_client=owner, azure_region=False, instance_discovery=False)
+            for operation in ("recorded", "obo"):
+                with self.subTest(operation=operation), patch.object(
+                        requests.adapters.HTTPAdapter, "send",
+                        autospec=True, side_effect=send):
+                    with pytest.raises(AssertionError) as failure:
+                        if operation == "recorded":
+                            self.scenario._acquire_recorded(
+                                app, self.scenario._KEY_VAULT_SCOPE,
+                                self.binding, http_client=owner)
+                        else:
+                            self.scenario._acquire_custom_http_obo_invalid_grant(app)
+                    form = posted[-1]
+                    self._assert_private_traceback(
+                        failure, form["client_assertion"][0],
+                        *form.get("assertion", []))
+                    self.assertEqual(
+                        "The real token exchange failed recording validation.",
+                        str(failure.value))
+                    self.assertTrue(failure.value.__suppress_context__)
+                    self.assertEqual(
+                        "_TokenValidationError",
+                        type(failure.value.__context__).__name__)
+            self.assertEqual([], owner.token_requests)
+            self.assertEqual({}, app.token_cache._cache.get("AccessToken", {}))
+            self.assertEqual(len(posted), owner.response_count)
+
+    def test_custom_acquisition_bad_json_traceback_hides_oauth_arguments(self):
+        self._assert_custom_summary_validation_privacy(invalid_json=True)
+
+    def test_custom_acquisition_invalid_signed_assertion_traceback_hides_oauth_arguments(self):
+        self._assert_custom_summary_validation_privacy(invalid_json=False)
+
+    def test_custom_recorder_retains_sample_pipeline_and_owner_cleanup(self):
+        def send(adapter, request, **kwargs):
+            response = self._response()
+            response.request = request
+            return response
+
+        with RecordingPolicyHttpClient(expected_binding=self.binding) as owner:
+            child = owner.create_mtls_client(self.binding)
+            with patch.object(requests.adapters.HTTPAdapter, "send",
+                              autospec=True, side_effect=send):
+                child.post(_ENDPOINT, data=self._signed_form())
+            self.assertEqual(1, child.response_count)
+            self.assertEqual(1, len(child.token_requests))
+            self.assertEqual(
+                "custom-policy", child.token_requests[0]["middleware"])
+            self.assertEqual(
+                "_MtlsHTTPAdapter", child.token_requests[0]["tls_adapter"])
+            self.assertEqual([], owner.token_requests)
+            self.assertFalse(owner._closed or child._closed)
+        self.assertTrue(owner._closed and child._closed)
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            child.post(_ENDPOINT)
+
+
+if __name__ == "__main__":
+    unittest.main()
