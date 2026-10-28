@@ -160,6 +160,100 @@ New in MSAL Python 1.26
    .. automethod:: __init__
 
 
+mTLS Proof-of-Possession (SN/I certificate)
+-------------------------------------------
+
+New in MSAL Python 1.38
+
+MSAL Python supports two different kinds of Proof-of-Possession (PoP) tokens:
+
+* **Signed HTTP Request (SHR) PoP** -- used by public-client apps through the
+  broker, and configured with the ``auth_scheme`` parameter and
+  :py:class:`msal.PopAuthScheme` above.
+* **mutual-TLS (mTLS) PoP** -- used by *confidential-client* apps. The app's
+  Subject Name + Issuer (SN/I) certificate is presented as the **client TLS
+  certificate** in a mutual-TLS handshake to Microsoft Entra, and the returned
+  access token is cryptographically bound to that certificate
+  (``token_type == "mtls_pop"``, ``cnf``/``x5t#S256``).
+
+To request an mTLS-PoP token, configure the confidential client with a
+certificate credential and pass ``mtls_proof_of_possession=True`` to
+:py:meth:`msal.ConfidentialClientApplication.acquire_token_for_client`::
+
+    app = msal.ConfidentialClientApplication(
+        client_id,
+        authority="https://login.microsoftonline.com/<tenant-id>",  # MUST be tenanted
+        client_credential={"private_key_pfx_path": "sni.pfx", "public_certificate": True},
+        # azure_region="westus3",  # optional; omit for the global mtls endpoint
+    )
+    result = app.acquire_token_for_client(
+        ["https://graph.microsoft.com/.default"],
+        mtls_proof_of_possession=True,
+    )
+    # result["token_type"] == "mtls_pop"
+    binding = result["binding_certificate"]
+    # binding.x5c
+    # binding.thumbprint_sha256
+
+    with binding.create_requests_session() as session:
+        response = session.get(
+            resource_url,
+            headers={
+                "Authorization":
+                    "{} {}".format(
+                        result["token_type"],
+                        result["access_token"],
+                    ),
+            },
+            timeout=30,
+        )
+
+Notes and requirements:
+
+* The ``authority`` must be **tenanted** (not ``/common`` or ``/organizations``).
+* MSAL must own the TLS transport, so a custom ``http_client`` is not supported
+  together with ``mtls_proof_of_possession=True``.
+  Per-request ``post`` and ``cert`` overrides are also rejected.
+  The owned mTLS token transport never follows redirects; HTTP 3xx responses
+  raise ``requests.exceptions.HTTPError`` and are not cached as tokens.
+* mTLS transport and ``binding.create_requests_session()`` require
+  Requests >= 2.25.0 with a compatible urllib3 that supports ``SSLContext``.
+  Missing transport capabilities raise ``ValueError`` with upgrade instructions.
+  This requirement does not change support for ordinary Bearer authentication.
+* If the provider returns a different token type, MSAL returns
+  ``token_type_mismatch`` without caching the rejected response.
+* ``azure_region`` is **optional**: omission honors ``MSAL_FORCE_REGION`` and
+  otherwise uses the global mTLS endpoint (``mtlsauth.microsoft.com``).
+  Set ``azure_region=False`` to guarantee global routing, or provide a region
+  (e.g. ``westus3``) to pin one.
+* The existing SN/I + Bearer (client-assertion) flow is unchanged; the same
+  certificate can be used either as an assertion signer (Bearer) or as the TLS
+  client certificate (mtls_pop).
+* mTLS PoP currently targets the public and Azure Government (Arlington) clouds.
+* Only the mTLS-PoP path drops the signed ``client_assertion``: the certificate
+  authenticates the client through the mutual-TLS handshake instead. The classic
+  (non-mTLS) certificate path is unchanged and still sends a signed
+  ``client_assertion`` (``private_key_jwt``) to obtain an ordinary token.
+* ``result["binding_certificate"]`` is a process-local
+  :py:class:`msal.MtlsBindingContext`. It exposes the public certificate chain
+  and SHA-256 thumbprint and can create an ``ssl.SSLContext`` or
+  ``requests.Session`` that presents the same certificate to the resource. It
+  is not serializable and must not be persisted.
+  The TLS helpers accept custom CA file/directory paths as strings or
+  ``os.PathLike`` objects (including ``pathlib.Path``); these replace the default
+  trust roots. ``True`` or ``None`` selects the Requests CA bundle, while
+  ``False`` disables server verification.
+
+mTLS-bound access tokens are persisted in a separate ``AccessToken_mTLS`` cache
+bucket. Older SDK versions ignore that bucket and retain their normal Bearer
+and SSH behavior. Before rolling back, remove bound tokens using the newer
+MSAL version or clear the entire persisted cache. An older version's
+``remove_tokens_for_client()`` does not purge an unknown mTLS bucket.
+
+.. autoclass:: msal.MtlsBindingContext
+   :members:
+
+
 Exceptions
 ----------
 These are exceptions that MSAL Python may raise.
