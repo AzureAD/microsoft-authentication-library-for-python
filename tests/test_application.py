@@ -15,6 +15,7 @@ from msal.application import (
     ClientApplication, PublicClientApplication, ConfidentialClientApplication,
     _str2bytes, _merge_claims_challenge_and_capabilities,
 )
+from msal.oauth2cli.oidc import _nonce_hash
 from tests import unittest
 from tests.test_token_cache import build_id_token, build_response
 from tests.http_client import MinimalHttpClient, MinimalResponse
@@ -1459,6 +1460,73 @@ class TestAcquireTokenByAuthorizationCodeWithClientClaims(unittest.TestCase):
         self.assertIsNone(
             app.acquire_token_silent(["s"], accounts[0]),
             "A plain silent call must not read a client_claims token")
+
+
+@patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
+class TestAuthCodeTokensRejectedByIdTokenChecksAreNotCached(unittest.TestCase):
+    """Tokens from a response that fails the nonce or max_age check
+    must not be stored, otherwise acquire_token_silent() would serve them."""
+
+    def _build_app(self):
+        return ConfidentialClientApplication(
+            "client_id", client_credential="secret",
+            authority="https://login.microsoftonline.com/my_tenant")
+
+    def _post(self, **id_token_claims):
+        return lambda *a, **k: MinimalResponse(status_code=200, text=json.dumps(
+            build_response(
+                uid="user_oid", utid="my_tenant", access_token="an AT",
+                refresh_token="an RT", id_token=build_id_token(
+                    aud="client_id", oid="user_oid", tid="my_tenant",
+                    preferred_username="user@contoso.com", **id_token_claims))))
+
+    def _assert_nothing_cached(self, app):
+        self.assertEqual([], app.get_accounts())
+        for credential_type in (
+                msal.TokenCache.CredentialType.ACCESS_TOKEN,
+                msal.TokenCache.CredentialType.REFRESH_TOKEN):
+            self.assertEqual([], list(app.token_cache.search(credential_type)))
+
+    def test_tokens_with_mismatching_nonce_should_not_be_cached(self):
+        app = self._build_app()
+        flow = app.initiate_auth_code_flow(["s"])
+        with self.assertRaises(RuntimeError):
+            app.acquire_token_by_auth_code_flow(
+                flow, {"state": flow["state"], "code": "code"},
+                post=self._post(nonce="a different nonce"))
+        self._assert_nothing_cached(app)
+
+    def test_tokens_with_stale_auth_time_should_not_be_cached(self):
+        app = self._build_app()
+        flow = app.initiate_auth_code_flow(["s"], max_age=60)
+        with self.assertRaises(RuntimeError):
+            app.acquire_token_by_auth_code_flow(
+                flow, {"state": flow["state"], "code": "code"},
+                post=self._post(
+                    nonce=_nonce_hash(flow["nonce"]),
+                    auth_time=int(time.time()) - 3600))
+        self._assert_nothing_cached(app)
+
+    def test_tokens_with_mismatching_nonce_via_authorization_code_should_not_be_cached(self):
+        app = self._build_app()
+        with self.assertRaises(ValueError):
+            app.acquire_token_by_authorization_code(
+                "code", ["s"], nonce="expected nonce",
+                post=self._post(nonce="a different nonce"))
+        self._assert_nothing_cached(app)
+
+    def test_tokens_passing_id_token_checks_should_be_cached(self):
+        app = self._build_app()
+        flow = app.initiate_auth_code_flow(["s"], max_age=60)
+        app.acquire_token_by_auth_code_flow(
+            flow, {"state": flow["state"], "code": "code"},
+            post=self._post(
+                nonce=_nonce_hash(flow["nonce"]), auth_time=int(time.time())))
+        accounts = app.get_accounts()
+        self.assertEqual(1, len(accounts))
+        result = app.acquire_token_silent(["s"], accounts[0])
+        self.assertEqual("an AT", result["access_token"])
+        self.assertEqual(result[app._TOKEN_SOURCE], app._TOKEN_SOURCE_CACHE)
 
 
 @patch(_OIDC_DISCOVERY, new=_OIDC_DISCOVERY_MOCK)
