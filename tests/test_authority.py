@@ -1,3 +1,4 @@
+import json
 import os
 try:
     from unittest.mock import patch
@@ -5,10 +6,34 @@ except:
     from mock import patch
 
 import msal
+from requests.exceptions import Timeout
 from msal.authority import *
 from msal.authority import _CIAM_DOMAIN_SUFFIX
+from msal.throttled_http_client import ThrottledHttpClient
 from tests import unittest
-from tests.http_client import MinimalHttpClient
+from tests.http_client import MinimalHttpClient, MinimalResponse, RecordingHttpClient
+
+
+_TENANT = "11111111-2222-3333-4444-555555555555"
+_ISSUER_POLICY_CASES = (
+    ("S01", "https://custom.example.com/{0}/v2.0",
+        "https://login.microsoftonline.com/{0}/v2.0", True),
+    ("S02", "https://contoso.ciamlogin.com/{0}/v2.0",
+        "https://login.microsoftonline.com/{0}/v2.0", True),
+    ("S03", "https://contoso.ciamlogin.com/{0}/v2.0",
+        "https://contoso.ciamlogin.com/{0}/v2.0", True),
+    ("S04", "https://custom.example.com/{0}",
+        "https://eastus.login.microsoftonline.com/{0}", False),
+    ("S05", "https://custom.example.com/{0}",
+        "https://evil.login.microsoftonline.com/{0}", False),
+    ("S06", "https://login.microsoftonline.com/{0}",
+        "https://evil.login.microsoftonline.com/{0}", True),
+    ("S07", "https://login.microsoftonline.com/attacker.onmicrosoft.com",
+        "https://attacker.onmicrosoft.com.ciamlogin.com/attacker.onmicrosoft.com/v2.0",
+        False),
+    ("S08", "https://custom.example.com/{0}",
+        "https://login.microsoftonline.evil.com/{0}", False),
+)
 
 
 @unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip network io during tagged release")
@@ -420,6 +445,181 @@ class TestMsalBehaviorsWithoutAndWithInstanceDiscoveryBoolean(unittest.TestCase)
         instance_metadata.assert_not_called()
 
 
+class OidcAuthorityIssuerPolicyTestCase(unittest.TestCase):
+    authorization_endpoint = "https://advertised.example.com/tenant/authorize"
+    token_endpoint = "https://advertised.example.com/tenant/token"
+
+    def _metadata(self, issuer):
+        return {
+            "issuer": issuer,
+            "authorization_endpoint": self.authorization_endpoint,
+            "token_endpoint": self.token_endpoint,
+        }
+
+    def _http_client(self, authority, metadata):
+        client = RecordingHttpClient()
+        discovery_url = authority + "/.well-known/openid-configuration"
+        client.add_get_route(
+            lambda call: call["url"] == discovery_url,
+            lambda call: MinimalResponse(status_code=200,
+                text=json.dumps(metadata)))
+        client.add_post_route(
+            lambda call: call["url"] == self.token_endpoint,
+            lambda call: MinimalResponse(status_code=200, text=json.dumps({
+                "access_token": "test-token", "token_type": "Bearer",
+                "expires_in": 3600})))
+        return client
+
+    def _application(self, authority, client, http_cache, token_cache):
+        return msal.ConfidentialClientApplication(
+            "id", client_credential="test-secret", oidc_authority=authority,
+            http_client=client, http_cache=http_cache, token_cache=token_cache,
+            validate_authority=False, instance_discovery=False)
+
+    def test_shared_cases_through_public_oidc_construction_and_acquisition(self):
+        for case, authority, issuer, expected in _ISSUER_POLICY_CASES:
+            with self.subTest(case=case):
+                authority, issuer = authority.format(_TENANT), issuer.format(_TENANT)
+                client = self._http_client(authority, self._metadata(issuer))
+                http_cache, token_cache = {}, msal.TokenCache()
+                if expected:
+                    app = self._application(authority, client, http_cache, token_cache)
+                    self.assertTrue(app.initiate_auth_code_flow(
+                        ["scope"])["auth_uri"].startswith(self.authorization_endpoint + "?"))
+                    self.assertEqual("test-token",
+                        app.acquire_token_for_client(["scope"])["access_token"])
+                    self.assertEqual([self.token_endpoint],
+                        [call["url"] for call in client.post_calls])
+                    self.assertTrue(list(token_cache.search(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+                    self._application(authority, client, http_cache, token_cache)
+                else:
+                    with patch.object(msal.ClientApplication, "_build_client") as build_client:
+                        with self.assertRaisesRegex(ValueError, "The issuer"):
+                            self._application(authority, client, http_cache, token_cache)
+                        build_client.assert_not_called()
+                    self.assertFalse(client.post_calls)
+                    self.assertFalse(list(token_cache.search(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+                    self.assertFalse([key for key in http_cache if key != "_index_"])
+                self.assertEqual(
+                    [authority + "/.well-known/openid-configuration"],
+                    [call["url"] for call in client.get_calls])
+
+    def test_rejected_discovery_is_not_cached_and_valid_response_can_recover(self):
+        authority = "https://custom.example.com/" + _TENANT
+        metadata = self._metadata("https://eastus.login.microsoftonline.com/" + _TENANT)
+        client = self._http_client(authority, metadata)
+        http_cache, token_cache = {}, msal.TokenCache()
+        for attempt in range(2):
+            with self.subTest(attempt=attempt):
+                with self.assertRaisesRegex(ValueError, "The issuer"):
+                    self._application(authority, client, http_cache, token_cache)
+                self.assertEqual(attempt + 1, len(client.get_calls))
+                self.assertFalse(client.post_calls)
+                self.assertFalse(list(token_cache.search(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+                self.assertFalse([key for key in http_cache if key != "_index_"])
+
+        metadata["issuer"] = "https://login.microsoftonline.com/" + _TENANT
+        app = self._application(authority, client, http_cache, token_cache)
+        self.assertEqual(3, len(client.get_calls))
+        self.assertTrue(app.initiate_auth_code_flow(
+            ["scope"])["auth_uri"].startswith(self.authorization_endpoint + "?"))
+        self.assertEqual("test-token",
+            app.acquire_token_for_client(["scope"])["access_token"])
+        self._application(authority, client, http_cache, token_cache)
+        self.assertEqual(3, len(client.get_calls), "Validated discovery should stay cached")
+        self.assertEqual(1, len(client.post_calls))
+
+    def test_preexisting_bad_http_cache_entry_is_revalidated_and_evicted(self):
+        authority = "https://custom.example.com/" + _TENANT
+        discovery_url = authority + "/.well-known/openid-configuration"
+        metadata = self._metadata("https://evil.login.microsoftonline.com/" + _TENANT)
+        client = self._http_client(authority, metadata)
+        http_cache, token_cache = {}, msal.TokenCache()
+        cached_client = ThrottledHttpClient(client, http_cache=http_cache)
+        cached_client.get(discovery_url)
+        unrelated_url = "https://other.example.com/discovery"
+        client.add_get_route(
+            lambda call: call["url"] == unrelated_url,
+            lambda call: MinimalResponse(status_code=200, text="unrelated"))
+        cached_client.get(unrelated_url)
+        metadata["issuer"] = "https://login.microsoftonline.com/" + _TENANT
+
+        with self.assertRaisesRegex(ValueError, "The issuer"):
+            self._application(authority, client, http_cache, token_cache)
+        self.assertEqual(2, len(client.get_calls), "The old cached issuer must be checked")
+        self.assertFalse(client.post_calls)
+        self.assertEqual("unrelated", cached_client.get(unrelated_url).text)
+        self.assertEqual(2, len(client.get_calls), "Other cache entries must be preserved")
+
+        app = self._application(authority, client, http_cache, token_cache)
+        self.assertEqual(3, len(client.get_calls))
+        self.assertEqual("test-token",
+            app.acquire_token_for_client(["scope"])["access_token"])
+
+    def test_runtime_alias_metadata_does_not_make_custom_authority_microsoft(self):
+        authority = "https://custom.example.com/" + _TENANT
+        client = self._http_client(authority,
+            self._metadata("https://evil.login.microsoftonline.com/" + _TENANT))
+        with patch.object(msal.ClientApplication, "_get_instance_metadata",
+                return_value=[{"aliases": ["custom.example.com", WORLD_WIDE],
+                    "preferred_network": "custom.example.com",
+                    "preferred_cache": "custom.example.com"}]) as instance_metadata:
+            with self.assertRaisesRegex(ValueError, "The issuer"):
+                self._application(authority, client, {}, msal.TokenCache())
+            instance_metadata.assert_not_called()
+        self.assertFalse(client.post_calls)
+
+    def test_explicit_oidc_transport_errors_and_interruptions_propagate(self):
+        authority = "https://custom.example.com/" + _TENANT
+        discovery_url = authority + "/.well-known/openid-configuration"
+        for error in (OSError("network unavailable"), Timeout("timeout"),
+                KeyboardInterrupt("interrupted")):
+            with self.subTest(error=type(error).__name__):
+                client = self._http_client(authority, self._metadata(authority))
+                http_cache, token_cache = {}, msal.TokenCache()
+                with patch.object(client, "get", side_effect=error) as get:
+                    with self.assertRaises(type(error)) as context:
+                        self._application(authority, client, http_cache, token_cache)
+                    self.assertIs(error, context.exception)
+                    get.assert_called_once_with(discovery_url)
+                self.assertFalse(client.post_calls)
+                self.assertFalse([key for key in http_cache if key != "_index_"])
+                self._application(authority, client, http_cache, token_cache)
+                self.assertEqual([discovery_url],
+                    [call["url"] for call in client.get_calls])
+
+    def test_discovery_errors_preserve_native_error_contract(self):
+        authority = "https://custom.example.com/" + _TENANT
+        for body, message in (
+                ("not-json", "Unable to get OIDC authority configuration"),
+                ("{}", "The issuer"),
+                (json.dumps(self._metadata(None)), "The issuer"),
+                (json.dumps(self._metadata("")), "The issuer")):
+            with self.subTest(body=body):
+                client = RecordingHttpClient()
+                client.add_get_route(
+                    lambda call: True,
+                    lambda call: MinimalResponse(status_code=200, text=body))
+                with self.assertRaisesRegex(ValueError, message):
+                    self._application(authority, client, {}, msal.TokenCache())
+                self.assertEqual([authority + "/.well-known/openid-configuration"],
+                    [call["url"] for call in client.get_calls])
+                self.assertFalse(client.post_calls)
+
+    def test_ordinary_authority_does_not_apply_explicit_oidc_issuer_policy(self):
+        authority = "https://login.microsoftonline.com/" + _TENANT
+        client = self._http_client(authority + "/v2.0",
+            self._metadata("https://tenant.ciamlogin.com/" + _TENANT))
+        app = msal.ConfidentialClientApplication(
+            "id", client_credential="test-secret", authority=authority,
+            http_client=client)
+        self.assertEqual("test-token",
+            app.acquire_token_for_client(["scope"])["access_token"])
+        self.assertEqual(
+            [authority + "/v2.0/.well-known/openid-configuration"],
+            [call["url"] for call in client.get_calls])
+
+
 class TestAuthorityIssuerValidation(unittest.TestCase):
     """Test cases for authority.has_valid_issuer method """
     
@@ -438,6 +638,160 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
             oidc_authority_url=oidc_authority_url
         )
         return authority
+
+    def _assert_issuer_policy(self, authority_url, issuer, expected, discovery):
+        if expected:
+            authority = self._create_authority_with_issuer(
+                authority_url, issuer, discovery)
+            self.assertTrue(authority.has_valid_issuer())
+        else:
+            with self.assertRaisesRegex(ValueError, "The issuer"):
+                self._create_authority_with_issuer(
+                    authority_url, issuer, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_shared_issuer_policy_cases(self, discovery):
+        for case, authority, issuer, expected in _ISSUER_POLICY_CASES:
+            with self.subTest(case=case):
+                self._assert_issuer_policy(
+                    authority.format(_TENANT), issuer.format(_TENANT),
+                    expected, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_known_hosts_and_aliases_are_case_insensitive(self, discovery):
+        for host in WELL_KNOWN_AUTHORITY_HOSTS:
+            for authority_host in (host, host.upper()):
+                for issuer_host in (WORLD_WIDE.upper(), "EVIL." + host.upper()):
+                    with self.subTest(authority=authority_host, issuer=issuer_host):
+                        self._assert_issuer_policy(
+                            "https://{}/tenant".format(authority_host),
+                            "https://{}/other/v2.0".format(issuer_host),
+                            True, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_known_authorities_reject_both_ciam_tenant_spellings(self, discovery):
+        for authority_host in WELL_KNOWN_AUTHORITY_HOSTS:
+            for tenant in ("attacker.onmicrosoft.com", _TENANT):
+                for issuer_host in (
+                        "attacker.onmicrosoft.com.ciamlogin.com",
+                        "attacker.ciamlogin.com"):
+                    with self.subTest(authority=authority_host,
+                            tenant=tenant, issuer=issuer_host):
+                        self._assert_issuer_policy(
+                            "https://{}/{}".format(authority_host.upper(), tenant),
+                            "https://{}/{}/v2.0".format(issuer_host, tenant),
+                            False, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_ppe_hosts_are_not_in_native_microsoft_catalog(self, discovery):
+        for host in ("login.windows-ppe.net", "login.microsoftonline-p.com"):
+            self.assertNotIn(host, WELL_KNOWN_AUTHORITY_HOSTS)
+            for issuer, expected in (
+                    ("https://{}/other".format(host), True),
+                    ("https://eastus.{}/tenant".format(host), False),
+                    ("https://eastus.login.microsoftonline.com/tenant", False),
+                    ("https://tenant.ciamlogin.com/tenant", True)):
+                with self.subTest(authority=host, issuer=issuer):
+                    self._assert_issuer_policy(
+                        "https://{}/tenant".format(host), issuer,
+                        expected, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_native_issuer_parsing_boundaries(self, discovery):
+        for authority, issuer, expected in (
+                ("https://custom.example.com/tenant",
+                    "https://custom.example.com/tenant/", True),
+                ("https://custom.example.com/tenant/",
+                    "https://custom.example.com/tenant", True),
+                ("https://custom.example.com/tenant",
+                    "https://custom.example.com/other", True),
+                ("https://custom.example.com/tenant",
+                    "https://CUSTOM.EXAMPLE.COM/other", False),
+                ("https://custom.example.com:443/tenant",
+                    "https://custom.example.com:443/other", True),
+                ("https://custom.example.com/tenant",
+                    "https://custom.example.com:443/other", False),
+                ("https://custom.example.com:8443/tenant",
+                    "https://custom.example.com:443/other", False),
+                ("https://custom.example.com/tenant",
+                    "http://custom.example.com/other", False),
+                ("https://custom.example.com/tenant", "/relative/issuer", False),
+                ("https://custom.example.com/tenant", "https:///tenant", False),
+                ("https://custom.example.com/tenant",
+                    "https://login.microsoftonline.com:8443/other", True),
+                ("https://login.microsoftonline.com:8443/tenant",
+                    "https://eastus.login.microsoftonline.com:443/other", True)):
+            with self.subTest(authority=authority, issuer=issuer):
+                self._assert_issuer_policy(authority, issuer, expected, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_malformed_issuer_preserves_parser_exceptions(self, discovery):
+        for issuer, error in (("https://[invalid/tenant", ValueError),
+                (123, AttributeError)):
+            with self.subTest(issuer=issuer):
+                with self.assertRaises(error):
+                    self._create_authority_with_issuer(
+                        "https://custom.example.com/tenant", issuer, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_regional_boundaries(self, discovery):
+        for authority_host in (WORLD_WIDE, "custom.example.com",
+                "eastus." + WORLD_WIDE, WORLD_WIDE + ".evil.com"):
+            for issuer_host in (
+                    "eastus." + WORLD_WIDE, "evil." + WORLD_WIDE,
+                    "east.us." + WORLD_WIDE, "." + WORLD_WIDE,
+                    "eastus." + WORLD_WIDE + ".evil.com",
+                    "eastus.custom.example.com"):
+                authority = "https://{}/tenant".format(authority_host)
+                issuer = "https://{}/other".format(issuer_host)
+                expected = (
+                    authority_host == issuer_host or
+                    authority_host == WORLD_WIDE and
+                    issuer_host in ("eastus." + WORLD_WIDE, "evil." + WORLD_WIDE))
+                with self.subTest(authority=authority, issuer=issuer):
+                    self._assert_issuer_policy(authority, issuer, expected, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_ciam_and_b2c_fallback_only_for_non_microsoft_authorities(self, discovery):
+        for authority_host in (WORLD_WIDE, "LOGIN.WINDOWS.NET",
+                "custom.example.com", "contoso.ciamlogin.com"):
+            for suffix in WELL_KNOWN_B2C_HOSTS:
+                for issuer_host in ("tenant." + suffix, "tenant.nested." + suffix,
+                        suffix, "fake" + suffix, "tenant." + suffix + ".evil.com"):
+                    expected = (
+                        authority_host.lower() not in WELL_KNOWN_AUTHORITY_HOSTS and
+                        issuer_host.endswith("." + suffix))
+                    with self.subTest(authority=authority_host, issuer=issuer_host):
+                        self._assert_issuer_policy(
+                            "https://{}/tenant".format(authority_host),
+                            "https://{}/different/v2.0".format(issuer_host),
+                            expected, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_existing_scheme_handling_is_preserved_with_new_host_restrictions(self, discovery):
+        for authority_host in (WORLD_WIDE, "custom.example.com"):
+            for issuer_host in (WORLD_WIDE, "eastus." + WORLD_WIDE,
+                    "tenant.ciamlogin.com", "tenant.b2clogin.com",
+                    "eastus.custom.example.com"):
+                expected = (
+                    issuer_host == WORLD_WIDE or
+                    authority_host == WORLD_WIDE and issuer_host == "eastus." + WORLD_WIDE or
+                    authority_host != WORLD_WIDE and issuer_host in (
+                        "tenant.ciamlogin.com", "tenant.b2clogin.com"))
+                for scheme in ("https", "http", "ftp"):
+                    with self.subTest(authority=authority_host,
+                            issuer=issuer_host, scheme=scheme):
+                        self._assert_issuer_policy(
+                            "https://{}/tenant".format(authority_host),
+                            "{}://{}/tenant".format(scheme, issuer_host),
+                            expected, discovery)
+
+    @patch("msal.authority.tenant_discovery")
+    def test_invalid_issuer_is_rejected_before_endpoint_consumption(self, discovery):
+        discovery.return_value = {"issuer": "https://evil.example.com/tenant"}
+        with self.assertRaisesRegex(ValueError, "The issuer"):
+            Authority(None, self.http_client,
+                oidc_authority_url="https://custom.example.com/tenant")
     
     @patch("msal.authority.tenant_discovery")
     def test_exact_match_issuer(self, tenant_discovery_mock):
@@ -464,7 +818,7 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
     def test_same_scheme_and_host_different_path(self, tenant_discovery_mock):
         """Test when issuer has same scheme and host but different path"""
         authority_url = "https://example.com/tenant"
-        issuer = f"https://{WORLD_WIDE}/tenant"
+        issuer = "https://example.com/different/path"
         authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
         self.assertTrue(authority.has_valid_issuer(), "Issuer should be valid when it has the same scheme and host")
     
@@ -539,36 +893,28 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
         """Test regional variant: westus2.login.microsoft.com"""
         authority_url = "https://custom-authority.com/tenant"
         issuer = "https://westus2.login.microsoftonline.com/tenant"
-        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
-        self.assertTrue(authority.has_valid_issuer(), 
-            "Regional issuer westus2.login.microsoftonline.com should be valid")
+        self._assert_issuer_policy(authority_url, issuer, False, tenant_discovery_mock)
 
     @patch("msal.authority.tenant_discovery")
     def test_regional_issuer_eastus_login_microsoftonline(self, tenant_discovery_mock):
         """Test regional variant: eastus.login.microsoftonline.com"""
         authority_url = "https://custom-authority.com/tenant"
         issuer = "https://eastus.login.microsoftonline.com/tenant"
-        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
-        self.assertTrue(authority.has_valid_issuer(),
-            "Regional issuer eastus.login.microsoftonline.com should be valid")
+        self._assert_issuer_policy(authority_url, issuer, False, tenant_discovery_mock)
 
     @patch("msal.authority.tenant_discovery")
     def test_regional_issuer_for_china_cloud(self, tenant_discovery_mock):
         """Test regional variant for China cloud: region.login.chinacloudapi.cn"""
         authority_url = "https://custom-authority.com/tenant"
         issuer = "https://chinanorth.login.chinacloudapi.cn/tenant"
-        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
-        self.assertTrue(authority.has_valid_issuer(),
-            "Regional issuer for China cloud should be valid")
+        self._assert_issuer_policy(authority_url, issuer, False, tenant_discovery_mock)
 
     @patch("msal.authority.tenant_discovery")
     def test_regional_issuer_for_us_government(self, tenant_discovery_mock):
         """Test regional variant for US Government: region.login.microsoftonline.us"""
         authority_url = "https://custom-authority.com/tenant"
         issuer = "https://usgovvirginia.login.microsoftonline.us/tenant"
-        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
-        self.assertTrue(authority.has_valid_issuer(),
-            "Regional issuer for US Government should be valid")
+        self._assert_issuer_policy(authority_url, issuer, False, tenant_discovery_mock)
 
     @patch("msal.authority.tenant_discovery")
     def test_invalid_regional_pattern_with_dots_in_region(self, tenant_discovery_mock):
@@ -617,30 +963,26 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
     @patch("msal.authority.tenant_discovery")
     def test_issuer_case_sensitivity_host(self, tenant_discovery_mock):
         """Test that host comparison is case-insensitive for regional check"""
-        authority_url = "https://custom-authority.com/tenant"
+        authority_url = "https://LOGIN.MICROSOFTONLINE.COM/tenant"
         issuer = "https://WESTUS2.LOGIN.MICROSOFTONLINE.COM/tenant"  # Uppercase
         authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
         self.assertTrue(authority.has_valid_issuer(),
             "Host comparison should be case-insensitive")
 
-    # Case 3b: Regional prefix on authority host tests
+    # Regional prefixes on custom authority hosts are no longer accepted.
     @patch("msal.authority.tenant_discovery")
     def test_regional_issuer_matching_authority_host(self, tenant_discovery_mock):
         """Test issuer with region prefix on the authority host: us.someweb.com -> someweb.com"""
         authority_url = "https://someweb.com/tenant"
         issuer = "https://us.someweb.com/tenant"
-        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
-        self.assertTrue(authority.has_valid_issuer(),
-            "Issuer with region prefix on authority host should be valid")
+        self._assert_issuer_policy(authority_url, issuer, False, tenant_discovery_mock)
 
     @patch("msal.authority.tenant_discovery")
     def test_regional_issuer_westus2_on_custom_authority(self, tenant_discovery_mock):
         """Test issuer westus2.myidp.example.com with authority myidp.example.com"""
         authority_url = "https://myidp.example.com/tenant"
         issuer = "https://westus2.myidp.example.com/tenant"
-        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
-        self.assertTrue(authority.has_valid_issuer(),
-            "Regional prefix westus2 on custom authority host should be valid")
+        self._assert_issuer_policy(authority_url, issuer, False, tenant_discovery_mock)
 
     @patch("msal.authority.tenant_discovery")
     def test_regional_issuer_does_not_match_different_authority(self, tenant_discovery_mock):
@@ -660,9 +1002,7 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
         """Test issuer eastus.someweb.com/v2 with authority someweb.com/tenant"""
         authority_url = "https://someweb.com/tenant"
         issuer = "https://eastus.someweb.com/v2"
-        authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
-        self.assertTrue(authority.has_valid_issuer(),
-            "Regional issuer with different path should still match by host")
+        self._assert_issuer_policy(authority_url, issuer, False, tenant_discovery_mock)
 
     # Case 5: B2C host suffix tests
     @patch("msal.authority.tenant_discovery")
@@ -762,4 +1102,3 @@ class TestAuthorityIssuerValidation(unittest.TestCase):
         authority = self._create_authority_with_issuer(authority_url, issuer, tenant_discovery_mock)
         self.assertTrue(authority.has_valid_issuer(),
             "Legitimate subdomain of b2clogin.com should be valid")
-

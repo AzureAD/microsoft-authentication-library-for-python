@@ -675,6 +675,20 @@ class ClientApplication(object):
             MSAL will append ".well-known/openid-configuration" to the authority
             and retrieve the OIDC metadata from there, to figure out the endpoints.
 
+            Issuer validation raises ``ValueError`` before using the advertised
+            endpoints when the issuer does not match an accepted pattern.
+            Exact known Microsoft issuer hosts remain accepted for custom
+            authorities. Regional issuer hosts are accepted only when the
+            configured authority host is an exact built-in Microsoft host
+            (case-insensitive). Any single nonempty regional label is still
+            accepted for those authorities; there is no region allowlist.
+            Custom authorities no longer accept regional prefixes on Microsoft
+            hosts or on their own host. Same-host matching and existing
+            B2C/CIAM issuer mappings for non-Microsoft authorities are preserved,
+            but Microsoft authorities cannot use the B2C/CIAM fallback.
+            Rejected discovery metadata is removed from MSAL's HTTP cache so a
+            later valid response can succeed.
+
             Note: Broker will NOT be used for OIDC authority.
         """
         self.client_id = client_id

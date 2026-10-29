@@ -171,10 +171,14 @@ class ThrottledHttpClient(ThrottledHttpClientBase):
 
         self.get = IndividualCache(  # Typically those discovery GETs
             mapping=self._expiring_mapping,
-            key_maker=lambda func, args, kwargs: "GET {} hash={} 2xx".format(
-                args[0],  # It is the url, sometimes containing inline params
-                self._hash(kwargs.get("params", "")),
-                ),
+            key_maker=lambda func, args, kwargs: self._get_cache_key(
+                args[0], kwargs.get("params", "")),
             expires_in=lambda result=None, **ignored:
                 3600*24 if 200 <= result.status_code < 300 else 0,
             )(self.get)
+
+    def _get_cache_key(self, url, params=""):
+        return "GET {} hash={} 2xx".format(url, self._hash(params))
+
+    def _forget_get(self, url):
+        self._expiring_mapping.pop(self._get_cache_key(url), None)

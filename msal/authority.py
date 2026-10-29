@@ -5,6 +5,8 @@ except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
 import logging
 
+from .throttled_http_client import ThrottledHttpClient
+
 logger = logging.getLogger(__name__)
 # Endpoints were copied from here
 # https://docs.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud#azure-ad-authentication-endpoints
@@ -113,13 +115,11 @@ class Authority(object):
                 ) + " Also please double check your tenant name or GUID is correct."
             raise ValueError(error_message)
         self._issuer = openid_config.get('issuer')
-        self.authorization_endpoint = openid_config['authorization_endpoint']
-        self.token_endpoint = openid_config['token_endpoint']
-        self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
-        _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
 
         # Validate the issuer if using OIDC authority
         if self._oidc_authority_url and not self.has_valid_issuer():
+            if isinstance(self._http_client, ThrottledHttpClient):
+                self._http_client._forget_get(tenant_discovery_endpoint)
             raise ValueError((
                 "The issuer '{iss}' does not match the authority '{auth}' or a known pattern. "
                 "When using the 'oidc_authority' parameter in ClientApplication, the authority "
@@ -128,6 +128,11 @@ class Authority(object):
                 "'authority' parameter should be used instead of 'oidc_authority'. "
                 ""
             ).format(iss=self._issuer, auth=oidc_authority_url))
+        self.authorization_endpoint = openid_config['authorization_endpoint']
+        self.token_endpoint = openid_config['token_endpoint']
+        self.device_authorization_endpoint = openid_config.get('device_authorization_endpoint')
+        _, _, self.tenant = canonicalize(self.token_endpoint)  # Usually a GUID
+
     def _initialize_oidc_authority(self, oidc_authority_url):
         authority, self.instance, tenant = canonicalize(oidc_authority_url)
         self.is_adfs = tenant.lower() == 'adfs'  # As a convention
@@ -208,8 +213,11 @@ class Authority(object):
         - It exactly matches the authority URL (with/without trailing slash)
         - It has the same scheme and host as the authority (path can be different)
         - The issuer host is a well-known Microsoft authority host
-        - The issuer host is a regional variant of a well-known host (e.g., westus2.login.microsoft.com)
-        - For CIAM, hosts that end with well-known B2C hosts (e.g., tenant.b2clogin.com) are accepted as valid issuers
+        - For a well-known Microsoft authority only, the issuer host has
+          exactly one nonempty label before a well-known Microsoft host.
+          The label is not checked against a list of regions.
+        - For other authorities, issuer hosts that end with well-known
+          B2C/CIAM hosts (e.g., tenant.b2clogin.com) are accepted.
         """
         if not self._issuer or not self._oidc_authority_url:
             return False
@@ -224,25 +232,20 @@ class Authority(object):
 
         if not issuer_host:
             return False
+        authority_host = authority_parsed.hostname.lower() if authority_parsed.hostname else ""
+        is_microsoft_authority = authority_host in WELL_KNOWN_AUTHORITY_HOSTS
         
         # Case 2: Issuer is from a trusted Microsoft host - O(1) lookup
         if issuer_host in WELL_KNOWN_AUTHORITY_HOSTS:
             return True
 
-        # Case 3: Regional variant check - O(1) lookup
+        # Case 3: Only built-in Microsoft authorities accept regional issuers.
         # e.g., westus2.login.microsoft.com -> extract "login.microsoft.com"
         dot_index = issuer_host.find(".")
-        if dot_index > 0:
+        if is_microsoft_authority and dot_index > 0:
             potential_base = issuer_host[dot_index + 1:]
-            if "." not in issuer_host[:dot_index]:
-                # 3a: Base host is a trusted Microsoft host
-                if potential_base in WELL_KNOWN_AUTHORITY_HOSTS:
-                    return True
-                # 3b: Issuer has a region prefix on the authority host
-                #     e.g. issuer=us.someweb.com, authority=someweb.com
-                authority_host = authority_parsed.hostname.lower() if authority_parsed.hostname else ""
-                if potential_base == authority_host:
-                    return True
+            if potential_base in WELL_KNOWN_AUTHORITY_HOSTS:
+                return True
 
         # Case 4: Same scheme and host (path can differ)
         if (authority_parsed.scheme == issuer_parsed.scheme and 
@@ -252,7 +255,8 @@ class Authority(object):
         # Case 5: Check if issuer host is a subdomain of a well-known B2C host
         # e.g., tenant.b2clogin.com matches .b2clogin.com
         # but fakeb2clogin.com does not
-        if any(issuer_host.endswith("." + h) for h in WELL_KNOWN_B2C_HOSTS):
+        if not is_microsoft_authority and any(
+                issuer_host.endswith("." + h) for h in WELL_KNOWN_B2C_HOSTS):
             return True
 
         return False
