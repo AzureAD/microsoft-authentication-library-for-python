@@ -529,6 +529,37 @@ class OidcAuthorityIssuerPolicyTestCase(unittest.TestCase):
         self.assertEqual(3, len(client.get_calls), "Validated discovery should stay cached")
         self.assertEqual(1, len(client.post_calls))
 
+    def _assert_malformed_issuer_recovery(self, issuer, error_type, message):
+        authority = "https://custom.example.com/" + _TENANT
+        metadata = self._metadata(issuer)
+        client = self._http_client(authority, metadata)
+        http_cache, token_cache = {}, msal.TokenCache()
+        for attempt in range(2):
+            with self.assertRaisesRegex(error_type, message):
+                self._application(authority, client, http_cache, token_cache)
+            self.assertEqual(attempt + 1, len(client.get_calls))
+            self.assertFalse(client.post_calls)
+            self.assertFalse(list(token_cache.search(msal.TokenCache.CredentialType.ACCESS_TOKEN)))
+            self.assertFalse([key for key in http_cache if key != "_index_"])
+
+        metadata["issuer"] = "https://login.microsoftonline.com/" + _TENANT
+        app = self._application(authority, client, http_cache, token_cache)
+        self.assertEqual(3, len(client.get_calls))
+        self.assertEqual("test-token",
+            app.acquire_token_for_client(["scope"])["access_token"])
+        self._application(authority, client, http_cache, token_cache)
+        self.assertEqual(3, len(client.get_calls), "Validated discovery should stay cached")
+        self.assertEqual([self.token_endpoint],
+            [call["url"] for call in client.post_calls])
+
+    def test_malformed_string_issuer_is_evicted_and_valid_metadata_can_recover(self):
+        self._assert_malformed_issuer_recovery(
+            "https://[invalid/tenant", ValueError, "Invalid IPv6 URL")
+
+    def test_nonstring_issuer_is_evicted_and_valid_metadata_can_recover(self):
+        self._assert_malformed_issuer_recovery(
+            123, AttributeError, "rstrip")
+
     def test_preexisting_bad_http_cache_entry_is_revalidated_and_evicted(self):
         authority = "https://custom.example.com/" + _TENANT
         discovery_url = authority + "/.well-known/openid-configuration"

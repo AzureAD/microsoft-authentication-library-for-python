@@ -117,9 +117,14 @@ class Authority(object):
         self._issuer = openid_config.get('issuer')
 
         # Validate the issuer if using OIDC authority
-        if self._oidc_authority_url and not self.has_valid_issuer():
-            if isinstance(self._http_client, ThrottledHttpClient):
+        is_valid_issuer = not self._oidc_authority_url
+        try:
+            if self._oidc_authority_url:
+                is_valid_issuer = self.has_valid_issuer()
+        finally:
+            if not is_valid_issuer and isinstance(self._http_client, ThrottledHttpClient):
                 self._http_client._forget_get(tenant_discovery_endpoint)
+        if not is_valid_issuer:
             raise ValueError((
                 "The issuer '{iss}' does not match the authority '{auth}' or a known pattern. "
                 "When using the 'oidc_authority' parameter in ClientApplication, the authority "
