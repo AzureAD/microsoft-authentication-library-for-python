@@ -163,6 +163,21 @@ class _ExpiringMapping(MutableMapping):
             del timestamps[key]  # O(1)
             self._mapping[self._INDEX] = sequence, timestamps
 
+    def _invalidate(self, key):
+        """Remove an entry and compact its expiry index under the same lock."""
+        self._validate_key(key)
+        with self._lock:
+            sequence, timestamps = self._peek()
+            self._mapping.pop(key, None)
+            timestamps.pop(key, None)
+            # Rebuild from live entries, including cleanup of previously orphaned records.
+            sequence[:] = [
+                [expires_at, created_at, entry_key]
+                for entry_key, (expires_at, created_at) in timestamps.items()
+            ]
+            heapq.heapify(sequence)
+            self._mapping[self._INDEX] = sequence, timestamps
+
     def __len__(self):  # O(logN)
         """Drop all expired items and return the remaining length"""
         with self._lock:
@@ -287,4 +302,3 @@ class _IndividualCache(object):
             return value
 
         return wrapper
-

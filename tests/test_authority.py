@@ -587,6 +587,42 @@ class OidcAuthorityIssuerPolicyTestCase(unittest.TestCase):
         self.assertEqual("test-token",
             app.acquire_token_for_client(["scope"])["access_token"])
 
+    def test_repeated_rejections_do_not_accumulate_expiry_index_records(self):
+        authority = "https://custom.example.com/" + _TENANT
+        metadata = self._metadata("https://evil.login.microsoftonline.com/" + _TENANT)
+        client = self._http_client(authority, metadata)
+        http_cache, token_cache = {}, msal.TokenCache()
+        cached_client = ThrottledHttpClient(client, http_cache=http_cache)
+        unrelated_url = "https://other.example.com/discovery"
+        client.add_get_route(
+            lambda call: call["url"] == unrelated_url,
+            lambda call: MinimalResponse(status_code=200, text="unrelated"))
+        with patch("msal.individual_cache.time.time", return_value=1000):
+            cached_client.get(unrelated_url)
+            for attempt in range(1025):
+                issuer, error = (
+                    ("https://evil.login.microsoftonline.com/" + _TENANT, ValueError),
+                    ("https://[invalid/tenant", ValueError),
+                    (123, AttributeError),
+                )[attempt % 3]
+                metadata["issuer"] = issuer
+                with self.assertRaises(error):
+                    self._application(authority, client, http_cache, token_cache)
+                sequence, timestamps = http_cache["_index_"]
+                self.assertEqual(1, len(sequence), "Rejected expiry records must be removed")
+                self.assertEqual(1, len(timestamps))
+                self.assertEqual(2, len(http_cache), "Only unrelated response and index remain")
+            self.assertEqual(1026, len(client.get_calls))
+            self.assertFalse(client.post_calls)
+            self.assertEqual("unrelated", cached_client.get(unrelated_url).text)
+            self.assertEqual(1026, len(client.get_calls))
+
+            metadata["issuer"] = "https://login.microsoftonline.com/" + _TENANT
+            self._application(authority, client, http_cache, token_cache)
+            self._application(authority, client, http_cache, token_cache)
+            self.assertEqual(1027, len(client.get_calls))
+            self.assertEqual(2, len(http_cache["_index_"][0]))
+
     def test_runtime_alias_metadata_does_not_make_custom_authority_microsoft(self):
         authority = "https://custom.example.com/" + _TENANT
         client = self._http_client(authority,

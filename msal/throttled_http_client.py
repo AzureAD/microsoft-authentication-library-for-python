@@ -181,4 +181,4 @@ class ThrottledHttpClient(ThrottledHttpClientBase):
         return "GET {} hash={} 2xx".format(url, self._hash(params))
 
     def _forget_get(self, url):
-        self._expiring_mapping.pop(self._get_cache_key(url), None)
+        self._expiring_mapping._invalidate(self._get_cache_key(url))
