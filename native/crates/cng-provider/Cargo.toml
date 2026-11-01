@@ -1,0 +1,21 @@
+[package]
+name = "cng-provider"
+version.workspace = true
+description = "Rust OpenSSL 3 provider for opaque Windows CNG RSA signing keys"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "microsoft_identity_native_provider"
+crate-type = ["cdylib"]
+
+[dependencies]
+cng-core = { version = "0.2.0", path = "../cng-core" }
+libc.workspace = true
+openssl-provider-sys = { version = "0.2.0", path = "../openssl-provider-sys" }
+zeroize.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,9 @@
+{
+  "name": "microsoft-identity-native-primitives",
+  "version-string": "0.2.0",
+  "description": "Rust-native identity primitives for platform-protected keys, including Windows CNG/OpenSSL and bounded mTLS transport",
+  "dependencies": [
+    "openssl"
+  ],
+  "builtin-baseline": "94a541197763a4f449a1b91478df48c0584a6256"
+}
