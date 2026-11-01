@@ -9,6 +9,80 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Default)]
+struct CopyObservation {
+    length: usize,
+    pointer: *mut u8,
+    freed: bool,
+    dirty: bool,
+}
+
+#[cfg(test)]
+thread_local! {
+    static COPY_OBSERVATION: std::cell::Cell<CopyObservation> =
+        const { std::cell::Cell::new(CopyObservation {
+            length: 0, pointer: std::ptr::null_mut(), freed: false, dirty: false,
+        }) };
+}
+
+#[cfg(test)]
+struct ObservedAllocator;
+
+#[cfg(test)]
+// SAFETY: layouts and allocation/free pairing are delegated unchanged to System.
+// The allocation-free thread-local observer initializes the watched allocation,
+// including unused capacity, before inspecting its bytes immediately before free.
+unsafe impl std::alloc::GlobalAlloc for ObservedAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: layout is supplied by the allocating caller.
+        let pointer = unsafe { std::alloc::System.alloc(layout) };
+        COPY_OBSERVATION.with(|observation| {
+            let mut state = observation.get();
+            if state.length != 0 && layout.size() == state.length && !pointer.is_null() {
+                // SAFETY: System allocated exactly this many writable bytes.
+                unsafe { pointer.write_bytes(0, layout.size()) };
+                state.pointer = pointer;
+                observation.set(state);
+            }
+        });
+        pointer
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        COPY_OBSERVATION.with(|observation| {
+            let mut state = observation.get();
+            if pointer == state.pointer {
+                // SAFETY: the observer initialized the full allocation, which remains
+                // live until System.dealloc below, even if decoding filled only a prefix.
+                let bytes = unsafe { std::slice::from_raw_parts(pointer, state.length) };
+                state.dirty = bytes.iter().any(|byte| *byte != 0);
+                state.freed = true;
+                state.pointer = std::ptr::null_mut();
+                observation.set(state);
+            }
+        });
+        // SAFETY: pointer/layout pairing comes unchanged from this allocator.
+        unsafe { std::alloc::System.dealloc(pointer, layout) };
+    }
+}
+
+#[cfg(test)]
+#[global_allocator]
+static ALLOCATOR: ObservedAllocator = ObservedAllocator;
+
+#[cfg(test)]
+pub fn assert_deallocated_copy_is_wiped(length: usize, operation: impl FnOnce()) {
+    COPY_OBSERVATION.set(CopyObservation {
+        length,
+        ..CopyObservation::default()
+    });
+    operation();
+    let observed = COPY_OBSERVATION.replace(CopyObservation::default());
+    assert!(observed.freed, "decoded name allocation was not observed");
+    assert!(!observed.dirty, "decoded name allocation was not wiped");
+}
+
 pub fn try_box<T>(value: T) -> Option<Box<T>> {
     #[cfg(test)]
     if BOX_ALLOCATION_FAILURE_COUNTDOWN.with(|countdown| match countdown.get() {

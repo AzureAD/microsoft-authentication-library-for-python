@@ -14,6 +14,13 @@ use crate::error::{self, INVALID_PARAMETER};
 use crate::params;
 
 pub const KEY_MAGIC: u32 = 0x434E_474B;
+const MAX_MODULUS_ENCODING_BYTES: usize = 16_384 / 8 + size_of::<u64>();
+const MAX_EXPONENT_ENCODING_BYTES: usize = size_of::<u64>();
+
+#[cfg(test)]
+thread_local! {
+    static BN_CONVERSION_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Clone)]
 pub enum KeyMaterial {
@@ -136,9 +143,28 @@ pub unsafe fn import_public(key: &mut ProviderKey, params_array: *const OSSL_PAR
         );
         return false;
     }
+    // SAFETY: both parameters were located in the live OpenSSL-owned array.
+    let modulus = unsafe { &*modulus_param };
+    // SAFETY: same invariant for the exponent parameter.
+    let exponent = unsafe { &*exponent_param };
+    if [modulus, exponent].iter().any(|parameter| {
+        parameter.data_type != openssl_provider_sys::OSSL_PARAM_UNSIGNED_INTEGER
+            || parameter.data.is_null()
+            || parameter.data_size == 0
+    }) || modulus.data_size > MAX_MODULUS_ENCODING_BYTES
+        || exponent.data_size > MAX_EXPONENT_ENCODING_BYTES
+    {
+        error::raise(
+            INVALID_PARAMETER,
+            "RSA public parameter encodings exceed their bounds or have an invalid type",
+        );
+        return false;
+    }
 
     let mut modulus_bn: *mut BIGNUM = null_mut();
     let mut exponent_bn: *mut BIGNUM = null_mut();
+    #[cfg(test)]
+    BN_CONVERSION_ATTEMPTS.with(|attempts| attempts.set(attempts.get() + 1));
     // SAFETY: OpenSSL owns the source parameters and initializes the returned BIGNUM pointers.
     let parsed = unsafe {
         OSSL_PARAM_get_BN(modulus_param, &raw mut modulus_bn) == 1
@@ -326,6 +352,77 @@ pub fn names_match(left: &ProviderKey, right: &ProviderKey) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn import_encoded_public(modulus: &mut [u8], exponent: &mut [u8]) -> bool {
+        let parameters = [
+            OSSL_PARAM {
+                key: c"n".as_ptr(),
+                data_type: openssl_provider_sys::OSSL_PARAM_UNSIGNED_INTEGER,
+                data: modulus.as_mut_ptr().cast(),
+                data_size: modulus.len(),
+                return_size: usize::MAX,
+            },
+            OSSL_PARAM {
+                key: c"e".as_ptr(),
+                data_type: openssl_provider_sys::OSSL_PARAM_UNSIGNED_INTEGER,
+                data: exponent.as_mut_ptr().cast(),
+                data_size: exponent.len(),
+                return_size: usize::MAX,
+            },
+            openssl_provider_sys::param_end(),
+        ];
+        let mut key = ProviderKey {
+            magic: KEY_MAGIC,
+            provider_context: null_mut(),
+            material: KeyMaterial::Empty,
+        };
+        // SAFETY: both native-endian encoding buffers and the terminated array remain live.
+        unsafe { import_public(&mut key, parameters.as_ptr()) }
+    }
+
+    #[test]
+    fn oversized_encodings_never_reach_bignum_conversion() {
+        for (modulus_length, exponent_length) in [
+            (MAX_MODULUS_ENCODING_BYTES + 1, 8),
+            (256, MAX_EXPONENT_ENCODING_BYTES + 1),
+            (65_536, 8),
+            (256, 65_536),
+        ] {
+            for significant in [false, true] {
+                let mut modulus = vec![if significant { 0x81 } else { 0 }; modulus_length];
+                modulus[0] = 1;
+                modulus[255] = 0x80;
+                let mut exponent = vec![if significant { 3 } else { 0 }; exponent_length];
+                exponent[0] = 3;
+                BN_CONVERSION_ATTEMPTS.set(0);
+                assert!(!import_encoded_public(&mut modulus, &mut exponent));
+                assert_eq!(BN_CONVERSION_ATTEMPTS.get(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_encodings_preserve_padding_and_mathematical_limits() {
+        for (bits, padding) in [(2_048, 0), (16_384, 0), (16_384, size_of::<u64>())] {
+            let mut modulus = vec![0; bits / 8 + padding];
+            modulus[0] = 1;
+            modulus[bits / 8 - 1] = 0x80;
+            for exponent_length in [4, 8] {
+                let mut exponent = vec![0; exponent_length];
+                exponent[0] = 3;
+                assert!(import_encoded_public(&mut modulus, &mut exponent));
+            }
+        }
+        let mut modulus = vec![0; 256];
+        modulus[0] = 1;
+        modulus[255] = 0x80;
+        assert!(!import_encoded_public(&mut modulus, &mut [1, 0, 0, 0, 1]));
+        assert!(!import_encoded_public(&mut modulus, &mut [2]));
+        let mut too_many_bits = vec![0; 2049];
+        too_many_bits[0] = 1;
+        too_many_bits[2048] = 1;
+        assert!(!import_encoded_public(&mut too_many_bits, &mut [3]));
+    }
 
     fn public_key(modulus_last_byte: u8) -> ProviderKey {
         let mut modulus = vec![0x80; 256];

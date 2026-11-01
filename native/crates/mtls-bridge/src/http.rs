@@ -678,7 +678,7 @@ fn decimal_bytes(mut value: usize, storage: &mut [u8]) -> &[u8] {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
@@ -768,18 +768,24 @@ mod tests {
         length: usize,
         expected_error: ErrorCode,
     ) {
+        assert_deallocated_copy_is_wiped(length, || {
+            // SAFETY: fixtures keep the complete ABI request and every referenced string,
+            // header array and body alive through this immediate validation call.
+            let result = unsafe { ValidatedRequest::from_abi(input) };
+            assert_eq!(
+                result.expect_err("fixture must fail validation").code,
+                expected_error
+            );
+        });
+    }
+
+    pub(crate) fn assert_deallocated_copy_is_wiped(length: usize, operation: impl FnOnce()) {
         COPY_OBSERVATION.set(CopyObservation {
             length,
             ..CopyObservation::default()
         });
-        // SAFETY: fixtures keep the complete ABI request and every referenced string,
-        // header array and body alive through this immediate validation call.
-        let result = unsafe { ValidatedRequest::from_abi(input) };
+        operation();
         let observed = COPY_OBSERVATION.replace(CopyObservation::default());
-        assert_eq!(
-            result.expect_err("fixture must fail validation").code,
-            expected_error
-        );
         assert!(observed.freed, "request copy was not observed");
         assert!(!observed.dirty, "request copy was freed without wiping");
     }

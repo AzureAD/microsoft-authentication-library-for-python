@@ -9,7 +9,7 @@ use openssl_provider_sys::{
     OSSL_PARAM_UTF8_STRING, OSSL_PASSPHRASE_CALLBACK, OSSL_STORE_INFO_PKEY, OsslCallback,
     OsslDispatch, param_definition, param_end, param_int, param_octet_string, param_utf8_string,
 };
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::allocation;
 use crate::error::{self, CNG_FAILURE, INVALID_PARAMETER, INVALID_REFERENCE, INVALID_URI};
@@ -31,7 +31,7 @@ struct StoreContext {
     reference: OwnedProviderKeyReference,
     expected_type: c_int,
     loaded: bool,
-    description: Vec<u8>,
+    description: Zeroizing<Vec<u8>>,
 }
 
 #[repr(transparent)]
@@ -100,6 +100,7 @@ unsafe extern "C" fn store_open(provider_context: *mut c_void, uri: *const c_cha
             error::raise_memory_failure();
             return null_mut();
         };
+        let description = Zeroizing::new(description);
         let reference = ProviderKey::new(provider_context, KeyMaterial::Private(key));
         if reference.is_null() {
             return null_mut();

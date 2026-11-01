@@ -463,40 +463,55 @@ unsafe extern "C" fn digest_sign_init(
     input: *const OSSL_PARAM,
 ) -> c_int {
     ffi_guard!(0, {
-        if signature_context.is_null() || provider_key.is_null() {
+        if signature_context.is_null() {
             return 0;
         }
-        // SAFETY: OpenSSL passes live contexts and provider key data.
+        // SAFETY: OpenSSL passes a live signature context.
         let context = unsafe { &mut *signature_context.cast::<SignatureContext>() };
-        // SAFETY: provider key data was allocated by this provider.
-        let key = unsafe { &*provider_key.cast::<ProviderKey>() };
-        if key.magic != KEY_MAGIC || key.private_key().is_none() {
-            error::raise(KEY_NOT_LOADED, "DigestSignInit requires a loaded CNG key");
-            return 0;
+        let mut next = SignatureContext::new(context.provider_context);
+        if provider_key.is_null() {
+            if context.key.is_none() {
+                error::raise(KEY_NOT_LOADED, "DigestSignInit requires a loaded CNG key");
+                return 0;
+            }
+            next.key.clone_from(&context.key);
+            next.digest = context.digest;
+            next.padding = context.padding;
+            next.pss_salt_length = context.pss_salt_length;
+            next.mgf1_digest = context.mgf1_digest;
+            next.mgf1_explicit = context.mgf1_explicit;
+        } else {
+            // SAFETY: non-null provider key data was allocated by this provider.
+            let key = unsafe { &*provider_key.cast::<ProviderKey>() };
+            if key.magic != KEY_MAGIC || key.private_key().is_none() {
+                error::raise(KEY_NOT_LOADED, "DigestSignInit requires a loaded CNG key");
+                return 0;
+            }
+            next.key = key.private_key().cloned();
         }
-
-        context.hash = None;
-        context.digest = None;
-        context.mgf1_digest = None;
-        context.mgf1_explicit = false;
-        context.hash_started = false;
-        context.key = key.private_key().cloned();
-        context.padding = RSA_PKCS1_PADDING;
-        context.pss_salt_length = RSA_PSS_SALTLEN_DIGEST;
         let digest = if digest_name.is_null() {
-            "SHA256"
+            next.digest.unwrap_or(Digest::Sha256).canonical_name()
         } else {
             // SAFETY: OpenSSL supplies a NUL-terminated digest name.
-            match unsafe { std::ffi::CStr::from_ptr(digest_name) }.to_str() {
-                Ok(value) => value,
-                Err(_) => return 0,
-            }
+            let Ok(value) = unsafe { std::ffi::CStr::from_ptr(digest_name) }.to_str() else {
+                error::raise(INVALID_PARAMETER, "the digest name is invalid");
+                return 0;
+            };
+            value
         };
-        if !context.set_digest(digest) {
+        let Some(digest) = Digest::parse(digest) else {
+            error::raise(UNSUPPORTED_DIGEST, "the digest is not supported");
+            return 0;
+        };
+        next.digest = Some(digest);
+        // SAFETY: `input` is null or a live terminated parameter array.
+        if !unsafe { next.set_params(input) }
+            || !next.set_digest(next.digest.unwrap_or(digest).canonical_name())
+        {
             return 0;
         }
-        // SAFETY: `input` is null or a live terminated parameter array.
-        i32::from(unsafe { context.set_params(input) })
+        *context = next;
+        1
     })
 }
 

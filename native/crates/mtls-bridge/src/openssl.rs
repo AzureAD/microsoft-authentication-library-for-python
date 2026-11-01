@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::fs::File;
 use std::io::Read;
 use std::os::windows::ffi::OsStrExt;
@@ -22,6 +22,7 @@ use windows_sys::Win32::Foundation::{FreeLibrary, GetLastError, HMODULE};
 use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
+use zeroize::Zeroizing;
 
 use crate::abi::{BridgeFailure, ErrorCode};
 use crate::http::ValidatedRequest;
@@ -30,7 +31,6 @@ const MAX_PEM_BYTES: usize = 4 * 1024 * 1024;
 const CERTIFICATE_BEGIN: &[u8] = b"-----BEGIN CERTIFICATE-----";
 const CERTIFICATE_END: &[u8] = b"-----END CERTIFICATE-----";
 const SSL_OP_IGNORE_UNEXPECTED_EOF: u64 = 1 << 7;
-const SSL_OP_NO_RENEGOTIATION: u64 = 1 << 30;
 
 pub struct OpenSslState {
     libctx: *mut OSSL_LIB_CTX,
@@ -97,7 +97,9 @@ impl OpenSslState {
         let init: OsslProviderInitFn = unsafe { std::mem::transmute(entry) };
         // SAFETY: the private libctx and module-name C string remain live; OpenSSL records the
         // process-lifetime function address while `state.module` is retained.
-        if unsafe { OSSL_PROVIDER_add_builtin(state.libctx, module_name.as_ptr(), Some(init)) } != 1
+        if unsafe {
+            OSSL_PROVIDER_add_builtin(state.libctx, module_name.as_ptr().cast(), Some(init))
+        } != 1
         {
             return Err(openssl_failure(
                 ErrorCode::Provider,
@@ -107,7 +109,8 @@ impl OpenSslState {
         // SAFETY: the private libctx is live and names are static/NUL-terminated.
         state.default_provider = unsafe { OSSL_PROVIDER_load(state.libctx, c"default".as_ptr()) };
         // SAFETY: same invariant, with the registered module name retained locally for the call.
-        state.cng_provider = unsafe { OSSL_PROVIDER_load(state.libctx, module_name.as_ptr()) };
+        state.cng_provider =
+            unsafe { OSSL_PROVIDER_load(state.libctx, module_name.as_ptr().cast()) };
         if state.default_provider.is_null() || state.cng_provider.is_null() {
             return Err(openssl_failure(
                 ErrorCode::Provider,
@@ -131,12 +134,11 @@ impl OpenSslState {
         }
         // HTTP framing is enforced independently, so an omitted close_notify
         // cannot truncate a response that the bridge accepts as complete.
+        // Keep OpenSSL's secure-renegotiation checks: Key Vault requests the client
+        // certificate after reading the token-bound HTTP headers.
         // SAFETY: SSL_CTX is live and the option is supported by OpenSSL 3.
         unsafe {
-            SSL_CTX_set_options(
-                state.ssl_ctx,
-                SSL_OP_IGNORE_UNEXPECTED_EOF | SSL_OP_NO_RENEGOTIATION,
-            );
+            SSL_CTX_set_options(state.ssl_ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
         }
         configure_ca_bundle(state.libctx, state.ssl_ctx, &request.ca_bundle_path)?;
         state.certificate = configure_client_certificate(
@@ -202,7 +204,7 @@ impl Drop for OpenSslState {
     }
 }
 
-fn normalize_provider_path(input: &str) -> Result<(PathBuf, CString), BridgeFailure> {
+fn normalize_provider_path(input: &str) -> Result<(PathBuf, Zeroizing<Vec<u8>>), BridgeFailure> {
     let path = Path::new(input);
     let full_path = path.canonicalize().map_err(|error| {
         BridgeFailure::system(
@@ -259,7 +261,7 @@ fn load_store_key(libctx: *mut OSSL_LIB_CTX, uri: &str) -> Result<*mut EVP_PKEY,
     // SAFETY: all C strings and the private libctx are live; optional callbacks/params are null.
     let store = unsafe {
         OSSL_STORE_open_ex(
-            uri.as_ptr(),
+            uri.as_ptr().cast(),
             libctx,
             c"provider=microsoft_identity_native_provider".as_ptr(),
             null(),
@@ -602,7 +604,7 @@ pub fn openssl_failure(code: ErrorCode, operation: &str) -> BridgeFailure {
     }
 }
 
-fn try_wide_path(path: &Path) -> Result<Vec<u16>, BridgeFailure> {
+fn try_wide_path(path: &Path) -> Result<Zeroizing<Vec<u16>>, BridgeFailure> {
     let length = path
         .as_os_str()
         .encode_wide()
@@ -615,10 +617,10 @@ fn try_wide_path(path: &Path) -> Result<Vec<u16>, BridgeFailure> {
         .map_err(|_| BridgeFailure::memory())?;
     output.extend(path.as_os_str().encode_wide());
     output.push(0);
-    Ok(output)
+    Ok(Zeroizing::new(output))
 }
 
-fn try_cstring(value: &str) -> Result<CString, BridgeFailure> {
+fn try_cstring(value: &str) -> Result<Zeroizing<Vec<u8>>, BridgeFailure> {
     let length = value
         .len()
         .checked_add(1)
@@ -629,8 +631,7 @@ fn try_cstring(value: &str) -> Result<CString, BridgeFailure> {
         .map_err(|_| BridgeFailure::memory())?;
     bytes.extend_from_slice(value.as_bytes());
     bytes.push(0);
-    // SAFETY: callers reject interior NUL bytes and this helper appends exactly one terminator.
-    Ok(unsafe { CString::from_vec_with_nul_unchecked(bytes) })
+    Ok(Zeroizing::new(bytes))
 }
 
 #[cfg(test)]
@@ -687,6 +688,79 @@ MkbjF87zqe14SXsBFriIJlRgbWEbFjC5zLG3ceY=\n\
                 OSSL_LIB_CTX_free(self.libctx);
             }
         }
+    }
+
+    #[test]
+    fn store_uri_conversion_is_wiped_after_success_and_failure() {
+        struct OwnedTestKey {
+            key: Option<cng_core::CngKey>,
+            name: String,
+        }
+        impl Drop for OwnedTestKey {
+            fn drop(&mut self) {
+                drop(self.key.take());
+                cng_core::delete_test_key(cng_core::DEFAULT_PROVIDER_NAME, &self.name)
+                    .expect("delete process-owned URI cleanup test key");
+            }
+        }
+        struct NativeProvider(*mut OSSL_PROVIDER);
+        impl Drop for NativeProvider {
+            fn drop(&mut self) {
+                // SAFETY: this test owns the provider reference, and clears its error queue
+                // before unloading provider code; the library context is still live.
+                unsafe {
+                    ERR_clear_error();
+                    let _ = OSSL_PROVIDER_unload(self.0);
+                }
+            }
+        }
+
+        let name = format!(
+            "openssl-cng-provider-test-{}-uri-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        );
+        assert!(cng_core::CngKey::open(cng_core::DEFAULT_PROVIDER_NAME, &name).is_err());
+        let _key = OwnedTestKey {
+            key: Some(
+                cng_core::CngKey::open_or_create(cng_core::DEFAULT_PROVIDER_NAME, &name, 2048)
+                    .expect("create process-owned test key"),
+            ),
+            name: name.clone(),
+        };
+        let context = PrivateContext::new();
+        let provider_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("artifacts")
+            .join(if cfg!(debug_assertions) {
+                "Debug"
+            } else {
+                "Release"
+            })
+            .join("microsoft_identity_native_provider.dll");
+        let provider_path = try_cstring(provider_path.to_str().expect("test provider path"))
+            .expect("NUL-terminated provider path");
+        // SAFETY: the private context and complete absolute provider path remain live.
+        let provider = unsafe { OSSL_PROVIDER_load(context.libctx, provider_path.as_ptr().cast()) };
+        assert!(
+            !provider.is_null(),
+            "load native provider for STORE cleanup regression"
+        );
+        let _provider = NativeProvider(provider);
+        let uri = format!("cng://?key={name}");
+        crate::http::tests::assert_deallocated_copy_is_wiped(uri.len() + 1, || {
+            let key = load_store_key(context.libctx, &uri).expect("load existing test key");
+            // SAFETY: STORE returned one owned EVP_PKEY reference.
+            unsafe { EVP_PKEY_free(key) };
+        });
+        let missing_uri = format!("{uri}-missing");
+        crate::http::tests::assert_deallocated_copy_is_wiped(missing_uri.len() + 1, || {
+            assert!(load_store_key(context.libctx, &missing_uri).is_err());
+        });
     }
 
     struct GlobalPropertiesReset;

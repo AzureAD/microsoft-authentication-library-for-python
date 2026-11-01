@@ -302,7 +302,7 @@ fn try_copy_str(value: &str, operation: &'static str) -> Result<String, CngError
     Ok(copy)
 }
 
-fn wide(value: &str, operation: &'static str) -> Result<Vec<u16>, CngError> {
+fn wide(value: &str, operation: &'static str) -> Result<Zeroizing<Vec<u16>>, CngError> {
     if value.is_empty() || value.contains('\0') {
         return Err(CngError::detail(
             operation,
@@ -319,7 +319,7 @@ fn wide(value: &str, operation: &'static str) -> Result<Vec<u16>, CngError> {
         .map_err(|_| CngError::memory_failure(operation))?;
     wide.extend(value.encode_utf16());
     wide.push(0);
-    Ok(wide)
+    Ok(Zeroizing::new(wide))
 }
 
 fn security_bits(bits: u32) -> u32 {

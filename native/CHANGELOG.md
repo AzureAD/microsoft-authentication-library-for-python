@@ -43,6 +43,15 @@ version and versions its native ABI separately.
   failures by retaining them in zeroizing storage immediately after copying.
 - Accept valid HTTP response token field names and surrounding Content-Length
   whitespace without permitting duplicate or ambiguous framing.
+- Permit secure server-initiated TLS 1.2 renegotiation for delayed client
+  authentication without enabling unsafe legacy renegotiation or resetting the
+  total I/O deadline.
+- Retain the key, digest, padding, MGF1, and salt settings during null-key
+  signing-context reuse while resetting message hashing.
+- Bound RSA modulus and exponent encodings before BIGNUM conversion, retaining
+  mathematical limits and supported native-word padding.
+- Wipe NUL-terminated STORE URI copies, decoded identifiers, STORE descriptions,
+  and temporary UTF-16 provider/key names on success and failure paths.
 
 ### Security
 

@@ -18,5 +18,8 @@ static_assertions.workspace = true
 windows-sys.workspace = true
 zeroize.workspace = true
 
+[dev-dependencies]
+cng-core = { version = "0.2.0", path = "../cng-core" }
+
 [lints]
 workspace = true

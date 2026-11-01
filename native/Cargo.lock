@@ -46,6 +46,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 name = "mtls-bridge"
 version = "0.2.0"
 dependencies = [
+ "cng-core",
  "libc",
  "openssl-provider-sys",
  "static_assertions",

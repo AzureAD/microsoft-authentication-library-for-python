@@ -64,6 +64,18 @@ validate C compiler layouts, calling conventions, exports, allocation
 ownership, provider behavior, and a complete local mTLS transaction against
 the Rust DLLs.
 
+Provider tests cover null-key signing-context reuse, retained PSS settings,
+and paired digest/MGF1 updates across independent messages. The loopback TLS
+server covers both initial-handshake client authentication and delayed client
+certificate requests after token-bound HTTP headers. Delayed authentication
+also has a total-deadline regression. These tests use the pinned Windows
+OpenSSL runtime; they do not establish live Key Vault service behavior.
+
+Rust regressions cover pre-conversion RSA encoding bounds, supported padding,
+and URI cleanup on successful/failed STORE loads and decoded-name failures.
+The STORE cleanup regression uses `cng-core` only as an internal test dependency
+to create and delete a process-owned key; no new external dependency is added.
+
 See [Development](development.md) for contributor setup,
 [Security review](security-review.md) for sensitive-change evidence, and
 [Release process](releasing.md) for the complete release gate.

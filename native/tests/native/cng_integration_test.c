@@ -675,6 +675,64 @@ int main(int argc, char **argv)
     stop_process(&server_process);
     server_started = 0;
 
+    {
+        const char *modes[] = { "delayed-cert", "delayed-cert-drip" };
+        size_t mode_index;
+        for (mode_index = 0; mode_index < 2; ++mode_index) {
+            DeleteFileA(ready_file);
+            if (sprintf_s(command_line, sizeof(command_line),
+                          "\"%s\" \"%s\" \"%s\" \"%s\" \"%s\" 1 %s",
+                          argv[4], ca_path, server_cert_path, server_key_path,
+                          ready_file, modes[mode_index]) < 0
+                || !start_process(command_line, &server_process)) {
+                fprintf(stderr, "Unable to start delayed-certificate server.\n");
+                goto cleanup;
+            }
+            server_started = 1;
+            if (!wait_for_port(ready_file, &port)) {
+                fprintf(stderr, "Delayed-certificate server was not ready.\n");
+                goto cleanup;
+            }
+            initialize_request(&request, unicode_provider_path, store_uri,
+                               unicode_client_cert_path, unicode_ca_path,
+                               "localhost", port);
+            headers[0].name = "Authorization";
+            headers[0].value = "mtls_pop synthetic-test-token";
+            headers[1].name = "x-ms-tokenboundauth";
+            headers[1].value = "true";
+            request.headers = headers;
+            request.header_count = 2;
+            if (mode_index == 1) {
+                request.io_timeout_ms = 1000;
+                if (microsoft_identity_native_request(&request, &response, &bridge_error)
+                    || bridge_error.code != MICROSOFT_IDENTITY_NATIVE_ERROR_IO
+                    || bridge_error.system_error != WSAETIMEDOUT) {
+                    fprintf(stderr, "Delayed authentication reset the I/O deadline: %s\n",
+                            bridge_error.message);
+                    goto cleanup;
+                }
+            } else {
+                if (!microsoft_identity_native_request(&request, &response, &bridge_error)
+                    || response.http_status != 200
+                    || response.body_length != sizeof("cng mTLS success\n") - 1
+                    || memcmp(response.body, "cng mTLS success\n",
+                              sizeof("cng mTLS success\n") - 1) != 0) {
+                    fprintf(stderr, "Delayed certificate authentication failed: %s\n",
+                            bridge_error.message);
+                    (void)wait_process(&server_process, PROCESS_TIMEOUT_MS);
+                    goto cleanup;
+                }
+                microsoft_identity_native_response_free(&response);
+            }
+            if (!wait_process(&server_process, PROCESS_TIMEOUT_MS)) {
+                fprintf(stderr, "Delayed-certificate server did not exit successfully.\n");
+                goto cleanup;
+            }
+            stop_process(&server_process);
+            server_started = 0;
+        }
+    }
+
     DeleteFileA(ready_file);
     if (sprintf_s(command_line, sizeof(command_line),
                   "\"%s\" \"%s\" \"%s\" \"%s\" \"%s\" 1 early-hints",

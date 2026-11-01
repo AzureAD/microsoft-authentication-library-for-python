@@ -1,4 +1,5 @@
 use cng_core::DEFAULT_PROVIDER_NAME;
+use zeroize::Zeroizing;
 
 use crate::allocation;
 
@@ -8,8 +9,8 @@ pub const MAX_STORE_URI: usize = 2048;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoreUri {
-    pub key_name: String,
-    pub provider_name: String,
+    pub key_name: Zeroizing<String>,
+    pub provider_name: Zeroizing<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,7 +48,9 @@ pub fn parse_store_uri(uri: &str) -> Result<StoreUri, StoreUriError> {
     let key_name = key_name.ok_or(StoreUriError::Invalid)?;
     let provider_name = match provider_name {
         Some(value) => value,
-        None => allocation::try_copy_str(DEFAULT_PROVIDER_NAME).ok_or(StoreUriError::Memory)?,
+        None => Zeroizing::new(
+            allocation::try_copy_str(DEFAULT_PROVIDER_NAME).ok_or(StoreUriError::Memory)?,
+        ),
     };
     Ok(StoreUri {
         key_name,
@@ -55,12 +58,12 @@ pub fn parse_store_uri(uri: &str) -> Result<StoreUri, StoreUriError> {
     })
 }
 
-fn decode_value(encoded: &str) -> Result<String, StoreUriError> {
+fn decode_value(encoded: &str) -> Result<Zeroizing<String>, StoreUriError> {
     if encoded.is_empty() {
         return Err(StoreUriError::Invalid);
     }
     let source = encoded.as_bytes();
-    let mut decoded = Vec::new();
+    let mut decoded = Zeroizing::new(Vec::new());
     decoded
         .try_reserve_exact(source.len())
         .map_err(|_| StoreUriError::Memory)?;
@@ -93,7 +96,10 @@ fn decode_value(encoded: &str) -> Result<String, StoreUriError> {
     if decoded.is_empty() {
         return Err(StoreUriError::Invalid);
     }
-    String::from_utf8(decoded).map_err(|_| StoreUriError::Invalid)
+    let value = std::str::from_utf8(&decoded).map_err(|_| StoreUriError::Invalid)?;
+    Ok(Zeroizing::new(
+        allocation::try_copy_str(value).ok_or(StoreUriError::Memory)?,
+    ))
 }
 
 const fn hex(value: u8) -> Option<u8> {
@@ -115,14 +121,14 @@ mod tests {
             "CNG://?key=client-%E6%B5%8B%E8%AF%95&provider=Microsoft%20Software%20Key%20Storage%20Provider",
         )
         .expect("valid URI");
-        assert_eq!(parsed.key_name, "client-测试");
-        assert_eq!(parsed.provider_name, DEFAULT_PROVIDER_NAME);
+        assert_eq!(parsed.key_name.as_str(), "client-测试");
+        assert_eq!(parsed.provider_name.as_str(), DEFAULT_PROVIDER_NAME);
     }
 
     #[test]
     fn defaults_provider() {
         let parsed = parse_store_uri("cng://?key=test-key").expect("valid URI");
-        assert_eq!(parsed.provider_name, DEFAULT_PROVIDER_NAME);
+        assert_eq!(parsed.provider_name.as_str(), DEFAULT_PROVIDER_NAME);
     }
 
     #[test]
@@ -140,6 +146,18 @@ mod tests {
             "cng://?key=x&unknown=y",
         ] {
             assert!(parse_store_uri(uri).is_err(), "{uri}");
+        }
+    }
+
+    #[test]
+    fn decoded_identifiers_are_wiped_on_parse_failures() {
+        for uri in [
+            format!("cng://?key={}&unknown=x", "k".repeat(80)),
+            format!("cng://?key={}%00", "k".repeat(77)),
+        ] {
+            allocation::assert_deallocated_copy_is_wiped(80, || {
+                assert_eq!(parse_store_uri(&uri), Err(StoreUriError::Invalid));
+            });
         }
     }
 }

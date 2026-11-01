@@ -190,12 +190,10 @@ cleanup:
     return result;
 }
 
-static int sign_and_verify(OSSL_LIB_CTX *libctx,
-                           EVP_PKEY *signing_key,
+static int sign_and_verify(OSSL_LIB_CTX *libctx, EVP_PKEY *signing_key,
                            EVP_PKEY *verification_key,
                            const char *signing_property_query,
-                           const char *digest_name,
-                           const char *padding_name,
+                           const char *digest_name, const char *padding_name,
                            const char *signing_salt_name,
                            const char *verification_salt_name)
 {
@@ -206,13 +204,30 @@ static int sign_and_verify(OSSL_LIB_CTX *libctx,
     char padding[16];
     char signing_salt[32];
     char verification_salt[32];
-    OSSL_PARAM signing_params[3];
+    OSSL_PARAM signing_params[4];
     OSSL_PARAM verification_params[3];
     int is_pss;
     int result = 0;
+    size_t message_index;
+    static const unsigned char second_message[] =
+        "second message after context reuse";
+    static const unsigned char third_message[] =
+        "message after digest parameter update";
+    static const unsigned char fourth_message[] =
+        "message after updated context reuse";
+    const unsigned char *messages[] = {test_message, second_message,
+                                       third_message, fourth_message};
+    const size_t message_lengths[] = {
+        sizeof(test_message) - 1, sizeof(second_message) - 1,
+        sizeof(third_message) - 1, sizeof(fourth_message) - 1};
+    char mgf1_digest[16];
+    char updated_digest[] = "SHA512";
+    OSSL_PARAM updates[2];
+    const char *current_digest = digest_name;
 
     is_pss = _stricmp(padding_name, OSSL_PKEY_RSA_PAD_MODE_PSS) == 0;
-    if (strcpy_s(padding, sizeof(padding), padding_name) != 0) {
+    if (strcpy_s(padding, sizeof(padding), padding_name) != 0)
+    {
         return 0;
     }
 
@@ -220,22 +235,30 @@ static int sign_and_verify(OSSL_LIB_CTX *libctx,
         OSSL_SIGNATURE_PARAM_PAD_MODE, padding, 0);
     verification_params[0] = OSSL_PARAM_construct_utf8_string(
         OSSL_SIGNATURE_PARAM_PAD_MODE, padding, 0);
-    if (is_pss) {
-        if (strcpy_s(signing_salt, sizeof(signing_salt),
-                     signing_salt_name)
-                != 0
-            || strcpy_s(verification_salt, sizeof(verification_salt),
-                        verification_salt_name)
-                   != 0) {
+    if (is_pss)
+    {
+        if (strcpy_s(signing_salt, sizeof(signing_salt), signing_salt_name) !=
+                0 ||
+            strcpy_s(verification_salt, sizeof(verification_salt),
+                     verification_salt_name) != 0)
+        {
             return 0;
         }
         signing_params[1] = OSSL_PARAM_construct_utf8_string(
             OSSL_SIGNATURE_PARAM_PSS_SALTLEN, signing_salt, 0);
-        signing_params[2] = OSSL_PARAM_construct_end();
+        if (strcpy_s(mgf1_digest, sizeof(mgf1_digest), digest_name) != 0)
+        {
+            return 0;
+        }
+        signing_params[2] = OSSL_PARAM_construct_utf8_string(
+            OSSL_SIGNATURE_PARAM_MGF1_DIGEST, mgf1_digest, 0);
+        signing_params[3] = OSSL_PARAM_construct_end();
         verification_params[1] = OSSL_PARAM_construct_utf8_string(
             OSSL_SIGNATURE_PARAM_PSS_SALTLEN, verification_salt, 0);
         verification_params[2] = OSSL_PARAM_construct_end();
-    } else {
+    }
+    else
+    {
         signing_params[1] = OSSL_PARAM_construct_end();
         signing_params[2] = OSSL_PARAM_construct_end();
         verification_params[1] = OSSL_PARAM_construct_end();
@@ -244,49 +267,71 @@ static int sign_and_verify(OSSL_LIB_CTX *libctx,
 
     sign_context = EVP_MD_CTX_new();
     verify_context = EVP_MD_CTX_new();
-    if (sign_context == NULL || verify_context == NULL) {
+    if (sign_context == NULL || verify_context == NULL)
+    {
         print_openssl_errors("EVP_MD_CTX_new");
         goto cleanup;
     }
 
-    if (EVP_DigestSignInit_ex(sign_context, NULL, digest_name, libctx,
-                              signing_property_query, signing_key,
-                              signing_params)
-            <= 0
-        || EVP_DigestSignUpdate(sign_context, test_message,
-                                sizeof(test_message) - 1)
-               <= 0
-        || EVP_DigestSignFinal(sign_context, NULL, &signature_length) <= 0) {
-        print_openssl_errors("EVP_DigestSign size query");
-        goto cleanup;
-    }
+    updates[0] = is_pss
+                     ? OSSL_PARAM_construct_utf8_string(
+                           OSSL_SIGNATURE_PARAM_MGF1_DIGEST, updated_digest, 0)
+                     : OSSL_PARAM_construct_end();
+    updates[1] = OSSL_PARAM_construct_end();
+    for (message_index = 0; message_index < 4; ++message_index)
+    {
+        if (message_index == 2)
+        {
+            current_digest = updated_digest;
+        }
+        if ((message_index == 0
+                 ? EVP_DigestSignInit_ex(sign_context, NULL, digest_name,
+                                         libctx, signing_property_query,
+                                         signing_key, signing_params)
+                 : EVP_DigestSignInit_ex(
+                       sign_context, NULL,
+                       message_index == 2 ? current_digest : NULL, NULL, NULL,
+                       NULL, message_index == 2 ? updates : NULL)) <= 0 ||
+            EVP_DigestSignUpdate(sign_context, messages[message_index],
+                                 message_lengths[message_index]) <= 0 ||
+            EVP_DigestSignFinal(sign_context, NULL, &signature_length) <= 0)
+        {
+            print_openssl_errors("EVP_DigestSign size query");
+            goto cleanup;
+        }
 
-    signature = (unsigned char *)malloc(signature_length);
-    if (signature == NULL) {
-        fprintf(stderr, "Unable to allocate the signature buffer.\n");
-        goto cleanup;
-    }
-    if (EVP_DigestSignFinal(sign_context, signature, &signature_length) <= 0) {
-        print_openssl_errors("EVP_DigestSign");
-        goto cleanup;
-    }
+        free(signature);
+        signature = (unsigned char *)malloc(signature_length);
+        if (signature == NULL)
+        {
+            fprintf(stderr, "Unable to allocate the signature buffer.\n");
+            goto cleanup;
+        }
+        if (EVP_DigestSignFinal(sign_context, signature, &signature_length) <=
+            0)
+        {
+            print_openssl_errors("EVP_DigestSign");
+            goto cleanup;
+        }
 
-    if (EVP_DigestVerifyInit_ex(verify_context, NULL, digest_name, libctx,
-                                "provider=default", verification_key,
-                                verification_params)
-            <= 0
-        || EVP_DigestVerifyUpdate(verify_context, test_message,
-                                  sizeof(test_message) - 1)
-               <= 0
-        || EVP_DigestVerifyFinal(verify_context, signature,
-                                 signature_length)
-               <= 0) {
-        print_openssl_errors("Default-provider EVP_DigestVerify");
-        goto cleanup;
-    }
+        if (EVP_DigestVerifyInit_ex(verify_context, NULL, current_digest,
+                                    libctx, "provider=default",
+                                    verification_key,
+                                    verification_params) <= 0 ||
+            EVP_DigestVerifyUpdate(verify_context, messages[message_index],
+                                   message_lengths[message_index]) <= 0 ||
+            EVP_DigestVerifyFinal(verify_context, signature,
+                                  signature_length) <= 0)
+        {
+            print_openssl_errors("Default-provider EVP_DigestVerify");
+            goto cleanup;
+        }
 
-    printf("Verified %s RSA signature with %s padding (%zu bytes).\n",
-           digest_name, padding_name, signature_length);
+        printf("Verified %s RSA signature with %s padding (%zu bytes, message "
+               "%zu).\n",
+               current_digest, padding_name, signature_length,
+               message_index + 1);
+    }
     result = 1;
 
 cleanup:
@@ -296,32 +341,31 @@ cleanup:
     return result;
 }
 
-static int generate_owned_key_name(const char *provider_name,
-                                   char *key_name,
+static int generate_owned_key_name(const char *provider_name, char *key_name,
                                    size_t key_name_size)
 {
     unsigned char random_bytes[16];
-    char error[512] = { 0 };
+    char error[512] = {0};
     unsigned int attempt;
 
-    for (attempt = 0; attempt < 8; ++attempt) {
+    for (attempt = 0; attempt < 8; ++attempt)
+    {
         CNG_KEY *existing = NULL;
 
-        if (!BCRYPT_SUCCESS(BCryptGenRandom(
-                NULL, random_bytes, sizeof(random_bytes),
-                BCRYPT_USE_SYSTEM_PREFERRED_RNG))
-            || sprintf_s(
-                   key_name, key_name_size,
-                   "openssl-cng-provider-test-%lu-"
-                   "%02x%02x%02x%02x%02x%02x%02x%02x"
-                   "%02x%02x%02x%02x%02x%02x%02x%02x",
-                   GetCurrentProcessId(), random_bytes[0], random_bytes[1],
-                   random_bytes[2], random_bytes[3], random_bytes[4],
-                   random_bytes[5], random_bytes[6], random_bytes[7],
-                   random_bytes[8], random_bytes[9], random_bytes[10],
-                   random_bytes[11], random_bytes[12], random_bytes[13],
-                   random_bytes[14], random_bytes[15])
-               < 0) {
+        if (!BCRYPT_SUCCESS(BCryptGenRandom(NULL, random_bytes,
+                                            sizeof(random_bytes),
+                                            BCRYPT_USE_SYSTEM_PREFERRED_RNG)) ||
+            sprintf_s(key_name, key_name_size,
+                      "openssl-cng-provider-test-%lu-"
+                      "%02x%02x%02x%02x%02x%02x%02x%02x"
+                      "%02x%02x%02x%02x%02x%02x%02x%02x",
+                      GetCurrentProcessId(), random_bytes[0], random_bytes[1],
+                      random_bytes[2], random_bytes[3], random_bytes[4],
+                      random_bytes[5], random_bytes[6], random_bytes[7],
+                      random_bytes[8], random_bytes[9], random_bytes[10],
+                      random_bytes[11], random_bytes[12], random_bytes[13],
+                      random_bytes[14], random_bytes[15]) < 0)
+        {
             SecureZeroMemory(random_bytes, sizeof(random_bytes));
             return 0;
         }
@@ -446,6 +490,11 @@ int main(int argc, char **argv)
                          provider_property_query, "SHA256",
                          OSSL_PKEY_RSA_PAD_MODE_PSS, "auto-digestmax",
                          OSSL_PKEY_RSA_PSS_SALT_LEN_DIGEST)) {
+        goto cleanup;
+    }
+    if (!sign_and_verify(libctx, cng_key, public_key,
+                         provider_property_query, "SHA384",
+                         OSSL_PKEY_RSA_PAD_MODE_PSS, "20", "20")) {
         goto cleanup;
     }
 

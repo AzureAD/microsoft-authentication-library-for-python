@@ -32,9 +32,14 @@ The current implementation enforces:
 - `mtls_pop` authorization scheme validation;
 - no redirects, proxy selection, arbitrary Host header, or transfer encoding;
 - verified CA trust and hostname/IP identity;
+- secure server-initiated TLS 1.2 renegotiation for delayed client authentication,
+  under the same total I/O deadline and without unsafe legacy renegotiation;
 - opaque CNG signing with public-key export only;
 - rejection of persisted keys with nonzero private export policy;
 - minimum RSA strength;
+- pre-conversion RSA encoding limits: 2,056 modulus bytes and eight exponent
+  bytes, accommodating one native-word modulus pad and padded 32-bit exponents
+  while retaining the 16,384-bit modulus and 32-bit exponent limits;
 - exact Content-Length response framing; and
 - panic containment across native boundaries.
 
@@ -70,6 +75,11 @@ behavior.
 
 Copied request paths, STORE URIs, header values, and bodies use zeroizing
 storage, including on validation failures.
+
+NUL-terminated STORE copies, decoded provider/key identifiers, retained STORE
+descriptions, and temporary UTF-16 provider/key names also use zeroizing
+storage. This does not guarantee cleanup of copies made internally by Windows
+or OpenSSL.
 
 ### Response-buffer reservation
 

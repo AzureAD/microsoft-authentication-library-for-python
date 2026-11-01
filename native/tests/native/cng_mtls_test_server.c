@@ -54,7 +54,7 @@ static const unsigned char *find_bytes(const unsigned char *buffer,
     return NULL;
 }
 
-static int read_request(SSL *ssl)
+static int read_request(SSL *ssl, int require_token_bound_header)
 {
     unsigned char buffer[SERVER_REQUEST_LIMIT];
     size_t length = 0;
@@ -80,7 +80,74 @@ static int read_request(SSL *ssl)
                != 0) {
         return 0;
     }
-    return 1;
+    return !require_token_bound_header
+           || find_bytes(buffer, (size_t)(header_end - buffer) + 2,
+                         "x-ms-tokenboundauth: true\r\n",
+                         sizeof("x-ms-tokenboundauth: true\r\n") - 1) != NULL;
+}
+
+static int request_client_certificate(SSL *ssl, SOCKET client)
+{
+    u_long nonblocking = 1;
+    ULONGLONG deadline = GetTickCount64() + 10000;
+    int hello_sent = 0;
+    int result = 0;
+
+    if (!SSL_get_secure_renegotiation_support(ssl)
+        || ioctlsocket(client, FIONBIO, &nonblocking) == SOCKET_ERROR) {
+        return 0;
+    }
+    SSL_set_verify(ssl, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+    SSL_set_options(ssl, SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION);
+    if (SSL_renegotiate(ssl) != 1) {
+        goto cleanup;
+    }
+    while (GetTickCount64() < deadline) {
+        unsigned char byte;
+        size_t received = 0;
+        int operation_result;
+        int error;
+        fd_set read_set, write_set;
+        struct timeval timeout = { 0, 100000 };
+
+        if (!hello_sent) {
+            operation_result = SSL_do_handshake(ssl);
+            if (operation_result == 1) {
+                hello_sent = 1;
+                continue;
+            }
+            error = SSL_get_error(ssl, operation_result);
+        } else {
+            operation_result = SSL_peek_ex(ssl, &byte, 1, &received);
+            error = SSL_get_error(ssl, operation_result);
+            if (SSL_total_renegotiations(ssl) == 1
+                && !SSL_renegotiate_pending(ssl)) {
+                X509 *peer = SSL_get1_peer_certificate(ssl);
+                result = peer != NULL && SSL_get_verify_result(ssl) == X509_V_OK;
+                X509_free(peer);
+                break;
+            }
+        }
+        if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) {
+            break;
+        }
+        FD_ZERO(&read_set);
+        FD_ZERO(&write_set);
+        if (error == SSL_ERROR_WANT_READ) {
+            FD_SET(client, &read_set);
+        } else {
+            FD_SET(client, &write_set);
+        }
+        if (select(0, &read_set, &write_set, NULL, &timeout) == SOCKET_ERROR) {
+            break;
+        }
+    }
+cleanup:
+    nonblocking = 0;
+    if (ioctlsocket(client, FIONBIO, &nonblocking) == SOCKET_ERROR) {
+        return 0;
+    }
+    return result;
 }
 
 static int write_all(SSL *ssl, const char *data, size_t length)
@@ -145,12 +212,14 @@ int main(int argc, char **argv)
     int connection_index;
     int successful_requests = 0;
     int result = EXIT_FAILURE;
+    int delayed_certificate;
+    int delayed_deadline;
 
     if (argc != 7) {
         fprintf(stderr,
                 "Usage: %s <ca.pem> <server-cert.pem> <server-key.pem> "
                 "<ready-file> <max-connections> "
-                "<success|early-hints|close-delimited|tls-truncate|drip>\n",
+                "<success|early-hints|close-delimited|tls-truncate|drip|delayed-cert|delayed-cert-drip>\n",
                 argv[0]);
         return EXIT_FAILURE;
     }
@@ -164,10 +233,14 @@ int main(int argc, char **argv)
         && strcmp(mode, "early-hints") != 0
         && strcmp(mode, "close-delimited") != 0
         && strcmp(mode, "tls-truncate") != 0
-        && strcmp(mode, "drip") != 0) {
+        && strcmp(mode, "drip") != 0
+        && strcmp(mode, "delayed-cert") != 0
+        && strcmp(mode, "delayed-cert-drip") != 0) {
         fprintf(stderr, "The response mode is invalid.\n");
         return EXIT_FAILURE;
     }
+    delayed_deadline = strcmp(mode, "delayed-cert-drip") == 0;
+    delayed_certificate = strcmp(mode, "delayed-cert") == 0 || delayed_deadline;
     if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) {
         fprintf(stderr, "WSAStartup failed.\n");
         return EXIT_FAILURE;
@@ -179,6 +252,8 @@ int main(int argc, char **argv)
                              TLS_server_method());
     if (libctx == NULL || default_provider == NULL || ssl_ctx == NULL
         || !SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_2_VERSION)
+        || (delayed_certificate
+            && !SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_2_VERSION))
         || SSL_CTX_use_certificate_chain_file(ssl_ctx, argv[2]) != 1
         || SSL_CTX_use_PrivateKey_file(ssl_ctx, argv[3],
                                        SSL_FILETYPE_PEM)
@@ -189,7 +264,8 @@ int main(int argc, char **argv)
         goto cleanup;
     }
     SSL_CTX_set_verify(ssl_ctx,
-                       SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+                       delayed_certificate ? SSL_VERIFY_NONE
+                                           : SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
                        NULL);
     SSL_CTX_set_verify_depth(ssl_ctx, 4);
 
@@ -238,9 +314,29 @@ int main(int argc, char **argv)
         if (ssl != NULL && SSL_set_fd(ssl, (int)client) == 1
             && SSL_accept(ssl) == 1
             && SSL_get_verify_result(ssl) == X509_V_OK
-            && (peer_certificate = SSL_get1_peer_certificate(ssl)) != NULL
-            && read_request(ssl)) {
-            if (strcmp(mode, "success") == 0) {
+            && ((peer_certificate = SSL_get1_peer_certificate(ssl)) != NULL
+                || delayed_certificate)
+            && (!delayed_certificate || peer_certificate == NULL)
+            && read_request(ssl, delayed_certificate)) {
+            if (delayed_certificate) {
+                if (delayed_deadline) {
+                    Sleep(600);
+                }
+                if (request_client_certificate(ssl, client)) {
+                    if (delayed_deadline) {
+                        ++successful_requests;
+                        Sleep(600);
+                        skip_shutdown = 1;
+                        (void)write_all(ssl, response_text, sizeof(response_text) - 1);
+                    } else if (write_all(ssl, response_text, sizeof(response_text) - 1)) {
+                        ++successful_requests;
+                        printf("Verified client certificate after secure TLS renegotiation.\n");
+                    }
+                } else {
+                    skip_shutdown = 1;
+                    print_errors("Delayed client certificate authentication");
+                }
+            } else if (strcmp(mode, "success") == 0) {
                 if (write_all(ssl, response_text,
                               sizeof(response_text) - 1)) {
                     ++successful_requests;
