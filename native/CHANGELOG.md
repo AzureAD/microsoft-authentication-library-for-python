@@ -33,6 +33,10 @@ version and versions its native ABI separately.
   key with a selection that also includes unavailable private material.
 - Resolve the example's provider DLL path before passing it to the ABI, which
   requires absolute paths.
+- Reject digest updates that conflict with retained explicit PSS MGF1 state
+  before changing the signature context.
+- Include IPv6 Host brackets in HTTP header/request limits and the reservation
+  made before copying authorization or body plaintext.
 
 ### Security
 

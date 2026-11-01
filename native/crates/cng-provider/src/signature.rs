@@ -73,6 +73,17 @@ impl SignatureContext {
         }
     }
 
+    fn validate_mgf1_digest(digest: Option<Digest>, mgf1_digest: Option<Digest>) -> bool {
+        if mgf1_digest.is_some() && mgf1_digest == digest {
+            return true;
+        }
+        error::raise(
+            UNSUPPORTED_DIGEST,
+            "Windows CNG requires the PSS MGF1 digest to match the message digest",
+        );
+        false
+    }
+
     fn set_digest(&mut self, name: &str) -> bool {
         let Some(digest) = Digest::parse(name) else {
             error::raise(
@@ -88,11 +99,7 @@ impl SignatureContext {
             );
             return false;
         }
-        if self.mgf1_explicit && self.mgf1_digest != Some(digest) {
-            error::raise(
-                UNSUPPORTED_DIGEST,
-                "Windows CNG requires the PSS MGF1 digest to match the message digest",
-            );
+        if self.mgf1_explicit && !Self::validate_mgf1_digest(Some(digest), self.mgf1_digest) {
             return false;
         }
         if self.digest == Some(digest) && self.hash.is_some() {
@@ -201,11 +208,7 @@ impl SignatureContext {
                 }
             };
             let parsed_mgf1 = Digest::parse(&value);
-            if parsed_mgf1.is_none() || parsed_mgf1 != digest {
-                error::raise(
-                    UNSUPPORTED_DIGEST,
-                    "Windows CNG requires the PSS MGF1 digest to match the message digest",
-                );
+            if !Self::validate_mgf1_digest(digest, parsed_mgf1) {
                 return false;
             }
             mgf1_digest = parsed_mgf1;
@@ -237,6 +240,9 @@ impl SignatureContext {
             salt_length = value;
         }
 
+        if mgf1_explicit && !Self::validate_mgf1_digest(digest, mgf1_digest) {
+            return false;
+        }
         let replacement_hash = if digest != self.digest || self.hash.is_none() {
             match digest {
                 Some(digest) => match HashState::new(digest) {
@@ -1131,6 +1137,54 @@ mod tests {
         assert!(!unsafe { context.set_params(invalid_salt_update.as_ptr()) });
         assert_eq!(context.digest, Some(Digest::Sha256));
         assert_eq!(context.padding, RSA_PKCS1_PADDING);
+    }
+
+    #[test]
+    fn digest_update_rejects_retained_explicit_mgf1_mismatch() {
+        let mut context = SignatureContext::new(null_mut());
+        let mut pss = RSA_PKCS1_PSS_PADDING;
+        let mut sha256 = *b"SHA256";
+        let mut mgf1 = *b"SHA256";
+        let initial = [
+            param_int(c"pad-mode".as_ptr(), &raw mut pss),
+            param_utf8_string(c"digest".as_ptr(), sha256.as_mut_ptr().cast(), sha256.len()),
+            param_utf8_string(
+                c"mgf1-digest".as_ptr(),
+                mgf1.as_mut_ptr().cast(),
+                mgf1.len(),
+            ),
+            param_end(),
+        ];
+        // SAFETY: all buffers and the terminated input array remain live.
+        assert!(unsafe { context.set_params(initial.as_ptr()) });
+
+        let mut sha384 = *b"SHA384";
+        let digest_only = [
+            param_utf8_string(c"digest".as_ptr(), sha384.as_mut_ptr().cast(), sha384.len()),
+            param_end(),
+        ];
+        // SAFETY: the digest buffer and terminated input array remain live.
+        assert!(!unsafe { context.set_params(digest_only.as_ptr()) });
+        assert_eq!(context.digest, Some(Digest::Sha256));
+        assert_eq!(context.mgf1_digest, Some(Digest::Sha256));
+        assert!(context.mgf1_explicit);
+        assert_eq!(context.padding, RSA_PKCS1_PSS_PADDING);
+
+        let mut replacement_mgf1 = *b"SHA384";
+        let matching_update = [
+            param_utf8_string(c"digest".as_ptr(), sha384.as_mut_ptr().cast(), sha384.len()),
+            param_utf8_string(
+                c"mgf1-digest".as_ptr(),
+                replacement_mgf1.as_mut_ptr().cast(),
+                replacement_mgf1.len(),
+            ),
+            param_end(),
+        ];
+        // SAFETY: both buffers and the terminated input array remain live.
+        assert!(unsafe { context.set_params(matching_update.as_ptr()) });
+        assert_eq!(context.digest, Some(Digest::Sha384));
+        assert_eq!(context.mgf1_digest, Some(Digest::Sha384));
+        assert!(context.mgf1_explicit);
     }
 
     #[test]

@@ -347,6 +347,7 @@ fn header_value_is_valid(name: &str, value: &str) -> bool {
 }
 
 pub fn build_http_request(request: &ValidatedRequest) -> Result<Zeroizing<Vec<u8>>, BridgeFailure> {
+    let is_ipv6 = request.host.parse::<std::net::Ipv6Addr>().is_ok();
     let mut port_storage = [0_u8; 5];
     let port = decimal_bytes(usize::from(request.port), &mut port_storage);
     let mut length_storage = [0_u8; 20];
@@ -358,6 +359,7 @@ pub fn build_http_request(request: &ValidatedRequest) -> Result<Zeroizing<Vec<u8
         .and_then(|value| value.checked_add(request.target.len()))
         .and_then(|value| value.checked_add(b" HTTP/1.1\r\nHost: ".len()))
         .and_then(|value| value.checked_add(request.host.len()))
+        .and_then(|value| value.checked_add(if is_ipv6 { b"[]".len() } else { 0 }))
         .and_then(|value| {
             value.checked_add(if request.port == 443 {
                 b"\r\n".len()
@@ -401,11 +403,11 @@ pub fn build_http_request(request: &ValidatedRequest) -> Result<Zeroizing<Vec<u8
     output.push(b' ');
     output.extend_from_slice(request.target.as_bytes());
     output.extend_from_slice(b" HTTP/1.1\r\nHost: ");
-    if request.host.parse::<std::net::Ipv6Addr>().is_ok() {
+    if is_ipv6 {
         output.push(b'[');
     }
     output.extend_from_slice(request.host.as_bytes());
-    if request.host.parse::<std::net::Ipv6Addr>().is_ok() {
+    if is_ipv6 {
         output.push(b']');
     }
     if request.port != 443 {
@@ -670,6 +672,77 @@ mod tests {
                 .code,
             ErrorCode::Http
         );
+    }
+
+    #[test]
+    fn ipv6_request_limits_include_host_brackets() {
+        for (port, body_length, header_limit) in [
+            (443, 0, MAX_HEADER_BYTES),
+            (8443, 0, MAX_HEADER_BYTES),
+            (443, MAX_BODY_BYTES, MAX_HEADER_BYTES - 2),
+            (8443, MAX_BODY_BYTES, MAX_HEADER_BYTES - 2),
+        ] {
+            let mut request = ValidatedRequest {
+                provider_module_path: Zeroizing::new(r"C:\provider.dll".to_owned()),
+                store_uri: Zeroizing::new("cng://?key=test".to_owned()),
+                client_certificate_path: Zeroizing::new(r"C:\client.pem".to_owned()),
+                ca_bundle_path: Zeroizing::new(r"C:\ca.pem".to_owned()),
+                host: "::1".to_owned(),
+                port,
+                method: "POST".to_owned(),
+                target: "/".to_owned(),
+                headers: [
+                    (
+                        "Authorization",
+                        format!(
+                            "mtls_pop {}",
+                            "t".repeat(MAX_HEADER_VALUE_BYTES - "mtls_pop ".len())
+                        ),
+                    ),
+                    ("Accept", "a".repeat(MAX_GENERAL_HEADER_VALUE)),
+                    ("Content-Type", "c".repeat(MAX_GENERAL_HEADER_VALUE)),
+                    ("User-Agent", "u".repeat(MAX_GENERAL_HEADER_VALUE)),
+                    ("x-ms-tokenboundauth", "true".to_owned()),
+                    ("X-Request-ID", "r".to_owned()),
+                ]
+                .into_iter()
+                .map(|(name, value)| Header {
+                    name: name.to_owned(),
+                    value: Zeroizing::new(value),
+                })
+                .collect(),
+                body: Zeroizing::new(vec![b'b'; body_length]),
+                connect_timeout_ms: DEFAULT_TIMEOUT_MS,
+                io_timeout_ms: DEFAULT_TIMEOUT_MS,
+            };
+            let initial = build_http_request(&request).expect("initial IPv6 request");
+            let initial_header_length =
+                find_bytes(&initial, b"\r\n\r\n").expect("header delimiter") + 2;
+            let padding = request.headers.last_mut().expect("padding header");
+            padding
+                .value
+                .push_str(&"r".repeat(header_limit - initial_header_length));
+            assert!(request.headers.iter().all(|header| {
+                header_name_is_allowed(&header.name)
+                    && header_value_is_valid(&header.name, &header.value)
+            }));
+            let at_limit = build_http_request(&request).expect("IPv6 request at limit");
+            assert_eq!(
+                find_bytes(&at_limit, b"\r\n\r\n").expect("header delimiter") + 2,
+                header_limit
+            );
+
+            request
+                .headers
+                .last_mut()
+                .expect("padding header")
+                .value
+                .push('r');
+            match build_http_request(&request) {
+                Err(error) => assert_eq!(error.code, ErrorCode::Limit),
+                Ok(_) => panic!("IPv6 request one byte over its wire limit was accepted"),
+            }
+        }
     }
 
     #[test]
