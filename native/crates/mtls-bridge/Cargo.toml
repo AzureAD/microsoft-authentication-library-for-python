@@ -1,0 +1,22 @@
+[package]
+name = "mtls-bridge"
+version.workspace = true
+description = "Bounded Rust mTLS and HTTP transport using an opaque provider-backed client key"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "microsoft_identity_native_primitives"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libc.workspace = true
+openssl-provider-sys = { version = "0.2.0", path = "../openssl-provider-sys" }
+static_assertions.workspace = true
+windows-sys.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true
