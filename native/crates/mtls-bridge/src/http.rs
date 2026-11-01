@@ -97,21 +97,24 @@ impl ValidatedRequest {
         let request = unsafe { &*request };
 
         // SAFETY: each ABI string is caller-owned and validated with a bounded scan.
-        let provider_module_path =
-            unsafe { read_utf8(request.provider_module_path, 32_767, INVALID_CORE_MESSAGE) }?;
+        let provider_module_path = Zeroizing::new(unsafe {
+            read_utf8(request.provider_module_path, 32_767, INVALID_CORE_MESSAGE)
+        }?);
         // SAFETY: same bounded caller-owned string invariant.
-        let store_uri = unsafe { read_utf8(request.store_uri, 2_047, INVALID_CORE_MESSAGE) }?;
+        let store_uri =
+            Zeroizing::new(unsafe { read_utf8(request.store_uri, 2_047, INVALID_CORE_MESSAGE) }?);
         // SAFETY: same bounded caller-owned string invariant.
-        let client_certificate_path = unsafe {
+        let client_certificate_path = Zeroizing::new(unsafe {
             read_utf8(
                 request.client_certificate_path,
                 32_767,
                 INVALID_CORE_MESSAGE,
             )
-        }?;
+        }?);
         // SAFETY: same bounded caller-owned string invariant.
-        let ca_bundle_path =
-            unsafe { read_utf8(request.ca_bundle_path, 32_767, INVALID_CORE_MESSAGE) }?;
+        let ca_bundle_path = Zeroizing::new(unsafe {
+            read_utf8(request.ca_bundle_path, 32_767, INVALID_CORE_MESSAGE)
+        }?);
         // SAFETY: same bounded caller-owned string invariant.
         let host = unsafe { read_utf8(request.host, MAX_HOST, INVALID_CORE_MESSAGE) }?;
         // SAFETY: same bounded caller-owned string invariant.
@@ -164,9 +167,9 @@ impl ValidatedRequest {
                     read_utf8(header.name, MAX_HEADER_NAME_BYTES, INVALID_HEADER_MESSAGE)
                 }?;
                 // SAFETY: same bounded caller-owned string invariant.
-                let value = unsafe {
+                let value = Zeroizing::new(unsafe {
                     read_utf8(header.value, MAX_HEADER_VALUE_BYTES, INVALID_HEADER_MESSAGE)
-                }?;
+                }?);
                 if !header_name_is_allowed(&name)
                     || !header_value_is_valid(&name, &value)
                     || headers
@@ -178,18 +181,15 @@ impl ValidatedRequest {
                         INVALID_HEADER_MESSAGE,
                     ));
                 }
-                headers.push(Header {
-                    name,
-                    value: Zeroizing::new(value),
-                });
+                headers.push(Header { name, value });
             }
         }
-        let body = if request.body_size == 0 {
+        let body = Zeroizing::new(if request.body_size == 0 {
             Vec::new()
         } else {
             // SAFETY: the body pointer is non-null and the size is bounded by one MiB.
             try_copy_bytes(unsafe { std::slice::from_raw_parts(request.body, request.body_size) })?
-        };
+        });
         let connect_timeout_ms = if request.connect_timeout_ms == 0 {
             DEFAULT_TIMEOUT_MS
         } else {
@@ -208,16 +208,16 @@ impl ValidatedRequest {
         }
 
         Ok(Self {
-            provider_module_path: Zeroizing::new(provider_module_path),
-            store_uri: Zeroizing::new(store_uri),
-            client_certificate_path: Zeroizing::new(client_certificate_path),
-            ca_bundle_path: Zeroizing::new(ca_bundle_path),
+            provider_module_path,
+            store_uri,
+            client_certificate_path,
+            ca_bundle_path,
             host,
             port: request.port,
             method,
             target,
             headers,
-            body: Zeroizing::new(body),
+            body,
             connect_timeout_ms,
             io_timeout_ms,
         })
@@ -536,9 +536,26 @@ fn parse_content_length(headers: &[u8]) -> Result<Option<usize>, BridgeFailure> 
         let name = &line[..colon];
         let value = &line[colon + 1..];
         if name.is_empty()
-            || !name
-                .iter()
-                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+            || !name.iter().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(
+                        byte,
+                        b'!' | b'#'
+                            | b'$'
+                            | b'%'
+                            | b'&'
+                            | b'\''
+                            | b'*'
+                            | b'+'
+                            | b'-'
+                            | b'.'
+                            | b'^'
+                            | b'_'
+                            | b'`'
+                            | b'|'
+                            | b'~'
+                    )
+            })
         {
             return Err(BridgeFailure::new(
                 ErrorCode::Http,
@@ -561,10 +578,15 @@ fn parse_content_length(headers: &[u8]) -> Result<Option<usize>, BridgeFailure> 
                     "Duplicate Content-Length headers are rejected.",
                 ));
             }
-            let value = value
+            let start = value
                 .iter()
                 .position(|byte| !matches!(byte, b' ' | b'\t'))
-                .map_or(&[][..], |start| &value[start..]);
+                .unwrap_or(value.len());
+            let end = value
+                .iter()
+                .rposition(|byte| !matches!(byte, b' ' | b'\t'))
+                .map_or(start, |end| end + 1);
+            let value = &value[start..end];
             if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
                 return Err(BridgeFailure::new(
                     ErrorCode::Http,
@@ -658,6 +680,109 @@ fn decimal_bytes(mut value: usize, storage: &mut [u8]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    use crate::abi::{ABI_VERSION, MicrosoftIdentityNativeHeader};
+
+    #[derive(Clone, Copy, Default)]
+    struct CopyObservation {
+        length: usize,
+        pointer: *mut u8,
+        freed: bool,
+        dirty: bool,
+    }
+
+    thread_local! {
+        static COPY_OBSERVATION: Cell<CopyObservation> = const { Cell::new(CopyObservation {
+            length: 0,
+            pointer: std::ptr::null_mut(),
+            freed: false,
+            dirty: false,
+        }) };
+    }
+
+    struct ObservedAllocator;
+
+    // SAFETY: allocation/free pairing and layouts are delegated unchanged to System.
+    // The thread-local observer is allocation-free and has no destructor. Each fixture
+    // selects a copy's unique allocation size and initializes all bytes before freeing it.
+    unsafe impl GlobalAlloc for ObservedAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: the caller supplies a valid allocation layout.
+            let pointer = unsafe { System.alloc(layout) };
+            COPY_OBSERVATION.with(|observation| {
+                let mut state = observation.get();
+                if state.length != 0 && layout.size() == state.length {
+                    state.pointer = pointer;
+                    observation.set(state);
+                }
+            });
+            pointer
+        }
+
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            COPY_OBSERVATION.with(|observation| {
+                let mut state = observation.get();
+                if pointer == state.pointer {
+                    // SAFETY: the fixture's watched copy initialized all `length` bytes;
+                    // its allocation remains live until System.dealloc below.
+                    let bytes = unsafe { std::slice::from_raw_parts(pointer, state.length) };
+                    state.dirty = bytes.iter().any(|byte| *byte != 0);
+                    state.freed = true;
+                    state.pointer = std::ptr::null_mut();
+                    observation.set(state);
+                }
+            });
+            // SAFETY: pointer and layout come unchanged from this allocator.
+            unsafe { System.dealloc(pointer, layout) };
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: ObservedAllocator = ObservedAllocator;
+
+    fn abi_request() -> MicrosoftIdentityNativeRequest {
+        MicrosoftIdentityNativeRequest {
+            struct_size: size_of::<MicrosoftIdentityNativeRequest>() as u32,
+            abi_version: ABI_VERSION,
+            provider_module_path: c"C:\\provider.dll".as_ptr(),
+            store_uri: c"cng://?key=test".as_ptr(),
+            client_certificate_path: c"C:\\client.pem".as_ptr(),
+            ca_bundle_path: c"C:\\ca.pem".as_ptr(),
+            host: c"localhost".as_ptr(),
+            port: 443,
+            method: c"POST".as_ptr(),
+            target: c"/".as_ptr(),
+            headers: std::ptr::null(),
+            header_count: 0,
+            body: std::ptr::null(),
+            body_size: 0,
+            connect_timeout_ms: 0,
+            io_timeout_ms: 0,
+        }
+    }
+
+    fn assert_failed_copy_is_wiped(
+        input: &MicrosoftIdentityNativeRequest,
+        length: usize,
+        expected_error: ErrorCode,
+    ) {
+        COPY_OBSERVATION.set(CopyObservation {
+            length,
+            ..CopyObservation::default()
+        });
+        // SAFETY: fixtures keep the complete ABI request and every referenced string,
+        // header array and body alive through this immediate validation call.
+        let result = unsafe { ValidatedRequest::from_abi(input) };
+        let observed = COPY_OBSERVATION.replace(CopyObservation::default());
+        assert_eq!(
+            result.expect_err("fixture must fail validation").code,
+            expected_error
+        );
+        assert!(observed.freed, "request copy was not observed");
+        assert!(!observed.dirty, "request copy was freed without wiping");
+    }
 
     fn success(method: &str, raw: &str, status: i32, body: &[u8]) {
         let parsed = parse_http_response(raw.as_bytes(), method).expect("valid response");
@@ -671,6 +796,82 @@ mod tests {
                 .expect_err("invalid response")
                 .code,
             ErrorCode::Http
+        );
+    }
+
+    #[test]
+    fn rejected_headers_wipe_copied_values() {
+        let value = std::ffi::CString::new(format!("mtls_pop {}", "t".repeat(71)))
+            .expect("synthetic token");
+        for name in [c"Authorization", c"Not-Allowed"] {
+            let headers = [MicrosoftIdentityNativeHeader {
+                name: name.as_ptr(),
+                value: value.as_ptr(),
+            }; 2];
+            let mut input = abi_request();
+            input.headers = headers.as_ptr();
+            input.header_count = headers.len();
+            assert_failed_copy_is_wiped(&input, value.as_bytes().len(), ErrorCode::InvalidArgument);
+        }
+    }
+
+    #[test]
+    fn rejected_timeouts_wipe_copied_body() {
+        let body = [b's'; 80];
+        for (connect_timeout_ms, io_timeout_ms) in
+            [(MAX_TIMEOUT_MS + 1, 0), (0, MAX_TIMEOUT_MS + 1)]
+        {
+            let mut input = abi_request();
+            input.body = body.as_ptr();
+            input.body_size = body.len();
+            input.connect_timeout_ms = connect_timeout_ms;
+            input.io_timeout_ms = io_timeout_ms;
+            assert_failed_copy_is_wiped(&input, body.len(), ErrorCode::Limit);
+        }
+    }
+
+    #[test]
+    fn later_validation_failure_wipes_store_uri_copy() {
+        let value = std::ffi::CString::new(format!("cng://?{}", "k".repeat(73)))
+            .expect("synthetic STORE URI");
+        let mut input = abi_request();
+        input.store_uri = value.as_ptr();
+        input.client_certificate_path = std::ptr::null();
+        assert_failed_copy_is_wiped(&input, value.as_bytes().len(), ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn response_header_names_accept_http_token_punctuation() {
+        success(
+            "GET",
+            "HTTP/1.1 200 OK\r\nX!#$%&'*+-.^_`|~: test\r\nContent-Length: 0\r\n\r\n",
+            200,
+            b"",
+        );
+        failure("GET", "HTTP/1.1 200 OK\r\nContent-Length : 0\r\n\r\n");
+        failure(
+            "GET",
+            "HTTP/1.1 200 OK\r\nX Request: test\r\nContent-Length: 0\r\n\r\n",
+        );
+    }
+
+    #[test]
+    fn content_length_accepts_surrounding_ows_but_not_ambiguous_values() {
+        success(
+            "GET",
+            "HTTP/1.1 200 OK\r\nContent-Length: \t5 \t\r\n\r\nhello",
+            200,
+            b"hello",
+        );
+        for value in [" \t ", "5 0", "+5", "5,5"] {
+            failure(
+                "GET",
+                &format!("HTTP/1.1 200 OK\r\nContent-Length: {value}\r\n\r\nhello"),
+            );
+        }
+        failure(
+            "GET",
+            "HTTP/1.1 200 OK\r\nContent-Length: 0 \t\r\nContent-Length:\t0 \r\n\r\n",
         );
     }
 

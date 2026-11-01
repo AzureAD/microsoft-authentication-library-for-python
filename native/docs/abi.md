@@ -23,6 +23,10 @@ request headers to `MICROSOFT_IDENTITY_NATIVE_MAX_HEADER_BYTES`.
 Pass fresh or zeroed `MICROSOFT_IDENTITY_NATIVE_RESPONSE` storage. On success,
 the returned structure owns native header and body allocations.
 
+Response header names follow the HTTP token grammar. Content-Length permits
+surrounding spaces and tabs, but duplicate lengths, internal whitespace,
+nondecimal lengths, and transfer encoding remain rejected.
+
 The response is move-only:
 
 - Do not copy the structure.

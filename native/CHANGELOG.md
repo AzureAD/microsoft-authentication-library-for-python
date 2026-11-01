@@ -39,6 +39,10 @@ version and versions its native ABI separately.
   before changing the signature context.
 - Include IPv6 Host brackets in HTTP header/request limits and the reservation
   made before copying authorization or body plaintext.
+- Wipe copied request paths, STORE URIs, header values, and bodies on validation
+  failures by retaining them in zeroizing storage immediately after copying.
+- Accept valid HTTP response token field names and surrounding Content-Length
+  whitespace without permitting duplicate or ambiguous framing.
 
 ### Security
 

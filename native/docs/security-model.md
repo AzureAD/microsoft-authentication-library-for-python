@@ -68,6 +68,9 @@ Native copies are redacted or zeroized where practical. Original strings or
 byte objects owned by a managed runtime remain subject to that runtime's memory
 behavior.
 
+Copied request paths, STORE URIs, header values, and bodies use zeroizing
+storage, including on validation failures.
+
 ### Response-buffer reservation
 
 Each in-flight request reserves the bounded 1 MiB native response capacity
