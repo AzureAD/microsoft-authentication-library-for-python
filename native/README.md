@@ -79,13 +79,19 @@ external compiler boundary is the test or example being demonstrated.
 
 ## Quick start
 
-Run the commands below from the native project directory:
+With the [build prerequisites](#build-and-test) installed, configure the native
+test harness and pinned OpenSSL installation before the first build. Run from
+the repository root:
 
 ```powershell
 Set-Location native
+$vcpkg = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\vcpkg'
+cmake -S . -B build -G 'Visual Studio 17 2022' -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE="$vcpkg\scripts\buildsystems\vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows
 ```
 
-Build the Release configuration first:
+Then build the Release configuration from the same `native/` directory:
 
 ```powershell
 .\scripts\build.ps1 -Configuration Release
@@ -157,14 +163,7 @@ Requirements:
 - Rust 1.97.1 `x86_64-pc-windows-msvc`
 - CMake and vcpkg
 
-Configure:
-
-```powershell
-$vcpkg = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\vcpkg'
-cmake -S . -B build -G 'Visual Studio 17 2022' -A x64 `
-  -DCMAKE_TOOLCHAIN_FILE="$vcpkg\scripts\buildsystems\vcpkg.cmake" `
-  -DVCPKG_TARGET_TRIPLET=x64-windows
-```
+Configure using the [quick-start steps](#quick-start) before building.
 
 Build and run the complete Rust/native matrix:
 

@@ -33,6 +33,8 @@ version and versions its native ABI separately.
   key with a selection that also includes unavailable private material.
 - Resolve the example's provider DLL path before passing it to the ABI, which
   requires absolute paths.
+- Configure the pinned OpenSSL installation and native test harness before the
+  first quick-start build command.
 - Reject digest updates that conflict with retained explicit PSS MGF1 state
   before changing the signature context.
 - Include IPv6 Host brackets in HTTP header/request limits and the reservation
