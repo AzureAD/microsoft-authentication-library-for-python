@@ -121,9 +121,12 @@ keep the demonstration simple:
 
 ```powershell
 $env:NATIVE_PRIMITIVES_MTLS_POP_TOKEN = '<already-acquired-token>'
+$providerModulePath = (Resolve-Path -LiteralPath `
+  '.\artifacts\Release\microsoft_identity_native_provider.dll' `
+  -ErrorAction Stop).Path
 
 .\artifacts\Release\microsoft_identity_native_example.exe `
-  .\artifacts\Release\microsoft_identity_native_provider.dll `
+  $providerModulePath `
   'cng://?key=<encoded-key>&provider=<encoded-provider>' `
   'C:\absolute\path\client-chain.pem' `
   'C:\absolute\path\ca-bundle.pem' `

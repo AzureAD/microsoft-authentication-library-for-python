@@ -29,6 +29,11 @@ version and versions its native ABI separately.
 
 ### Fixed
 
+- Preserve available public material when OpenSSL duplicates a public-only RSA
+  key with a selection that also includes unavailable private material.
+- Resolve the example's provider DLL path before passing it to the ABI, which
+  requires absolute paths.
+
 ### Security
 
 - Documented mandatory review areas and evidence for unsafe Rust, FFI, CNG,

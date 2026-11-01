@@ -97,8 +97,9 @@ cleanup:
     return key;
 }
 
-static EVP_PKEY *create_standard_public_key(OSSL_LIB_CTX *libctx,
-                                             EVP_PKEY *cng_key)
+static EVP_PKEY *create_public_key(OSSL_LIB_CTX *libctx,
+                                  EVP_PKEY *cng_key,
+                                  const char *property_query)
 {
     EVP_PKEY_CTX *context = NULL;
     EVP_PKEY *public_key = NULL;
@@ -109,12 +110,12 @@ static EVP_PKEY *create_standard_public_key(OSSL_LIB_CTX *libctx,
         goto cleanup;
     }
 
-    context = EVP_PKEY_CTX_new_from_name(libctx, "RSA", "provider=default");
+    context = EVP_PKEY_CTX_new_from_name(libctx, "RSA", property_query);
     if (context == NULL || EVP_PKEY_fromdata_init(context) <= 0
         || EVP_PKEY_fromdata(context, &public_key, EVP_PKEY_PUBLIC_KEY,
                              public_params)
                <= 0) {
-        print_openssl_errors("Default-provider RSA public-key import");
+        print_openssl_errors("RSA public-key import");
         EVP_PKEY_free(public_key);
         public_key = NULL;
     }
@@ -140,6 +141,53 @@ static int confirm_provider_private_export_blocked(EVP_PKEY *key)
     }
     ERR_clear_error();
     return 1;
+}
+
+static int confirm_public_key_duplication(OSSL_LIB_CTX *libctx,
+                                         EVP_PKEY *cng_key,
+                                         EVP_PKEY *verification_key,
+                                         const char *property_query)
+{
+    EVP_PKEY *public_key = NULL;
+    EVP_PKEY *duplicate = NULL;
+    EVP_PKEY_CTX *duplicate_context = NULL;
+    int result = 0;
+
+    public_key = create_public_key(libctx, cng_key, property_query);
+    if (public_key == NULL) {
+        goto cleanup;
+    }
+    duplicate = EVP_PKEY_dup(public_key);
+    if (duplicate == NULL) {
+        print_openssl_errors("Public-only provider EVP_PKEY_dup");
+        goto cleanup;
+    }
+    EVP_PKEY_free(public_key);
+    public_key = NULL;
+
+    duplicate_context = EVP_PKEY_CTX_new_from_pkey(
+        libctx, duplicate, property_query);
+    if (duplicate_context == NULL
+        || EVP_PKEY_eq(duplicate, verification_key) != 1
+        || EVP_PKEY_public_check(duplicate_context) != 1) {
+        print_openssl_errors("Duplicated RSA public-key validation");
+        goto cleanup;
+    }
+    ERR_clear_error();
+    if (EVP_PKEY_private_check(duplicate_context) != 0
+        || !confirm_provider_private_export_blocked(duplicate)) {
+        fprintf(stderr, "Public-only duplicate unexpectedly has private material.\n");
+        goto cleanup;
+    }
+    ERR_clear_error();
+    printf("Public-only RSA duplication preserves independent public material.\n");
+    result = 1;
+
+cleanup:
+    EVP_PKEY_CTX_free(duplicate_context);
+    EVP_PKEY_free(duplicate);
+    EVP_PKEY_free(public_key);
+    return result;
 }
 
 static int sign_and_verify(OSSL_LIB_CTX *libctx,
@@ -364,9 +412,11 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
-    public_key = create_standard_public_key(libctx, cng_key);
+    public_key = create_public_key(libctx, cng_key, "provider=default");
     if (public_key == NULL
-        || !confirm_provider_private_export_blocked(cng_key)) {
+        || !confirm_provider_private_export_blocked(cng_key)
+        || !confirm_public_key_duplication(
+            libctx, cng_key, public_key, provider_property_query)) {
         goto cleanup;
     }
 

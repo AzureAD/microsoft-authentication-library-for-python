@@ -99,12 +99,12 @@ unsafe extern "C" fn keymgmt_dup(key_data: *const c_void, selection: c_int) -> *
         if !source.is_valid() {
             return null_mut();
         }
-        let material = if selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY != 0 {
-            let Some(key) = source.private_key() else {
-                return null_mut();
-            };
+        let private_key = source
+            .private_key()
+            .filter(|_| selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY != 0);
+        let material = if let Some(key) = private_key {
             KeyMaterial::Private(key.clone())
-        } else {
+        } else if selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY != 0 {
             let Some((modulus, exponent, bits)) = source.public_parts() else {
                 return null_mut();
             };
@@ -121,6 +121,8 @@ unsafe extern "C" fn keymgmt_dup(key_data: *const c_void, selection: c_int) -> *
                 exponent,
                 bits,
             }
+        } else {
+            return null_mut();
         };
         ProviderKey::new(source.provider_context, material).cast()
     })
