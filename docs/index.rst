@@ -388,6 +388,12 @@ token result. ``binding_certificate`` remains present only on a final
 ``mtls_pop`` result, never on an ordinary Bearer result. This extension does not
 change downstream resource TLS or the requirements for mTLS PoP.
 
+The credential still needs an exportable private key in PEM or PFX form. MSAL
+resolves that key before calling the factory; this hook cannot substitute a
+non-exportable CNG key, certificate-store reference or protected-key handle.
+Protected-key signing and TLS require a separate provider-backed credential
+contract, not just a custom HTTP pipeline.
+
 
 Exceptions
 ----------

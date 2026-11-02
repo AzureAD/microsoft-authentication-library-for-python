@@ -782,7 +782,7 @@ class TestMtlsCertificateChain(unittest.TestCase):
                         ["pop"], mtls_proof_of_possession=True)
                     cached = app.acquire_token_for_client(
                         ["pop"], mtls_proof_of_possession=True)
-                self.addCleanup(app._mtls_client._http_client.close)
+                self.addCleanup(app._mtls_http_client.close)
                 self.assertEqual(self.key_id, result["binding_certificate"].thumbprint_sha256)
                 self.assertEqual(self.key_id, cached["binding_certificate"].thumbprint_sha256)
                 self.assertEqual("cache", cached[app._TOKEN_SOURCE])

@@ -2431,7 +2431,7 @@ class TestMtlsProofOfPossession(unittest.TestCase):
             self.assertEqual(0 if warm else 1, post.call_count)
             self.assertEqual(
                 material["key_id"], result["binding_certificate"].thumbprint_sha256)
-            if valid._mtls_client is not None:
+            if valid._mtls_http_client is not None:
                 self.addCleanup(valid._mtls_http_client.close)
 
     def test_certificate_override_is_rejected_before_cache_lookup(self):

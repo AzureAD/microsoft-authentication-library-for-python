@@ -3361,8 +3361,8 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             requesting other token types, including SSH certificates, raises
             ``ValueError``.
             ``post`` and ``cert`` overrides and redirects are rejected. If the
-            provider returns another token type, the result is ``token_type_mismatch``
-            and the rejected response is not cached.
+            provider returns another token type, the result is
+            ``token_type_mismatch`` and the rejected response is not cached.
             Nonempty constructor ``client_claims`` are rejected for this
             certificate-only authentication: no signed client assertion is
             sent. ``claims_challenge`` and ``forwarded_client_claims`` retain

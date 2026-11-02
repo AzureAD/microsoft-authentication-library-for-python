@@ -276,6 +276,44 @@ The Government alias mapping follows the same pinned .NET
 [dotnet-clouds]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/src/client/Microsoft.Identity.Client/Instance/Discovery/KnownCloudData.cs
 [dotnet-mtls-hosts]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/src/client/Microsoft.Identity.Client/Instance/Discovery/RegionAndMtlsDiscoveryProvider.cs
 
+### Custom HTTP source coverage
+
+The #974 source contributes the two methods below to this combined 21-method
+inventory. On trusted runs they execute in `CertificateScenariosTestCase`
+and fail, rather than skip, when the required lab certificate is missing or
+invalid. The additional custom Bearer and FIC cases are mapped above.
+
+| Required method | Observation |
+| --- | --- |
+| `test_credential_x509_custom_http_output_pop` | Real Graph PoP acquisition through the derived certificate-aware factory pipeline, returned certificate binding, the same cached token treated as opaque, resource HTTP 200 and all three same-token rejection controls, preserved sample middleware, and caller-owned cleanup. |
+| `test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint` | Ordinary custom-client OBO POST with the mTLS flag off, signed certificate assertion and exact HTTP 400 / `invalid_request` / AADSTS50027 rejection; no derived certificate-bearing child is created. This is a malformed-user-assertion request capture, not a successful OBO acquisition. |
+
+These #974 source tests exercise the existing factory API. They do not add
+Bearer-over-mTLS or FIC APIs, and do not claim live custom-Bearer or real
+custom-FIC integration coverage; those combined cases remain in the combined
+follow-up. Collecting these tests or passing the offline guards is not evidence
+that a live service run passed.
+
+The custom recorder is isolated in `tests\mtls_http_e2e_helpers.py`; generic
+recording/binding helpers remain in `tests\mtls_e2e_helpers.py`, without a
+dependency on the custom sample in the foundation branch. Run its offline
+privacy/lifecycle guards and existing loopback suite with:
+
+```powershell
+python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_mtls_http_e2e_helpers.py tests\test_mtls_http_client.py
+```
+
+The custom-recorder privacy guards render actual pytest failures with argument
+display enabled and locals disabled to check constructor/POST/capture redaction.
+The lifecycle guard retains the sample's response middleware and owner/child cleanup.
+`test_custom_capture_failure_traceback_hides_the_expected_assertion` mocks
+acquisition: it checks generic recorder privacy, not real FIC support.
+The custom sample's output guard prevents dynamic error values from being
+printed, and the real loopback TLS fixture explicitly requires TLS 1.2 or newer.
+Offline custom guards also cover key/leaf preflight before cache or factory use,
+encrypted temporary TLS keys, per-app PEM/PFX snapshots, ordinary PFX signing
+without mTLS issuer validation, and opaque Graph cache/resource-control behavior.
+
 ## 5) Manual-intervention E2E tests
 
 Manual tests (interactive browser/device-flow/POP manual scenarios) are separated into:

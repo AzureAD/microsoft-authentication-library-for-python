@@ -11,7 +11,7 @@ import requests
 import urllib3
 
 from tests import test_e2e
-from tests.mtls_e2e_helpers import unrelated_binding
+from tests.mtls_e2e_helpers import GRAPH_REJECTION_MARKERS, unrelated_binding
 from tests.mtls_http_e2e_helpers import RecordingPolicyHttpClient
 from tests.test_mtls_e2e_helpers import CertificateFixture, _CREDENTIAL, _ENDPOINT, _jwt
 
@@ -188,6 +188,66 @@ class TestCustomMtlsE2eHelpers(CertificateFixture):
 
     def test_custom_acquisition_invalid_signed_assertion_traceback_hides_oauth_arguments(self):
         self._assert_custom_summary_validation_privacy(invalid_json=False)
+
+    def test_custom_graph_opaque_token_retains_cache_and_same_token_controls(self):
+        token = "opaque-custom-graph-token"
+        authority = self.scenario._SNI_ALLOWLISTED_AUTHORITY
+        metadata = {
+            "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
+            "token_endpoint": authority + "/oauth2/v2.0/token",
+            "issuer": authority + "/v2.0",
+        }
+        applications, pipelines = [], []
+
+        def application(credential, azure_region=False, http_client=None):
+            app = msal.ConfidentialClientApplication(
+                self.scenario._SNI_ALLOWLISTED_CLIENT_ID,
+                authority=authority, client_credential=credential,
+                http_client=http_client, azure_region=azure_region,
+                instance_discovery=False)
+            applications.append(app)
+            pipelines.append(http_client)
+            return app
+
+        def send(adapter, request, **kwargs):
+            response = self._response(status=200, payload={
+                "access_token": token, "token_type": "mtls_pop", "expires_in": 3600})
+            response.request = request
+            return response
+
+        self.addCleanup(self.scenario.doCleanups)
+        with patch("msal.authority.tenant_discovery", return_value=metadata), patch.object(
+                self.scenario, "_certificate",
+                return_value=(_CREDENTIAL, self.binding)), patch.object(
+                self.scenario, "_sni_app", side_effect=application), patch.object(
+                requests.adapters.HTTPAdapter, "send",
+                autospec=True, side_effect=send) as post, patch.object(
+                self.scenario, "_call_graph_with_mtls_pop_token",
+                return_value=Mock(status_code=200)) as accepted, patch.object(
+                self.scenario, "_assert_graph_rejects") as rejected:
+            self.scenario.test_credential_x509_custom_http_output_pop()
+        self.assertEqual(1, len(applications))
+        self.assertEqual(1, post.call_count, "The repeated acquisition must use cache.")
+        accepted.assert_called_once()
+        self.assertEqual(token, accepted.call_args.args[0])
+        binding = accepted.call_args.args[1]
+        self.assertEqual(self.binding.thumbprint_sha256, binding.thumbprint_sha256)
+        self.assertEqual(3, rejected.call_count)
+        for call, scheme, marker in zip(
+                rejected.call_args_list,
+                ("mtls_pop", "Bearer", "mtls_pop"), GRAPH_REJECTION_MARKERS):
+            self.assertEqual(token, call.args[0])
+            self.assertEqual(scheme, call.args[1])
+            self.assertEqual(marker, call.args[3])
+        self.assertIsNone(rejected.call_args_list[0].args[2])
+        self.assertIs(binding, rejected.call_args_list[1].args[2])
+        self.assertNotEqual(
+            binding.thumbprint_sha256,
+            rejected.call_args_list[2].args[2].thumbprint_sha256)
+        self.assertEqual(1, len(pipelines[0]._children))
+        self.assertTrue(pipelines[0]._closed and pipelines[0]._children[0]._closed)
+        self.assertEqual(
+            "custom-policy", pipelines[0]._children[0].token_requests[0]["middleware"])
 
     def test_custom_recorder_retains_sample_pipeline_and_owner_cleanup(self):
         def send(adapter, request, **kwargs):
