@@ -14,6 +14,12 @@ AT_EXPIRED = 3
 AT_AGING = 4
 RESERVED = 5
 
+# Server-telemetry token-type values (parity with the other MSALs, e.g. .NET's
+# TelemetryTokenTypeConstants). Only non-Bearer token types are emitted.
+_TELEMETRY_TOKEN_TYPES = {
+    "mtls_pop": 6,  # mTLS-bound Proof-of-Possession
+    }
+
 
 def _get_new_correlation_id():
     return str(uuid.uuid4())
@@ -28,18 +34,31 @@ class _TelemetryContext(object):
     _CURRENT_HEADER_SIZE_LIMIT = 100
     _LAST_HEADER_SIZE_LIMIT = 350
 
-    def __init__(self, buffer, lock, api_id, correlation_id=None, refresh_reason=None):
+    def __init__(self, buffer, lock, api_id, correlation_id=None,
+            refresh_reason=None, token_type=None):
         self._buffer = buffer
         self._lock = lock
         self._api_id = api_id
         self._correlation_id = correlation_id or _get_new_correlation_id()
         self._refresh_reason = refresh_reason or NON_SILENT_CALL
+        self._token_type = token_type
         logger.debug("Generate or reuse correlation_id: %s", self._correlation_id)
 
     def generate_headers(self):
         with self._lock:
-            current = "4|{api_id},{cache_refresh}|".format(
-                api_id=self._api_id, cache_refresh=self._refresh_reason)
+            # MSAL Python's current schema (4) carries an EMPTY platform-config
+            # section after the second "|". To stay byte-for-byte unchanged for
+            # every existing flow, we only populate that section for token types
+            # that need it (currently mtls_pop -> value 6, placed in the 3rd
+            # platform field). This is a documented Python-schema divergence:
+            # other MSALs use schema 5, but the token-type *value* matches.
+            token_type_value = _TELEMETRY_TOKEN_TYPES.get(self._token_type)
+            platform_config = (
+                ",,{}".format(token_type_value)
+                if token_type_value is not None else "")
+            current = "4|{api_id},{cache_refresh}|{platform_config}".format(
+                api_id=self._api_id, cache_refresh=self._refresh_reason,
+                platform_config=platform_config)
             if len(current) > self._CURRENT_HEADER_SIZE_LIMIT:
                 logger.warning(
                     "Telemetry header greater than {} will be truncated by AAD".format(

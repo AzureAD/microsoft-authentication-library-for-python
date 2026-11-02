@@ -33,6 +33,88 @@ LAB_APP_CLIENT_CERT_PFX_PATH=C:/path/to/your/cert.pfx
 Notes:
 - `tests/test_e2e.py` loads `.env` automatically when `python-dotenv` is installed.
 - For certificate auth, `LAB_APP_CLIENT_CERT_PFX_PATH` should be an absolute path.
+- Required certificate scenarios use the exportable `LabAuth.MSIDLab.com` PFX
+  from the MSID Lab `LabAuth` secret, without a PFX password. Missing, unreadable,
+  or invalid PFX files fail these scenarios; they never count as skipped coverage.
+
+### FIC over mTLS lab parity
+
+The FIC tests reuse the existing MSAL.NET/Go SN/I lab configuration for both
+legs: app `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e`, authority
+`https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c`,
+and the shared LabAuth certificate supplied through
+`LAB_APP_CLIENT_CERT_PFX_PATH`. No Python-only `LAB_FIC_*` configuration or
+new app provisioning is needed.
+
+Leg 1 requests `api://AzureADTokenExchange/.default` as an mTLS PoP assertion.
+The PoP-output cell uses global endpoints for both legs, requests
+`https://graph.microsoft.com/.default`, and calls the mTLS Graph resource with
+the final token's `binding_certificate`. The Bearer-output cell uses `westus3`
+for both legs and requests `https://storage.azure.com/.default`; its final
+token must not contain `binding_certificate` or trigger a downstream mTLS call.
+Missing or invalid certificates and real token-acquisition errors fail the
+FIC tests rather than skipping or accepting an error as success.
+
+All four FIC variants require real token POST evidence for each leg,
+the expected global or `westus3` mTLS endpoint, and the same lab certificate.
+Leg 2 must invoke the assertion provider and send its exact, unchanged leg-1
+value as a `jwt-pop` client assertion. The exchange assertion may be opaque;
+it is not assumed to be a resource JWT. Leg 2 receives the actual
+`MtlsBindingContext` returned with the leg-1 assertion rather than reloading
+the PFX path. The sample also checks binding continuity when the callable
+renews the assertion. Final Storage Bearer tokens must have the Storage
+audience. Graph owns its token format: the final Graph token is treated as
+opaque and requires matching returned certificate binding plus HTTP 200 from
+the mTLS Graph resource using that context, not client-side JWT inspection.
+The same token must also fail the shared no-certificate, wrong-certificate,
+and Bearer-scheme controls with their exact rejection markers.
+
+Both cells also run through a caller-owned recording HTTP factory. The factory
+uses the sample's real certificate-scoped Requests adapter, preserves its policy
+header and response middleware, and owns cleanup of the derived client. These
+are live exchanges, not mocked factory responses.
+
+Run all four live FIC variants with:
+
+```powershell
+python -m pytest -q tests\test_e2e.py::FicTwoLegTestCase
+```
+
+The offline `tests\test_fic_e2e_helpers.py` checks the two-leg provider/wire
+contract, opaque exchange and Graph tokens, strict final binding/type and
+Storage audience, Graph rejection failures, and exact assertion handoff.
+`tests.test_application.TestFicCertificateHandoff` replaces a PFX with a second
+certificate after caching the leg-1 assertion, checks both token and actual
+TLS certificate/key continuity, and checks renewal and Bearer/PoP output
+contracts without reopening that file. The recorder privacy regression uses
+pytest's actual traceback renderer with arguments shown and locals disabled,
+and rejects full tokens and truncated token fragments. These offline guards
+do not replace live acquisitions or the combined custom-factory checks.
+
+```powershell
+python -m pytest -q tests\test_application.py::TestFicCertificateHandoff tests\test_fic_e2e_helpers.py tests\test_lab_config.py
+```
+
+### Exportable-certificate scope and deferred protected keys
+
+This feature supports exportable PEM/PFX certificate credentials. A custom HTTP
+transport receives exportable certificate material; it does not add native
+Windows CNG or non-exportable-key support. Each application retains a fixed
+certificate snapshot for signing, TLS, and cache binding. Construct a new
+application to rotate a file credential. Temporary TLS keys are encrypted with
+a random process-local password and removed after loading.
+Ordinary PFX assertions retain leaf-only handling; full-chain issuer verification
+is deferred until the application requests mTLS certificate material.
+
+Protected-key support is a separate, deferred deliverable, not covered by this
+lab's parity claims. Its Windows acceptance test must prove that the private
+key cannot be exported, acquire a token using that key, call Graph successfully,
+and repeat from cache with the same certificate binding.
+
+Government authorities `login.microsoftonline.us` and its legacy alias
+`login.usgovcloudapi.net` both use `[region.]mtlsauth.microsoftonline.us`.
+This normalizes the Government preferred network host; it does not enable
+additional sovereign clouds.
 
 ## 4) Run unit/integration tests
 
@@ -45,8 +127,198 @@ python -m pytest -q tests -k "not e2e"
 Run full E2E unattended suite:
 
 ```powershell
-python -m pytest -q tests/test_e2e.py
+python -m pytest -q tests\test_e2e.py
 ```
+
+Run only the required certificate scenarios:
+
+```powershell
+python -m pytest -q tests\test_e2e.py::CertificateScenariosTestCase
+```
+
+The certificate matrix uses client `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e`
+in tenant `bea21ebe-8b64-4d06-9f6d-6a889b120a7c`, matching the .NET and Go
+lab setup. Global Graph PoP and regional `westus3` Key Vault PoP are separate
+cases. Ordinary regional signed-certificate authentication and regional
+Bearer-over-mTLS are also separate cases.
+
+The global Graph case reuses the same real token for bound-certificate success
+and three 401/403 controls: no certificate (`MissingClientCertificate`), the
+correct certificate with the Bearer scheme (`Cnf claim not supported over`),
+and an unrelated locally generated certificate
+(`MtlsCnfClaimRequestDataValidationFailed`). It then verifies a cached repeat.
+Both acquisition orders also verify Bearer/PoP isolation in the same
+application, cache, and Key Vault scope.
+
+OBO, refresh-token, and authorization-code captures delegate to the real
+transport and require an actual expected HTTP/OAuth rejection for intentionally
+invalid grants. They check the selected endpoint, signed client assertion,
+grant-specific fields, and absence of PoP request markers. They do not claim
+successful user-token issuance. A flag-off OBO control must use the ordinary
+endpoint. Default and custom-pipeline variants run independently; a flag-off
+custom client must not invoke the mTLS factory.
+The malformed OBO assertion specifically requires HTTP 400,
+`invalid_request`, and AADSTS50027; refresh/auth-code inputs require
+HTTP 400 and `invalid_grant`, never a credential or transport failure.
+
+Graph access tokens are opaque to the client: the suite checks the returned
+binding identity and lets Graph validate the same token through success and
+all three rejection controls. Readable JWT, SHA256 `cnf`, and audience assertions
+are reserved for lab resources with that token-format contract. Their audiences
+can use their verified URI or well-known application-ID alias: Key Vault
+`cfa8b339-82a2-471a-a3c9-0fc0be7a4093` and Storage
+`e406a681-f3d4-42a8-90b6-c2b029497af1`.
+FIC's exchange-scope leg-1 value is instead an opaque federated assertion,
+as in the pinned references, not a resource JWT contract. Its requested scope,
+PoP type, returned certificate, exact unchanged `jwt-pop` handoff, and real
+leg-2 redemption are required. Final Graph validation uses the resource;
+Key Vault and Storage retain strict format and audience checks.
+
+On trusted CI runs, all 21 required live methods (17 certificate and four FIC)
+run without skips, including tagged releases. Missing configuration, credential failures, and
+DNS/TLS failures are failures, not acceptable rejection evidence. They do not
+fetch unrelated user configuration from Key Vault. Legacy interactive and
+other optional E2E skips are unchanged.
+Fork PRs run the offline suite but do not schedule the credentialed E2E stage;
+that stage exclusion is not live E2E coverage.
+
+Feature-owned coverage is inherited from #938 (six base certificate methods
+and cache compatibility/scaling), #939 (two default FIC methods), #947 (five
+default Bearer-transport methods), and #974 (two custom-client methods).
+The combined suite retains six sibling-dependent live methods,
+cross-feature factory and two-certificate FIC regressions, and the complete
+21-method no-skip inventory. Core, FIC, Bearer, and custom-client offline guards
+are collected once from their feature-owned modules.
+
+Offline recorder/guard tests are separate from live evidence:
+
+```powershell
+python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_fic_e2e_helpers.py tests\test_bearer_mtls_e2e_helpers.py tests\test_mtls_http_e2e_helpers.py tests\test_mtls_http_client.py
+```
+
+Cache compatibility and write-scaling regressions run with
+`python -m pytest -q tests\test_token_cache.py`. They count actual access-token
+bucket visits and identity operations, requiring no steady-state bucket scans
+and linear population work while preserving legacy renewal and persistence.
+Native removal must delete equal canonical and legacy copies without a reload,
+while preserving renewed replacements and other certificates.
+
+These checks use local fixtures or synthetic responses to verify strict
+binding, safe recording, Graph rejection gates, the exact required-method inventory,
+and real unittest-runner failure rather than skip when credentials are missing.
+They render failure tracebacks with argument display enabled and locals disabled
+to check token-result, cache, FIC recording/factory, Graph, and recorder POST/setup helpers for
+tokens, client assertions, refresh credentials, and truncated token fragments.
+Recorder guards cover transport failures, malformed JSON, and invalid assertion
+signatures. Sample-output guards reject dynamic result values in printed summaries.
+Combined guards also check custom Bearer response types before every token-cache
+callback, constructor signed-claim rejection before a certificate-only PoP cache
+lookup, and continued support for forwarded claims and resource challenges.
+The two-certificate FIC loopback test replaces the PFX after leg 1 is cached and
+requires leg 2 to present the returned binding's original certificate, for both
+Bearer and PoP results. A newly constructed application may use the replacement;
+an existing application does not automatically rotate its certificate.
+The existing custom-HTTP loopback TLS tests remain in
+`tests\test_mtls_http_client.py`; they complement, not replace, live factory
+coverage. Recorders retain bounded status/error metadata, never raw forms,
+tokens, private keys, or client assertions.
+
+### Pinned confidential-client mTLS parity mapping
+
+The applicable active reference cases below are pinned, rather than inferred
+from similarly named scenarios:
+
+- .NET `c8b90e9de5bc4974de9928835532faac5c88e2d2`:
+  [client-credentials/FIC cases][dotnet-cc] and [transport/factory cases][dotnet-transport].
+- Go `903eb9f1e54e361525025ea27040ac9644b64358`:
+  [PoP, ordinary certificate, cache, and regional cases][go-pop].
+- Go `30f4770ffcbd9c4c51d278cdab6dbda71a0f7337`:
+  [regional FIC Bearer addition][go-fic] and [Bearer transport cases][go-bom].
+- Go HTTP follow-up `45e70aa9590f231fc1ef739da78eb91804c11dd6`:
+  [same active Bearer transport assertions][go-http], with API/comment changes,
+  not additional active custom-factory E2E cases.
+
+`C` means `tests.test_e2e.CertificateScenariosTestCase`; `F` means
+`tests.test_e2e.FicTwoLegTestCase`. Every row is applicable and live.
+
+| Active reference case(s) | Python method(s) | Required observation |
+| --- | --- | --- |
+| Go `TestCredential_X509_Output_Pop`; .NET `Credential_X509_Output_Pop_TestAsync` | `C.test_credential_x509_output_pop`, `C.test_credential_x509_custom_http_output_pop` | Nonempty opaque Graph PoP, matching returned certificate, resource HTTP 200, and all three same-token rejection controls; both paths repeat from cache. Custom case proves the derived factory pipeline. |
+| Go `TestCredential_X509_Output_Bearer` | `C.test_credential_x509_output_bearer` | Ordinary westus3 Key Vault Bearer, no output binding, signed certificate assertion, cache repeat. The ordinary regional POST retains the central assertion audience by design. |
+| Go `TestCredential_X509_Output_Pop_Regional` | `C.test_credential_x509_output_pop_regional` | westus3 Key Vault PoP, certificate/JWT binding, same cached token and type; not a redirected global Graph cell. |
+| Go `TestConfidentialClientSNIBearerAndMtlsPoPCacheIsolated` | `C.test_bearer_then_mtls_pop_cache_isolated` | One app/cache/scope, Bearer then PoP, distinct tokens and schemes, no Bearer binding, both cache results preserved. |
+| Go `TestConfidentialClientSNIMtlsPoPThenBearerCacheIsolated` | `C.test_mtls_pop_then_bearer_cache_isolated` | Reverse acquisition order with the same isolation and reusable PoP result. |
+| Go `TestSendCertificateOverMtls_ClientCredential_Live`; .NET `Credential_X509_Output_Bearer_TestAsync` | `C.test_credential_x509_send_certificate_over_mtls_output_bearer` | Built-in real mTLS POST, westus3 Key Vault Bearer, signed client assertion, no PoP markers/output binding, cached repeat. |
+| Go `TestTwoLegFICMtlsPoP_SNI`; .NET `Credential_Fic_Output_Pop_TestAsync` / `RunTwoLegS2sFicBothLegsPopAsync` | `F.test_credential_fic_output_pop`, `F.test_credential_fic_custom_http_output_pop` | Global exchange leg 1 to Graph leg 2, provider invoked, exact leg-1 assertion sent as `jwt-pop` with its returned certificate binding, final PoP type, resource HTTP 200, and all three same-token rejection controls without inspecting Graph token claims. |
+| Go `TestTwoLegFICMtlsBearer_SNI`; .NET `Credential_Fic_Output_Bearer_TestAsync` | `F.test_credential_fic_output_bearer`, `F.test_credential_fic_custom_http_output_bearer` | westus3 exchange to Storage, provider and actual `jwt-pop` wire shape, certificate continuity, Storage Bearer audience, no final binding or downstream mTLS resource call. |
+| Go `TestSendCertificateOverMtls_OnBehalfOf_RequestCapture`; .NET `OboFlow_WithSendCertificateOverMtls_BothMtlsConditionsMet` | `C.test_send_certificate_over_mtls_on_behalf_of_request_capture`, `C.test_custom_http_send_certificate_over_mtls_on_behalf_of_request_capture` | Live HTTP 400 / `invalid_request` / AADSTS50027 over real mTLS; OBO grant and `requested_token_use`, signed `jwt-bearer`, mtlsauth URL, no PoP markers. |
+| .NET `RefreshTokenFlow_WithSendCertificateOverMtls_BothMtlsConditionsMet` | `C.test_send_certificate_over_mtls_refresh_token_request_capture`, `C.test_custom_http_send_certificate_over_mtls_refresh_token_request_capture` | Live invalid-grant rejection, actual refresh-token grant and signed assertion over the real selected mTLS pipeline. |
+| Go `TestSendCertificateOverMtls_AuthCode_RequestCapture`; .NET `AuthCodeFlow_WithSendCertificateOverMtls_BothMtlsConditionsMetAsync` | `C.test_send_certificate_over_mtls_auth_code_request_capture`, `C.test_custom_http_send_certificate_over_mtls_auth_code_request_capture` | Live invalid-grant rejection, authorization-code/redirect fields, signed assertion, real mTLS endpoint, no PoP markers. |
+| .NET `OboFlow_WithoutSendCertificateOverMtls_UsesRegularEndpointAsync` | `C.test_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint`, `C.test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint` | Live rejection capture at the ordinary endpoint with signed assertion; custom control creates no certificate-scoped child. |
+| .NET `ClientCredentials_WithSendCertificateOverMtls_BothMtlsConditionsMet` | `C.test_credential_x509_custom_http_send_certificate_over_mtls_output_bearer` | Successful westus3 Key Vault Bearer acquisition through `create_mtls_client(binding_context)` and its derived real POST pipeline, middleware and caller-owned cleanup intact. |
+
+The retained `C.test_subject_name_issuer_authentication` is an additional
+required legacy SN/I lab cell. Supported PoP/FIC custom-pipeline combinations
+exercise the combined features without adding SDK APIs.
+
+Excluded explicitly: IMDSv2; non-exportable/VBS/provider-backed keys; managed
+identity; unrelated legacy skips; Go's disabled/opt-in successful OBO and
+refresh acquisitions; .NET's disabled `OboFlow_AcquiresTokenAsync` and
+`RefreshTokenFlow_AcquiresTokenAsync`; and .NET-only callback correlation-ID
+options without a Python API equivalent. This suite does not provision apps
+or claim repository-wide skip elimination.
+
+[dotnet-cc]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/tests/Microsoft.Identity.Test.Integration.netcore/HeadlessTests/ClientCredentialsMtlsPopTests.cs
+[dotnet-transport]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/tests/Microsoft.Identity.Test.Integration.netcore/HeadlessTests/MtlsTransportUserFlowTests.cs
+[go-pop]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/903eb9f1e54e361525025ea27040ac9644b64358/apps/tests/integration/mtls_pop_integration_test.go
+[go-fic]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/30f4770ffcbd9c4c51d278cdab6dbda71a0f7337/apps/tests/integration/mtls_pop_integration_test.go
+[go-bom]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/30f4770ffcbd9c4c51d278cdab6dbda71a0f7337/apps/tests/integration/bearer_mtls_integration_test.go
+[go-http]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/45e70aa9590f231fc1ef739da78eb91804c11dd6/apps/tests/integration/bearer_mtls_integration_test.go
+
+The Government alias mapping follows the same pinned .NET
+[known cloud metadata][dotnet-clouds] and
+[regional/mTLS transformation][dotnet-mtls-hosts].
+
+[dotnet-clouds]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/src/client/Microsoft.Identity.Client/Instance/Discovery/KnownCloudData.cs
+[dotnet-mtls-hosts]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/src/client/Microsoft.Identity.Client/Instance/Discovery/RegionAndMtlsDiscoveryProvider.cs
+
+### Custom HTTP source coverage
+
+The #974 source contributes the two methods below to this combined 21-method
+inventory. On trusted runs they execute in `CertificateScenariosTestCase`
+and fail, rather than skip, when the required lab certificate is missing or
+invalid. The additional custom Bearer and FIC cases are mapped above.
+
+| Required method | Observation |
+| --- | --- |
+| `test_credential_x509_custom_http_output_pop` | Real Graph PoP acquisition through the derived certificate-aware factory pipeline, returned certificate binding, the same cached token treated as opaque, resource HTTP 200 and all three same-token rejection controls, preserved sample middleware, and caller-owned cleanup. |
+| `test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint` | Ordinary custom-client OBO POST with the mTLS flag off, signed certificate assertion and exact HTTP 400 / `invalid_request` / AADSTS50027 rejection; no derived certificate-bearing child is created. This is a malformed-user-assertion request capture, not a successful OBO acquisition. |
+
+These #974 source tests exercise the existing factory API. They do not add
+Bearer-over-mTLS or FIC APIs, and do not claim live custom-Bearer or real
+custom-FIC integration coverage; those combined cases remain in the combined
+follow-up. Collecting these tests or passing the offline guards is not evidence
+that a live service run passed.
+
+The custom recorder is isolated in `tests\mtls_http_e2e_helpers.py`; generic
+recording/binding helpers remain in `tests\mtls_e2e_helpers.py`, without a
+dependency on the custom sample in the foundation branch. Run its offline
+privacy/lifecycle guards and existing loopback suite with:
+
+```powershell
+python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_mtls_http_e2e_helpers.py tests\test_mtls_http_client.py
+```
+
+The custom-recorder privacy guards render actual pytest failures with argument
+display enabled and locals disabled to check constructor/POST/capture redaction.
+The lifecycle guard retains the sample's response middleware and owner/child cleanup.
+`test_custom_capture_failure_traceback_hides_the_expected_assertion` mocks
+acquisition: it checks generic recorder privacy, not real FIC support.
+The custom sample's output guard prevents dynamic error values from being
+printed, and the real loopback TLS fixture explicitly requires TLS 1.2 or newer.
+Offline custom guards also cover key/leaf preflight before cache or factory use,
+encrypted temporary TLS keys, per-app PEM/PFX snapshots, ordinary PFX signing
+without mTLS issuer validation, and opaque Graph cache/resource-control behavior.
 
 ## 5) Manual-intervention E2E tests
 
