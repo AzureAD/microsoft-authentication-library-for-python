@@ -1210,6 +1210,81 @@ class ReleasedCacheCompatibilityTestCase(unittest.TestCase):
                             scheme, "thumb", target=["other-scope"])])
                     self.assertNotIn("legacy:duplicate", entries)
 
+    def test_modify_retires_original_access_token_identity(self):
+        changes = (
+            {"key_id": "Other"},
+            {"token_type": "Bearer", "key_id": None},
+            {"target": "other-scope"},
+            {"ext_cache_key": "other-claims"},
+        )
+        for cache_type in (TokenCache, SerializableTokenCache):
+            for change in changes:
+                with self.subTest(cache_type=cache_type.__name__, change=change):
+                    self.cache = cache_type()
+                    self.cache.add(self.event("mtls_pop", "old"), now=1000)
+                    old = self.search("mtls_pop", "Thumb")[0]
+                    self.cache.modify("AccessToken", old, change)
+                    expected = dict(old, **change)
+                    self.assertEqual([expected], self.search(for_removal=True))
+                    self.cache.remove_at(expected)
+                    self.assertEqual([], self.search(for_removal=True))
+
+    def test_modify_preserves_renewed_original_and_unrelated_identities(self):
+        from msal import token_cache
+
+        for change in ({"key_id": "Other"}, {"token_type": "Bearer"}):
+            with self.subTest(change=change):
+                self.cache = TokenCache()
+                self.cache.add(self.event("mtls_pop", "old"), now=1000)
+                old = self.search("mtls_pop", "Thumb")[0]
+                self.cache.add(self.event("mtls_pop", "renewed"), now=1001)
+                self.cache.add(self.event(
+                    "mtls_pop", "other-certificate", key_id="unrelated"), now=1000)
+                self.cache.add(self.event(
+                    "ssh-cert", "other-scheme", scopes=["other-scope"]), now=1000)
+                for bucket in ("AccessToken", "AccessToken_mTLS"):
+                    entries = dict(self.cache._cache.get(bucket, {}))
+                    entries["legacy:old"] = dict(old)
+                    self.cache._cache[bucket] = entries
+                self.cache.modify("AccessToken", old, change)
+                expected = dict(old, **change)
+                identity = token_cache._access_token_identity(old)
+                self.assertEqual(["renewed"], [
+                    entry["secret"] for entry in self.search()
+                    if token_cache._access_token_identity(entry) == identity])
+                self.cache.remove_at(expected)
+                self.assertEqual(
+                    ["other-certificate", "other-scheme", "renewed"],
+                    sorted(entry["secret"] for entry in self.search()))
+                for bucket in self.cache._cache.values():
+                    self.assertNotIn("legacy:old", bucket)
+
+    def test_modify_identity_change_uses_only_indexed_locations(self):
+        from msal import token_cache
+
+        for count in (100, 1000, 10000):
+            with self.subTest(count=count):
+                self.cache, buckets = self.canonical_cache(count)
+                self.cache.add(self.event("mtls_pop", "old"), now=1000)
+                old = self.search("mtls_pop", "Thumb")[0]
+                entries = _CountingAccessTokenEntries(
+                    self.cache._cache["AccessToken"])
+                entries["legacy:duplicate"] = dict(old)
+                self.cache._cache["AccessToken"] = entries
+                buckets["AccessToken"] = entries
+                self.cache._get_access_token_index()
+                for bucket in buckets.values():
+                    bucket.visits = 0
+                with patch.object(
+                        token_cache, "_access_token_identity",
+                        wraps=token_cache._access_token_identity) as identity:
+                    self.cache.modify("AccessToken", old, {"key_id": "Other"})
+                self.assertEqual(0, sum(bucket.visits for bucket in buckets.values()))
+                self.assertLessEqual(identity.call_count, 4)
+                self.assertEqual([], self.search("mtls_pop", "Thumb"))
+                self.assertEqual(["old"], [
+                    entry["secret"] for entry in self.search("mtls_pop", "Other")])
+
     def test_native_duplicate_removal_uses_only_indexed_identity_locations(self):
         from msal import token_cache
 
