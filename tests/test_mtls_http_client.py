@@ -128,6 +128,197 @@ class TestMtlsHttpClientFactory(unittest.TestCase):
                 self.assertIs(False, request.kwargs["allow_redirects"])
                 self.ordinary.post.assert_not_called()
 
+    def _redeem_bearer_grant(self, client, grant, **kwargs):
+        if grant == "refresh_token":
+            return client.obtain_token_by_refresh_token(
+                "original-refresh-token", scope=["s1"], **kwargs)
+        forms = {
+            "client_credentials": {},
+            "authorization_code": {"code": "authorization-code"},
+            "urn:ietf:params:oauth:grant-type:jwt-bearer": {
+                "assertion": "user-assertion", "requested_token_use": "on_behalf_of"},
+            "password": {"username": "unit@example.com", "password": "unit-password"},
+            "urn:ietf:params:oauth:grant-type:saml1_1-bearer": {
+                "assertion": "unit-saml-assertion"},
+            "urn:ietf:params:oauth:grant-type:saml2-bearer": {
+                "assertion": "unit-saml-assertion"},
+            "user_fic": {"user_federated_identity_credential": "unit-user-fic"},
+        }
+        return client._obtain_token(
+            grant, data=dict(forms[grant], scope=["s1"]), **kwargs)
+
+    def test_bearer_factory_rejects_response_types_before_all_cache_callbacks(
+            self, discovery):
+        grants = (
+            "client_credentials", "authorization_code", "refresh_token",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer", "password",
+            "urn:ietf:params:oauth:grant-type:saml1_1-bearer",
+            "urn:ietf:params:oauth:grant-type:saml2-bearer", "user_fic",
+        )
+        for grant in grants:
+            for token_type in (None, "", "mtls_pop", "ssh-cert"):
+                for override_callback in (False, True):
+                    with self.subTest(
+                            grant=grant, token_type=token_type,
+                            override_callback=override_callback):
+                        response = {
+                            "access_token": "must-not-cache",
+                            "refresh_token": "must-not-update",
+                            "expires_in": 3600,
+                        }
+                        if token_type is not None:
+                            response["token_type"] = token_type
+                        pipeline = Mock(spec=["post"])
+                        pipeline.post.return_value = MinimalResponse(
+                            status_code=200, text=json.dumps(response))
+                        self.ordinary.create_mtls_client.return_value = pipeline
+                        app = self._app(client_credential=dict(
+                            _CREDENTIAL, send_certificate_over_mtls=True))
+                        client = app._get_mtls_bearer_client(app.authority)
+                        client.on_obtaining_tokens = Mock(
+                            wraps=client.on_obtaining_tokens)
+                        client.on_removing_rt = Mock()
+                        client.on_updating_rt = Mock()
+                        callback = Mock()
+                        result = self._redeem_bearer_grant(
+                            client, grant, **(
+                                {"on_obtaining_tokens": callback}
+                                if override_callback else {}))
+                        self.assertEqual("token_type_mismatch", result.get("error"))
+                        self.assertNotIn("access_token", result)
+                        self.assertNotIn("refresh_token", result)
+                        self.assertNotIn("binding_certificate", result)
+                        self.assertNotIn("must-not-cache", json.dumps(result))
+                        self.assertNotIn("must-not-update", json.dumps(result))
+                        client.on_obtaining_tokens.assert_not_called()
+                        client.on_removing_rt.assert_not_called()
+                        client.on_updating_rt.assert_not_called()
+                        callback.assert_not_called()
+                        self.assertEqual({}, app.token_cache._cache)
+                        pipeline.post.assert_called_once()
+        self.ordinary.post.assert_not_called()
+
+    def test_bearer_factory_preserves_oauth_errors_and_refresh_removal(
+            self, discovery):
+        error = {
+            "error": "invalid_grant", "error_description": "Unit grant rejected.",
+            "error_codes": [50027],
+        }
+        for grant in ("client_credentials", "authorization_code", "refresh_token",
+                      "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                      "password", "user_fic"):
+            with self.subTest(grant=grant):
+                pipeline = Mock(spec=["post"])
+                pipeline.post.return_value = MinimalResponse(
+                    status_code=400, text=json.dumps(error))
+                self.ordinary.create_mtls_client.return_value = pipeline
+                app = self._app(client_credential=dict(
+                    _CREDENTIAL, send_certificate_over_mtls=True))
+                client = app._get_mtls_bearer_client(app.authority)
+                client.on_obtaining_tokens = Mock()
+                client.on_removing_rt = Mock()
+                client.on_updating_rt = Mock()
+                result = self._redeem_bearer_grant(client, grant)
+                self.assertEqual(error, result)
+                client.on_obtaining_tokens.assert_not_called()
+                client.on_updating_rt.assert_not_called()
+                if grant == "refresh_token":
+                    client.on_removing_rt.assert_called_once_with(
+                        "original-refresh-token")
+                else:
+                    client.on_removing_rt.assert_not_called()
+                self.assertEqual({}, app.token_cache._cache)
+                pipeline.post.assert_called_once()
+        self.ordinary.post.assert_not_called()
+
+    def test_certificate_only_claims_fail_before_custom_factory_and_warm_cache(
+            self, discovery):
+        for send in (False, True):
+            producer_pipeline = Mock(spec=["post"])
+            producer_pipeline.post.return_value = MinimalResponse(
+                status_code=200, text=_TOKEN)
+            self.ordinary.create_mtls_client.return_value = producer_pipeline
+            producer = self._app(client_credential=dict(
+                _CREDENTIAL, send_certificate_over_mtls=send))
+            producer.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True)
+            cached = producer.acquire_token_for_client(
+                ["s1"], mtls_proof_of_possession=True)
+            self.assertEqual("cache", cached["token_source"])
+            self.assertEqual("mtls_pop", cached["token_type"])
+            producer_pipeline.post.assert_called_once()
+            for warm in (False, True):
+                with self.subTest(send=send, warm=warm):
+                    pipeline = Mock(spec=["post"])
+                    pipeline.post.return_value = MinimalResponse(
+                        status_code=200, text=_TOKEN)
+                    self.ordinary.create_mtls_client.return_value = pipeline
+                    app = self._app(
+                        client_credential=dict(
+                            _CREDENTIAL, send_certificate_over_mtls=send),
+                        client_claims={"unit_signed_claim": "required"},
+                        token_cache=producer.token_cache if warm else msal.TokenCache())
+                    self.ordinary.reset_mock()
+                    with patch.object(
+                            app, "_acquire_token_silent_with_error",
+                            wraps=app._acquire_token_silent_with_error) as cache:
+                        with self.assertRaisesRegex(ValueError, "client_claims"):
+                            app.acquire_token_for_client(
+                                ["s1"], mtls_proof_of_possession=True)
+                        cache.assert_not_called()
+                    self.ordinary.create_mtls_client.assert_not_called()
+                    pipeline.post.assert_not_called()
+                    self.ordinary.post.assert_not_called()
+
+    def test_custom_pop_preserves_forwarded_claims_and_resource_challenges(
+            self, discovery):
+        forwarded = {"access_token": {"unit_forwarded": {"value": "forwarded"}}}
+        challenge = {"access_token": {"unit_challenge": {"essential": True}}}
+        app = self._app(client_claims={})
+        result = app.acquire_token_for_client(
+            ["s1"], mtls_proof_of_possession=True,
+            forwarded_client_claims=json.dumps(forwarded),
+            claims_challenge=json.dumps(challenge))
+        self.assertEqual("mtls_pop", result["token_type"])
+        data = self.pipeline.post.call_args.kwargs["data"]
+        self.assertEqual({
+            "access_token": dict(
+                forwarded["access_token"], **challenge["access_token"]),
+        }, json.loads(data["claims"]))
+        self.assertNotIn("client_assertion", data)
+        self.assertNotIn("client_claims", data)
+        self.ordinary.post.assert_not_called()
+
+    def test_constructor_claims_remain_supported_for_custom_bearer_and_fic(
+            self, discovery):
+        for fic, pop in ((False, False), (True, False), (True, True)):
+            with self.subTest(fic=fic, pop=pop):
+                pipeline = Mock(spec=["post"])
+                pipeline.post.return_value = MinimalResponse(
+                    status_code=200, text=json.dumps({
+                        "access_token": "accepted-claims-at", "expires_in": 3600,
+                        "token_type": "mtls_pop" if pop else "Bearer"}))
+                self.ordinary.create_mtls_client.return_value = pipeline
+                credential = {
+                    "client_assertion": lambda: "leg-one-assertion",
+                    "mtls_binding_certificate": _CREDENTIAL,
+                } if fic else dict(_CREDENTIAL, send_certificate_over_mtls=True)
+                app = self._app(
+                    client_credential=credential,
+                    client_claims={"unit_signed_claim": "required"})
+                result = app.acquire_token_for_client(
+                    ["s1"], mtls_proof_of_possession=pop)
+                self.assertEqual("mtls_pop" if pop else "Bearer", result["token_type"])
+                self.assertEqual(pop, "binding_certificate" in result)
+                data = pipeline.post.call_args.kwargs["data"]
+                self.assertTrue(data["client_assertion"])
+                self.assertEqual(
+                    "urn:ietf:params:oauth:client-assertion-type:jwt-pop" if fic
+                    else "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                    data["client_assertion_type"])
+                pipeline.post.assert_called_once()
+        self.ordinary.post.assert_not_called()
+
     def test_bearer_and_pop_share_pipeline_without_sharing_token_cache_keys(
             self, discovery):
         app = self._app(client_credential=dict(
@@ -781,7 +972,9 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
                             and certificate == owner.client_der[0]):
                         status, response = 400, {"error": "invalid_client"}
                     else:
-                        response["token_type"] = "mtls_pop"
+                        response["token_type"] = (
+                            "mtls_pop" if data.get("token_type") == ["mtls_pop"]
+                            else "Bearer")
                 payload = json.dumps(response).encode("utf-8")
                 self.send_response(status)
                 if status == 307 and data.get("scope") != ["redirect-without-location"]:
@@ -803,7 +996,7 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
         self.addCleanup(self.http_client.close)
 
     def _app(self, http_client=None, certificate=0, discover=True,
-             credential=None, **kwargs):
+             client_credential=None, **kwargs):
         def discovery(endpoint, client):
             response = client.get(self.url + "/metadata")
             response.raise_for_status()
@@ -814,8 +1007,9 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
                    return_value=dict(_METADATA, token_endpoint=self.url + _ORDINARY_PATH)):
             return msal.ConfidentialClientApplication(
                 "cid", authority=_AUTHORITY,
-                client_credential=(self.credentials[certificate]
-                                   if credential is None else credential),
+                client_credential=(
+                    self.credentials[certificate] if client_credential is None
+                    else client_credential),
                 http_client=self.http_client if http_client is None else http_client,
                 azure_region=False, instance_discovery=False, **kwargs)
 
@@ -914,13 +1108,13 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
                     }
                 cache = msal.TokenCache()
                 first = self._app(
-                    credential=credential, token_cache=cache, discover=False)
+                    client_credential=credential, token_cache=cache, discover=False)
                 if source == "pem":
                     credential.update(self.credentials[1])
                 else:
                     self._write_pfx(pfx_path, 1)
                 rotated = self._app(
-                    credential=credential, token_cache=cache, discover=False)
+                    client_credential=credential, token_cache=cache, discover=False)
                 start = len(self.records)
                 first.acquire_token_for_client(["ordinary-snapshot-" + source])
                 original = self._acquire(first)
@@ -960,7 +1154,7 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
         }
         with patch("msal.application._is_certificate_issuer", side_effect=(
                 UnsupportedAlgorithm("Unsupported test issuer signature."))) as issuer:
-            app = self._app(credential=credential, discover=False)
+            app = self._app(client_credential=credential, discover=False)
             result = app.acquire_token_for_client(["ordinary"])
             cached = app.acquire_token_for_client(["ordinary"])
             issuer.assert_not_called()
@@ -1009,6 +1203,77 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
         self.assertEqual("cache", cached["token_source"])
         self.assertEqual(results[0]["binding_certificate"].thumbprint_sha256,
                          cached["binding_certificate"].thumbprint_sha256)
+
+    def test_fic_custom_pipeline_keeps_cached_assertion_binding_after_pfx_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fic.pfx")
+            self._write_pfx(path, 0)
+            credential = {
+                "private_key_pfx_path": path, "passphrase": "snapshot-test",
+                "public_certificate": True,
+            }
+            leg1 = self._app(
+                discover=False, client_credential=credential)
+            original = self._acquire(leg1, "exchange")
+            self._write_pfx(path, 1)
+            cached = self._acquire(leg1, "exchange")
+            self.assertEqual("cache", cached["token_source"])
+            self.assertEqual(original["access_token"], cached["access_token"])
+            self.assertEqual(
+                original["binding_certificate"].thumbprint_sha256,
+                cached["binding_certificate"].thumbprint_sha256)
+
+            for pop in (False, True):
+                with self.subTest(pop=pop):
+                    assertion = Mock(return_value=cached["access_token"])
+                    leg2 = self._app(discover=False, client_credential={
+                        "client_assertion": assertion,
+                        "mtls_binding_certificate": cached["binding_certificate"],
+                    })
+                    with patch("msal.mtls.transform_token_endpoint",
+                               return_value=self.url + _TOKEN_PATH):
+                        result = leg2.acquire_token_for_client(
+                            ["final"], mtls_proof_of_possession=pop)
+                        repeated = leg2.acquire_token_for_client(
+                            ["final"], mtls_proof_of_possession=pop)
+                    self.assertEqual(
+                        "mtls_pop" if pop else "Bearer", result["token_type"])
+                    self.assertEqual(pop, "binding_certificate" in result)
+                    self.assertEqual("cache", repeated["token_source"])
+                    self.assertEqual(result["access_token"], repeated["access_token"])
+                    assertion.assert_called_once_with()
+                    request = self.records[-1]
+                    self.assertEqual(self.client_der[0], request["certificate"])
+                    self.assertEqual(
+                        [cached["access_token"]], request["data"]["client_assertion"])
+                    self.assertEqual(
+                        ["urn:ietf:params:oauth:client-assertion-type:jwt-pop"],
+                        request["data"]["client_assertion_type"])
+                    self.assertEqual(
+                        ["mtls_pop"] if pop else None,
+                        request["data"].get("token_type"))
+                    self.assertNotIn("key_id", request["data"])
+                    self.assertNotIn("req_cnf", request["data"])
+                    if pop:
+                        for token in (result, repeated):
+                            self.assertEqual(
+                                cached["binding_certificate"].thumbprint_sha256,
+                                token["binding_certificate"].thumbprint_sha256)
+
+            replacement = self._app(
+                discover=False, client_credential=credential)
+            renewed = self._acquire(replacement, "exchange")
+            self.assertNotEqual(
+                cached["binding_certificate"].thumbprint_sha256,
+                renewed["binding_certificate"].thumbprint_sha256)
+        self.assertEqual(
+            [self.client_der[0]] * 3 + [self.client_der[1]],
+            [record["certificate"] for record in self.records])
+        self.assertTrue(all(
+            record["path"] == _TOKEN_PATH
+            and record["middleware"] == "custom-policy"
+            for record in self.records))
+        self.assertEqual(4, len(self.http_client._children))
 
     def test_effective_ca_settings_and_verification_pools(self):
         from cryptography import x509

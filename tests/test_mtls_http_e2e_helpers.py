@@ -249,6 +249,78 @@ class TestCustomMtlsE2eHelpers(CertificateFixture):
         self.assertEqual(
             "custom-policy", pipelines[0]._children[0].token_requests[0]["middleware"])
 
+    def test_custom_fic_accepts_opaque_graph_token_and_keeps_same_token_controls(self):
+        scenario = test_e2e.FicTwoLegTestCase(
+            "test_credential_fic_custom_http_output_pop")
+        authority = scenario._SNI_ALLOWLISTED_AUTHORITY
+        metadata = {
+            "authorization_endpoint": authority + "/oauth2/v2.0/authorize",
+            "token_endpoint": authority + "/oauth2/v2.0/token",
+            "issuer": authority + "/v2.0",
+        }
+        assertion = "opaque-leg-one-unit-assertion"
+        token = "opaque-or-encrypted-graph-unit-token"
+        wrong_binding = unrelated_binding()
+        posts, resource_requests, resource_bindings = [], [], []
+        create_session = msal.MtlsBindingContext.create_requests_session
+
+        def session_for(binding, *args, **kwargs):
+            resource_bindings.append(binding)
+            return create_session(binding, *args, **kwargs)
+
+        def send(adapter, request, **kwargs):
+            response = requests.Response()
+            response.request = request
+            response.status_code = 200
+            if request.method == "POST":
+                form = parse_qs(request.body)
+                posts.append(form)
+                value = assertion if len(posts) == 1 else token
+                response._content = (
+                    '{"access_token": "%s", "token_type": "mtls_pop", '
+                    '"expires_in": 3600}' % value).encode("ascii")
+            else:
+                resource_requests.append(request)
+                index = len(resource_requests) - 1
+                response.status_code = 200 if index == 0 else 401
+                response._content = (
+                    b'{"value": []}' if index == 0
+                    else GRAPH_REJECTION_MARKERS[index - 1].encode("ascii"))
+            return response
+
+        with patch("msal.authority.tenant_discovery", return_value=metadata), patch.object(
+                scenario, "_certificate", return_value=(_CREDENTIAL, self.binding)), patch(
+                "tests.test_e2e.unrelated_binding", return_value=wrong_binding), patch.object(
+                requests.adapters.HTTPAdapter, "send", autospec=True,
+                side_effect=send), patch.object(
+                msal.MtlsBindingContext, "create_requests_session",
+                autospec=True, side_effect=session_for):
+            try:
+                scenario.test_credential_fic_custom_http_output_pop()
+            finally:
+                scenario.doCleanups()
+
+        self.assertEqual(2, len(posts))
+        self.assertEqual(
+            ["api://AzureADTokenExchange/.default"], posts[0]["scope"])
+        self.assertNotIn("client_assertion", posts[0])
+        self.assertEqual(["https://graph.microsoft.com/.default"], posts[1]["scope"])
+        self.assertEqual([assertion], posts[1]["client_assertion"])
+        self.assertEqual(
+            ["urn:ietf:params:oauth:client-assertion-type:jwt-pop"],
+            posts[1]["client_assertion_type"])
+        self.assertTrue(all(post["token_type"] == ["mtls_pop"] for post in posts))
+        self.assertEqual(
+            ["mtls_pop " + token, "mtls_pop " + token,
+             "Bearer " + token, "mtls_pop " + token],
+            [request.headers["Authorization"] for request in resource_requests])
+        self.assertTrue(all(
+            request.url == scenario._MTLS_GRAPH_RESOURCE
+            for request in resource_requests))
+        self.assertEqual(
+            [self.binding.thumbprint_sha256] * 2 + [wrong_binding.thumbprint_sha256],
+            [binding.thumbprint_sha256 for binding in resource_bindings])
+
     def test_custom_recorder_retains_sample_pipeline_and_owner_cleanup(self):
         def send(adapter, request, **kwargs):
             response = self._response()
