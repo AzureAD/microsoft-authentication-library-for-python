@@ -931,7 +931,7 @@ class FicTwoLegTestCase(MtlsPopTestCase):
             azure_region=azure_region, http_client=leg2_http,
             credential={
                 "client_assertion": assertion_provider,
-                "mtls_binding_certificate": credential})
+                "mtls_binding_certificate": leg1["binding_certificate"]})
         result, leg2_requests = self._acquire_recorded(
             leg2_app, scope, binding, pop=mtls_proof_of_possession,
             http_client=leg2_http, expected_assertion=leg1["access_token"])
@@ -967,7 +967,7 @@ class FicTwoLegTestCase(MtlsPopTestCase):
         _, result = self._acquire_fic_token(
             self._MTLS_POP_SCOPE, azure_region=False,
             mtls_proof_of_possession=True)
-        self._call_graph_with_mtls_pop_token(
+        self._assert_graph_token_binding(
             result["access_token"], result["binding_certificate"])
 
     def test_credential_fic_custom_http_output_bearer(self):

@@ -55,6 +55,20 @@ token must not contain `binding_certificate` or trigger a downstream mTLS call.
 Missing or invalid certificates and real token-acquisition errors fail the
 FIC tests rather than skipping or accepting an error as success.
 
+All four FIC variants require real token POST evidence for each leg,
+the expected global or `westus3` mTLS endpoint, and the same lab certificate.
+Leg 2 must invoke the assertion provider and send its exact, unchanged leg-1
+value as a `jwt-pop` client assertion. The exchange assertion may be opaque;
+it is not assumed to be a resource JWT. Leg 2 receives the actual
+`MtlsBindingContext` returned with the leg-1 assertion rather than reloading
+the PFX path. The sample also checks binding continuity when the callable
+renews the assertion. Final Storage Bearer tokens must have the Storage
+audience. Graph owns its token format: the final Graph token is treated as
+opaque and requires matching returned certificate binding plus HTTP 200 from
+the mTLS Graph resource using that context, not client-side JWT inspection.
+The same token must also fail the shared no-certificate, wrong-certificate,
+and Bearer-scheme controls with their exact rejection markers.
+
 Both cells also run through a caller-owned recording HTTP factory. The factory
 uses the sample's real certificate-scoped Requests adapter, preserves its policy
 header and response middleware, and owns cleanup of the derived client. These
@@ -64,6 +78,21 @@ Run all four live FIC variants with:
 
 ```powershell
 python -m pytest -q tests\test_e2e.py::FicTwoLegTestCase
+```
+
+The offline `tests\test_fic_e2e_helpers.py` checks the two-leg provider/wire
+contract, opaque exchange and Graph tokens, strict final binding/type and
+Storage audience, Graph rejection failures, and exact assertion handoff.
+`tests.test_application.TestFicCertificateHandoff` replaces a PFX with a second
+certificate after caching the leg-1 assertion, checks both token and actual
+TLS certificate/key continuity, and checks renewal and Bearer/PoP output
+contracts without reopening that file. The recorder privacy regression uses
+pytest's actual traceback renderer with arguments shown and locals disabled,
+and rejects full tokens and truncated token fragments. These offline guards
+do not replace live acquisitions or the combined custom-factory checks.
+
+```powershell
+python -m pytest -q tests\test_application.py::TestFicCertificateHandoff tests\test_fic_e2e_helpers.py tests\test_lab_config.py tests\test_e2e.py::FicScenarioTestCase
 ```
 
 ### Exportable-certificate scope and deferred protected keys

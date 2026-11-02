@@ -37,7 +37,9 @@ For the optional FIC sample, also configure::
 
 The leg-1 app must be authorized for mTLS PoP at the exchange audience. The
 leg-2 app's federated identity credential must trust the leg-1 token's issuer,
-subject, and audience. Both legs use the SAME local certificate.
+subject, and audience. Leg 2 reuses the actual certificate binding returned
+with the leg-1 assertion, not a second load of the PFX path. Each application
+keeps its certificate snapshot; replacing the file does not rotate those apps.
 
 Then run::
 
@@ -171,14 +173,28 @@ def fic_two_leg_over_mtls_pop():
     exchange_scope = os.getenv(
         "FIC_EXCHANGE_SCOPE", "api://AzureADTokenExchange/.default")
 
-    def get_leg1_assertion():
+    def acquire_leg1():
         # Reuse the leg-1 cache, acquiring a fresh token when the old one expires.
         leg1 = leg1_app.acquire_token_for_client(
             [exchange_scope], mtls_proof_of_possession=True)
-        if "access_token" not in leg1:
+        if not leg1.get("access_token"):
             _print_result_summary(leg1, "FIC leg 1 result:")
+            raise RuntimeError("FIC leg 1 failed; inspect the result to diagnose.")
+        if (leg1.get("token_type") != "mtls_pop" or not isinstance(
+                leg1.get("binding_certificate"), msal.MtlsBindingContext)):
+            raise RuntimeError("FIC leg 1 must return an mTLS PoP certificate binding.")
+        return leg1
+
+    first_leg1 = acquire_leg1()
+    binding = first_leg1["binding_certificate"]
+
+    def get_leg1_assertion():
+        leg1 = acquire_leg1()
+        current_binding = leg1["binding_certificate"]
+        if (current_binding.thumbprint_sha256 != binding.thumbprint_sha256
+                or current_binding.x5c != binding.x5c):
             raise RuntimeError(
-                "FIC leg 1 failed: {}".format(leg1.get("error")))
+                "FIC leg 1 certificate binding changed; recreate both applications.")
         return leg1["access_token"]
 
     # --- Leg 2: exchange the leg-1 token for the final token ---------------
@@ -187,7 +203,7 @@ def fic_two_leg_over_mtls_pop():
         authority=os.environ["LEG2_AUTHORITY"],
         client_credential={
             "client_assertion": get_leg1_assertion,
-            "mtls_binding_certificate": cert,
+            "mtls_binding_certificate": binding,
         },
         azure_region=os.getenv("AZURE_REGION"),
     )
