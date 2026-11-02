@@ -45,6 +45,8 @@ Windows CNG or non-exportable-key support. Each application retains a fixed
 certificate snapshot for signing, TLS, and cache binding. Construct a new
 application to rotate a file credential. Temporary TLS keys are encrypted with
 a random process-local password and removed after loading.
+Ordinary PFX assertions retain leaf-only handling; full-chain issuer verification
+is deferred until the application requests mTLS certificate material.
 
 Protected-key support is a separate, deferred deliverable, not covered by this
 lab's parity claims. Its Windows acceptance test must prove that the private
@@ -169,12 +171,12 @@ The Government alias mapping follows the same pinned .NET
 
 This branch adds two required cells to the six inherited X.509/default-transport
 cells, for **eight required certificate scenarios**, not the combined suite's
-21-cell inventory. They run in `CertificateScenariosTestCase` and fail, rather
-than skip, when the required lab certificate is missing or invalid.
+21-cell inventory. On trusted runs they execute in `CertificateScenariosTestCase`
+and fail, rather than skip, when the required lab certificate is missing or invalid.
 
 | Required method | Observation |
 | --- | --- |
-| `test_credential_x509_custom_http_output_pop` | Real Graph PoP acquisition through the derived certificate-aware factory pipeline, returned/JWT certificate binding, the same cached token, resource HTTP 200, preserved sample middleware, and caller-owned cleanup. |
+| `test_credential_x509_custom_http_output_pop` | Real Graph PoP acquisition through the derived certificate-aware factory pipeline, returned certificate binding, the same cached token treated as opaque, resource HTTP 200 and all three same-token rejection controls, preserved sample middleware, and caller-owned cleanup. |
 | `test_custom_http_without_send_certificate_over_mtls_on_behalf_of_regular_endpoint` | Ordinary custom-client OBO POST with the mTLS flag off, signed certificate assertion and exact HTTP 400 / `invalid_request` / AADSTS50027 rejection; no derived certificate-bearing child is created. This is a malformed-user-assertion request capture, not a successful OBO acquisition. |
 
 These are source-specific tests of the existing factory API. They do not add
@@ -199,6 +201,9 @@ The lifecycle guard retains the sample's response middleware and owner/child cle
 acquisition: it checks generic recorder privacy, not real FIC support.
 The custom sample's output guard prevents dynamic error values from being
 printed, and the real loopback TLS fixture explicitly requires TLS 1.2 or newer.
+Offline custom guards also cover key/leaf preflight before cache or factory use,
+encrypted temporary TLS keys, per-app PEM/PFX snapshots, ordinary PFX signing
+without mTLS issuer validation, and opaque Graph cache/resource-control behavior.
 
 ## 5) Manual-intervention E2E tests
 

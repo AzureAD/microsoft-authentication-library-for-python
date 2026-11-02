@@ -1,3 +1,4 @@
+import base64
 import ipaddress
 import io
 import json
@@ -17,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs
 
+import jwt
 import requests
 
 import msal
@@ -76,9 +78,10 @@ class TestMtlsHttpClientFactory(unittest.TestCase):
             status_code=200,
             text='{"access_token": "ordinary", "token_type": "Bearer"}')
 
-    def _app(self, http_client=None, **kwargs):
+    def _app(self, http_client=None, credential=None, **kwargs):
         return msal.ConfidentialClientApplication(
-            "cid", authority=_AUTHORITY, client_credential=_CREDENTIAL,
+            "cid", authority=_AUTHORITY,
+            client_credential=_CREDENTIAL if credential is None else credential,
             http_client=self.ordinary if http_client is None else http_client,
             azure_region=False, instance_discovery=False, **kwargs)
 
@@ -166,6 +169,45 @@ class TestMtlsHttpClientFactory(unittest.TestCase):
         self.ordinary.create_mtls_client.assert_called_once()
         self.pipeline.post.assert_called_once()
         self.assertIsNone(self.pipeline.post.call_args.kwargs["cert"])
+        self.ordinary.post.assert_not_called()
+
+    def test_mismatched_pem_key_is_rejected_before_custom_factory_and_cache(
+            self, discovery):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from msal.application import _load_mtls_cert_material
+
+        material = _load_mtls_cert_material(_CREDENTIAL)
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        credential = {
+            "private_key": key.private_bytes(
+                serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption()).decode("ascii"),
+            "public_certificate": material["cert_pem"].decode("ascii"),
+        }
+
+        def create(binding):
+            pipeline = Mock(spec=["post"])
+            pipeline.post.return_value = MinimalResponse(status_code=200, text=_TOKEN)
+            return pipeline
+
+        self.ordinary.create_mtls_client.side_effect = create
+        valid = self._app()
+        valid.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
+        self.ordinary.create_mtls_client.reset_mock()
+        for cached in (False, True):
+            with self.subTest(cached=cached):
+                app = self._app(
+                    credential=credential,
+                    token_cache=valid.token_cache if cached else msal.TokenCache())
+                with patch.object(
+                        app, "_acquire_token_silent_with_error",
+                        wraps=app._acquire_token_silent_with_error) as cache:
+                    with self.assertRaisesRegex(ValueError, "match"):
+                        app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True)
+                    cache.assert_not_called()
+                self.ordinary.create_mtls_client.assert_not_called()
         self.ordinary.post.assert_not_called()
 
     def test_concurrent_creation_does_not_orphan_pipelines(self, discovery):
@@ -574,7 +616,8 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
             verify=self.ca_path, timeout=(2, 3), trust_env=False)
         self.addCleanup(self.http_client.close)
 
-    def _app(self, http_client=None, certificate=0, discover=True, **kwargs):
+    def _app(self, http_client=None, certificate=0, discover=True,
+             credential=None, **kwargs):
         def discovery(endpoint, client):
             response = client.get(self.url + "/metadata")
             response.raise_for_status()
@@ -585,9 +628,26 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
                    return_value=dict(_METADATA, token_endpoint=self.url + _ORDINARY_PATH)):
             return msal.ConfidentialClientApplication(
                 "cid", authority=_AUTHORITY,
-                client_credential=self.credentials[certificate],
+                client_credential=(self.credentials[certificate]
+                                   if credential is None else credential),
                 http_client=self.http_client if http_client is None else http_client,
                 azure_region=False, instance_discovery=False, **kwargs)
+
+    def _write_pfx(self, path, certificate, include_root=False):
+        from cryptography import x509
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.serialization import pkcs12
+
+        payload = pkcs12.serialize_key_and_certificates(
+            b"snapshot",
+            serialization.load_pem_private_key(
+                self.credentials[certificate]["private_key"].encode("ascii"),
+                password=None),
+            x509.load_der_x509_certificate(self.client_der[certificate]),
+            [x509.load_pem_x509_certificate(self.root_pem)] if include_root else None,
+            serialization.BestAvailableEncryption(b"snapshot-test"))
+        with open(path, "wb") as stream:
+            stream.write(payload)
 
     def _acquire(self, app, scope="s1", **kwargs):
         with patch("msal.mtls.transform_token_endpoint",
@@ -623,6 +683,119 @@ class TestCustomPipelineLocalTls(unittest.TestCase):
         self.assertNotEqual(self.records[1]["port"], self.records[2]["port"])
         self._acquire(app)
         self.assertEqual(4, len(self.records), "A cache hit must not use HTTP")
+
+    def test_custom_tls_loads_only_encrypted_temporary_private_keys(self):
+        app = self._app()
+        loaded_paths = []
+        load_cert_chain = ssl.SSLContext.load_cert_chain
+
+        def load(context, certfile, keyfile=None, password=None):
+            with open(keyfile or certfile, "rb") as stream:
+                contents = stream.read()
+            self.assertTrue(
+                b"-----BEGIN ENCRYPTED PRIVATE KEY-----" in contents,
+                "The temporary TLS private key must be encrypted.")
+            self.assertFalse(
+                any(marker in contents for marker in (
+                    b"-----BEGIN PRIVATE KEY-----", b"-----BEGIN RSA PRIVATE KEY-----")),
+                "No unencrypted private key may be written for custom TLS.")
+            self.assertIsNotNone(password)
+            loaded_paths.extend((certfile,) if keyfile is None else (certfile, keyfile))
+            return load_cert_chain(
+                context, certfile, keyfile=keyfile, password=password)
+
+        with patch.object(ssl.SSLContext, "load_cert_chain", new=load):
+            result = self._acquire(app)
+        self.assertTrue(loaded_paths)
+        self.assertTrue(all(not os.path.exists(path) for path in loaded_paths))
+        self.assertEqual("mtls_pop", result["token_type"])
+        self.assertEqual(self.client_der[0], self.records[-1]["certificate"])
+        self.assertEqual("custom-policy", self.records[-1]["middleware"])
+        self.assertEqual(1, self.http_client._children[0].response_count)
+        self.assertEqual("cache", self._acquire(app)["token_source"])
+
+    def test_custom_certificate_snapshot_survives_pem_mutation_and_pfx_replacement(self):
+        pfx_path = os.path.join(os.path.dirname(self.ca_path), "snapshot.pfx")
+        for source in ("pem", "pfx"):
+            with self.subTest(source=source):
+                if source == "pem":
+                    credential = dict(self.credentials[0])
+                else:
+                    self._write_pfx(pfx_path, 0)
+                    credential = {
+                        "private_key_pfx_path": pfx_path,
+                        "passphrase": "snapshot-test", "public_certificate": True,
+                    }
+                cache = msal.TokenCache()
+                first = self._app(
+                    credential=credential, token_cache=cache, discover=False)
+                if source == "pem":
+                    credential.update(self.credentials[1])
+                else:
+                    self._write_pfx(pfx_path, 1)
+                rotated = self._app(
+                    credential=credential, token_cache=cache, discover=False)
+                start = len(self.records)
+                first.acquire_token_for_client(["ordinary-snapshot-" + source])
+                original = self._acquire(first)
+                replacement = self._acquire(rotated)
+                self._acquire(first, "second-snapshot-" + source)
+                cached = self._acquire(first)
+                records = self.records[start:]
+                self.assertEqual(4, len(records), "The repeat must come from cache.")
+                self.assertEqual(
+                    [None, self.client_der[0], self.client_der[1], self.client_der[0]],
+                    [record["certificate"] for record in records])
+                header = jwt.get_unverified_header(
+                    records[0]["data"]["client_assertion"][0])
+                for chain in (header["x5c"], original["binding_certificate"].x5c):
+                    self.assertEqual(
+                        [self.client_der[0]],
+                        [base64.b64decode("".join(cert.split()), validate=True)
+                         for cert in chain])
+                self.assertNotEqual(
+                    original["binding_certificate"].thumbprint_sha256,
+                    replacement["binding_certificate"].thumbprint_sha256)
+                self.assertEqual("cache", cached["token_source"])
+                self.assertEqual(
+                    original["binding_certificate"].thumbprint_sha256,
+                    cached["binding_certificate"].thumbprint_sha256)
+                self.assertTrue(all(
+                    record["middleware"] == "custom-policy" for record in records))
+
+    def test_flagless_custom_pfx_defers_issuer_validation_until_mtls(self):
+        from cryptography.exceptions import UnsupportedAlgorithm
+
+        pfx_path = os.path.join(os.path.dirname(self.ca_path), "ordinary-chain.pfx")
+        self._write_pfx(pfx_path, 0, include_root=True)
+        credential = {
+            "private_key_pfx_path": pfx_path,
+            "passphrase": "snapshot-test", "public_certificate": True,
+        }
+        with patch("msal.application._is_certificate_issuer", side_effect=(
+                UnsupportedAlgorithm("Unsupported test issuer signature."))) as issuer:
+            app = self._app(credential=credential, discover=False)
+            result = app.acquire_token_for_client(["ordinary"])
+            cached = app.acquire_token_for_client(["ordinary"])
+            issuer.assert_not_called()
+            self.assertEqual("Bearer", result["token_type"])
+            self.assertNotIn("binding_certificate", result)
+            self.assertEqual("cache", cached["token_source"])
+            self.assertEqual([_ORDINARY_PATH],
+                             [record["path"] for record in self.records])
+            self.assertIsNone(self.records[0]["certificate"])
+            self.assertEqual("custom-policy", self.records[0]["middleware"])
+            header = jwt.get_unverified_header(
+                self.records[0]["data"]["client_assertion"][0])
+            self.assertEqual(
+                [self.client_der[0]],
+                [base64.b64decode("".join(cert.split()), validate=True)
+                 for cert in header["x5c"]])
+            with self.assertRaises(UnsupportedAlgorithm):
+                self._acquire(app)
+            issuer.assert_called()
+            self.assertEqual(1, len(self.records))
+            self.assertFalse(self.http_client._children)
 
     def test_certificate_rotation_isolates_connections_tokens_and_http_errors(self):
         token_cache, http_cache = msal.TokenCache(), {}

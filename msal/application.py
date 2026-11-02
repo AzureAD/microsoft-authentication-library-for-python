@@ -166,8 +166,7 @@ def _is_certificate_issuer(cert, issuer):
     return True
 
 
-def _parse_pfx(pfx_path, passphrase_bytes, *, include_chain=False):
-    # Cert concepts https://security.stackexchange.com/a/226758/125264
+def _load_pfx(pfx_path, passphrase_bytes):
     from cryptography.hazmat.primitives.serialization import pkcs12
     with open(pfx_path, 'rb') as f:
         private_key, cert, additional_certs = pkcs12.load_key_and_certificates(  # cryptography 2.5+
@@ -175,6 +174,15 @@ def _parse_pfx(pfx_path, passphrase_bytes, *, include_chain=False):
             f.read(), passphrase_bytes)
     if not (private_key and cert):
         raise ValueError("Your PFX file shall contain both private key and cert")
+    return private_key, cert, tuple(additional_certs or ())
+
+
+def _parse_pfx(
+        pfx_path, passphrase_bytes, *, include_chain=False, _pfx_data=None):
+    # Cert concepts https://security.stackexchange.com/a/226758/125264
+    private_key, cert, additional_certs = (
+        _load_pfx(pfx_path, passphrase_bytes)
+        if _pfx_data is None else _pfx_data)
     sha256_thumbprint, sha1_thumbprint, x5c, cert_pem = _extract_cert_and_thumbprints(cert)
     if include_chain:
         remaining = [candidate for candidate in additional_certs or [] if candidate != cert]
@@ -231,7 +239,7 @@ def _private_key_to_unencrypted_pem(private_key, passphrase_bytes=None):
         encryption_algorithm=serialization.NoEncryption())
 
 
-def _load_mtls_cert_material(cert_credential):
+def _load_mtls_cert_material(cert_credential, *, _pfx_data=None):
     """Load client-cert material for an mTLS PoP handshake from a cert credential.
 
     Accept a certificate credential dict or an existing process-local binding
@@ -256,7 +264,7 @@ def _load_mtls_cert_material(cert_credential):
     if cert_credential.get("private_key_pfx_path"):
         private_key, sha256_thumbprint, _, x5c, cert_pem = _parse_pfx(
             cert_credential["private_key_pfx_path"], passphrase_bytes,
-            include_chain=True)
+            include_chain=True, _pfx_data=_pfx_data)
     elif cert_credential.get("private_key"):
         public_cert = cert_credential.get("public_certificate")
         if not isinstance(public_cert, str):
@@ -999,8 +1007,8 @@ class ClientApplication(object):
         self._region_detected = None
         self._region_resolved = False
         self._region_to_use = None
-        # Signing and TLS use one application-local certificate snapshot.
-        # PFX signing resolves it during _build_client; PEM TLS remains lazy.
+        # Signing snapshots the PFX once; full TLS chain validation stays lazy.
+        self._pfx_cert_snapshot = None
         self._mtls_pop_cert_material = None
         self._mtls_client = None  # Lazily built global mTLS client
         self._mtls_regional_client = None  # Lazily built regional mTLS client
@@ -1191,6 +1199,17 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
             default_headers['x-app-ver'] = self.app_version
         return default_headers
 
+    def _get_pfx_cert_snapshot(self):
+        with self._mtls_lock:
+            if self._pfx_cert_snapshot is None:
+                credential = self.client_credential
+                passphrase_bytes = (
+                    _str2bytes(credential["passphrase"])
+                    if credential.get("passphrase") else None)
+                self._pfx_cert_snapshot = _load_pfx(
+                    credential["private_key_pfx_path"], passphrase_bytes)
+            return self._pfx_cert_snapshot
+
     def _get_mtls_pop_cert(self):
         """Lazily parse and cache the client certificate material used as the
         TLS client certificate for mTLS PoP. Raises ``ValueError`` when no
@@ -1201,10 +1220,15 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                 "to be configured with a certificate credential (a "
                 "'private_key_pfx_path', or a 'private_key' plus "
                 "'public_certificate').")
+        material_options = {}
+        if (self._mtls_cert_credential is self.client_credential
+                and isinstance(self.client_credential, dict)
+                and self.client_credential.get("private_key_pfx_path")):
+            material_options["_pfx_data"] = self._get_pfx_cert_snapshot()
         with self._mtls_lock:
             if self._mtls_pop_cert_material is None:
                 self._mtls_pop_cert_material = _load_mtls_cert_material(
-                    self._mtls_cert_credential)
+                    self._mtls_cert_credential, **material_options)
             return self._mtls_pop_cert_material
 
     def _get_mtls_http_client_factory(self):
@@ -1312,11 +1336,9 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     client_credential["passphrase"]
                     ) if client_credential.get("passphrase") else None
                 if client_credential.get("private_key_pfx_path"):
-                    material = self._get_mtls_pop_cert()
-                    private_key = material["private_key_pem"]
-                    sha256_thumbprint = material["sha256_thumbprint"]
-                    sha1_thumbprint = material["sha1_thumbprint"]
-                    x5c = material["x5c"][:1]
+                    private_key, sha256_thumbprint, sha1_thumbprint, x5c, _ = _parse_pfx(
+                        client_credential["private_key_pfx_path"], passphrase_bytes,
+                        _pfx_data=self._get_pfx_cert_snapshot())
                     if client_credential.get("public_certificate") is True and x5c:
                         headers["x5c"] = x5c
                 elif client_credential.get("private_key"):  # PEM blob

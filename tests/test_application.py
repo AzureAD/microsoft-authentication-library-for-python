@@ -2315,7 +2315,7 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                                side_effect=self._capturing_post([])):
                         producer.acquire_token_for_client(
                             ["s1"], mtls_proof_of_possession=True)
-                    self.addCleanup(producer._mtls_client._http_client.close)
+                    self.addCleanup(producer._mtls_http_client.close)
                 app = ConfidentialClientApplication(
                     "cid", client_credential=_MTLS_CERT_CRED,
                     client_claims={"signed-claim": "must-not-be-dropped"},
@@ -2365,7 +2365,7 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                         ["s1"], mtls_proof_of_possession=True,
                         claims_challenge='{"access_token":{"challenge":null}}',
                         forwarded_client_claims='{"access_token":{"forwarded":null}}')
-                self.addCleanup(app._mtls_client._http_client.close)
+                self.addCleanup(app._mtls_http_client.close)
                 self.assertEqual("mtls_pop", result["token_type"])
                 self.assertEqual(
                     {"access_token": {"challenge": None, "forwarded": None}},
@@ -2394,7 +2394,7 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                            side_effect=self._capturing_post([])):
                     producer.acquire_token_for_client(
                         ["s1"], mtls_proof_of_possession=True)
-                self.addCleanup(producer._mtls_client._http_client.close)
+                self.addCleanup(producer._mtls_http_client.close)
             for key, password in (
                     (plain.decode("ascii"), None), (plain, None),
                     (other_key, None), (encrypted, b"synthetic-passphrase")):
@@ -2427,8 +2427,8 @@ class TestMtlsProofOfPossession(unittest.TestCase):
             self.assertEqual(0 if warm else 1, post.call_count)
             self.assertEqual(
                 material["key_id"], result["binding_certificate"].thumbprint_sha256)
-            if valid._mtls_client is not None:
-                self.addCleanup(valid._mtls_client._http_client.close)
+            if valid._mtls_http_client is not None:
+                self.addCleanup(valid._mtls_http_client.close)
 
     def test_certificate_override_is_rejected_before_cache_lookup(self):
         app = ConfidentialClientApplication(
@@ -2755,8 +2755,7 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                                side_effect=self._capturing_post(captured)):
                         result = app.acquire_token_for_client(
                             ["s1"], mtls_proof_of_possession=True)
-                    client = app._mtls_regional_client if region else app._mtls_client
-                    self.addCleanup(client._http_client.close)
+                    self.addCleanup(app._mtls_http_client.close)
                     host = ("usgovvirginia." if region else "") + (
                         "mtlsauth.microsoftonline.us")
                     self.assertEqual(

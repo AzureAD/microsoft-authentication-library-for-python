@@ -762,7 +762,7 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
 
     def test_credential_x509_custom_http_output_pop(self):
         result = self._acquire_x509(self._MTLS_POP_SCOPE, pop=True, custom=True)
-        self._call_graph_with_mtls_pop_token(
+        self._assert_graph_token_binding(
             result["access_token"], result["binding_certificate"])
 
     def _acquire_custom_http_obo_invalid_grant(self, app):
