@@ -37,6 +37,84 @@ Notes:
   from the MSID Lab `LabAuth` secret, without a PFX password. Missing, unreadable,
   or invalid PFX files fail these scenarios; they never count as skipped coverage.
 
+### FIC over mTLS lab parity
+
+The FIC tests reuse the existing MSAL.NET/Go SN/I lab configuration for both
+legs: app `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e`, authority
+`https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c`,
+and the shared LabAuth certificate supplied through
+`LAB_APP_CLIENT_CERT_PFX_PATH`. No Python-only `LAB_FIC_*` configuration or
+new app provisioning is needed.
+
+Leg 1 requests `api://AzureADTokenExchange/.default` as an mTLS PoP assertion.
+The PoP-output cell uses global endpoints for both legs, requests
+`https://graph.microsoft.com/.default`, and calls the mTLS Graph resource with
+the final token's `binding_certificate`. The Bearer-output cell uses `westus3`
+for both legs and requests `https://storage.azure.com/.default`; its final
+token must not contain `binding_certificate` or trigger a downstream mTLS call.
+Missing or invalid certificates and real token-acquisition errors fail the
+FIC tests rather than skipping or accepting an error as success.
+
+Both default-transport cells require real token POST evidence for each leg,
+the expected global or `westus3` mTLS endpoint, and the same lab certificate.
+Leg 2 must invoke the assertion provider and send its exact, unchanged leg-1
+value as a `jwt-pop` client assertion. The exchange assertion may be opaque;
+it is not assumed to be a resource JWT. Leg 2 receives the actual
+`MtlsBindingContext` returned with the leg-1 assertion rather than reloading
+the PFX path. The sample also checks binding continuity when the callable
+renews the assertion. Final Storage Bearer tokens must have the Storage
+audience. Graph owns its token format: the final Graph token is treated as
+opaque and requires matching returned certificate binding plus HTTP 200 from
+the mTLS Graph resource using that context, not client-side JWT inspection.
+The same token must also fail the shared no-certificate, wrong-certificate,
+and Bearer-scheme controls with their exact rejection markers.
+
+The required FIC inventory is exactly these two methods in
+`tests.test_e2e.FicTwoLegTestCase`:
+
+- `test_credential_fic_output_bearer`
+- `test_credential_fic_output_pop`
+
+They run without skips, including on tagged releases. Custom HTTP-factory
+acquisitions are not part of this default-FIC branch.
+This branch's required live inventory totals eight methods: the six inherited
+`CertificateScenariosTestCase` cells documented below and these two FIC cells.
+`tests\test_lab_config.py` checks the exact method sets and proves that all
+eight produce credential errors, not skips, when the certificate is missing.
+
+The FIC mapping reuses the already pinned .NET
+`c8b90e9de5bc4974de9928835532faac5c88e2d2` [client-credentials cases][dotnet-cc]
+and Go `30f4770ffcbd9c4c51d278cdab6dbda71a0f7337`
+[two-leg integration cases][go-fic]:
+
+| Active reference case(s) | Python FIC method | Required observation |
+| --- | --- | --- |
+| Go `TestTwoLegFICMtlsPoP_SNI`; .NET `Credential_Fic_Output_Pop_TestAsync` / `RunTwoLegS2sFicBothLegsPopAsync` | `test_credential_fic_output_pop` | Global exchange to Graph; invoked provider, unchanged `jwt-pop` assertion, actual returned-binding handoff, final PoP type/binding, authoritative resource HTTP 200. |
+| Go `TestTwoLegFICMtlsBearer_SNI`; .NET `Credential_Fic_Output_Bearer_TestAsync` | `test_credential_fic_output_bearer` | `westus3` exchange to Storage; provider and real `jwt-pop` POST, certificate continuity, Storage Bearer, no output binding or downstream resource mTLS. |
+
+Run these two live cells with:
+
+```powershell
+python -m pytest -q tests\test_e2e.py::FicTwoLegTestCase
+```
+
+The offline `tests\test_fic_e2e_helpers.py` checks the two-leg provider/wire
+contract, opaque exchange and Graph tokens, strict final binding/type and
+Storage audience, Graph rejection failures, and exact assertion handoff.
+`tests.test_application.TestFicCertificateHandoff` replaces a PFX with a second
+certificate after caching the leg-1 assertion, checks both token and actual
+TLS certificate/key continuity, and checks renewal and Bearer/PoP output
+contracts without reopening that file. The recorder privacy regression uses
+pytest's actual traceback renderer with arguments shown and locals disabled,
+and rejects full tokens and truncated token fragments. These offline guards
+are not evidence of live acquisition or a custom HTTP factory.
+
+```powershell
+python -m pytest -q tests\test_fic_e2e_helpers.py tests\test_lab_config.py tests\test_e2e.py::FicScenarioTestCase
+```
+
+[go-fic]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/30f4770ffcbd9c4c51d278cdab6dbda71a0f7337/apps/tests/integration/mtls_pop_integration_test.go
+
 ### Exportable-certificate scope and deferred protected keys
 
 This feature supports exportable PEM/PFX certificate credentials. A custom HTTP
