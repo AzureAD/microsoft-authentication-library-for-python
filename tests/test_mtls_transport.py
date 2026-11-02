@@ -3,6 +3,8 @@ import io
 import json
 import os
 import ssl
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -66,10 +68,19 @@ class TestMtlsEndpointTransform(unittest.TestCase):
                 "login.microsoftonline.com"),
             "https://mtlsauth.microsoft.com:8443/t/token")
 
-    def test_sovereign_us_gov_fails_fast(self):
-        with self.assertRaises(ValueError) as cm:
-            mtls.mtls_pop_host("login.usgovcloudapi.net")
-        self.assertIn("login.microsoftonline.us", str(cm.exception))
+    def test_government_alias_normalizes_global_and_regional_hosts(self):
+        for alias in ("login.usgovcloudapi.net", "LOGIN.USGOVCLOUDAPI.NET",
+                      "login.microsoftonline.us"):
+            for region in (None, "usgovvirginia"):
+                with self.subTest(alias=alias, region=region):
+                    host = ("usgovvirginia." if region else "") + (
+                        "mtlsauth.microsoftonline.us")
+                    self.assertEqual(host, mtls.mtls_pop_host(alias, region))
+                    self.assertEqual(
+                        "https://{}/tenant/oauth2/v2.0/token".format(host),
+                        mtls.transform_token_endpoint(
+                            "https://{}/tenant/oauth2/v2.0/token".format(alias),
+                            alias, region))
 
     def test_sovereign_china_fails_fast(self):
         with self.assertRaises(ValueError) as cm:
@@ -91,7 +102,7 @@ class TestMtlsEndpointTransform(unittest.TestCase):
 
 
 class TestMtlsSslContext(unittest.TestCase):
-    """The mTLS SSLContext is built from in-memory PEM and leaves no key on disk."""
+    """Temporary TLS keys are encrypted and removed after loading."""
 
     _PFX = os.path.join(os.path.dirname(__file__), "certificate-with-password.pfx")
     _PASSPHRASE = "password"
@@ -154,6 +165,112 @@ class TestMtlsSslContext(unittest.TestCase):
         self.assertFalse(
             os.path.exists(created["path"]),
             "temp key file must be unlinked immediately after load_cert_chain")
+
+    def _assert_encrypted_key_file(self, path, material):
+        from cryptography.hazmat.primitives import serialization
+
+        contents = Path(path).read_bytes()
+        self.assertIn(b"-----BEGIN ENCRYPTED PRIVATE KEY-----", contents)
+        self.assertNotIn(b"-----BEGIN PRIVATE KEY-----", contents)
+        self.assertNotIn(material["private_key_pem"], contents)
+        with self.assertRaises(TypeError):
+            serialization.load_pem_private_key(contents, password=None)
+
+    def test_cleanup_failure_leaves_only_encrypted_private_key(self):
+        material = self._material()
+        mkstemp = tempfile.mkstemp
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("tempfile.mkstemp", side_effect=lambda **kwargs: mkstemp(
+                    dir=directory, **kwargs)), patch(
+                    "msal.mtls.os.remove", side_effect=PermissionError(
+                        "synthetic cleanup failure")), self.assertLogs(
+                    "msal.mtls", level="WARNING") as logs:
+                context = mtls._create_ssl_context(
+                    material["cert_pem"], material["private_key_pem"])
+            self.assertIsInstance(context, ssl.SSLContext)
+            paths = list(Path(directory).glob("*.pem"))
+            self.assertEqual(1, len(paths))
+            self._assert_encrypted_key_file(paths[0], material)
+            self.assertEqual(
+                ["WARNING:msal.mtls:Unable to remove temporary mTLS key file"],
+                logs.output)
+
+    def test_process_exit_leaves_only_encrypted_private_key(self):
+        script = """
+import os
+import sys
+import tempfile
+from msal import mtls
+from msal.application import _load_mtls_cert_material
+material = _load_mtls_cert_material({
+    "private_key_pfx_path": sys.argv[1], "passphrase": "password"})
+original = tempfile.mkstemp
+tempfile.mkstemp = lambda **kwargs: original(dir=sys.argv[2], **kwargs)
+class ExitDuringLoad:
+    def load_cert_chain(self, *args, **kwargs):
+        os._exit(73)
+mtls._new_verifying_context = lambda verify: ExitDuringLoad()
+mtls._create_ssl_context(material["cert_pem"], material["private_key_pem"])
+"""
+        material = self._material()
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [sys.executable, "-c", script, self._PFX, directory],
+                capture_output=True, timeout=30)
+            self.assertEqual(73, process.returncode)
+            paths = list(Path(directory).glob("*.pem"))
+            self.assertEqual(1, len(paths))
+            self._assert_encrypted_key_file(paths[0], material)
+
+    def test_certificate_material_validates_key_pair_for_supported_pem_forms(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        material = self._material()
+        key = serialization.load_pem_private_key(
+            material["private_key_pem"], password=None)
+        other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        for matches, private_key in ((True, key), (False, other)):
+            plain = _private_key_to_unencrypted_pem(private_key)
+            encrypted = private_key.private_bytes(
+                serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                serialization.BestAvailableEncryption(b"synthetic-passphrase"))
+            for form, password in (
+                    (plain, None), (plain.decode("ascii"), None),
+                    (private_key, None), (encrypted, b"synthetic-passphrase"),
+                    (encrypted.decode("ascii"), "synthetic-passphrase")):
+                with self.subTest(matches=matches, form=type(form).__name__,
+                                  encrypted=password is not None):
+                    credential = {
+                        "private_key": form, "passphrase": password,
+                        "public_certificate": material["cert_pem"].decode("ascii"),
+                    }
+                    if matches:
+                        loaded = _load_mtls_cert_material(credential)
+                        self.assertEqual(material["key_id"], loaded["key_id"])
+                        self.assertIsInstance(mtls._create_ssl_context(
+                            loaded["cert_pem"], loaded["private_key_pem"]),
+                            ssl.SSLContext)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "does not match"):
+                            _load_mtls_cert_material(credential)
+
+    def test_existing_binding_material_is_validated_without_reopening_pfx(self):
+        material = self._material()
+        binding = MtlsBindingContext(
+            material["cert_pem"], material["private_key_pem"],
+            material["x5c"], material["key_id"])
+        with patch("msal.application._parse_pfx") as parse:
+            self.assertEqual(material, _load_mtls_cert_material(binding))
+        parse.assert_not_called()
+        for chain, key_id in (
+                (material["x5c"], "incorrect-thumbprint"),
+                (["incorrect-chain"], material["key_id"])):
+            with self.subTest(chain_matches=chain == material["x5c"]):
+                with self.assertRaisesRegex(ValueError, "does not match"):
+                    _load_mtls_cert_material(MtlsBindingContext(
+                        material["cert_pem"], material["private_key_pem"],
+                        chain, key_id))
 
     def test_adapter_injects_ssl_context(self):
         material = self._material()
@@ -337,6 +454,7 @@ class TestMtlsCertificateChain(unittest.TestCase):
         cls.intermediate = make_cert(
             "intermediate", intermediate_key, cls.upper_intermediate.subject, upper_key, True)
         unrelated_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.unrelated_key = unrelated_key
         cls.unrelated = make_cert("unrelated", unrelated_key, None, unrelated_key, True)
         cls.impostor = make_cert("intermediate", unrelated_key, None, unrelated_key, True)
         cls.leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -538,6 +656,109 @@ class TestMtlsCertificateChain(unittest.TestCase):
                         self.assertNotIn("x5c", decoded)
             with self.assertRaises(UnsupportedAlgorithm):
                 _load_mtls_cert_material({"private_key_pfx_path": path})
+
+    def test_application_pfx_snapshot_keeps_signing_tls_and_cache_consistent(self):
+        import jwt
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.serialization import pkcs12
+        from msal.application import ConfidentialClientApplication, _parse_pfx
+        from tests.http_client import MinimalResponse
+
+        authority = "https://login.microsoftonline.com/tenant"
+        endpoint = authority + "/oauth2/v2.0/token"
+        metadata = {
+            "authorization_endpoint": endpoint.replace("/token", "/authorize"),
+            "token_endpoint": endpoint, "issuer": authority + "/v2.0",
+        }
+        first = pkcs12.serialize_key_and_certificates(
+            b"first", self.leaf_key, self.leaf,
+            [self.intermediate, self.upper_intermediate],
+            serialization.NoEncryption())
+        second = pkcs12.serialize_key_and_certificates(
+            b"second", self.unrelated_key, self.unrelated, None,
+            serialization.NoEncryption())
+        with tempfile.TemporaryDirectory() as directory, patch(
+                "msal.authority.tenant_discovery", return_value=metadata):
+            path = Path(directory) / "rotating.pfx"
+            path.write_bytes(first)
+            credential = {"private_key_pfx_path": path, "public_certificate": True}
+            with patch("msal.application._parse_pfx", wraps=_parse_pfx) as parse:
+                app = ConfidentialClientApplication(
+                    "cid", authority=authority, azure_region=False,
+                    client_credential=credential)
+                self.addCleanup(app.http_client.close)
+                path.write_bytes(second)
+                credential["private_key_pfx_path"] = "not-the-original-file.pfx"
+                material = app._get_mtls_pop_cert()
+                self.assertEqual(self.key_id, material["key_id"])
+                self._assert_chain_and_handshake(material)
+                rebuilt, _ = app._build_client(
+                    app.client_credential, app.authority, skip_regional_client=True)
+
+                def post(url, data=None, **kwargs):
+                    assertion = data["client_assertion"]
+                    self.assertEqual(
+                        extract_certs(self.chain_pem.decode("ascii"))[:1],
+                        jwt.get_unverified_header(assertion)["x5c"])
+                    jwt.decode(assertion, self.leaf.public_key(),
+                               algorithms=["PS256"], audience=endpoint, issuer="cid")
+                    return MinimalResponse(
+                        status_code=200,
+                        text='{"access_token":"ordinary","token_type":"Bearer"}')
+
+                rebuilt.obtain_token_for_client(scope=["ordinary"], post=post)
+                app.acquire_token_for_client(["ordinary"], post=post)
+                with patch("msal.mtls._MtlsHttpClient.post", return_value=MinimalResponse(
+                        status_code=200, text=json.dumps({
+                            "access_token": "opaque-bound-token",
+                            "token_type": "mtls_pop", "expires_in": 3600,
+                        }))) as send:
+                    result = app.acquire_token_for_client(
+                        ["pop"], mtls_proof_of_possession=True)
+                    cached = app.acquire_token_for_client(
+                        ["pop"], mtls_proof_of_possession=True)
+                self.addCleanup(app._mtls_client._http_client.close)
+                self.assertEqual(self.key_id, result["binding_certificate"].thumbprint_sha256)
+                self.assertEqual(self.key_id, cached["binding_certificate"].thumbprint_sha256)
+                self.assertEqual("cache", cached[app._TOKEN_SOURCE])
+                self.assertEqual(1, send.call_count)
+                self.assertEqual(1, parse.call_count)
+            rotated = ConfidentialClientApplication(
+                "cid", authority=authority, azure_region=False,
+                client_credential={"private_key_pfx_path": path})
+            self.addCleanup(rotated.http_client.close)
+            self.assertNotEqual(self.key_id, rotated._get_mtls_pop_cert()["key_id"])
+
+    def test_application_pem_snapshot_ignores_caller_credential_mutation(self):
+        from cryptography.hazmat.primitives import serialization
+        from msal.application import ConfidentialClientApplication
+
+        authority = "https://login.microsoftonline.com/tenant"
+        endpoint = authority + "/oauth2/v2.0/token"
+        credential = {
+            "private_key": self.key_pem.decode("ascii"),
+            "public_certificate": self.chain_pem.decode("ascii"),
+        }
+        with patch("msal.authority.tenant_discovery", return_value={
+                "authorization_endpoint": endpoint.replace("/token", "/authorize"),
+                "token_endpoint": endpoint, "issuer": authority + "/v2.0"}):
+            app = ConfidentialClientApplication(
+                "cid", authority=authority, azure_region=False,
+                client_credential=credential)
+            self.addCleanup(app.http_client.close)
+            credential.update(
+                private_key=_private_key_to_unencrypted_pem(
+                    self.unrelated_key).decode("ascii"),
+                public_certificate=self.unrelated.public_bytes(
+                    serialization.Encoding.PEM).decode("ascii"))
+            self._assert_chain_and_handshake(app._get_mtls_pop_cert())
+            rotated = ConfidentialClientApplication(
+                "cid", authority=authority, azure_region=False,
+                client_credential=credential)
+            self.addCleanup(rotated.http_client.close)
+            self.assertNotEqual(
+                app._get_mtls_pop_cert()["key_id"],
+                rotated._get_mtls_pop_cert()["key_id"])
 
     def test_issuer_signature_verification_on_older_cryptography(self):
         import builtins
