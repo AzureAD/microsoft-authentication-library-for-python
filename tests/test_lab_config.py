@@ -1,5 +1,7 @@
 import io
 import os
+from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -8,6 +10,42 @@ from cryptography.hazmat.primitives.serialization import NoEncryption, pkcs12
 
 from tests.lab_config import get_client_certificate
 from tests import test_e2e
+
+
+class TestCredentialedPipelineConfiguration(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        template = (Path(__file__).resolve().parents[1]
+                    / ".Pipelines" / "template-pipeline-stages.yml")
+        cls.stages = template.read_text(encoding="utf-8")
+
+    def _stage(self, name):
+        match = re.search(
+            r"(?ms)^- stage: " + name + r"\n(.*?)(?=^- stage:|\Z)",
+            self.stages)
+        self.assertIsNotNone(match)
+        return match.group(1)
+
+    def test_credentialed_e2e_requires_successful_units_and_a_trusted_run(self):
+        stage = self._stage("E2ETests")
+        condition = re.search(r"(?m)^  condition: (.+)$", stage)
+        self.assertIsNotNone(condition)
+        self.assertEqual(
+            "and(eq(dependencies.UnitTests.result, 'Succeeded'), "
+            "ne(variables['System.PullRequest.IsFork'], 'True'))",
+            condition.group(1))
+        self.assertIn("tests/test_e2e.py tests/test_fmi_e2e.py", stage)
+        self.assertIn("failTaskOnFailedTests: true", stage)
+        self.assertIn("if [ -z \"${LAB_AUTH_B64:-}\" ]; then", stage)
+        self.assertIn("exit 1", stage)
+
+    def test_offline_units_run_for_forks_without_lab_credentials(self):
+        stage = self._stage("UnitTests")
+        self.assertNotIn("System.PullRequest.IsFork", stage)
+        self.assertNotIn("AzureKeyVault", stage)
+        self.assertNotIn("LAB_APP_CLIENT_CERT_PFX_PATH", stage)
+        self.assertIn("--ignore=tests/test_e2e.py", stage)
+        self.assertIn("--ignore=tests/test_fmi_e2e.py", stage)
 
 
 class TestRequiredCertificateConfiguration(unittest.TestCase):

@@ -208,7 +208,7 @@ def _private_key_to_unencrypted_pem(private_key, passphrase_bytes=None):
 
     ``private_key`` may be a ``cryptography`` private-key object (as returned by
     ``_parse_pfx``) or a PEM string/bytes (the raw ``private_key`` credential).
-    The result is suitable for ``ssl.SSLContext.load_cert_chain`` via a temp file.
+    The result stays in memory; the TLS helper encrypts any temporary key file.
     """
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.backends import default_backend
@@ -234,15 +234,25 @@ def _private_key_to_unencrypted_pem(private_key, passphrase_bytes=None):
 def _load_mtls_cert_material(cert_credential):
     """Load client-cert material for an mTLS PoP handshake from a cert credential.
 
-    ``cert_credential`` is the app's main ``client_credential`` (vanilla SN/I),
-    a certificate credential dict. Returns a dict with the unencrypted-PEM private key,
-    the certificate chain PEM, ``x5c``, the SHA-256 thumbprint (hex), and ``key_id``
-    (base64url ``x5t#S256``, used for cache binding). Raises ``ValueError`` when
-    the credential cannot yield mTLS-capable certificate material.
+    Accept a certificate credential dict or an existing process-local binding
+    context. Return the in-memory private key PEM, certificate chain PEM, ``x5c``,
+    SHA-256/SHA-1 thumbprints (hex), and ``key_id`` (base64url ``x5t#S256``).
+    Raise ``ValueError`` for mismatched keys or unusable certificate material.
     """
+    if isinstance(cert_credential, mtls.MtlsBindingContext):
+        material = cert_credential._get_mtls_cert_material()
+        if (material["key_id"] != cert_credential.thumbprint_sha256
+                or material["x5c"] != cert_credential.x5c):
+            raise ValueError(
+                "The binding context does not match its certificate material.")
+        return material
     passphrase_bytes = _str2bytes(
         cert_credential["passphrase"]
         ) if cert_credential.get("passphrase") else None
+    from cryptography import x509
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes, serialization
+
     if cert_credential.get("private_key_pfx_path"):
         private_key, sha256_thumbprint, _, x5c, cert_pem = _parse_pfx(
             cert_credential["private_key_pfx_path"], passphrase_bytes,
@@ -254,8 +264,6 @@ def _load_mtls_cert_material(cert_credential):
                 "mTLS Proof-of-Possession requires the certificate's public part. "
                 "Provide 'public_certificate' (PEM) alongside 'private_key', "
                 "or use 'private_key_pfx_path'.")
-        from cryptography import x509
-        from cryptography.hazmat.backends import default_backend
         cert = x509.load_pem_x509_certificate(
             _str2bytes(public_cert), backend=default_backend())
         sha256_thumbprint, _, x5c, cert_pem = _extract_cert_and_thumbprints(cert)
@@ -273,14 +281,25 @@ def _load_mtls_cert_material(cert_credential):
     if not sha256_thumbprint:
         raise ValueError(
             "mTLS Proof-of-Possession requires a SHA-256 certificate thumbprint.")
+    private_key_pem = _private_key_to_unencrypted_pem(
+        private_key, passphrase_bytes)
+    key = _load_private_key_from_pem_str(private_key_pem, None)
+    leaf = x509.load_pem_x509_certificate(
+        _str2bytes(cert_pem), backend=default_backend())
+    public_key_format = (
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    if (key.public_key().public_bytes(*public_key_format)
+            != leaf.public_key().public_bytes(*public_key_format)):
+        raise ValueError(
+            "The mTLS private key does not match the leaf certificate.")
     key_id = base64.urlsafe_b64encode(
         bytes.fromhex(sha256_thumbprint)).rstrip(b"=").decode("ascii")
     return {
-        "private_key_pem": _private_key_to_unencrypted_pem(
-            private_key, passphrase_bytes),
+        "private_key_pem": private_key_pem,
         "cert_pem": cert_pem if isinstance(cert_pem, bytes) else _str2bytes(cert_pem),
         "x5c": x5c,
         "sha256_thumbprint": sha256_thumbprint,
+        "sha1_thumbprint": leaf.fingerprint(hashes.SHA1()).hex(),
         "key_id": key_id,
         }
 
@@ -864,6 +883,9 @@ class ClientApplication(object):
             Note: Broker will NOT be used for OIDC authority.
         """
         self.client_id = client_id
+        client_credential = (
+            dict(client_credential) if isinstance(client_credential, dict)
+            else client_credential)
         self.client_credential = client_credential
         self.client_claims = client_claims
         self._client_capabilities = client_capabilities
@@ -963,15 +985,9 @@ class ClientApplication(object):
         self._region_detected = None
         self._region_resolved = False
         self._region_to_use = None
-        self.client, self._regional_client = self._build_client(
-            client_credential, self.authority)
-
-        # mTLS Proof-of-Possession state. The certificate material and the
-        # dedicated mTLS client(s) are parsed/built lazily on the first
-        # mtls_proof_of_possession request (see _get_mtls_pop_cert /
-        # _get_mtls_client), so Bearer-only cert apps pay nothing and the
-        # sovereign/tenanted guardrails fire at request time.
-        self._mtls_pop_cert_material = None  # Cached parse of the cert below
+        # Signing and TLS use one application-local certificate snapshot.
+        # PFX signing resolves it during _build_client; PEM TLS remains lazy.
+        self._mtls_pop_cert_material = None
         self._mtls_client = None  # Lazily built global mTLS client
         self._mtls_regional_client = None  # Lazily built regional mTLS client
         self._mtls_lock = Lock()
@@ -982,6 +998,9 @@ class ClientApplication(object):
             self._mtls_cert_credential = client_credential
         else:  # No certificate available to present over mTLS
             self._mtls_cert_credential = None
+
+        self.client, self._regional_client = self._build_client(
+            client_credential, self.authority)
 
         # Warn if using a static string/bytes client_assertion (discouraged for long-running apps)
         if isinstance(client_credential, dict) and isinstance(
@@ -1267,9 +1286,11 @@ The reserved list: {}""".format(list(scope_set), list(reserved_scope)))
                     client_credential["passphrase"]
                     ) if client_credential.get("passphrase") else None
                 if client_credential.get("private_key_pfx_path"):
-                    private_key, sha256_thumbprint, sha1_thumbprint, x5c, _ = _parse_pfx(
-                        client_credential["private_key_pfx_path"],
-                        passphrase_bytes)
+                    material = self._get_mtls_pop_cert()
+                    private_key = material["private_key_pem"]
+                    sha256_thumbprint = material["sha256_thumbprint"]
+                    sha1_thumbprint = material["sha1_thumbprint"]
+                    x5c = material["x5c"][:1]
                     if client_credential.get("public_certificate") is True and x5c:
                         headers["x5c"] = x5c
                 elif client_credential.get("private_key"):  # PEM blob
@@ -2985,6 +3006,10 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             A ``post`` transport override is also rejected. If the provider
             returns another token type, the result is ``token_type_mismatch``
             and the rejected response is not cached.
+            Nonempty constructor ``client_claims`` are rejected for this
+            certificate-only authentication: no signed client assertion is
+            sent. ``claims_challenge`` and ``forwarded_client_claims`` retain
+            their separate OAuth claims contracts.
 
             On success the result also contains an
             :py:class:`msal.MtlsBindingContext` as ``binding_certificate``. It
@@ -3048,6 +3073,14 @@ class ConfidentialClientApplication(ClientApplication):  # server-side web app
             kwargs["data"] = kwargs.get("data", {})
             _stash_client_claims(forwarded_client_claims, kwargs["data"])
         if mtls_proof_of_possession:
+            if (self.client_claims
+                    and isinstance(self.client_credential, dict)
+                    and not self.client_credential.get("client_assertion")
+                    and (self.client_credential.get("private_key_pfx_path")
+                         or self.client_credential.get("private_key"))):
+                raise ValueError(
+                    "Certificate-only mTLS PoP does not send a signed client "
+                    "assertion and cannot use constructor client_claims.")
             if kwargs.get("cert") is not None:
                 raise ValueError(
                     "mtls_proof_of_possession=True does not support a cert "

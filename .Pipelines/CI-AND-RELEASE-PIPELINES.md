@@ -41,7 +41,7 @@ PreBuildCheck ─► UnitTests ─► E2ETests ─► Benchmark (post-merge to d
 |-------|-------------|-------------|
 | **PreBuildCheck** | Runs SDL security scans: PoliCheck (policy/offensive content), CredScan (leaked credentials), and PostAnalysis (breaks the build on findings) | Always |
 | **UnitTests** | Runs the unit test suite on Python 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 (no Key Vault required) | After PreBuildCheck |
-| **E2ETests** | Fetches the MSID Lab certificate from Key Vault and runs `tests/test_e2e.py` + `tests/test_fmi_e2e.py` on the same Python matrix. On forked PRs the Key Vault tasks remain skipped to protect secrets. Required certificate scenarios fail when `LAB_APP_CLIENT_CERT_PFX_PATH` is missing or invalid; missing credentials cannot produce green skipped coverage. Legacy optional skips are unchanged. | After UnitTests |
+| **E2ETests** | Fetches the MSID Lab certificate from Key Vault and runs `tests/test_e2e.py` + `tests/test_fmi_e2e.py` on the same Python matrix. Fork PRs run offline unit tests but skip this credentialed stage to protect secrets; stage exclusion is not live E2E coverage. On trusted runs, missing or invalid `LAB_APP_CLIENT_CERT_PFX_PATH` fails required certificate scenarios rather than skipping them. Legacy optional skips are unchanged. | After UnitTests, trusted runs only |
 | **Benchmark** | Runs performance benchmarks on Python 3.9 and publishes `benchmark-results` artifact | Post-merge pushes to `dev` and manual runs only |
 
 The `Validate` stage is **skipped** on PR/CI runs (it only applies to release builds).

@@ -2303,6 +2303,133 @@ class TestMtlsProofOfPossession(unittest.TestCase):
                 "access_token": "an_at", "expires_in": 3600, "token_type": token_type}))
         return mock_post
 
+    def test_constructor_claims_are_rejected_before_cold_or_warm_pop_cache(self):
+        for warm in (False, True):
+            with self.subTest(warm=warm):
+                producer = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    authority=self._AUTHORITY, azure_region=False)
+                self.addCleanup(producer.http_client.close)
+                if warm:
+                    with patch("msal.mtls._MtlsHttpClient.post",
+                               side_effect=self._capturing_post([])):
+                        producer.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True)
+                    self.addCleanup(producer._mtls_client._http_client.close)
+                app = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    client_claims={"signed-claim": "must-not-be-dropped"},
+                    authority=self._AUTHORITY, azure_region=False,
+                    token_cache=producer.token_cache)
+                self.addCleanup(app.http_client.close)
+                with patch.object(app, "_acquire_token_silent_with_error") as lookup:
+                    with self.assertRaisesRegex(ValueError, "constructor client_claims"):
+                        app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True)
+                lookup.assert_not_called()
+
+    def test_ordinary_bearer_preserves_signed_constructor_claims(self):
+        import jwt
+        from cryptography import x509
+        from msal.application import _load_mtls_cert_material
+
+        material = _load_mtls_cert_material(_MTLS_CERT_CRED)
+        certificate = x509.load_pem_x509_certificate(material["cert_pem"])
+        app = ConfidentialClientApplication(
+            "cid", client_credential=_MTLS_CERT_CRED,
+            client_claims={"signed-claim": "retained"},
+            authority=self._AUTHORITY, azure_region=False)
+        self.addCleanup(app.http_client.close)
+        captured = []
+        result = app.acquire_token_for_client(
+            ["s1"], post=self._capturing_post(captured, "Bearer"))
+        claims = jwt.decode(
+            captured[0]["data"]["client_assertion"], certificate.public_key(),
+            algorithms=["PS256"], audience=app.authority.token_endpoint,
+            issuer="cid")
+        self.assertEqual("retained", claims["signed-claim"])
+        self.assertEqual("Bearer", result["token_type"])
+
+    def test_pop_preserves_challenge_and_forwarded_claims_without_signed_claims(self):
+        for constructor_claims in (None, {}):
+            with self.subTest(constructor_claims=constructor_claims):
+                app = ConfidentialClientApplication(
+                    "cid", client_credential=_MTLS_CERT_CRED,
+                    client_claims=constructor_claims,
+                    authority=self._AUTHORITY, azure_region=False)
+                self.addCleanup(app.http_client.close)
+                captured = []
+                with patch("msal.mtls._MtlsHttpClient.post",
+                           side_effect=self._capturing_post(captured)):
+                    result = app.acquire_token_for_client(
+                        ["s1"], mtls_proof_of_possession=True,
+                        claims_challenge='{"access_token":{"challenge":null}}',
+                        forwarded_client_claims='{"access_token":{"forwarded":null}}')
+                self.addCleanup(app._mtls_client._http_client.close)
+                self.assertEqual("mtls_pop", result["token_type"])
+                self.assertEqual(
+                    {"access_token": {"challenge": None, "forwarded": None}},
+                    json.loads(captured[0]["data"]["claims"]))
+                self.assertNotIn("client_assertion", captured[0]["data"])
+
+    def test_mismatched_pem_is_rejected_before_cold_or_warm_pop_cache(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from msal.application import (
+            _load_mtls_cert_material, _private_key_to_unencrypted_pem)
+
+        material = _load_mtls_cert_material(_MTLS_CERT_CRED)
+        other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        plain = _private_key_to_unencrypted_pem(other_key)
+        encrypted = other_key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+            serialization.BestAvailableEncryption(b"synthetic-passphrase"))
+        for warm in (False, True):
+            producer = ConfidentialClientApplication(
+                "cid", client_credential=_MTLS_CERT_CRED,
+                authority=self._AUTHORITY, azure_region=False)
+            self.addCleanup(producer.http_client.close)
+            if warm:
+                with patch("msal.mtls._MtlsHttpClient.post",
+                           side_effect=self._capturing_post([])):
+                    producer.acquire_token_for_client(
+                        ["s1"], mtls_proof_of_possession=True)
+                self.addCleanup(producer._mtls_client._http_client.close)
+            for key, password in (
+                    (plain.decode("ascii"), None), (plain, None),
+                    (other_key, None), (encrypted, b"synthetic-passphrase")):
+                with self.subTest(warm=warm, key=type(key).__name__,
+                                  encrypted=password is not None):
+                    app = ConfidentialClientApplication(
+                        "cid", client_credential={
+                            "private_key": key, "passphrase": password,
+                            "public_certificate": material["cert_pem"].decode("ascii"),
+                        }, authority=self._AUTHORITY, azure_region=False,
+                        token_cache=producer.token_cache)
+                    self.addCleanup(app.http_client.close)
+                    with patch.object(
+                            app, "_acquire_token_silent_with_error") as lookup:
+                        with self.assertRaisesRegex(ValueError, "does not match"):
+                            app.acquire_token_for_client(
+                                ["s1"], mtls_proof_of_possession=True)
+                    lookup.assert_not_called()
+            valid = ConfidentialClientApplication(
+                "cid", client_credential={
+                    "private_key": material["private_key_pem"],
+                    "public_certificate": material["cert_pem"].decode("ascii"),
+                }, authority=self._AUTHORITY, azure_region=False,
+                token_cache=producer.token_cache)
+            self.addCleanup(valid.http_client.close)
+            with patch("msal.mtls._MtlsHttpClient.post",
+                       side_effect=self._capturing_post([])) as post:
+                result = valid.acquire_token_for_client(
+                    ["s1"], mtls_proof_of_possession=True)
+            self.assertEqual(0 if warm else 1, post.call_count)
+            self.assertEqual(
+                material["key_id"], result["binding_certificate"].thumbprint_sha256)
+            if valid._mtls_client is not None:
+                self.addCleanup(valid._mtls_client._http_client.close)
+
     def test_certificate_override_is_rejected_before_cache_lookup(self):
         app = ConfidentialClientApplication(
             "cid", client_credential=_MTLS_CERT_CRED,
@@ -2609,6 +2736,33 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         self.assertEqual(
             captured[0]["url"],
             "https://westus3.mtlsauth.microsoft.com/my_tenant/oauth2/v2.0/token")
+
+    def test_government_alias_requests_normalized_global_and_regional_endpoints(self):
+        authority = "https://login.usgovcloudapi.net/my_tenant"
+        endpoint = authority + "/oauth2/v2.0/token"
+        with patch(_OIDC_DISCOVERY, return_value={
+                "authorization_endpoint": endpoint.replace("/token", "/authorize"),
+                "token_endpoint": endpoint, "issuer": authority + "/v2.0"}), patch(
+                "msal.application._detect_region", return_value="usgovvirginia"):
+            for region in (False, "usgovvirginia"):
+                with self.subTest(region=region):
+                    app = ConfidentialClientApplication(
+                        "cid", client_credential=_MTLS_CERT_CRED,
+                        authority=authority, azure_region=region)
+                    self.addCleanup(app.http_client.close)
+                    captured = []
+                    with patch("msal.mtls._MtlsHttpClient.post",
+                               side_effect=self._capturing_post(captured)):
+                        result = app.acquire_token_for_client(
+                            ["s1"], mtls_proof_of_possession=True)
+                    client = app._mtls_regional_client if region else app._mtls_client
+                    self.addCleanup(client._http_client.close)
+                    host = ("usgovvirginia." if region else "") + (
+                        "mtlsauth.microsoftonline.us")
+                    self.assertEqual(
+                        "https://{}/my_tenant/oauth2/v2.0/token".format(host),
+                        captured[0]["url"])
+                    self.assertEqual("mtls_pop", result["token_type"])
 
     def test_secret_credential_with_flag_raises(self):
         app = ConfidentialClientApplication(
