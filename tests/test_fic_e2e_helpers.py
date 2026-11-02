@@ -1,12 +1,13 @@
 """Offline default-FIC guards, not evidence of live token acquisitions."""
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import requests
 
 from tests import test_e2e
 from tests.mtls_e2e_helpers import (
-    JWT_BEARER, JWT_POP, token_request_summary, unrelated_binding,
+    GRAPH_REJECTION_MARKERS, JWT_BEARER, JWT_POP,
+    token_request_summary, unrelated_binding,
 )
 from tests.test_mtls_e2e_helpers import (
     CertificateFixture, _CREDENTIAL, _ENDPOINT, _jwt,
@@ -59,17 +60,51 @@ class TestFicScenarioGuards(CertificateFixture):
         self.invoke_provider = True
         self.omit_final_record = False
         self.final_record_changes = {}
+        self.graph_response = Mock(status_code=200, text="")
+        self.graph_requests = []
+        self.invalid_graph_marker = None
         patchers = (
             patch("tests.lab_config.get_client_certificate", return_value=_CREDENTIAL),
             patch("msal.ConfidentialClientApplication", self.factory),
             patch.object(self.scenario, "_acquire_recorded",
                          side_effect=self._recorded),
-            patch.object(self.scenario, "_call_graph_with_mtls_pop_token"),
+            patch.object(
+                self.scenario, "_call_graph_with_mtls_pop_token",
+                wraps=self.scenario._call_graph_with_mtls_pop_token),
+            patch("msal.MtlsBindingContext.create_requests_session",
+                  autospec=True, side_effect=self._graph_session_for),
+            patch("requests.Session", side_effect=self._graph_session_for),
         )
         for patcher in patchers:
             patcher.start()
             self.addCleanup(patcher.stop)
         self.addCleanup(self.scenario.doCleanups)
+
+    def _graph_session_for(self, binding=None):
+        def get(url, headers, **kwargs):
+            self.assertEqual(self.scenario._MTLS_GRAPH_RESOURCE, url)
+            self.assertEqual({"timeout": 30, "allow_redirects": False}, kwargs)
+            header = headers["Authorization"]
+            if binding is None:
+                marker = GRAPH_REJECTION_MARKERS[0]
+            elif header.startswith("Bearer "):
+                marker = GRAPH_REJECTION_MARKERS[1]
+            elif binding.thumbprint_sha256 != self.binding.thumbprint_sha256:
+                marker = GRAPH_REJECTION_MARKERS[2]
+            else:
+                marker = None
+            self.graph_requests.append({
+                "binding": binding, "header": header, "marker": marker})
+            if marker is None:
+                return self.graph_response
+            return Mock(
+                status_code=200 if marker == self.invalid_graph_marker else 401,
+                text=marker)
+
+        session = MagicMock()
+        session.__enter__.return_value = session
+        session.get.side_effect = get
+        return session
 
     def _recorded(self, app, scope, binding, pop=False,
                   http_client=None, expected_assertion=None):
@@ -108,13 +143,23 @@ class TestFicScenarioGuards(CertificateFixture):
                 self.scenario._SNI_ALLOWLISTED_AUTHORITY, app_call.kwargs["authority"])
             self.assertIs(False, app_call.kwargs["azure_region"])
         self.assertIs(
-            calls[0].kwargs["client_credential"],
+            self.leg1.acquire_token_for_client.return_value["binding_certificate"],
             calls[1].kwargs["client_credential"]["mtls_binding_certificate"])
         self.leg1.acquire_token_for_client.assert_called_once_with(
             ["api://AzureADTokenExchange/.default"], mtls_proof_of_possession=True)
         self.leg2.acquire_token_for_client.assert_called_once_with(
             ["https://graph.microsoft.com/.default"], mtls_proof_of_possession=True)
         self.scenario._call_graph_with_mtls_pop_token.assert_called_once()
+        self.assertEqual(4, len(self.graph_requests))
+        token = self.leg2.acquire_token_for_client.return_value["access_token"]
+        self.assertCountEqual(
+            ["mtls_pop " + token] * 3 + ["Bearer " + token],
+            [request["header"] for request in self.graph_requests])
+        self.assertEqual(2, sum(
+            request["binding"] is self.binding for request in self.graph_requests))
+        self.assertCountEqual(
+            [None] + list(GRAPH_REJECTION_MARKERS),
+            [request["marker"] for request in self.graph_requests])
 
     def test_regional_bearer_has_storage_audience_and_no_resource_mtls(self):
         self.leg2.acquire_token_for_client.return_value = {
@@ -163,23 +208,47 @@ class TestFicScenarioGuards(CertificateFixture):
                 self.scenario.test_credential_fic_output_pop()
         self.leg2.acquire_token_for_client.assert_not_called()
 
-    def test_final_pop_requires_type_binding_cnf_and_audience(self):
+    def test_final_pop_requires_type_and_matching_certificate_binding(self):
         original = self.leg2.acquire_token_for_client.return_value
         for changes in (
                 {"token_type": "Bearer"}, {"binding_certificate": None},
-                {"binding_certificate": {}}, {"access_token": "opaque"},
-                {"access_token": _jwt({
-                    "aud": "https://graph.microsoft.com",
-                    "cnf": {"x5t#S256": "different-certificate"}})},
-                {"access_token": _jwt({
-                    "aud": "https://wrong.example",
-                    "cnf": {"x5t#S256": self.binding.thumbprint_sha256}})}):
+                {"binding_certificate": {}},
+                {"binding_certificate": unrelated_binding()}):
             with self.subTest(fields=tuple(changes)):
                 self.factory.side_effect = [self.leg1, self.leg2]
                 self.leg2.acquire_token_for_client.return_value = dict(original, **changes)
                 with self.assertRaises(AssertionError):
                     self.scenario.test_credential_fic_output_pop()
         self.scenario._call_graph_with_mtls_pop_token.assert_not_called()
+
+    def test_graph_format_is_opaque_and_resource_acceptance_is_authoritative(self):
+        for token in (
+                "opaque-graph-token",
+                _jwt({"aud": "https://wrong.example"}),
+                _jwt({"cnf": {"x5t#S256": "different-certificate"}})):
+            for status in (200, 401, 403, 302, 500):
+                with self.subTest(format="jwt" if "." in token else "opaque",
+                                  status=status):
+                    self.factory.side_effect = [self.leg1, self.leg2]
+                    self.leg2.acquire_token_for_client.return_value["access_token"] = token
+                    self.graph_response.status_code = status
+                    self.graph_requests.clear()
+                    if status == 200:
+                        self.scenario.test_credential_fic_output_pop()
+                    else:
+                        with self.assertRaisesRegex(AssertionError, "Graph resource"):
+                            self.scenario.test_credential_fic_output_pop()
+                    self.assertEqual("mtls_pop " + token, self.graph_requests[0]["header"])
+
+    def test_fic_graph_requires_all_same_token_rejection_controls(self):
+        for marker in GRAPH_REJECTION_MARKERS:
+            with self.subTest(marker=marker):
+                self.factory.side_effect = [self.leg1, self.leg2]
+                self.invalid_graph_marker = marker
+                self.graph_requests.clear()
+                with self.assertRaises(AssertionError):
+                    self.scenario.test_credential_fic_output_pop()
+                self.assertEqual(marker, self.graph_requests[-1]["marker"])
 
     def test_final_bearer_rejects_bound_or_wrong_audience_results(self):
         for result in (

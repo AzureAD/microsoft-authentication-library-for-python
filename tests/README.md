@@ -59,10 +59,15 @@ Both default-transport cells require real token POST evidence for each leg,
 the expected global or `westus3` mTLS endpoint, and the same lab certificate.
 Leg 2 must invoke the assertion provider and send its exact, unchanged leg-1
 value as a `jwt-pop` client assertion. The exchange assertion may be opaque;
-it is not assumed to be a resource JWT. Final resource tokens must be JWTs
-with the Graph or Storage audience. Final Graph PoP additionally requires a
-matching SHA256 `cnf` and returned `MtlsBindingContext`, then HTTP 200 from the
-mTLS Graph resource using that context.
+it is not assumed to be a resource JWT. Leg 2 receives the actual
+`MtlsBindingContext` returned with the leg-1 assertion rather than reloading
+the PFX path. The sample also checks binding continuity when the callable
+renews the assertion. Final Storage Bearer tokens must have the Storage
+audience. Graph owns its token format: the final Graph token is treated as
+opaque and requires matching returned certificate binding plus HTTP 200 from
+the mTLS Graph resource using that context, not client-side JWT inspection.
+The same token must also fail the shared no-certificate, wrong-certificate,
+and Bearer-scheme controls with their exact rejection markers.
 
 The required FIC inventory is exactly these two methods in
 `tests.test_e2e.FicTwoLegTestCase`:
@@ -84,7 +89,7 @@ and Go `30f4770ffcbd9c4c51d278cdab6dbda71a0f7337`
 
 | Active reference case(s) | Python FIC method | Required observation |
 | --- | --- | --- |
-| Go `TestTwoLegFICMtlsPoP_SNI`; .NET `Credential_Fic_Output_Pop_TestAsync` / `RunTwoLegS2sFicBothLegsPopAsync` | `test_credential_fic_output_pop` | Global exchange to Graph; invoked provider, unchanged `jwt-pop` assertion, certificate continuity, strict final audience/type/`cnf`, resource HTTP 200. |
+| Go `TestTwoLegFICMtlsPoP_SNI`; .NET `Credential_Fic_Output_Pop_TestAsync` / `RunTwoLegS2sFicBothLegsPopAsync` | `test_credential_fic_output_pop` | Global exchange to Graph; invoked provider, unchanged `jwt-pop` assertion, actual returned-binding handoff, final PoP type/binding, authoritative resource HTTP 200. |
 | Go `TestTwoLegFICMtlsBearer_SNI`; .NET `Credential_Fic_Output_Bearer_TestAsync` | `test_credential_fic_output_bearer` | `westus3` exchange to Storage; provider and real `jwt-pop` POST, certificate continuity, Storage Bearer, no output binding or downstream resource mTLS. |
 
 Run these two live cells with:
@@ -94,10 +99,14 @@ python -m pytest -q tests\test_e2e.py::FicTwoLegTestCase
 ```
 
 The offline `tests\test_fic_e2e_helpers.py` checks the two-leg provider/wire
-contract, opaque exchange assertions, strict final binding/audience, and exact
-assertion handoff. Its privacy regression uses pytest's actual traceback
-renderer with arguments shown and locals disabled, and rejects full tokens
-and truncated token fragments. These mock-driven guards are not evidence of
+contract, opaque exchange and Graph tokens, strict final binding/type and
+Storage audience, Graph rejection failures, and exact assertion handoff.
+`tests.test_application.TestFicCertificateHandoff` replaces a PFX with a second
+certificate after caching the leg-1 assertion, checks both token and actual
+TLS certificate/key continuity, and checks renewal and Bearer/PoP output
+contracts without reopening that file. The recorder privacy regression uses
+pytest's actual traceback renderer with arguments shown and locals disabled,
+and rejects full tokens and truncated token fragments. These offline guards are not evidence of
 live acquisition or a custom HTTP factory.
 
 ```powershell

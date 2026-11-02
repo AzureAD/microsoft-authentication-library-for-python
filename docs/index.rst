@@ -245,8 +245,12 @@ Notes and requirements:
   ``False`` disables server verification.
 * For a Federated Identity Credential (FIC) exchange, configure the leg-2 client
   with both a ``client_assertion`` callable (acquiring the leg-1 token) and an
-  ``mtls_binding_certificate`` sub-key; the leg-1 assertion is then sent as a
-  ``jwt-pop`` client assertion over mTLS using the same certificate as leg 1.
+  ``mtls_binding_certificate`` sub-key containing the leg-1 result's
+  ``binding_certificate``. This reuses the actual certificate snapshot rather
+  than reopening a PFX path that may have changed between the two legs. The
+  leg-1 assertion is then sent as a ``jwt-pop`` client assertion over mTLS
+  using that same certificate. A certificate credential dictionary remains
+  supported when the caller already guarantees certificate continuity.
   A fixed assertion string expires and emits a deprecation warning; the callable
   lets the leg-1 application reuse cached tokens and acquire fresh ones as needed.
   The target application must have a federated identity credential trusting the

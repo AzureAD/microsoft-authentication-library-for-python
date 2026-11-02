@@ -6,7 +6,9 @@ import logging
 import os
 import pickle
 import runpy
+import shutil
 import sys
+import tempfile
 import time
 import warnings
 from unittest.mock import patch, Mock
@@ -2741,15 +2743,21 @@ class TestMtlsProofOfPossession(unittest.TestCase):
             os.path.dirname(__file__), os.pardir, "sample",
             "confidential_client_mtls_pop_sample.py"))
         result = {"access_token": "token", "token_type": "Bearer"}
-        app = Mock()
-        app.acquire_token_for_client.return_value = result
+        leg1_app = Mock()
+        leg1_app.acquire_token_for_client.return_value = {
+            "access_token": "assertion", "token_type": "mtls_pop",
+            "binding_certificate": msal.MtlsBindingContext(
+                b"cert", b"key", ["certificate"], "thumbprint"),
+        }
+        leg2_app = Mock()
+        leg2_app.acquire_token_for_client.return_value = result
         with patch.dict(os.environ, {
                 "CLIENT_ID": "leg1", "AUTHORITY": self._AUTHORITY,
                 "LEG2_CLIENT_ID": "leg2", "LEG2_AUTHORITY": self._AUTHORITY,
                 "PFX_PATH": "unused.pfx", "SCOPE": "s1",
                 "RESOURCE_URL": "https://resource.invalid"}), patch(
                     "msal.ConfidentialClientApplication",
-                    return_value=app), patch("builtins.print"), patch(
+                    side_effect=[leg1_app, leg2_app]), patch("builtins.print"), patch(
                         "msal.MtlsBindingContext.create_requests_session") as session:
             self.assertIs(result, sample["fic_two_leg_over_mtls_pop"]())
         session.assert_not_called()
@@ -2758,11 +2766,15 @@ class TestMtlsProofOfPossession(unittest.TestCase):
         # FIC leg 2 needs the binding cert AND the leg-1 assertion. A binding
         # cert with no client_assertion must fail fast at construction with a
         # clear ValueError, not a later KeyError when the request is built.
-        with self.assertRaisesRegex(
-                ValueError, "also requires a client_assertion"):
-            ConfidentialClientApplication(
-                "cid", authority=self._AUTHORITY,
-                client_credential={"mtls_binding_certificate": _MTLS_CERT_CRED})
+        for binding in (
+                _MTLS_CERT_CRED,
+                msal.MtlsBindingContext(b"cert", b"key", ["certificate"], "thumbprint")):
+            with self.subTest(binding_type=type(binding).__name__):
+                with self.assertRaisesRegex(
+                        ValueError, "also requires a client_assertion"):
+                    ConfidentialClientApplication(
+                        "cid", authority=self._AUTHORITY,
+                        client_credential={"mtls_binding_certificate": binding})
 
     def test_invalid_binding_certificate_is_rejected(self):
         for certificate in (
@@ -2871,6 +2883,197 @@ class TestMtlsProofOfPossession(unittest.TestCase):
             http_client=MinimalHttpClient())
         with self.assertRaises(ValueError):
             app.acquire_token_for_client(["s1"], mtls_proof_of_possession=True)
+
+
+@patch(_OIDC_DISCOVERY, new=_MTLS_OIDC_MOCK)
+class TestFicCertificateHandoff(unittest.TestCase):
+    _AUTHORITY = TestMtlsProofOfPossession._AUTHORITY
+
+    @classmethod
+    def setUpClass(cls):
+        from datetime import datetime, timedelta, timezone
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives.serialization import pkcs12
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(
+            x509.oid.NameOID.COMMON_NAME, "FIC handoff replacement")])
+        now = datetime.now(timezone.utc)
+        cert = (x509.CertificateBuilder()
+            .subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(days=1))
+            .not_valid_after(now + timedelta(days=1))
+            .sign(key, hashes.SHA256()))
+        cls._replacement_pfx = pkcs12.serialize_key_and_certificates(
+            b"fic-replacement", key, cert, None,
+            serialization.BestAvailableEncryption(b"password"))
+
+    def setUp(self):
+        from msal.application import _load_mtls_cert_material
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.pfx_path = os.path.join(directory.name, "credential.pfx")
+        shutil.copyfile(_MTLS_PFX, self.pfx_path)
+        self.credential = dict(_MTLS_CERT_CRED, private_key_pfx_path=self.pfx_path)
+        self.material = _load_mtls_cert_material(self.credential)
+        self.binding = self._binding(self.material)
+        self.requests = []
+        self.sample = runpy.run_path(os.path.join(
+            os.path.dirname(__file__), os.pardir, "sample",
+            "confidential_client_mtls_pop_sample.py"))
+        environment = patch.dict(os.environ, {
+            "CLIENT_ID": "leg1", "AUTHORITY": self._AUTHORITY,
+            "LEG2_CLIENT_ID": "leg2", "LEG2_AUTHORITY": self._AUTHORITY,
+            "PFX_PATH": self.pfx_path, "PFX_PASSPHRASE": "password",
+            "SCOPE": "final-scope", "RESOURCE_URL": "",
+            "AZURE_REGION": "",
+            "FIC_EXCHANGE_SCOPE": "api://AzureADTokenExchange/.default",
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    @staticmethod
+    def _binding(material):
+        return msal.MtlsBindingContext(
+            material["cert_pem"], material["private_key_pem"],
+            material["x5c"], material["key_id"])
+
+    def _replace_pfx(self):
+        with open(self.pfx_path, "wb") as stream:
+            stream.write(self._replacement_pfx)
+
+    def _post(self, transport, url, data=None, **kwargs):
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+
+        cert = x509.load_pem_x509_certificate(transport._cert_pem)
+        key = serialization.load_pem_private_key(transport._key_pem, password=None)
+        self.assertEqual(
+            self.material["sha256_thumbprint"],
+            cert.fingerprint(hashes.SHA256()).hex())
+        self.assertEqual(
+            cert.public_key().public_bytes(
+                serialization.Encoding.DER,
+                serialization.PublicFormat.SubjectPublicKeyInfo),
+            key.public_key().public_bytes(
+                serialization.Encoding.DER,
+                serialization.PublicFormat.SubjectPublicKeyInfo))
+        transport._ensure_session(url)  # Build the real certificate-bearing TLS context.
+        self.addCleanup(transport.close)
+        self.requests.append(dict(data or {}))
+        return MinimalResponse(status_code=200, text=json.dumps({
+            "access_token": "unit-assertion-{}".format(len(self.requests)),
+            "token_type": (data or {}).get("token_type", "Bearer"),
+            "expires_in": 3600,
+        }))
+
+    def test_fic_sample_reuses_cached_assertion_certificate_after_pfx_replacement(self):
+        factory = msal.ConfidentialClientApplication
+        apps = []
+
+        def create_app(*args, **kwargs):
+            app = factory(*args, **kwargs)
+            apps.append(app)
+            if len(apps) == 1:
+                app.acquire_token_for_client(
+                    ["api://AzureADTokenExchange/.default"],
+                    mtls_proof_of_possession=True)
+                self._replace_pfx()
+            return app
+
+        from msal.application import _parse_pfx
+        with patch("msal.application._parse_pfx", wraps=_parse_pfx) as parse, patch(
+                "msal.ConfidentialClientApplication", side_effect=create_app), patch(
+                    "msal.mtls._MtlsHttpClient.post",
+                    new=lambda transport, url, **kwargs:
+                        self._post(transport, url, **kwargs)), patch("builtins.print"):
+            result = self.sample["fic_two_leg_over_mtls_pop"]()
+            self.assertEqual(["leg1", "leg2"], [
+                request["client_id"] for request in self.requests])
+            self.assertEqual(
+                "unit-assertion-1", self.requests[1]["client_assertion"])
+            self.assertEqual(_JWT_POP, self.requests[1]["client_assertion_type"])
+            binding = apps[1].client_credential["mtls_binding_certificate"]
+            self.assertIsInstance(binding, msal.MtlsBindingContext)
+            self.assertEqual(
+                self.binding.thumbprint_sha256,
+                result["binding_certificate"].thumbprint_sha256)
+            for entry in list(apps[0].token_cache.search(
+                    msal.TokenCache.CredentialType.ACCESS_TOKEN, for_removal=True)):
+                apps[0].token_cache.modify(
+                    msal.TokenCache.CredentialType.ACCESS_TOKEN, entry,
+                    {"expires_on": "0"})
+            renewed = apps[1].client_credential["client_assertion"]()
+            self.assertEqual("unit-assertion-3", renewed)
+            self.assertEqual(["leg1", "leg2", "leg1"], [
+                request["client_id"] for request in self.requests])
+            self.assertEqual(1, parse.call_count, "PFX must be loaded once per app.")
+
+    def test_fic_binding_context_preserves_bearer_and_pop_contracts(self):
+        self._replace_pfx()
+        with patch(
+                "msal.application._parse_pfx",
+                side_effect=AssertionError("FIC must not reload the PFX path.")), patch(
+                    "msal.mtls._MtlsHttpClient.post",
+                    new=lambda transport, url, **kwargs:
+                        self._post(transport, url, **kwargs)):
+            for pop in (False, True):
+                with self.subTest(pop=pop):
+                    app = ConfidentialClientApplication(
+                        "leg2", authority=self._AUTHORITY, azure_region=False,
+                        client_credential={
+                            "client_assertion": lambda: "cached-assertion-A",
+                            "mtls_binding_certificate": self.binding})
+                    result = app.acquire_token_for_client(
+                        ["final-scope"], mtls_proof_of_possession=pop)
+                    self.assertEqual(
+                        "mtls_pop" if pop else "Bearer", result["token_type"])
+                    self.assertEqual(pop, "binding_certificate" in result)
+                    self.assertEqual(
+                        "cached-assertion-A", self.requests[-1]["client_assertion"])
+                    self.assertEqual(_JWT_POP, self.requests[-1]["client_assertion_type"])
+
+    def test_fic_sample_rejects_changed_assertion_binding(self):
+        from msal.application import _load_mtls_cert_material
+
+        self._replace_pfx()
+        replacement = self._binding(_load_mtls_cert_material(self.credential))
+        leg1 = Mock()
+        leg1.acquire_token_for_client.side_effect = [{
+            "access_token": "unit-assertion", "token_type": "mtls_pop",
+            "binding_certificate": binding,
+        } for binding in (self.binding, replacement)]
+        factory = msal.ConfidentialClientApplication
+
+        def create_app(client_id, **kwargs):
+            return leg1 if client_id == "leg1" else factory(client_id, **kwargs)
+
+        with patch("msal.ConfidentialClientApplication", side_effect=create_app), patch(
+                "msal.mtls._MtlsHttpClient.post") as post:
+            with self.assertRaisesRegex(RuntimeError, "certificate binding changed"):
+                self.sample["fic_two_leg_over_mtls_pop"]()
+        post.assert_not_called()
+
+    def test_fic_sample_requires_leg_one_binding_before_constructing_leg_two(self):
+        for result in (
+                {"error": "invalid_client"},
+                {"access_token": "unit-assertion", "token_type": "Bearer"},
+                {"access_token": "unit-assertion", "token_type": "mtls_pop"},
+                {"access_token": "unit-assertion", "token_type": "mtls_pop",
+                 "binding_certificate": {}}):
+            with self.subTest(fields=tuple(result)):
+                leg1 = Mock()
+                leg1.acquire_token_for_client.return_value = result
+                with patch(
+                        "msal.ConfidentialClientApplication",
+                        return_value=leg1) as factory, patch("builtins.print"):
+                    with self.assertRaises(RuntimeError):
+                        self.sample["fic_two_leg_over_mtls_pop"]()
+                self.assertEqual(1, factory.call_count)
 
 
 @patch(_OIDC_DISCOVERY, new=Mock(return_value={

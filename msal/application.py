@@ -620,14 +620,22 @@ class ClientApplication(object):
 
                 For a Federated Identity Credential (FIC) exchange over mutual-TLS
                 Proof-of-Possession, the ``client_assertion`` container may also
-                carry an ``mtls_binding_certificate`` sub-key -- a certificate
-                credential (same shape as the top-level cert credential) that is
-                presented as the client TLS certificate during the token request.
-                An explicitly supplied binding certificate must be a non-empty
-                certificate credential dictionary; invalid or incomplete values
-                raise ``ValueError``.
+                carry an ``mtls_binding_certificate`` sub-key. Pass the
+                :class:`~msal.MtlsBindingContext` returned with the leg-1 token
+                to present that exact certificate during the leg-2 token request.
+                A non-empty certificate credential dictionary (same shape as the
+                top-level cert credential) is also supported. Invalid or
+                incomplete values raise ``ValueError``.
                 Use a callable to acquire the leg-1 token on demand; the leg-1
                 application's cache reuses valid tokens and renews expired ones::
+
+                    leg1 = leg1_app.acquire_token_for_client(
+                        ["api://AzureADTokenExchange/.default"],
+                        mtls_proof_of_possession=True,
+                    )
+                    if "access_token" not in leg1:
+                        raise RuntimeError("FIC leg 1 failed")
+                    binding = leg1["binding_certificate"]
 
                     def get_leg1_assertion():
                         result = leg1_app.acquire_token_for_client(
@@ -635,16 +643,14 @@ class ClientApplication(object):
                             mtls_proof_of_possession=True,
                         )
                         if "access_token" not in result:
-                            raise RuntimeError(
-                                "FIC leg 1 failed: {}".format(result.get("error")))
+                            raise RuntimeError("FIC leg 1 failed")
+                        if result["binding_certificate"].x5c != binding.x5c:
+                            raise RuntimeError("FIC certificate binding changed")
                         return result["access_token"]
 
                     {
                         "client_assertion": get_leg1_assertion,
-                        "mtls_binding_certificate": {
-                            "private_key_pfx_path": "/path/to/your.pfx",
-                            "public_certificate": True,
-                        },
+                        "mtls_binding_certificate": binding,
                     }
 
                 When ``mtls_binding_certificate`` is present, MSAL sends the
@@ -1025,15 +1031,17 @@ class ClientApplication(object):
         if (isinstance(client_credential, dict)
                 and "mtls_binding_certificate" in client_credential):
             binding_certificate = client_credential["mtls_binding_certificate"]
-            if not isinstance(binding_certificate, dict) or not (
+            if not isinstance(binding_certificate, mtls.MtlsBindingContext) and (
+                    not isinstance(binding_certificate, dict) or not (
                     binding_certificate.get("private_key_pfx_path")
                     or (binding_certificate.get("private_key")
                         and isinstance(
                             binding_certificate.get("public_certificate"), str)
-                        and binding_certificate["public_certificate"])):
+                        and binding_certificate["public_certificate"]))):
                 raise ValueError(
-                    "mtls_binding_certificate must be a non-empty certificate "
-                    "credential dictionary with 'private_key_pfx_path', or "
+                    "mtls_binding_certificate must be an MtlsBindingContext "
+                    "or a non-empty certificate credential dictionary with "
+                    "'private_key_pfx_path', or "
                     "'private_key' plus a PEM 'public_certificate'.")
             if not client_credential.get("client_assertion"):
                 raise ValueError(
