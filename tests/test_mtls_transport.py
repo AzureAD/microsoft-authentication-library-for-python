@@ -658,11 +658,69 @@ class TestMtlsCertificateChain(unittest.TestCase):
             with self.assertRaises(UnsupportedAlgorithm):
                 _load_mtls_cert_material({"private_key_pfx_path": path})
 
+    def test_ordinary_pfx_defers_issuer_verification_until_mtls_use(self):
+        import jwt
+        from cryptography.exceptions import UnsupportedAlgorithm
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.serialization import pkcs12
+        from msal.application import ConfidentialClientApplication
+        from tests.http_client import MinimalResponse
+
+        authority = "https://login.microsoftonline.com/tenant"
+        endpoint = authority + "/oauth2/v2.0/token"
+        with tempfile.TemporaryDirectory() as directory, patch(
+                "msal.authority.tenant_discovery", return_value={
+                    "authorization_endpoint": endpoint.replace("/token", "/authorize"),
+                    "token_endpoint": endpoint, "issuer": authority + "/v2.0"}):
+            path = Path(directory) / "chain.pfx"
+            path.write_bytes(pkcs12.serialize_key_and_certificates(
+                b"client", self.leaf_key, self.leaf, [self.intermediate],
+                serialization.NoEncryption()))
+            for public_certificate in (False, True):
+                with self.subTest(public_certificate=public_certificate), patch(
+                        "msal.application._is_certificate_issuer",
+                        side_effect=UnsupportedAlgorithm(
+                            "Upgrade cryptography to verify RSA-PSS certificate chains")
+                        ) as verify_issuer:
+                    app = ConfidentialClientApplication(
+                        "cid", authority=authority, azure_region=False,
+                        client_credential={
+                            "private_key_pfx_path": path,
+                            "public_certificate": public_certificate})
+                    self.addCleanup(app.http_client.close)
+                    self.assertTrue(
+                        app._mtls_pop_cert_material is None,
+                        "Ordinary PFX signing must not resolve the TLS chain.")
+
+                    def post(url, data=None, **kwargs):
+                        assertion = data["client_assertion"]
+                        header = jwt.get_unverified_header(assertion)
+                        if public_certificate:
+                            self.assertEqual(
+                                extract_certs(self.chain_pem.decode("ascii"))[:1],
+                                header["x5c"])
+                        else:
+                            self.assertNotIn("x5c", header)
+                        jwt.decode(assertion, self.leaf.public_key(),
+                                   algorithms=["PS256"], audience=endpoint, issuer="cid")
+                        return MinimalResponse(
+                            status_code=200,
+                            text='{"access_token":"ordinary","token_type":"Bearer"}')
+
+                    result = app.acquire_token_for_client(["ordinary"], post=post)
+                    self.assertEqual("Bearer", result["token_type"])
+                    verify_issuer.assert_not_called()
+                    with self.assertRaises(UnsupportedAlgorithm):
+                        app._get_mtls_pop_cert()
+                    self.assertTrue(
+                        app._mtls_pop_cert_material is None,
+                        "Failed TLS chain validation must not cache material.")
+
     def test_application_pfx_snapshot_keeps_signing_tls_and_cache_consistent(self):
         import jwt
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.serialization import pkcs12
-        from msal.application import ConfidentialClientApplication, _parse_pfx
+        from msal.application import ConfidentialClientApplication
         from tests.http_client import MinimalResponse
 
         authority = "https://login.microsoftonline.com/tenant"
@@ -683,11 +741,17 @@ class TestMtlsCertificateChain(unittest.TestCase):
             path = Path(directory) / "rotating.pfx"
             path.write_bytes(first)
             credential = {"private_key_pfx_path": path, "public_certificate": True}
-            with patch("msal.application._parse_pfx", wraps=_parse_pfx) as parse:
+            with patch(
+                    "cryptography.hazmat.primitives.serialization.pkcs12."
+                    "load_key_and_certificates",
+                    wraps=pkcs12.load_key_and_certificates) as parse:
                 app = ConfidentialClientApplication(
                     "cid", authority=authority, azure_region=False,
                     client_credential=credential)
                 self.addCleanup(app.http_client.close)
+                self.assertTrue(
+                    app._mtls_pop_cert_material is None,
+                    "Ordinary PFX signing must not resolve the TLS chain.")
                 path.write_bytes(second)
                 credential["private_key_pfx_path"] = "not-the-original-file.pfx"
                 material = app._get_mtls_pop_cert()
