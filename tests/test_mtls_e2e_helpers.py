@@ -112,17 +112,99 @@ class TestMtlsE2eHelpers(CertificateFixture):
         result = {
             "token_type": "mtls_pop", "binding_certificate": self.binding,
             "access_token": _jwt({
-                "aud": "00000003-0000-0000-c000-000000000000",
+                "aud": "https://vault.azure.net",
                 "cnf": {"x5t#S256": self.binding.thumbprint_sha256}}),
         }
         self.scenario._assert_token_result(
-            result, self.scenario._MTLS_POP_SCOPE, "mtls_pop", self.binding)
+            result, self.scenario._KEY_VAULT_SCOPE, "mtls_pop", self.binding)
         wrong = dict(result, access_token=_jwt({
-            "aud": "https://graph.microsoft.com",
+            "aud": "https://vault.azure.net",
             "cnf": {"x5t#S256": "different-certificate"}}))
         with self.assertRaises(AssertionError):
             self.scenario._assert_token_result(
-                wrong, self.scenario._MTLS_POP_SCOPE, "mtls_pop", self.binding)
+                wrong, self.scenario._KEY_VAULT_SCOPE, "mtls_pop", self.binding)
+
+    def test_graph_accepts_opaque_tokens_but_still_checks_binding_identity(self):
+        for token in ("opaque-graph-access-token", "encrypted.token.with.five.segments"):
+            result = {
+                "access_token": token, "token_type": "mtls_pop",
+                "binding_certificate": self.binding,
+            }
+            self.scenario._assert_token_result(
+                result, self.scenario._MTLS_POP_SCOPE, "mtls_pop", self.binding)
+            with self.assertRaises(AssertionError):
+                self.scenario._assert_token_result(
+                    result, self.scenario._MTLS_POP_SCOPE,
+                    "mtls_pop", unrelated_binding())
+
+    def test_opaque_graph_live_leaf_preserves_same_token_resource_controls(self):
+        token = "opaque-graph-access-token"
+        graph_requests = []
+        token_requests = []
+        binding_sessions = []
+        create_session = msal.MtlsBindingContext.create_requests_session
+
+        def session_for(binding, *args, **kwargs):
+            binding_sessions.append(binding)
+            return create_session(binding, *args, **kwargs)
+
+        def send(adapter, request, **kwargs):
+            response = requests.Response()
+            response.request = request
+            response.url = request.url
+            if request.url == _ENDPOINT:
+                token_requests.append(request)
+                response.status_code = 200
+                response._content = json.dumps({
+                    "access_token": token, "token_type": "mtls_pop",
+                    "expires_in": 3600,
+                }).encode("ascii")
+            else:
+                index = len(graph_requests)
+                graph_requests.append(request)
+                response.status_code = 200 if index == 0 else 401
+                response._content = (
+                    "[]" if index == 0 else GRAPH_REJECTION_MARKERS[index - 1]
+                ).encode("ascii")
+            return response
+
+        app = Mock(_TOKEN_SOURCE="token_source", _TOKEN_SOURCE_CACHE="cache")
+
+        def acquire(scope, mtls_proof_of_possession=False):
+            self.assertTrue(mtls_proof_of_possession)
+            cached = bool(token_requests)
+            if not cached:
+                with self.binding.create_requests_session() as session:
+                    session.post(_ENDPOINT, data={
+                        "client_id": self.scenario._SNI_ALLOWLISTED_CLIENT_ID,
+                        "grant_type": "client_credentials",
+                        "token_type": "mtls_pop", "scope": " ".join(scope),
+                    })
+            return {
+                "access_token": token, "token_type": "mtls_pop",
+                "binding_certificate": self.binding,
+                "token_source": "cache" if cached else "identity_provider",
+            }
+
+        app.acquire_token_for_client.side_effect = acquire
+        with patch.object(self.scenario, "_certificate",
+                          return_value=(_CREDENTIAL, self.binding)), patch.object(
+                self.scenario, "_sni_app", return_value=app), patch.object(
+                msal.MtlsBindingContext, "create_requests_session",
+                new=session_for), patch(
+                "requests.adapters.HTTPAdapter.send", autospec=True,
+                side_effect=send):
+            self.scenario.test_credential_x509_output_pop()
+        self.assertEqual(1, len(token_requests))
+        self.assertEqual(2, app.acquire_token_for_client.call_count)
+        self.assertEqual(
+            ["mtls_pop " + token, "mtls_pop " + token,
+             "Bearer " + token, "mtls_pop " + token],
+            [request.headers["Authorization"] for request in graph_requests])
+        self.assertEqual([self.binding] * 3, binding_sessions[:3])
+        self.assertNotEqual(
+            self.binding.thumbprint_sha256,
+            binding_sessions[3].thumbprint_sha256)
 
     def test_key_vault_accepts_its_verified_application_id_not_another_resource(self):
         for audience, accepted in (
@@ -152,7 +234,7 @@ class TestMtlsE2eHelpers(CertificateFixture):
             }
             with pytest.raises(AssertionError) as failure:
                 self.scenario._assert_token_result(
-                    result, self.scenario._MTLS_POP_SCOPE, "mtls_pop", self.binding)
+                    result, self.scenario._KEY_VAULT_SCOPE, "mtls_pop", self.binding)
             self._assert_private_traceback(failure, token)
 
     def test_cached_result_failure_traceback_hides_original_token(self):
