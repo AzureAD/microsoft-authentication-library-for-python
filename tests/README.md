@@ -33,6 +33,30 @@ LAB_APP_CLIENT_CERT_PFX_PATH=C:/path/to/your/cert.pfx
 Notes:
 - `tests/test_e2e.py` loads `.env` automatically when `python-dotenv` is installed.
 - For certificate auth, `LAB_APP_CLIENT_CERT_PFX_PATH` should be an absolute path.
+- Required certificate scenarios use the exportable `LabAuth.MSIDLab.com` PFX
+  from the MSID Lab `LabAuth` secret, without a PFX password. Missing, unreadable,
+  or invalid PFX files fail these scenarios; they never count as skipped coverage.
+
+### Exportable-certificate scope and deferred protected keys
+
+This feature supports exportable PEM/PFX certificate credentials. A custom HTTP
+transport receives exportable certificate material; it does not add native
+Windows CNG or non-exportable-key support. Each application retains a fixed
+certificate snapshot for signing, TLS, and cache binding. Construct a new
+application to rotate a file credential. Temporary TLS keys are encrypted with
+a random process-local password and removed after loading.
+Ordinary PFX assertions retain leaf-only handling; full-chain issuer verification
+is deferred until the application requests mTLS certificate material.
+
+Protected-key support is a separate, deferred deliverable, not covered by this
+lab's parity claims. Its Windows acceptance test must prove that the private
+key cannot be exported, acquire a token using that key, call Graph successfully,
+and repeat from cache with the same certificate binding.
+
+Government authorities `login.microsoftonline.us` and its legacy alias
+`login.usgovcloudapi.net` both use `[region.]mtlsauth.microsoftonline.us`.
+This normalizes the Government preferred network host; it does not enable
+additional sovereign clouds.
 
 ## 4) Run unit/integration tests
 
@@ -47,6 +71,100 @@ Run full E2E unattended suite:
 ```powershell
 python -m pytest -q tests/test_e2e.py
 ```
+
+Run only the required certificate scenarios:
+
+```powershell
+python -m pytest -q tests/test_e2e.py::CertificateScenariosTestCase
+```
+
+The six required certificate methods use the MSID Lab certificate and the
+preconfigured client `163ffef9-a313-45b4-ab2f-c7e2f5e0e23e` in tenant
+`bea21ebe-8b64-4d06-9f6d-6a889b120a7c`, matching the .NET and Go lab setup.
+Global Graph PoP and regional `westus3` Key Vault PoP are separate cases.
+Ordinary regional signed-certificate Bearer authentication is not
+Bearer-over-mTLS: it uses the ordinary endpoint and retains the central
+authority's signed-assertion audience.
+
+The global Graph case reuses the same real token for bound-certificate success
+and three 401/403 controls: no certificate (`MissingClientCertificate`), the
+correct certificate with the Bearer scheme (`Cnf claim not supported over`),
+and an unrelated locally generated certificate
+(`MtlsCnfClaimRequestDataValidationFailed`). It then verifies a cached repeat.
+Both acquisition orders also verify Bearer/PoP isolation in the same
+application, cache, and Key Vault scope.
+
+Graph access tokens are opaque to the client: the suite checks the returned
+binding identity and lets Graph validate the same token through the success
+and rejection controls. Readable JWT, SHA256 `cnf`, and audience assertions are
+reserved for lab resources with that token-format contract. Key Vault accepts its verified
+URI or application-ID alias `cfa8b339-82a2-471a-a3c9-0fc0be7a4093`.
+Recorders delegate to the real default `Session.send`, preserving the TLS
+adapter, and verify signed certificate assertions against the certificate,
+client, and expected audience. They retain bounded status/error metadata,
+never raw forms, tokens, private keys, or client assertions.
+
+On trusted CI runs, all six methods run without skips, including tagged releases. Missing
+configuration, credential failures, and DNS/TLS failures are failures, not
+acceptable rejection evidence. They do not fetch unrelated user configuration
+from Key Vault. Legacy interactive and other optional E2E skips are unchanged.
+Fork PRs run the offline suite but do not schedule the credentialed E2E stage;
+that stage exclusion is not live E2E coverage.
+
+Offline guards are separate from live evidence:
+
+```powershell
+python -m pytest -q tests\test_lab_config.py tests\test_mtls_e2e_helpers.py tests\test_token_cache.py
+```
+
+These checks use local fixtures or synthetic responses to verify strict
+binding, safe recording, Graph rejection gates, the exact required-method
+inventory, and real unittest-runner failure rather than skip when credentials
+are missing. They render failure tracebacks with argument display enabled and
+locals disabled to check token-result, cache, Graph, and real Requests POST
+failures for complete tokens and truncated token fragments. Recorder guards
+cover transport failures, malformed JSON, and invalid assertion signatures.
+The sample-output guard rejects dynamic result values in printed summaries.
+
+Cache compatibility and write-scaling regressions count actual access-token
+bucket visits and identity operations, requiring no steady-state bucket scans
+and linear population work while preserving legacy renewal and persistence.
+Native removal must delete equal canonical and legacy copies without a reload,
+while preserving renewed replacements and other certificates.
+
+### Pinned core certificate parity mapping
+
+The applicable active reference cases below are pinned:
+
+- .NET `c8b90e9de5bc4974de9928835532faac5c88e2d2`:
+  [client-credentials cases][dotnet-cc].
+- Go `903eb9f1e54e361525025ea27040ac9644b64358`:
+  [PoP, ordinary certificate, cache, and regional cases][go-pop].
+
+`C` means `tests.test_e2e.CertificateScenariosTestCase`. Every row is live.
+
+| Active reference case(s) | Python method | Required observation |
+| --- | --- | --- |
+| Go `TestCredential_X509_Output_Pop`; .NET `Credential_X509_Output_Pop_TestAsync` | `C.test_credential_x509_output_pop` | Opaque Graph PoP token, returned certificate identity, resource HTTP 200, all three same-token rejection markers, cached repeat. |
+| Go `TestCredential_X509_Output_Bearer` | `C.test_credential_x509_output_bearer` | Ordinary westus3 Key Vault Bearer, no output binding, signed certificate assertion with central audience, cached repeat. |
+| Go `TestCredential_X509_Output_Pop_Regional` | `C.test_credential_x509_output_pop_regional` | westus3 Key Vault PoP, certificate/JWT binding, same cached token and type; not a redirected global Graph cell. |
+| Go `TestConfidentialClientSNIBearerAndMtlsPoPCacheIsolated` | `C.test_bearer_then_mtls_pop_cache_isolated` | One app/cache/scope, Bearer then PoP, distinct tokens and schemes, no Bearer binding, both cache results preserved. |
+| Go `TestConfidentialClientSNIMtlsPoPThenBearerCacheIsolated` | `C.test_mtls_pop_then_bearer_cache_isolated` | Reverse acquisition order with the same isolation and reusable PoP result. |
+
+`C.test_subject_name_issuer_authentication` remains an additional required
+legacy SN/I lab cell. FIC, Bearer-over-mTLS, and custom HTTP pipeline scenarios
+belong to their feature PRs, not this core inventory. This suite does not
+provision apps or claim repository-wide skip elimination.
+
+[dotnet-cc]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/tests/Microsoft.Identity.Test.Integration.netcore/HeadlessTests/ClientCredentialsMtlsPopTests.cs
+[go-pop]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/903eb9f1e54e361525025ea27040ac9644b64358/apps/tests/integration/mtls_pop_integration_test.go
+
+The Government alias mapping follows the same pinned .NET
+[known cloud metadata][dotnet-clouds] and
+[regional/mTLS transformation][dotnet-mtls-hosts].
+
+[dotnet-clouds]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/src/client/Microsoft.Identity.Client/Instance/Discovery/KnownCloudData.cs
+[dotnet-mtls-hosts]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/src/client/Microsoft.Identity.Client/Instance/Discovery/RegionAndMtlsDiscoveryProvider.cs
 
 ## 5) Manual-intervention E2E tests
 

@@ -1,6 +1,6 @@
 #################################################################################
 #                      OneBranch Pipelines - PR Gate and CI                      #
-# Runs on pushes to dev, on all PRs to dev, and on a daily schedule.            #
+# Runs on dev pushes, PRs to dev or the mTLS PoP base, and a daily schedule.   #
 # Documentation:  https://aka.ms/obpipelines                                    #
 # Yaml Schema:    https://aka.ms/obpipelines/yaml/schema                        #
 #################################################################################
@@ -14,6 +14,7 @@ pr:
   branches:
     include:
     - dev
+    - rginsburg/sni-mtls-pop
   drafts: false
 
 schedules:
