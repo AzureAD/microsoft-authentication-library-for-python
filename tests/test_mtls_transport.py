@@ -343,7 +343,8 @@ mtls._create_ssl_context(material["cert_pem"], material["private_key_pem"])
             with dependency:
                 for factory in (
                         lambda: mtls._MtlsHttpClient(b"cert", b"key"),
-                        binding.create_requests_session):
+                        binding.create_requests_session,
+                        binding.create_requests_adapter):
                     with self.subTest(factory=factory), self.assertRaisesRegex(
                             ValueError, r"mTLS requires Requests >= 2\.25\.0.*"
                                         r"python -m pip install --upgrade"):
@@ -697,7 +698,7 @@ class TestMtlsCertificateChain(unittest.TestCase):
                         ["pop"], mtls_proof_of_possession=True)
                     cached = app.acquire_token_for_client(
                         ["pop"], mtls_proof_of_possession=True)
-                self.addCleanup(app._mtls_client._http_client.close)
+                self.addCleanup(app._mtls_http_client.close)
                 self.assertEqual(self.key_id, result["binding_certificate"].thumbprint_sha256)
                 self.assertEqual(self.key_id, cached["binding_certificate"].thumbprint_sha256)
                 self.assertEqual("cache", cached[app._TOKEN_SOURCE])
