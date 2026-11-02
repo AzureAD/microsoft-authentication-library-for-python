@@ -2736,6 +2736,133 @@ class TestSendCertificateOverMtls(unittest.TestCase):
                             public_certificate=public_certificate))
 
     # --- B. Client-credentials behavior -------------------------------------
+    def test_response_token_type_is_validated_before_all_cache_callbacks(self):
+        from msal.application import _MtlsBearerClient
+
+        for token_type in (None, "", "mtls_pop", "unexpected", 123, "Bearer", "bEaReR"):
+            for per_request_callback in (False, True):
+                with self.subTest(
+                        token_type=token_type, per_request=per_request_callback):
+                    response = {
+                        "access_token": "an_at", "refresh_token": "rotated_rt",
+                        "expires_in": 3600,
+                    }
+                    if token_type is not None:
+                        response["token_type"] = token_type
+                    default_callback, request_callback, update_rt = Mock(), Mock(), Mock()
+                    http_client = Mock()
+                    http_client.post.return_value = MinimalResponse(
+                        status_code=200, text=json.dumps(response))
+                    client = _MtlsBearerClient(
+                        {"token_endpoint": "https://mtlsauth.microsoft.com/token"},
+                        "cid", http_client=http_client,
+                        on_obtaining_tokens=default_callback,
+                        on_updating_rt=update_rt)
+                    result = client.obtain_token_by_refresh_token(
+                        "original_rt", scope=["s1"],
+                        **({"on_obtaining_tokens": request_callback}
+                           if per_request_callback else {}))
+                    expected = request_callback if per_request_callback else default_callback
+                    other = default_callback if per_request_callback else request_callback
+                    other.assert_not_called()
+                    if isinstance(token_type, str) and token_type.lower() == "bearer":
+                        self.assertEqual(response, result)
+                        expected.assert_called_once()
+                        update_rt.assert_called_once_with("original_rt", "rotated_rt")
+                    else:
+                        self.assertEqual("token_type_mismatch", result["error"])
+                        self.assertNotIn("access_token", result)
+                        self.assertNotIn("refresh_token", result)
+                        expected.assert_not_called()
+                        update_rt.assert_not_called()
+
+    def test_unexpected_response_token_types_are_uncached_across_grants(self):
+        grants = (
+            "client_credentials", "obo", "auth_code", "auth_code_flow",
+            "refresh", "silent_refresh", "password", "federated", "user_fic",
+        )
+        for grant in grants:
+            for token_type in (None, "mtls_pop", "unexpected"):
+                with self.subTest(grant=grant, token_type=token_type):
+                    app = ConfidentialClientApplication(
+                        "cid", authority=self._AUTHORITY, azure_region=False,
+                        client_credential=dict(
+                            _MTLS_CERT_CRED, send_certificate_over_mtls=True))
+                    account = None
+                    if grant == "silent_refresh":
+                        with patch(
+                                "msal.mtls._MtlsHttpClient.post",
+                                return_value=MinimalResponse(
+                                    status_code=200, text=_build_user_token_response(
+                                        client_id="cid", refresh_token="original_rt"))):
+                            app.acquire_token_on_behalf_of("assertion", ["s1"])
+                        account = next(app.token_cache.search(
+                            msal.TokenCache.CredentialType.ACCOUNT))
+                    cached = json.dumps(app.token_cache._cache, sort_keys=True)
+                    response = {
+                        "access_token": "rejected_at", "refresh_token": "rejected_rt",
+                        "expires_in": 3600,
+                    }
+                    if token_type is not None:
+                        response["token_type"] = token_type
+                    with patch(
+                            "msal.mtls._MtlsHttpClient.post",
+                            return_value=MinimalResponse(
+                                status_code=200, text=json.dumps(response))) as post, \
+                            patch.object(
+                                app, "_get_authority_aliases", return_value=[]), \
+                            patch.object(
+                                app.authority, "user_realm_discovery", return_value={
+                                    "account_type": (
+                                        "Federated" if grant == "federated" else "Managed"),
+                                    "federation_active_auth_url":
+                                        "https://federation.example"}), \
+                            patch("msal.application.wst_send_request", return_value={
+                                "token": b"assertion",
+                                "type": msal.application.SAML_TOKEN_TYPE_V1}):
+                        if grant == "client_credentials":
+                            result = app.acquire_token_for_client(["s2"])
+                        elif grant == "obo":
+                            result = app.acquire_token_on_behalf_of("assertion", ["s2"])
+                        elif grant == "auth_code":
+                            result = app.acquire_token_by_authorization_code("code", ["s2"])
+                        elif grant == "auth_code_flow":
+                            flow = app.initiate_auth_code_flow(["s2"])
+                            result = app.acquire_token_by_auth_code_flow(
+                                flow, {"code": "code", "state": flow["state"]})
+                        elif grant == "refresh":
+                            result = app.acquire_token_by_refresh_token("original_rt", ["s2"])
+                        elif grant in ("password", "federated"):
+                            result = app.acquire_token_by_username_password(
+                                "user@example.com", "password", ["s2"])
+                        elif grant == "user_fic":
+                            result = app.acquire_token_by_user_federated_identity_credential(
+                                ["s2"], "assertion", user_object_id="uid")
+                        else:
+                            result = app.acquire_token_silent_with_error(
+                                ["s1"], account, force_refresh=True)
+                    self.assertEqual("token_type_mismatch", result["error"])
+                    self.assertNotIn("access_token", result)
+                    self.assertNotIn("binding_certificate", result)
+                    self.assertEqual(cached, json.dumps(app.token_cache._cache, sort_keys=True))
+                    post.assert_called_once()
+
+    def test_bearer_response_validation_preserves_oauth_errors(self):
+        app = ConfidentialClientApplication(
+            "cid", authority=self._AUTHORITY, azure_region=False,
+            client_credential=dict(_MTLS_CERT_CRED, send_certificate_over_mtls=True))
+        response = {
+            "error": "invalid_grant", "error_description": "Synthetic OAuth rejection.",
+            "error_codes": [50027],
+        }
+        with patch(
+                "msal.mtls._MtlsHttpClient.post",
+                return_value=MinimalResponse(status_code=400, text=json.dumps(response))), \
+                patch.object(app.token_cache, "add") as cache_add:
+            result = app.acquire_token_on_behalf_of("assertion", ["s1"])
+        self.assertEqual(response, {key: result[key] for key in response})
+        cache_add.assert_not_called()
+
     def test_cc_flag_no_region_uses_global_mtls_and_returns_bearer(self):
         app = ConfidentialClientApplication(
             "cid", authority=self._AUTHORITY, client_credential=dict(
