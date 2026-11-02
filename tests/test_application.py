@@ -3037,6 +3037,28 @@ class TestFicCertificateHandoff(unittest.TestCase):
                         "cached-assertion-A", self.requests[-1]["client_assertion"])
                     self.assertEqual(_JWT_POP, self.requests[-1]["client_assertion_type"])
 
+    def test_fic_certificate_dictionary_is_copied_before_caller_mutation(self):
+        credential = dict(self.credential)
+        app = ConfidentialClientApplication(
+            "leg2", authority=self._AUTHORITY, azure_region=False,
+            client_credential={
+                "client_assertion": lambda: "cached-assertion-A",
+                "mtls_binding_certificate": credential})
+        credential.clear()
+        credential["private_key_pfx_path"] = "missing-replacement.pfx"
+        with patch(
+                "msal.mtls._MtlsHttpClient.post",
+                new=lambda transport, url, **kwargs:
+                    self._post(transport, url, **kwargs)):
+            result = app.acquire_token_for_client(
+                ["final-scope"], mtls_proof_of_possession=True)
+            self.assertEqual("mtls_pop", result["token_type"])
+            self.assertEqual(
+                self.binding.thumbprint_sha256,
+                result["binding_certificate"].thumbprint_sha256)
+            self.assertEqual("cached-assertion-A", self.requests[0]["client_assertion"])
+            self.assertEqual(_JWT_POP, self.requests[0]["client_assertion_type"])
+
     def test_fic_sample_rejects_changed_assertion_binding(self):
         from msal.application import _load_mtls_cert_material
 

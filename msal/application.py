@@ -1049,7 +1049,9 @@ class ClientApplication(object):
                     "client_assertion (the leg-1 mtls_pop token) in the same "
                     "client_credential; the binding certificate is presented "
                     "to carry that assertion.")
-            self._mtls_cert_credential = binding_certificate
+            self._mtls_cert_credential = (
+                dict(binding_certificate)
+                if isinstance(binding_certificate, dict) else binding_certificate)
             self._mtls_is_fic_leg2 = True
         elif isinstance(client_credential, dict) and not client_credential.get(
                 "client_assertion") and (
