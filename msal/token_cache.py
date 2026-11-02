@@ -653,6 +653,11 @@ class TokenCache(object):
                     old_entry,  # Do not use entries[key] b/c it might not exist
                     **new_key_value_pairs)
                 if is_at:
+                    if entry != old_entry:
+                        for stored_bucket, stored_key in tuple(
+                                index.get(_access_token_identity(old_entry), ())):
+                            if self._cache[stored_bucket].get(stored_key) == old_entry:
+                                self._remove_access_token_entry(stored_bucket, stored_key)
                     if entry.get("key_id") is not None:
                         entry["key_id"] = _key_id_to_str(entry["key_id"])
                     identity = _access_token_identity(entry)
