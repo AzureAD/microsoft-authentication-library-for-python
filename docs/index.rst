@@ -267,6 +267,8 @@ Notes and requirements:
   ``send_certificate_over_mtls=True`` in the certificate credential and omit
   ``mtls_proof_of_possession``. The resulting token uses the ``Bearer`` scheme,
   is not certificate-bound, and does not include ``binding_certificate``.
+  Successful access-token responses with a missing or unexpected token type
+  return ``token_type_mismatch`` before any token-cache callback is invoked.
 
 mTLS-bound access tokens are persisted in a separate ``AccessToken_mTLS`` cache
 bucket. Older SDK versions ignore that bucket and retain their normal Bearer

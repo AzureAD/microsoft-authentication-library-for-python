@@ -413,6 +413,19 @@ class _ClientWithCcsRoutingInfo(Client):
 
 
 class _MtlsBearerClient(_ClientWithCcsRoutingInfo):
+    @staticmethod
+    def _validate_response(response):
+        if response and "access_token" in response and "error" not in response:
+            token_type = response.get("token_type")
+            if not isinstance(token_type, str) or token_type.lower() != "bearer":
+                return {
+                    "error": "token_type_mismatch",
+                    "error_description": (
+                        "The identity provider did not return token_type "
+                        "'Bearer' for the Bearer-over-mTLS request."),
+                }
+        return response
+
     def _obtain_token(self, *args, **kwargs):
         for option in ("post", "cert"):
             if option in kwargs and (
@@ -422,7 +435,15 @@ class _MtlsBearerClient(_ClientWithCcsRoutingInfo):
                     "override. Omit {} to use the certificate-aware mTLS transport "
                     "with the configured certificate.".format(option, option))
         mtls._validate_mtls_request(kwargs)
-        return super(_MtlsBearerClient, self)._obtain_token(*args, **kwargs)
+        callback = kwargs.pop("on_obtaining_tokens", None)
+
+        def _cache_validated_response(event):
+            if "error" not in self._validate_response(event["response"]):
+                (callback or self.on_obtaining_tokens)(event)
+
+        kwargs["on_obtaining_tokens"] = _cache_validated_response
+        return self._validate_response(
+            super(_MtlsBearerClient, self)._obtain_token(*args, **kwargs))
 
 
 def _validate_mtls_response(response, expected_token_type="mtls_pop"):
