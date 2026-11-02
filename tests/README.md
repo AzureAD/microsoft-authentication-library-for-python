@@ -123,6 +123,8 @@ Windows CNG or non-exportable-key support. Each application retains a fixed
 certificate snapshot for signing, TLS, and cache binding. Construct a new
 application to rotate a file credential. Temporary TLS keys are encrypted with
 a random process-local password and removed after loading.
+Ordinary PFX assertions retain leaf-only handling; full-chain issuer verification
+is deferred until the application requests mTLS certificate material.
 
 Protected-key support is a separate, deferred deliverable, not covered by this
 lab's parity claims. Its Windows acceptance test must prove that the private
