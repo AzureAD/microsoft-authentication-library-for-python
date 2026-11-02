@@ -43,6 +43,11 @@ _PUBLIC_CLOUD_LOGIN_HOSTS = frozenset([
     "login.windows.net",
     ])
 
+_GOVERNMENT_LOGIN_HOSTS = frozenset([
+    "login.microsoftonline.us",
+    "login.usgovcloudapi.net",
+    ])
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SOVEREIGN GUARDRAIL - single override point for mTLS cloud availability.
 #
@@ -50,9 +55,6 @@ _PUBLIC_CLOUD_LOGIN_HOSTS = frozenset([
 # mapping here when another cloud becomes available.
 # ─────────────────────────────────────────────────────────────────────────────
 _MTLS_POP_UNSUPPORTED_HOSTS = {
-    "login.usgovcloudapi.net":
-        "login.usgovcloudapi.net is not supported for mTLS PoP, "
-        "please use login.microsoftonline.us",
     "login.chinacloudapi.cn":
         "login.chinacloudapi.cn is not supported for mTLS PoP.",
     }
@@ -73,7 +75,7 @@ def mtls_pop_host(instance, region=None):
         # Known public aliases (including legacy login.windows.net)
         # all normalize to the single global mTLS host.
         base = _PUBLIC_MTLS_HOST
-    elif instance == "login.microsoftonline.us":
+    elif instance in _GOVERNMENT_LOGIN_HOSTS:
         base = "mtlsauth.microsoftonline.us"
     else:
         raise ValueError(
@@ -171,6 +173,14 @@ class MtlsBindingContext(Mapping):
             session.proxies.update(proxies)
         session.mount("https://", self.create_requests_adapter())
         return session
+
+    def _get_mtls_cert_material(self):
+        from .application import _load_mtls_cert_material
+
+        return _load_mtls_cert_material({
+            "private_key": self.__key_pem,
+            "public_certificate": self.__cert_pem.decode("ascii"),
+        })
 
     def __getitem__(self, key):
         if key == "x5c":
@@ -467,21 +477,30 @@ def _create_ssl_context(cert_pem, key_pem, verify=True):
     """Build a client ``ssl.SSLContext`` that presents ``cert_pem``/``key_pem``.
 
     ``ssl.SSLContext.load_cert_chain`` requires a file path, but our key is
-    in memory. We write a ``0600`` temp PEM (mkstemp defaults to owner-only),
-    load it, then unlink it immediately - the context keeps the material in
-    memory, so nothing sensitive lingers on disk.
+    in memory. Encrypt the temporary PKCS8 key with a random password kept only
+    in this process, load it, then unlink it. A crash or cleanup failure leaves
+    only encrypted key material, not the input's unencrypted private key.
     """
     import os
     import tempfile
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
+
     context = _new_verifying_context(verify)  # Verifies the server (ESTS)
+    password = os.urandom(32).hex().encode("ascii")
+    key = serialization.load_pem_private_key(
+        key_pem, password=None, backend=default_backend())
+    encrypted_key = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.BestAvailableEncryption(password))
     fd, path = tempfile.mkstemp(suffix=".pem")  # Owner-only (0600) by default
     try:
         # os.fdopen() takes ownership of fd and guarantees it is closed even if
         # writing raises; file.write() writes every byte (os.write() may perform
         # a short write). Closing the fd also lets Windows unlink the file below.
         with os.fdopen(fd, "wb") as f:
-            f.write(key_pem + b"\n" + cert_pem)
-        context.load_cert_chain(path)  # Loads our client cert+key into memory
+            f.write(encrypted_key + b"\n" + cert_pem)
+        context.load_cert_chain(path, password=password)
     finally:
         try:
             os.remove(path)  # Unlink immediately; minimal disk exposure

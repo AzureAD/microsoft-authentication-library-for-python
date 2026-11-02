@@ -66,6 +66,25 @@ Run all four live FIC variants with:
 python -m pytest -q tests\test_e2e.py::FicTwoLegTestCase
 ```
 
+### Exportable-certificate scope and deferred protected keys
+
+This feature supports exportable PEM/PFX certificate credentials. A custom HTTP
+transport receives exportable certificate material; it does not add native
+Windows CNG or non-exportable-key support. Each application retains a fixed
+certificate snapshot for signing, TLS, and cache binding. Construct a new
+application to rotate a file credential. Temporary TLS keys are encrypted with
+a random process-local password and removed after loading.
+
+Protected-key support is a separate, deferred deliverable, not covered by this
+lab's parity claims. Its Windows acceptance test must prove that the private
+key cannot be exported, acquire a token using that key, call Graph successfully,
+and repeat from cache with the same certificate binding.
+
+Government authorities `login.microsoftonline.us` and its legacy alias
+`login.usgovcloudapi.net` both use `[region.]mtlsauth.microsoftonline.us`.
+This normalizes the Government preferred network host; it does not enable
+additional sovereign clouds.
+
 ## 4) Run unit/integration tests
 
 Run all non-E2E tests quickly:
@@ -111,22 +130,27 @@ The malformed OBO assertion specifically requires HTTP 400,
 `invalid_request`, and AADSTS50027; refresh/auth-code inputs require
 HTTP 400 and `invalid_grant`, never a credential or transport failure.
 
-Graph and Key Vault resource PoP tokens require readable JWTs and matching
-`cnf` bindings, without a best-effort parsing fallback. Resource audiences can
-use their verified URI or well-known application-ID alias: Key Vault
+Graph access tokens are opaque to the client: the suite checks the returned
+binding identity and lets Graph validate the same token through success and
+all three rejection controls. Readable JWT, SHA256 `cnf`, and audience assertions
+are reserved for lab resources with that token-format contract. Their audiences
+can use their verified URI or well-known application-ID alias: Key Vault
 `cfa8b339-82a2-471a-a3c9-0fc0be7a4093` and Storage
 `e406a681-f3d4-42a8-90b6-c2b029497af1`.
 FIC's exchange-scope leg-1 value is instead an opaque federated assertion,
 as in the pinned references, not a resource JWT contract. Its requested scope,
 PoP type, returned certificate, exact unchanged `jwt-pop` handoff, and real
-leg-2 redemption are required; final resource binding/audience checks remain
-strict.
+leg-2 redemption are required. Final Graph validation uses the resource;
+Key Vault and Storage retain strict format and audience checks.
 
-All 21 required live methods (17 certificate and four FIC) run without skips,
+On trusted CI runs, all 21 required live methods (17 certificate and four FIC)
+run without skips,
 including tagged releases. Missing configuration, credential failures, and
 DNS/TLS failures are failures, not acceptable rejection evidence. They do not
 fetch unrelated user configuration from Key Vault. Legacy interactive and
 other optional E2E skips are unchanged.
+Fork PRs run the offline suite but do not schedule the credentialed E2E stage;
+that stage exclusion is not live E2E coverage.
 
 Feature-owned coverage is inherited from #938 (six base certificate methods
 and cache compatibility/scaling), #939 (two default FIC methods), #947 (five
@@ -182,7 +206,7 @@ from similarly named scenarios:
 
 | Active reference case(s) | Python method(s) | Required observation |
 | --- | --- | --- |
-| Go `TestCredential_X509_Output_Pop`; .NET `Credential_X509_Output_Pop_TestAsync` | `C.test_credential_x509_output_pop`, `C.test_credential_x509_custom_http_output_pop` | Nonempty Graph PoP, returned certificate and JWT SHA256 `cnf` binding, resource HTTP 200; default case adds all three same-token rejection markers and cached repeat. Custom case proves the derived factory pipeline. |
+| Go `TestCredential_X509_Output_Pop`; .NET `Credential_X509_Output_Pop_TestAsync` | `C.test_credential_x509_output_pop`, `C.test_credential_x509_custom_http_output_pop` | Nonempty opaque Graph PoP, matching returned certificate, resource HTTP 200, and all three same-token rejection controls; both paths repeat from cache. Custom case proves the derived factory pipeline. |
 | Go `TestCredential_X509_Output_Bearer` | `C.test_credential_x509_output_bearer` | Ordinary westus3 Key Vault Bearer, no output binding, signed certificate assertion, cache repeat. The ordinary regional POST retains the central assertion audience by design. |
 | Go `TestCredential_X509_Output_Pop_Regional` | `C.test_credential_x509_output_pop_regional` | westus3 Key Vault PoP, certificate/JWT binding, same cached token and type; not a redirected global Graph cell. |
 | Go `TestConfidentialClientSNIBearerAndMtlsPoPCacheIsolated` | `C.test_bearer_then_mtls_pop_cache_isolated` | One app/cache/scope, Bearer then PoP, distinct tokens and schemes, no Bearer binding, both cache results preserved. |
@@ -213,6 +237,13 @@ or claim repository-wide skip elimination.
 [go-fic]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/30f4770ffcbd9c4c51d278cdab6dbda71a0f7337/apps/tests/integration/mtls_pop_integration_test.go
 [go-bom]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/30f4770ffcbd9c4c51d278cdab6dbda71a0f7337/apps/tests/integration/bearer_mtls_integration_test.go
 [go-http]: https://github.com/AzureAD/microsoft-authentication-library-for-go/blob/45e70aa9590f231fc1ef739da78eb91804c11dd6/apps/tests/integration/bearer_mtls_integration_test.go
+
+The Government alias mapping follows the same pinned .NET
+[known cloud metadata][dotnet-clouds] and
+[regional/mTLS transformation][dotnet-mtls-hosts].
+
+[dotnet-clouds]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/src/client/Microsoft.Identity.Client/Instance/Discovery/KnownCloudData.cs
+[dotnet-mtls-hosts]: https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/blob/c8b90e9de5bc4974de9928835532faac5c88e2d2/src/client/Microsoft.Identity.Client/Instance/Discovery/RegionAndMtlsDiscoveryProvider.cs
 
 ## 5) Manual-intervention E2E tests
 

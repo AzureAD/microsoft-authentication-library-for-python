@@ -357,8 +357,6 @@ class MtlsPopTestCase(E2eTestCase):
     _SNI_ALLOWLISTED_CLIENT_ID = "163ffef9-a313-45b4-ab2f-c7e2f5e0e23e"
     _SNI_ALLOWLISTED_AUTHORITY = "https://login.microsoftonline.com/bea21ebe-8b64-4d06-9f6d-6a889b120a7c"
     _TOKEN_AUDIENCES = {
-        "https://graph.microsoft.com/.default": {
-            "https://graph.microsoft.com", "00000003-0000-0000-c000-000000000000"},
         "https://vault.azure.net/.default": {
             "https://vault.azure.net", "cfa8b339-82a2-471a-a3c9-0fc0be7a4093"},
         "https://storage.azure.com/.default": {
@@ -391,6 +389,8 @@ class MtlsPopTestCase(E2eTestCase):
 
     def _assert_audience(self, result, scope):
         __tracebackhide__ = True
+        if scope[0] == "https://graph.microsoft.com/.default":
+            return  # Only Graph can interpret its access tokens.
         audience = jwt_claims(result["access_token"]).get("aud")
         self.assertTrue(
             isinstance(audience, str)
@@ -416,8 +416,9 @@ class MtlsPopTestCase(E2eTestCase):
             self.assertFalse(
                 "PRIVATE KEY" in repr(binding),
                 "The binding context repr must not expose key material.")
-            # Reference FIC assertions are opaque; resource PoP JWTs require cnf.
-            if scope != ["api://AzureADTokenExchange/.default"]:
+            # Graph and FIC tokens are opaque to the client. Check claims only
+            # where the lab resource contract explicitly requires readable JWTs.
+            if scope[0] in self._TOKEN_AUDIENCES:
                 self.assertEqual(
                     binding.thumbprint_sha256,
                     self._cnf_x5t_s256(result["access_token"]))
@@ -569,6 +570,17 @@ class MtlsPopTestCase(E2eTestCase):
         self.assertIn(response.status_code, (401, 403), diagnostic)
         self.assertEqual((marker,), observed, diagnostic)
 
+    def _assert_graph_token_binding(self, token, binding):
+        __tracebackhide__ = True
+        response = self._call_graph_with_mtls_pop_token(token, binding)
+        for scheme, certificate, marker in (
+                ("mtls_pop", None, GRAPH_REJECTION_MARKERS[0]),
+                ("Bearer", binding, GRAPH_REJECTION_MARKERS[1]),
+                ("mtls_pop", unrelated_binding(), GRAPH_REJECTION_MARKERS[2])):
+            with self.subTest(control=marker):
+                self._assert_graph_rejects(token, scheme, certificate, marker)
+        return response
+
 
 class PublicCloudScenariosTestCase(MtlsPopTestCase):
     # Historically this class was driven by tests/config.json for semi-automated runs.
@@ -719,13 +731,7 @@ class CertificateScenariosTestCase(MtlsPopTestCase):
             self.assertEqual(200, request["status_code"])
             self.assertEqual("mtls_pop", request["token_type"])
             token, binding = result["access_token"], result["binding_certificate"]
-            self._call_graph_with_mtls_pop_token(token, binding)
-            for scheme, certificate, marker in (
-                    ("mtls_pop", None, GRAPH_REJECTION_MARKERS[0]),
-                    ("Bearer", binding, GRAPH_REJECTION_MARKERS[1]),
-                    ("mtls_pop", unrelated_binding(), GRAPH_REJECTION_MARKERS[2])):
-                with self.subTest(control=marker):
-                    self._assert_graph_rejects(token, scheme, certificate, marker)
+            self._assert_graph_token_binding(token, binding)
             self._assert_cached_result(app, self._MTLS_POP_SCOPE, result, pop=True)
         self.assertEqual(1, len(records), "The PoP repeat must come from cache.")
 
