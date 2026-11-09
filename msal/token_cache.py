@@ -601,7 +601,9 @@ class SerializableTokenCache(TokenCache):
         if os.path.exists(cache_filename):
             cache.deserialize(open(cache_filename, "r").read())
         atexit.register(lambda:
-            open(cache_filename, "w").write(cache.serialize())
+            open(  # Readable only by its owner, because it contains refresh tokens
+                os.open(cache_filename, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                "w").write(cache.serialize())
             # Hint: The following optional line persists only when state changed
             if cache.has_state_changed else None
             )
