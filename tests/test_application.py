@@ -1,6 +1,7 @@
 # Note: Since Aug 2019 we move all e2e tests into test_e2e.py,
 # so this test_application file contains only unit tests without dependency.
 import base64
+import datetime
 import json
 import logging
 import os
@@ -9,6 +10,9 @@ import time
 import warnings
 from unittest.mock import patch, Mock
 from requests.exceptions import ConnectionError as RequestsConnectionError
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 import msal
 from msal.application import (
     extract_certs,
@@ -34,29 +38,79 @@ _OIDC_DISCOVERY_MOCK = Mock(return_value={
 
 class TestHelperExtractCerts(unittest.TestCase):  # It is used by SNI scenario
 
+    @classmethod
+    def setUpClass(cls):
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "test")])
+        cls.certs = [
+            x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(serial)
+            .not_valid_before(datetime.datetime(2020, 1, 1))
+            .not_valid_after(datetime.datetime(2030, 1, 1))
+            .sign(key, hashes.SHA256())
+            for serial in (1, 2)]
+        cls.pem = [
+            cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
+            for cert in cls.certs]
+        cls.der = [
+            cert.public_bytes(serialization.Encoding.DER) for cert in cls.certs]
+        cls.encoded = [base64.b64encode(der).decode("ascii") for der in cls.der]
+
     def test_extract_a_tag_less_public_cert(self):
-        pem = "my_cert"
-        self.assertEqual(["my_cert"], extract_certs(pem))
+        value = self.encoded[0]
+        self.assertEqual([value], extract_certs(
+            " \n" + value[:40] + "\n\t" + value[40:] + " \n"))
 
     def test_extract_a_tag_enclosed_cert(self):
-        pem = """
-        -----BEGIN CERTIFICATE-----
-        my_cert
-        -----END CERTIFICATE-----
-        """
-        self.assertEqual(["my_cert"], extract_certs(pem))
+        self.assertEqual([self.encoded[0]], extract_certs(self.pem[0]))
 
     def test_extract_multiple_tag_enclosed_certs(self):
-        pem = """
-        -----BEGIN CERTIFICATE-----
-        my_cert1
-        -----END CERTIFICATE-----
+        self.assertEqual(self.encoded, extract_certs("".join(self.pem)))
+        self.assertEqual(
+            self.encoded[::-1], extract_certs("".join(self.pem[::-1])))
 
-        -----BEGIN CERTIFICATE-----
-        my_cert2
-        -----END CERTIFICATE-----
-        """
-        self.assertEqual(["my_cert1", "my_cert2"], extract_certs(pem))
+    def test_extract_only_certificates_from_combined_pem(self):
+        with open(os.path.join(
+                os.path.dirname(__file__), "certificate-with-password.pem")) as f:
+            combined = f.read()
+        cert = x509.load_pem_x509_certificate(combined.encode("ascii"))
+        expected = base64.b64encode(
+            cert.public_bytes(serialization.Encoding.DER)).decode("ascii")
+        self.assertEqual([expected], extract_certs(combined))
+
+    def test_reject_invalid_certificate_encodings(self):
+        public_key_der = self.certs[0].public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo)
+        invalid_values = [
+            "", " \n\t", "not base64!", "é", "AA--AA",
+            base64.b64encode(b"not a certificate").decode("ascii"),
+            base64.b64encode(public_key_der).decode("ascii"),
+            base64.b64encode(self.der[0] + b"trailing bytes").decode("ascii"),
+            base64.b64encode(self.der[0] + self.der[1]).decode("ascii"),
+        ]
+        for value in invalid_values:
+            for content in (
+                    value,
+                    "-----BEGIN CERTIFICATE-----\n{}\n"
+                    "-----END CERTIFICATE-----".format(value)):
+                with self.subTest(content=content):
+                    with self.assertRaisesRegex(ValueError, "certificate"):
+                        extract_certs(content)
+        with self.assertRaises(ValueError):
+            extract_certs(self.pem[0] + "-----BEGIN CERTIFICATE-----\n"
+                "invalid\n-----END CERTIFICATE-----")
+        with self.assertRaises(ValueError):
+            extract_certs("-----BEGIN PUBLIC KEY-----\n{}\n"
+                "-----END PUBLIC KEY-----".format(self.encoded[0]))
+
+    def test_reject_trailing_der_when_parser_accepts_it(self):
+        value = base64.b64encode(
+            self.der[0] + b"trailing bytes").decode("ascii")
+        with patch("cryptography.x509.load_der_x509_certificate",
+                return_value=self.certs[0]):
+            with self.assertRaisesRegex(ValueError, "certificate"):
+                extract_certs(value)
 
 
 class TestBytesConversion(unittest.TestCase):

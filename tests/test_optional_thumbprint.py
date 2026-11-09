@@ -1,5 +1,9 @@
+import base64
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 from msal.application import ConfidentialClientApplication
 
 
@@ -9,17 +13,15 @@ from msal.application import ConfidentialClientApplication
 class TestClientCredentialWithOptionalThumbprint(unittest.TestCase):
     """Test that thumbprint is optional when public_certificate is provided"""
 
-    # Sample test certificate and private key (PEM format)
-    # These are minimal valid PEM structures for testing
+    # Assertion signing is mocked; certificate parsing uses a real fixture.
     test_private_key = """-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj
 MzEfYyjiWA4R4/M2bS1+fWIcPm15j7uo6xKvRr4PNx5bKMDFqMdW6/xfqFWX0nZK
 -----END PRIVATE KEY-----"""
 
-    test_certificate = """-----BEGIN CERTIFICATE-----
-MIIC5jCCAc6gAwIBAgIJALdYQVsVsNZHMA0GCSqGSIb3DQEBCwUAMBYxFDASBgNV
-BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
------END CERTIFICATE-----"""
+    test_certificate = x509.load_pem_x509_certificate(
+        Path(__file__).with_name("certificate-with-password.pem").read_bytes()
+        ).public_bytes(serialization.Encoding.PEM).decode("ascii")
 
     def _setup_mocks(self, mock_authority_class, authority="https://login.microsoftonline.com/common"):
         """Helper to setup Authority mock"""
@@ -157,13 +159,18 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
         )
 
         # Verify manual thumbprint takes precedence (backward compatibility)
-        self._verify_assertion_params(
+        call_args = self._verify_assertion_params(
             mock_jwt_creator_class,
             expected_algorithm='RS256',
             expected_thumbprint_type='sha1',
             expected_thumbprint_value=manual_thumbprint,
             has_x5c=True  # x5c should still be present
         )
+        cert = x509.load_pem_x509_certificate(self.test_certificate.encode("ascii"))
+        self.assertEqual(
+            [base64.b64encode(cert.public_bytes(
+                serialization.Encoding.DER)).decode("ascii")],
+            call_args[1]["headers"]["x5c"])
 
     @patch('cryptography.x509.load_pem_x509_certificate')
     @patch('msal.application._extract_cert_and_thumbprints')
@@ -190,6 +197,19 @@ BAMMC0V4YW1wbGUgQ0EwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjAW
             expected_algorithm='RS256',
             expected_thumbprint_type='sha1'
         )
+
+    def test_manual_thumbprint_rejects_malformed_public_certificate(
+            self, mock_jwt_creator_class, mock_authority_class):
+        self._setup_mocks(mock_authority_class)
+        with self.assertRaisesRegex(ValueError, "certificate"):
+            ConfidentialClientApplication(
+                "my_client_id",
+                client_credential={
+                    "private_key": self.test_private_key,
+                    "thumbprint": "A1B2C3D4E5F6",
+                    "public_certificate": "bm90IGEgY2VydGlmaWNhdGU=",
+                })
+        mock_jwt_creator_class.assert_not_called()
 
     def test_pem_with_neither_raises_error(self, mock_jwt_creator_class, mock_authority_class):
         """Test that providing neither thumbprint nor certificate raises ValueError"""
