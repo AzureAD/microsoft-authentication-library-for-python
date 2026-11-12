@@ -12,6 +12,7 @@ import os
 import re
 import ssl
 import sys
+import threading
 import time
 import uuid
 from urllib.parse import urlparse, urlsplit  # Python 3+
@@ -413,12 +414,38 @@ class ManagedIdentityClient(object):
         self._client_capabilities = client_capabilities
         self._service_fabric_http_options = _snapshot_service_fabric_options(
             service_fabric_http_options)
+        self._v2_client = None
+        self._v2_lock = threading.Lock()
+        self._capability_discovery = None
+
+    def get_managed_identity_capabilities(self, *, timeout=None):
+        """Discover the host source and maximum binding strength.
+
+        Returns ``source``, ``error_reason``, ``max_supported_binding_strength``
+        and ``is_mtls_pop_supported_by_host``. Both IMDS versions report
+        ``"IMDS"``. Strength describes host capability, not attestation of an
+        acquired token or permission to fall back to a weaker key.
+
+        ``timeout`` is a positive number of seconds, defaulting to 90. One
+        budget covers uncached discovery, including waiting for another caller.
+        Timing out a waiter never cancels the caller performing discovery.
+        """
+        from ._managed_identity_v2 import _CapabilityDiscovery
+        with self._v2_lock:
+            if self._capability_discovery is None:
+                self._capability_discovery = _CapabilityDiscovery(self)
+        return self._capability_discovery.get(timeout=timeout)
 
     def acquire_token_for_client(
         self,
         *,
         resource: str,  # If/when we support scope, resource will become optional
         claims_challenge: Optional[str] = None,
+        mtls_proof_of_possession: bool = False,
+        request_over_mtls: bool = False,
+        with_attestation_support: bool = False,
+        minimum_binding_strength: Optional[int] = None,
+        force_refresh: bool = False,
     ):
         """Acquire token for the managed identity.
 
@@ -426,6 +453,30 @@ class ManagedIdentityClient(object):
         Subsequent calls will automatically search from cache first.
 
         :param resource: The resource for which the token is acquired.
+
+        :param mtls_proof_of_possession:
+            Request an explicit ``mtls_pop`` token on a supported Windows
+            IMDSv2/KeyGuard host. The result includes ``binding_certificate``.
+            Its ``open_session()`` uses the optional Rust native transport and
+            restricts resource requests to this resource's HTTPS origin.
+
+        :param request_over_mtls:
+            Authenticate to the token endpoint over protected-key mTLS, but
+            return a Bearer token without a downstream binding. Mutually
+            exclusive with ``mtls_proof_of_possession``.
+
+        :param with_attestation_support:
+            Require the independently installed KeyGuard attestation component.
+            Requires one explicit mTLS mode; never enables a fallback.
+
+        :param minimum_binding_strength:
+            Optional floor: 0 (none), 1 (software), or 3 (KeyGuard). Value 2 is
+            reserved. Explicit modes still require a usable KeyGuard key.
+
+        :param force_refresh:
+            Bypass the access-token cache. In explicit mTLS modes, also remint
+            the binding certificate while retaining a healthy persisted key
+            and fresh attestation evidence.
 
         :param claims_challenge:
             Optional.
@@ -447,12 +498,43 @@ class ManagedIdentityClient(object):
             This is a service-side behavior that cannot be changed by this library.
             `Azure VM docs <https://learn.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/how-to-use-vm-token#get-a-token-using-http>`_
         """
+        if any(not isinstance(value, bool) for value in (
+                mtls_proof_of_possession, request_over_mtls, with_attestation_support, force_refresh)):
+            raise ManagedIdentityError("Managed identity request flags must be bool values.")
+        if mtls_proof_of_possession and request_over_mtls:
+            raise ManagedIdentityError("Choose only one explicit mTLS token mode.")
+        explicit = mtls_proof_of_possession or request_over_mtls
+        if with_attestation_support and not explicit:
+            raise ManagedIdentityError("Key attestation requires an explicit mTLS token mode.")
+        floor = 0 if minimum_binding_strength is None else minimum_binding_strength
+        if isinstance(floor, bool) or not isinstance(floor, int) or floor not in (0, 1, 3):
+            raise ManagedIdentityError("Binding strength must be 0, 1, or 3; 2 is reserved.")
+        if minimum_binding_strength is not None and not explicit:
+            raise ManagedIdentityError("A binding-strength floor requires an explicit mTLS mode.")
+        if explicit:
+            from ._managed_identity_v2 import _V2Client, _V2Error
+            disabled = os.getenv("MSAL_MI_DISABLE_IMDS_V2", "").lower() in ("1", "true")
+            if disabled or get_managed_identity_source() is not DEFAULT_TO_VM:
+                raise _V2Error(
+                    "The requested protected managed identity mode is unavailable on this host.",
+                    stage="discovery", error_code=(
+                        "minimum_binding_strength_not_met" if floor else "imds_v2_not_supported"))
+            identifier = self._managed_identity.get(ManagedIdentity.ID)
+            if identifier is not None and (not isinstance(identifier, str) or not identifier
+                    or len(identifier) > 4096 or any(ord(char) < 32 for char in identifier)):
+                raise ManagedIdentityError("An explicit managed identity selector must be bounded text.")
+            with self._v2_lock:
+                if self._v2_client is None:
+                    self._v2_client = _V2Client(self)
+            return self._v2_client.acquire(
+                resource, pop=mtls_proof_of_possession, attested=with_attestation_support,
+                floor=floor, force=force_refresh, claims_challenge=claims_challenge)
         access_token_to_refresh = None  # This could become a public parameter in the future
         access_token_from_cache = None
         client_id_in_cache = self._managed_identity.get(
             ManagedIdentity.ID, "SYSTEM_ASSIGNED_MANAGED_IDENTITY")
         now = time.time()
-        if True:  # Attempt cache search even if receiving claims_challenge,
+        if not force_refresh or claims_challenge:  # Locate challenged tokens even during forced refresh,
                   # because we want to locate the existing token (if any) and refresh it
             matches = self._token_cache.search(
                 self._token_cache.CredentialType.ACCESS_TOKEN,
@@ -465,6 +547,9 @@ class ManagedIdentityClient(object):
                 ),
             )
             for entry in matches:
+                if not isinstance(entry.get("token_type", "Bearer"), str) or entry.get(
+                        "token_type", "Bearer").lower() != "bearer":
+                    continue
                 expires_in = int(entry["expires_on"]) - now
                 if expires_in < 5*60:  # Then consider it expired
                     continue  # Removal is not necessary, it will be overwritten

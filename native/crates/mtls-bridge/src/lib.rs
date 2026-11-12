@@ -9,6 +9,7 @@ use openssl_provider_sys::ERR_clear_error;
 use zeroize::Zeroize;
 
 mod abi;
+mod bootstrap;
 mod http;
 mod openssl;
 mod transport;

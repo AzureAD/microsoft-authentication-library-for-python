@@ -54,7 +54,8 @@ static const unsigned char *find_bytes(const unsigned char *buffer,
     return NULL;
 }
 
-static int read_request(SSL *ssl, int require_token_bound_header)
+static int read_request(SSL *ssl, int require_token_bound_header,
+                        const char *mode)
 {
     unsigned char buffer[SERVER_REQUEST_LIMIT];
     size_t length = 0;
@@ -73,11 +74,59 @@ static int read_request(SSL *ssl, int require_token_bound_header)
             break;
         }
     }
-    if (header_end == NULL
-        || length < sizeof("POST /mtls HTTP/1.1\r\n") - 1
+    if (header_end == NULL) {
+        return 0;
+    }
+    if (strcmp(mode, "token-pop") == 0 || strcmp(mode, "token-bearer") == 0) {
+        char expected_body[512];
+        char expected_length[64];
+        size_t body_length;
+        size_t header_length = (size_t)(header_end - buffer) + 4;
+        static const char target[] = "POST /tenant/oauth2/v2.0/token HTTP/1.1\r\n";
+
+        if (sprintf_s(expected_body, sizeof(expected_body),
+                      "client_id=canonical-client&grant_type=client_credentials&"
+                      "scope=https%%3A%%2F%%2Fvault.azure.net%%2F.default&token_type=%s",
+                      strcmp(mode, "token-pop") == 0 ? "mtls_pop" : "bearer") < 0) {
+            return 0;
+        }
+        body_length = strlen(expected_body);
+        if (sprintf_s(expected_length, sizeof(expected_length),
+                      "\r\nContent-Length: %zu\r\n", body_length) < 0
+            || length < sizeof(target) - 1
+            || memcmp(buffer, target, sizeof(target) - 1) != 0
+            || find_bytes(buffer, header_length, expected_length,
+                          strlen(expected_length)) == NULL
+            || find_bytes(buffer, header_length,
+                          "\r\nContent-Type: application/x-www-form-urlencoded\r\n",
+                          sizeof("\r\nContent-Type: application/x-www-form-urlencoded\r\n") - 1) == NULL
+            || find_bytes(buffer, header_length,
+                          "\r\nclient-request-id: token-correlation\r\n",
+                          sizeof("\r\nclient-request-id: token-correlation\r\n") - 1) == NULL
+            || find_bytes(buffer, header_length, "Authorization:", 14) != NULL) {
+            return 0;
+        }
+        while (length < header_length + body_length) {
+            size_t received = 0;
+            if (SSL_read_ex(ssl, buffer + length, sizeof(buffer) - length,
+                            &received) != 1 || received == 0) {
+                return 0;
+            }
+            length += received;
+        }
+        return length == header_length + body_length
+               && memcmp(buffer + header_length, expected_body, body_length) == 0;
+    }
+    if (length < sizeof("POST /mtls HTTP/1.1\r\n") - 1
         || memcmp(buffer, "POST /mtls HTTP/1.1\r\n",
                   sizeof("POST /mtls HTTP/1.1\r\n") - 1)
                != 0) {
+        return 0;
+    }
+    if (strcmp(mode, "success") == 0
+        && find_bytes(buffer, (size_t)(header_end - buffer) + 2,
+                      "\r\nx-ms-client-request-id: resource-correlation\r\n",
+                      sizeof("\r\nx-ms-client-request-id: resource-correlation\r\n") - 1) == NULL) {
         return 0;
     }
     return !require_token_bound_header
@@ -219,7 +268,7 @@ int main(int argc, char **argv)
         fprintf(stderr,
                 "Usage: %s <ca.pem> <server-cert.pem> <server-key.pem> "
                 "<ready-file> <max-connections> "
-                "<success|early-hints|close-delimited|tls-truncate|drip|delayed-cert|delayed-cert-drip>\n",
+                "<success|token-pop|token-bearer|early-hints|close-delimited|tls-truncate|drip|delayed-cert|delayed-cert-drip>\n",
                 argv[0]);
         return EXIT_FAILURE;
     }
@@ -230,6 +279,8 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     if (strcmp(mode, "success") != 0
+        && strcmp(mode, "token-pop") != 0
+        && strcmp(mode, "token-bearer") != 0
         && strcmp(mode, "early-hints") != 0
         && strcmp(mode, "close-delimited") != 0
         && strcmp(mode, "tls-truncate") != 0
@@ -317,7 +368,7 @@ int main(int argc, char **argv)
             && ((peer_certificate = SSL_get1_peer_certificate(ssl)) != NULL
                 || delayed_certificate)
             && (!delayed_certificate || peer_certificate == NULL)
-            && read_request(ssl, delayed_certificate)) {
+            && read_request(ssl, delayed_certificate, mode)) {
             if (delayed_certificate) {
                 if (delayed_deadline) {
                     Sleep(600);
@@ -335,6 +386,22 @@ int main(int argc, char **argv)
                 } else {
                     skip_shutdown = 1;
                     print_errors("Delayed client certificate authentication");
+                }
+            } else if (strcmp(mode, "token-pop") == 0
+                       || strcmp(mode, "token-bearer") == 0) {
+                char body[256];
+                char response[512];
+                if (sprintf_s(body, sizeof(body),
+                              "{\"access_token\":\"synthetic-token\","
+                              "\"token_type\":\"%s\",\"expires_in\":3600}",
+                              strcmp(mode, "token-pop") == 0 ? "mtls_pop" : "bearer") >= 0
+                    && sprintf_s(response, sizeof(response),
+                                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                 "Content-Length: %zu\r\nConnection: close\r\n\r\n%s",
+                                 strlen(body), body) >= 0
+                    && write_all(ssl, response, strlen(response))) {
+                    ++successful_requests;
+                    printf("Verified client certificate and bounded token form POST.\n");
                 }
             } else if (strcmp(mode, "success") == 0) {
                 if (write_all(ssl, response_text,

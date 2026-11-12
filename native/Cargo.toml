@@ -13,7 +13,7 @@ edition = "2024"
 license = "MIT"
 publish = false
 rust-version = "1.97"
-version = "0.2.0"
+version = "0.3.0"
 
 [workspace.dependencies]
 libc = ">=0.2.177, <0.3"

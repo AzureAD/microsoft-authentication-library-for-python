@@ -17,6 +17,35 @@
 
 #define PROCESS_TIMEOUT_MS 30000U
 
+_Static_assert(sizeof(MICROSOFT_IDENTITY_NATIVE_PUBLIC_KEY) == 2068,
+               "The public-key ABI layout changed.");
+
+static int protected_key_abi_rejects_invalid_inputs(void)
+{
+    MICROSOFT_IDENTITY_NATIVE_KEY *key = (MICROSOFT_IDENTITY_NATIVE_KEY *)(uintptr_t)1;
+    MICROSOFT_IDENTITY_NATIVE_ERROR error;
+    MICROSOFT_IDENTITY_NATIVE_PUBLIC_KEY public_key = { 0 };
+    unsigned char digest[32] = { 0 };
+    unsigned char signature[256];
+    size_t written = 0;
+    uintptr_t borrowed = 0;
+
+    if (microsoft_identity_native_key_open_protected(
+            "another-application-key", &key, &error)
+        || key != NULL || error.code != MICROSOFT_IDENTITY_NATIVE_ERROR_INVALID_ARGUMENT
+        || microsoft_identity_native_key_public(NULL, &public_key, &error)
+        || error.code != MICROSOFT_IDENTITY_NATIVE_ERROR_INVALID_ARGUMENT
+        || microsoft_identity_native_key_sign_sha256_pss(
+            NULL, digest, sizeof(digest), signature, sizeof(signature), &written, &error)
+        || error.code != MICROSOFT_IDENTITY_NATIVE_ERROR_INVALID_ARGUMENT
+        || microsoft_identity_native_key_borrow_handle(NULL, &borrowed, &error)
+        || error.code != MICROSOFT_IDENTITY_NATIVE_ERROR_INVALID_ARGUMENT) {
+        return 0;
+    }
+    microsoft_identity_native_key_free(NULL);
+    return 1;
+}
+
 static int split_provider_path(const char *input,
                                char *directory,
                                size_t directory_size,
@@ -454,7 +483,7 @@ int main(int argc, char **argv)
     MICROSOFT_IDENTITY_NATIVE_REQUEST request;
     MICROSOFT_IDENTITY_NATIVE_RESPONSE response;
     MICROSOFT_IDENTITY_NATIVE_ERROR bridge_error;
-    MICROSOFT_IDENTITY_NATIVE_HEADER headers[2];
+    MICROSOFT_IDENTITY_NATIVE_HEADER headers[4];
     const unsigned char body[] = "local request body";
     char platform_error[512] = { 0 };
     CNG_KEY *deleted_key = NULL;
@@ -469,6 +498,10 @@ int main(int argc, char **argv)
                 "Usage: %s <provider-dll> <signing-test-exe> <pki-exe> "
                 "<server-exe> <artifact-root>\n",
                 argv[0]);
+        return EXIT_FAILURE;
+    }
+    if (!protected_key_abi_rejects_invalid_inputs()) {
+        fprintf(stderr, "Protected-key ABI validation did not fail safely.\n");
         return EXIT_FAILURE;
     }
     if (!generate_owned_key_name(key_name, sizeof(key_name))
@@ -647,11 +680,13 @@ int main(int argc, char **argv)
     headers[0].value = "text/plain";
     headers[1].name = "X-Request-ID";
     headers[1].value = "cng-local-integration";
+    headers[2].name = "x-ms-client-request-id";
+    headers[2].value = "resource-correlation";
     initialize_request(&request, unicode_provider_path, store_uri,
                        unicode_client_cert_path, unicode_ca_path, "localhost",
                        port);
     request.headers = headers;
-    request.header_count = 2;
+    request.header_count = 3;
     request.body = body;
     request.body_size = sizeof(body) - 1;
     if (!microsoft_identity_native_request(&request, &response, &bridge_error)
@@ -674,6 +709,66 @@ int main(int argc, char **argv)
     }
     stop_process(&server_process);
     server_started = 0;
+
+    {
+        const char *modes[] = { "token-pop", "token-bearer" };
+        size_t mode_index;
+        for (mode_index = 0; mode_index < 2; ++mode_index) {
+            char form[512];
+            const char *token_type = mode_index == 0 ? "mtls_pop" : "bearer";
+            char expected_response[256];
+
+            DeleteFileA(ready_file);
+            if (sprintf_s(command_line, sizeof(command_line),
+                          "\"%s\" \"%s\" \"%s\" \"%s\" \"%s\" 1 %s",
+                          argv[4], ca_path, server_cert_path, server_key_path,
+                          ready_file, modes[mode_index]) < 0
+                || !start_process(command_line, &server_process)) {
+                fprintf(stderr, "Unable to start the token POST test server.\n");
+                goto cleanup;
+            }
+            server_started = 1;
+            if (!wait_for_port(ready_file, &port)
+                || sprintf_s(form, sizeof(form),
+                             "client_id=canonical-client&grant_type=client_credentials&"
+                             "scope=https%%3A%%2F%%2Fvault.azure.net%%2F.default&token_type=%s",
+                             token_type) < 0
+                || sprintf_s(expected_response, sizeof(expected_response),
+                             "{\"access_token\":\"synthetic-token\","
+                             "\"token_type\":\"%s\",\"expires_in\":3600}",
+                             token_type) < 0) {
+                fprintf(stderr, "Unable to prepare the token POST fixture.\n");
+                goto cleanup;
+            }
+            initialize_request(&request, argv[1], store_uri, client_cert_path,
+                               ca_path, "localhost", port);
+            headers[0].name = "Accept";
+            headers[0].value = "application/json";
+            headers[1].name = "Content-Type";
+            headers[1].value = "application/x-www-form-urlencoded";
+            headers[2].name = "client-request-id";
+            headers[2].value = "token-correlation";
+            request.target = "/tenant/oauth2/v2.0/token";
+            request.headers = headers;
+            request.header_count = 3;
+            request.body = (const unsigned char *)form;
+            request.body_size = strlen(form);
+            if (!microsoft_identity_native_request(&request, &response, &bridge_error)
+                || response.http_status != 200
+                || response.body_length != strlen(expected_response)
+                || memcmp(response.body, expected_response, response.body_length) != 0) {
+                fprintf(stderr, "The mTLS form POST failed: %s\n", bridge_error.message);
+                goto cleanup;
+            }
+            microsoft_identity_native_response_free(&response);
+            if (!wait_process(&server_process, PROCESS_TIMEOUT_MS)) {
+                fprintf(stderr, "The token POST server rejected the request.\n");
+                goto cleanup;
+            }
+            stop_process(&server_process);
+            server_started = 0;
+        }
+    }
 
     {
         const char *modes[] = { "delayed-cert", "delayed-cert-drip" };

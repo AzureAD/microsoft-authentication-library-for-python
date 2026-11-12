@@ -44,6 +44,7 @@ use windows_sys::core::PCWSTR;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const DEFAULT_PROVIDER_NAME: &str = "Microsoft Software Key Storage Provider";
+pub const PROTECTED_KEY_PREFIX: &str = "microsoft-identity-native-vbs-";
 pub const TEST_KEY_PREFIXES: &[&str] = &[
     "openssl-cng-provider-test-",
     "openssl-cng-integration-",
@@ -51,6 +52,8 @@ pub const TEST_KEY_PREFIXES: &[&str] = &[
 ];
 const CREATE_RACE_OPEN_ATTEMPTS: u32 = 128;
 const NCRYPT_ALLOW_KEY_ATTESTATION_FLAG: u32 = 0x0000_0010;
+const NCRYPT_USE_VIRTUAL_ISOLATION_FLAG: u32 = 0x0002_0000;
+const NCRYPT_USE_PER_BOOT_KEY_FLAG: u32 = 0x0004_0000;
 const MIN_RSA_BITS: u32 = 2_048;
 const MAX_RSA_BITS: u32 = 16_384;
 const MAX_PUBLIC_BLOB_BYTES: u32 = 4_096;
@@ -832,7 +835,7 @@ impl fmt::Debug for CngKey {
 
 impl CngKey {
     pub fn open(provider_name: &str, key_name: &str) -> Result<Self, CngError> {
-        Self::open_internal(provider_name, key_name, None)
+        Self::open_internal(provider_name, key_name, None, false)
     }
 
     pub fn open_or_create(
@@ -846,13 +849,67 @@ impl CngKey {
                 format_args!("RSA keys must be between {MIN_RSA_BITS} and {MAX_RSA_BITS} bits"),
             ));
         }
-        Self::open_internal(provider_name, key_name, Some(bits))
+        Self::open_internal(provider_name, key_name, Some(bits), false)
+    }
+
+    pub fn open_or_create_protected(key_name: &str) -> Result<Self, CngError> {
+        if !key_name.starts_with(PROTECTED_KEY_PREFIX) {
+            return Err(CngError::detail(
+                "CngKey::open_or_create_protected",
+                "a native-owned protected key name is required",
+            ));
+        }
+        let provider_wide = wide(DEFAULT_PROVIDER_NAME, "provider name conversion")?;
+        let key_wide = wide(key_name, "key name conversion")?;
+        let mutex_name = key_creation_mutex_name(
+            &provider_wide[..provider_wide.len() - 1],
+            &key_wide[..key_wide.len() - 1],
+        )?;
+        let _guard = KeyCreationMutexGuard::acquire(&mutex_name)?;
+        let key = Self::open_internal(DEFAULT_PROVIDER_NAME, key_name, Some(2_048), true)?;
+        match key.validate_protected() {
+            Ok(()) => return Ok(key),
+            Err(error) if error.is_memory_failure() => return Err(error),
+            Err(_) => {}
+        }
+        drop(key);
+        delete_named_key(DEFAULT_PROVIDER_NAME, key_name)?;
+        let key = Self::open_internal(DEFAULT_PROVIDER_NAME, key_name, Some(2_048), true)?;
+        key.validate_protected()?;
+        Ok(key)
+    }
+
+    fn validate_protected(&self) -> Result<(), CngError> {
+        let isolated = read_u32_property(
+            self.0.key,
+            windows_sys::core::w!("Virtual Iso"),
+            "NCryptGetProperty(Virtual Iso)",
+        )?;
+        if isolated == 0 {
+            return Err(CngError::detail(
+                "CngKey::validate_protected",
+                "VBS key isolation is not active",
+            ));
+        }
+        let mut signature = Zeroizing::new(Vec::new());
+        signature
+            .try_reserve_exact(self.max_signature_size())
+            .map_err(|_| CngError::memory_failure("protected key liveness probe"))?;
+        signature.resize(self.max_signature_size(), 0);
+        self.sign_digest(
+            Digest::Sha256,
+            RsaPadding::Pss { salt_len: 32 },
+            &[0; 32],
+            Some(&mut signature),
+        )?;
+        Ok(())
     }
 
     fn open_internal(
         provider_name: &str,
         key_name: &str,
         create_bits: Option<u32>,
+        protected: bool,
     ) -> Result<Self, CngError> {
         let provider_name = if provider_name.is_empty() {
             DEFAULT_PROVIDER_NAME
@@ -930,7 +987,11 @@ impl CngKey {
                         NCRYPT_RSA_ALGORITHM,
                         key_wide.as_ptr(),
                         0,
-                        0,
+                        if protected {
+                            NCRYPT_USE_VIRTUAL_ISOLATION_FLAG | NCRYPT_USE_PER_BOOT_KEY_FLAG
+                        } else {
+                            0
+                        },
                     )
                 };
                 if status == NTE_EXISTS {
@@ -944,7 +1005,12 @@ impl CngKey {
                 } else if status == 0 {
                     created = true;
                     delete_created_on_failure = true;
-                    let usage = NCRYPT_ALLOW_SIGNING_FLAG;
+                    let usage = NCRYPT_ALLOW_SIGNING_FLAG
+                        | if protected {
+                            NCRYPT_ALLOW_KEY_ATTESTATION_FLAG
+                        } else {
+                            0
+                        };
                     let export_policy = 0_u32;
                     // SAFETY: each property pointer references a four-byte value for the duration
                     // of the call, and `key` is a valid unfinalized key handle.
@@ -1166,6 +1232,13 @@ impl CngKey {
     #[must_use]
     pub fn public_exponent(&self) -> &[u8] {
         &self.0.exponent
+    }
+
+    /// Borrows the `NCrypt` handle without transferring ownership.
+    /// The caller must retain this key and must not close or delete the borrowed handle.
+    #[must_use]
+    pub fn native_handle(&self) -> NCRYPT_KEY_HANDLE {
+        self.0.key
     }
 
     pub fn sign_digest(
@@ -1735,7 +1808,10 @@ pub fn delete_test_key(provider_name: &str, key_name: &str) -> Result<(), CngErr
             "refusing to delete a key without a recognized test-owned prefix",
         ));
     }
+    delete_named_key(provider_name, key_name)
+}
 
+fn delete_named_key(provider_name: &str, key_name: &str) -> Result<(), CngError> {
     let provider_name = if provider_name.is_empty() {
         DEFAULT_PROVIDER_NAME
     } else {
@@ -1770,7 +1846,8 @@ pub fn delete_test_key(provider_name: &str, key_name: &str) -> Result<(), CngErr
         let _ = unsafe { NCryptFreeObject(provider) };
         return Err(CngError::from_status("NCryptOpenKey(delete)", status));
     }
-    // SAFETY: this function accepts only explicitly test-owned names and owns the opened handle.
+    // SAFETY: callers restrict deletion to owned test names or an owned stale protected key,
+    // and this function owns the opened handle.
     let delete_status = unsafe { NCryptDeleteKey(key, NCRYPT_SILENT_FLAG) };
     if delete_status == 0 {
         key = 0;

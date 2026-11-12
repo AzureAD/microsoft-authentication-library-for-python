@@ -19,7 +19,7 @@ const MAX_GENERAL_HEADER_VALUE: usize = 1_024;
 const MAX_REQUEST_BYTES: usize = MAX_HEADER_BYTES + MAX_BODY_BYTES;
 const INVALID_CORE_MESSAGE: &str =
     "A provider, CNG URI, certificate path, host, port, method, or relative target is invalid.";
-const INVALID_HEADER_MESSAGE: &str = "Only bounded Accept, Authorization, Content-Type, User-Agent, X-Request-ID, and x-ms-tokenboundauth headers are accepted.";
+const INVALID_HEADER_MESSAGE: &str = "Only bounded Accept, Authorization, Content-Type, User-Agent, X-Request-ID, client-request-id, x-ms-client-request-id, and x-ms-tokenboundauth headers are accepted.";
 
 pub struct Header {
     pub name: String,
@@ -228,7 +228,7 @@ fn invalid_core() -> BridgeFailure {
     BridgeFailure::new(ErrorCode::InvalidArgument, INVALID_CORE_MESSAGE)
 }
 
-unsafe fn read_utf8(
+pub(crate) unsafe fn read_utf8(
     pointer: *const c_char,
     maximum: usize,
     invalid_message: &str,
@@ -313,6 +313,8 @@ fn header_name_is_allowed(name: &str) -> bool {
         "Content-Type",
         "User-Agent",
         "X-Request-ID",
+        "client-request-id",
+        "x-ms-client-request-id",
         "x-ms-tokenboundauth",
     ]
     .iter()
@@ -1033,6 +1035,76 @@ pub(crate) mod tests {
         let _: &Zeroizing<Vec<u8>> = &parsed.headers;
         let _: &Zeroizing<Vec<u8>> = &parsed.body;
         assert_eq!(parsed.body.as_slice(), b"secret");
+    }
+
+    #[test]
+    fn form_post_preserves_correlation_without_authorization() {
+        let body = b"client_id=client&grant_type=client_credentials&scope=https%3A%2F%2Fvault.azure.net%2F.default&token_type=mtls_pop";
+        let headers = [
+            MicrosoftIdentityNativeHeader {
+                name: c"Content-Type".as_ptr(),
+                value: c"application/x-www-form-urlencoded".as_ptr(),
+            },
+            MicrosoftIdentityNativeHeader {
+                name: c"client-request-id".as_ptr(),
+                value: c"token-correlation".as_ptr(),
+            },
+            MicrosoftIdentityNativeHeader {
+                name: c"x-ms-client-request-id".as_ptr(),
+                value: c"resource-correlation".as_ptr(),
+            },
+        ];
+        let mut input = abi_request();
+        input.target = c"/tenant/oauth2/v2.0/token".as_ptr();
+        input.headers = headers.as_ptr();
+        input.header_count = headers.len();
+        input.body = body.as_ptr();
+        input.body_size = body.len();
+        // SAFETY: the complete ABI input and all referenced buffers remain live for validation.
+        let request =
+            unsafe { ValidatedRequest::from_abi(&raw const input) }.expect("bounded form POST");
+        let wire = build_http_request(&request).expect("form request");
+        let wire = std::str::from_utf8(&wire).expect("ASCII form");
+        assert!(wire.starts_with("POST /tenant/oauth2/v2.0/token HTTP/1.1\r\n"));
+        assert!(wire.contains("\r\nclient-request-id: token-correlation\r\n"));
+        assert!(wire.contains("\r\nx-ms-client-request-id: resource-correlation\r\n"));
+        assert!(!wire.contains("\r\nAuthorization:"));
+        assert!(wire.ends_with(std::str::from_utf8(body).expect("ASCII body")));
+    }
+
+    #[test]
+    fn correlation_headers_do_not_expand_other_header_or_value_permissions() {
+        for name in ["CLIENT-REQUEST-ID", "X-Ms-Client-Request-Id"] {
+            assert!(header_name_is_allowed(name));
+            assert!(header_value_is_valid(name, "bounded-correlation"));
+            assert!(!header_value_is_valid(name, "safe\r\nInjected: yes"));
+            assert!(!header_value_is_valid(
+                name,
+                &"r".repeat(MAX_GENERAL_HEADER_VALUE + 1)
+            ));
+        }
+        for name in ["Host", "Cookie", "X-Unrelated", "Transfer-Encoding"] {
+            assert!(!header_name_is_allowed(name));
+        }
+        let headers = [
+            MicrosoftIdentityNativeHeader {
+                name: c"client-request-id".as_ptr(),
+                value: c"first".as_ptr(),
+            },
+            MicrosoftIdentityNativeHeader {
+                name: c"Client-Request-Id".as_ptr(),
+                value: c"second".as_ptr(),
+            },
+        ];
+        let mut input = abi_request();
+        input.headers = headers.as_ptr();
+        input.header_count = headers.len();
+        // SAFETY: all ABI fields and referenced headers remain live for validation.
+        let result = unsafe { ValidatedRequest::from_abi(&raw const input) };
+        assert_eq!(
+            result.expect_err("duplicate correlation header").code,
+            ErrorCode::InvalidArgument
+        );
     }
 
     #[test]

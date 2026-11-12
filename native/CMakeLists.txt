@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(MicrosoftIdentityNativePrimitivesNativeTests VERSION 0.2.0 LANGUAGES C)
+project(MicrosoftIdentityNativePrimitivesNativeTests VERSION 0.3.0 LANGUAGES C)
 
 if(NOT WIN32)
     message(FATAL_ERROR "The native test harness requires Windows CNG.")

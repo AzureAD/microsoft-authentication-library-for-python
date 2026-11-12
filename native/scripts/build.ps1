@@ -89,6 +89,26 @@ function Build-Configuration {
         }
         Copy-Item $Source -Destination $Destination -Force
     }
+    $Hashes = [ordered]@{}
+    foreach ($File in @(
+        "libcrypto-3-x64.dll",
+        "libssl-3-x64.dll",
+        "microsoft_identity_native_provider.dll",
+        "microsoft_identity_native_primitives.dll"
+    )) {
+        $Hashes[$File] = (Get-FileHash -LiteralPath (Join-Path $Destination $File) -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $Revision = (& git -C $RepoRoot rev-parse HEAD)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to identify the native source revision."
+    }
+    [ordered]@{
+        schema_version = 1
+        abi_version = 1
+        development = $true
+        build_id = "$Revision-$Name-local"
+        files = $Hashes
+    } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $Destination "native-manifest.json") -Encoding utf8
     Write-Host "Staged Rust $Name artifacts at $Destination"
 }
 

@@ -12,14 +12,12 @@ name = "microsoft_identity_native_primitives"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+cng-core = { version = "0.3.0", path = "../cng-core" }
 libc.workspace = true
-openssl-provider-sys = { version = "0.2.0", path = "../openssl-provider-sys" }
+openssl-provider-sys = { version = "0.3.0", path = "../openssl-provider-sys" }
 static_assertions.workspace = true
 windows-sys.workspace = true
 zeroize.workspace = true
-
-[dev-dependencies]
-cng-core = { version = "0.2.0", path = "../cng-core" }
 
 [lints]
 workspace = true

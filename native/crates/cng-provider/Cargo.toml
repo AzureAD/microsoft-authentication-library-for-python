@@ -12,9 +12,9 @@ name = "microsoft_identity_native_provider"
 crate-type = ["cdylib"]
 
 [dependencies]
-cng-core = { version = "0.2.0", path = "../cng-core" }
+cng-core = { version = "0.3.0", path = "../cng-core" }
 libc.workspace = true
-openssl-provider-sys = { version = "0.2.0", path = "../openssl-provider-sys" }
+openssl-provider-sys = { version = "0.3.0", path = "../openssl-provider-sys" }
 zeroize.workspace = true
 
 [lints]

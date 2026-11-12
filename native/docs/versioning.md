@@ -46,7 +46,7 @@ published or reported.
 ## Rust dependency versions
 
 All crates inherit their product version and external dependency requirements from
-`native/Cargo.toml`. Product version `0.2.0` is independent of the MSAL Python
+`native/Cargo.toml`. Product version `0.3.0` is independent of the MSAL Python
 package version.
 
 Workspace dependencies use explicit compatible ranges, not exact version pins.

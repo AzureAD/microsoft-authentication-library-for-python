@@ -88,6 +88,17 @@ typedef struct microsoft_identity_native_error_st {
     char message[512];
 } MICROSOFT_IDENTITY_NATIVE_ERROR;
 
+typedef struct microsoft_identity_native_key_st MICROSOFT_IDENTITY_NATIVE_KEY;
+
+typedef struct microsoft_identity_native_public_key_st {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t bits;
+    uint32_t exponent;
+    uint32_t modulus_length;
+    unsigned char modulus[2048];
+} MICROSOFT_IDENTITY_NATIVE_PUBLIC_KEY;
+
 MICROSOFT_IDENTITY_NATIVE_API uint32_t
 microsoft_identity_native_abi_version(void);
 /*
@@ -102,6 +113,43 @@ MICROSOFT_IDENTITY_NATIVE_API int microsoft_identity_native_request(
     MICROSOFT_IDENTITY_NATIVE_ERROR *error);
 MICROSOFT_IDENTITY_NATIVE_API void microsoft_identity_native_response_free(
     MICROSOFT_IDENTITY_NATIVE_RESPONSE *response);
+
+/*
+ * Additive ABI v1 key primitives. Only microsoft-identity-native-vbs-* names are
+ * accepted. No software fallback. Successful open returns one owned key object.
+ */
+MICROSOFT_IDENTITY_NATIVE_API int microsoft_identity_native_key_open_protected(
+    const char *name,
+    MICROSOFT_IDENTITY_NATIVE_KEY **key,
+    MICROSOFT_IDENTITY_NATIVE_ERROR *error);
+/* Initialize public_key.struct_size and .abi_version before calling. */
+MICROSOFT_IDENTITY_NATIVE_API int microsoft_identity_native_key_public(
+    const MICROSOFT_IDENTITY_NATIVE_KEY *key,
+    MICROSOFT_IDENTITY_NATIVE_PUBLIC_KEY *public_key,
+    MICROSOFT_IDENTITY_NATIVE_ERROR *error);
+/* SHA-256 digest, PSS SHA-256/MGF1 SHA-256, salt32; buffers must not alias. */
+MICROSOFT_IDENTITY_NATIVE_API int microsoft_identity_native_key_sign_sha256_pss(
+    const MICROSOFT_IDENTITY_NATIVE_KEY *key,
+    const unsigned char *digest,
+    size_t digest_length,
+    unsigned char *signature,
+    size_t signature_capacity,
+    size_t *written,
+    MICROSOFT_IDENTITY_NATIVE_ERROR *error);
+/*
+ * Borrows the NCrypt handle without transferring ownership. Retain the key
+ * through all uses; never free/delete the borrowed handle.
+ */
+MICROSOFT_IDENTITY_NATIVE_API int microsoft_identity_native_key_borrow_handle(
+    const MICROSOFT_IDENTITY_NATIVE_KEY *key,
+    uintptr_t *handle,
+    MICROSOFT_IDENTITY_NATIVE_ERROR *error);
+/*
+ * Free each successful key object once, with no concurrent operations or
+ * outstanding borrowed handles. NULL is accepted. Does not delete the key.
+ */
+MICROSOFT_IDENTITY_NATIVE_API void microsoft_identity_native_key_free(
+    MICROSOFT_IDENTITY_NATIVE_KEY *key);
 
 #ifdef __cplusplus
 }

@@ -8,9 +8,9 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-cng-core = { version = "0.2.0", path = "../cng-core" }
-mtls-bridge = { version = "0.2.0", path = "../mtls-bridge" }
-openssl-provider-sys = { version = "0.2.0", path = "../openssl-provider-sys" }
+cng-core = { version = "0.3.0", path = "../cng-core" }
+mtls-bridge = { version = "0.3.0", path = "../mtls-bridge" }
+openssl-provider-sys = { version = "0.3.0", path = "../openssl-provider-sys" }
 
 [lints]
 workspace = true

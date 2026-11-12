@@ -14,7 +14,7 @@ dependencies = [
 
 [[package]]
 name = "cng-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "windows-sys",
  "zeroize",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "cng-provider"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cng-core",
  "libc",
@@ -44,7 +44,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "mtls-bridge"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cng-core",
  "libc",
@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "openssl-provider-sys"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
  "openssl-sys",
@@ -83,7 +83,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "rust-tests"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cng-core",
  "mtls-bridge",

@@ -8,6 +8,13 @@ version and versions its native ABI separately.
 
 ### Added
 
+- Additive opaque protected-key exports for VBS/per-boot signing keys, bounded
+  public-key retrieval, SHA-256/PSS salt32 signing, borrowed NCrypt attestation
+  interop, and deterministic handle cleanup. Existing ABI v1 layouts remain
+  unchanged. Owned stale generations are recreated once; no software fallback.
+- Bounded `client-request-id` and `x-ms-client-request-id` request headers for
+  host-orchestrated mTLS form POSTs and resource calls, retaining ABI version 1
+  and the existing authorization and framing rules.
 - Microsoft contribution, code-of-conduct, support, maintainer, ownership, and
   release-governance documentation.
 - Structured bug, feature, design-proposal, documentation, and pull-request
