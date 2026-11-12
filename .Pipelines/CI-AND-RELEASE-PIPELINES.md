@@ -31,6 +31,15 @@ by the GitHub Actions workflow
 [`.github/workflows/python-package.yml`](../.github/workflows/python-package.yml),
 which builds the package and runs `twine check` on every PR.
 
+For the native integration stack targeting `feature/native-primitives`, that
+workflow also runs secret-free unit tests on Python 3.9 through 3.14, including
+draft PRs. The [native workflow](../.github/workflows/native-primitives.yml)
+accepts that stacked base and runs the Windows Debug/Release native matrix,
+dependency policy checks, and Python 3.12 native integration tests. Both workflows
+publish JUnit artifacts. These checks do not replace OneBranch SDL or live
+VBS/MAA/Key Vault validation; the existing ADO branch and draft policies remain
+unchanged.
+
 ### Stages
 
 ```
