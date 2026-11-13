@@ -130,6 +130,7 @@ class Authority(object):
             ).format(iss=self._issuer, auth=oidc_authority_url))
     def _initialize_oidc_authority(self, oidc_authority_url):
         authority, self.instance, tenant = canonicalize(oidc_authority_url)
+        self._netloc = authority.netloc.lower()  # Unlike instance, keeps the port
         self.is_adfs = tenant.lower() == 'adfs'  # As a convention
         self._is_b2c = True  # Not exactly true, but
             # OIDC Authority was designed for CIAM which is the next gen of B2C.
@@ -147,6 +148,7 @@ class Authority(object):
         if isinstance(authority_url, AuthorityBuilder):
             authority_url = str(authority_url)
         authority, self.instance, tenant = canonicalize(authority_url)
+        self._netloc = authority.netloc.lower()  # Unlike instance, keeps the port
         is_ciam = self.instance.endswith(_CIAM_DOMAIN_SUFFIX)
         self.is_adfs = tenant.lower() == 'adfs' and not is_ciam
         parts = authority.path.split('/')
@@ -188,16 +190,16 @@ class Authority(object):
         # It will typically return a dict containing "ver", "account_type",
         # "federation_protocol", "cloud_audience_urn",
         # "federation_metadata_url", "federation_active_auth_url", etc.
-        if self.instance not in self.__class__._domains_without_user_realm_discovery:
+        if self._netloc not in self.__class__._domains_without_user_realm_discovery:
             resp = response or self._http_client.get(
                 "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
-                    netloc=self.instance, username=username),
+                    netloc=self._netloc, username=username),
                 headers={'Accept': 'application/json',
                          'client-request-id': correlation_id},)
             if resp.status_code != 404:
                 resp.raise_for_status()
                 return json.loads(resp.text)
-            self.__class__._domains_without_user_realm_discovery.add(self.instance)
+            self.__class__._domains_without_user_realm_discovery.add(self._netloc)
         return {}  # This can guide the caller to fall back normal ROPC flow
 
     def has_valid_issuer(self):
