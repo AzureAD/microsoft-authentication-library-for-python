@@ -1075,6 +1075,9 @@ class CiamTestCase(LabBasedTestCase):
             lab_name=self.user_config.lab_name,
         )
 
+    @unittest.skip(
+        "Temporarily disabled after CIAM test certificate rotation (AADSTS700027); "
+        "re-enable when the app certificate registration is updated.")
     def test_ciam_acquire_token_for_client(self):
         """Test client credentials flow for CIAM using certificate."""
         self._test_acquire_token_by_client_cert(
@@ -1133,6 +1136,9 @@ class CiamCudTestCase(CiamTestCase):
             lab_name=self.user_config.lab_name,
         )
 
+    @unittest.skip(
+        "Temporarily disabled after CIAM test certificate rotation (AADSTS700027); "
+        "re-enable when the app certificate registration is updated.")
     def test_ciam_acquire_token_for_client(self):
         """Test client credentials flow for CIAM CUD using certificate with OIDC authority."""
         self._test_acquire_token_by_client_cert(
