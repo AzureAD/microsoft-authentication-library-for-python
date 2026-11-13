@@ -1,3 +1,4 @@
+import base64
 import functools
 import json
 import time
@@ -52,17 +53,28 @@ def _init_broker(enable_pii_log):  # Make it a function to allow mocking
 def extract_certs(public_cert_content):
     # Parses raw public certificate file contents and returns a list of strings
     # Usage: headers = {"x5c": extract_certs(open("my_cert.pem").read())}
+    from cryptography import x509
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
+
     public_certificates = re.findall(
-        r'-----BEGIN CERTIFICATE-----(?P<cert_value>[^-]+)-----END CERTIFICATE-----',
-        public_cert_content, re.I)
-    if public_certificates:
-        return [cert.strip() for cert in public_certificates]
-    # The public cert tags are not found in the input,
-    # let's make best effort to exclude a private key pem file.
-    if "PRIVATE KEY" in public_cert_content:
+        r'-----BEGIN CERTIFICATE-----(?P<cert_value>.*?)-----END CERTIFICATE-----',
+        public_cert_content, re.I | re.S)
+    certificates = []
+    try:
+        for value in public_certificates or [public_cert_content]:
+            der = base64.b64decode("".join(value.split()), validate=True)
+            cert = x509.load_der_x509_certificate(der, default_backend())
+            certificate_der = cert.public_bytes(serialization.Encoding.DER)
+            # Some parsers accept trailing data after the certificate.
+            if certificate_der != der:
+                raise ValueError()
+            certificates.append(base64.b64encode(certificate_der).decode("ascii"))
+    except ValueError:
         raise ValueError(
-            "We expect your public key but detect a private key instead")
-    return [public_cert_content.strip()]
+            "Invalid public certificate. Provide PEM certificates or a "
+            "base64-encoded DER certificate.") from None
+    return certificates
 
 
 def _merge_claims_challenge_and_capabilities(capabilities, claims_challenge):
@@ -357,6 +369,11 @@ class ClientApplication(object):
 
                 ``public_certificate`` (optional) is public key certificate
                 which will be sent through 'x5c' JWT header.
+                With a manual thumbprint, PEM certificate chains or tagless
+                base64-encoded DER certificates are accepted. These encodings
+                are validated before constructing 'x5c'; malformed data raises
+                ``ValueError``. PEM chains retain their order, and other
+                labeled PEM blocks are not included in 'x5c'.
                 This is useful when you use `Subject Name/Issuer Authentication
                 <https://github.com/AzureAD/microsoft-authentication-library-for-python/issues/60>`_
                 which is an approach to allow easier certificate rotation.
