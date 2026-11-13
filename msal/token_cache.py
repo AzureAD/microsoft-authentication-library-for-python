@@ -390,7 +390,7 @@ class TokenCache(object):
                 # kept in data only for ext_cache_key computation, so redact them
                 # from the debug log (both the cache-key pseudo-param and the
                 # merged wire parameter).
-                "client_claims", "claims",
+                "client_claims", "claims", "mi_v2_claims",
             )),
             response=make_clean_copy(event.get("response", {}), (
                 "id_token_claims",  # Provided by broker
@@ -640,4 +640,3 @@ class SerializableTokenCache(TokenCache):
         with self._lock:
             self.has_state_changed = False
             return json.dumps(self._cache, indent=4)
-

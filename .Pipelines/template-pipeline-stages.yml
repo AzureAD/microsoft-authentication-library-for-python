@@ -396,3 +396,77 @@ stages:
         testResultsFiles: 'test-results/junit-mi-e2e-arc.xml'
         failTaskOnFailedTests: true
         testRunTitle: 'MI E2E - Azure Arc'
+
+# Explicitly enabled only after a trusted candidate and enrolled fixture are staged.
+- stage: MIE2EImdsV2
+  displayName: 'MI E2E - installed MSI v2 KeyGuard candidate'
+  dependsOn: UnitTests
+  condition: and(eq(dependencies.UnitTests.result, 'Succeeded'), ne(variables['System.PullRequest.IsFork'], 'True'), eq(variables['MSAL_RUN_MI_V2'], '1'))
+  jobs:
+  - job: PytestV2
+    pool:
+      type: windows
+      isCustom: true
+      name: MISEManagedIdentity
+    timeoutInMinutes: 30
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Verify runner, install selected wheels, run full MSI v2 profile'
+      inputs:
+        targetType: inline
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $py = (Get-Command python.exe -ErrorAction Stop).Source
+          $tpm = Get-Tpm
+          if (-not $tpm.TpmPresent -or -not $tpm.TpmReady) { throw 'MSI v2 requires a ready TPM.' }
+          if (-not (Confirm-SecureBootUEFI)) { throw 'MSI v2 requires Secure Boot.' }
+          $guard = Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard
+          if ($guard.VirtualizationBasedSecurityStatus -ne 2) { throw 'MSI v2 requires running VBS.' }
+          $candidate = '$(MSAL_MI_V2_CANDIDATE_DIR)'
+          if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
+            throw 'Stage the reviewed core, native and attestation wheels in MSAL_MI_V2_CANDIDATE_DIR.'
+          }
+          $wheels = @()
+          foreach ($pattern in @('msal-*-py3-none-any.whl', 'msal_native_primitives-*-win_amd64.whl', 'msal_key_attestation-*-win_amd64.whl')) {
+            $selected = @(Get-ChildItem -LiteralPath $candidate -Filter $pattern -File)
+            if ($selected.Count -ne 1) { throw "Stage exactly one selected candidate matching $pattern." }
+            $wheels += $selected[0].FullName
+            Write-Host "Candidate SHA256: $((Get-FileHash -LiteralPath $selected[0].FullName).Hash)"
+          }
+          $env:MSAL_TEST_MI_V2_SOURCE_FINGERPRINT = & $py -c "from tests.test_mi_v2_e2e import _sdk_fingerprint; print(_sdk_fingerprint())"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not fingerprint the selected SDK source.' }
+          $env:MSAL_TEST_MI_V2_NATIVE_BUILD_ID = & $py -c "import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(json.loads(z.read('msal_native_primitives/lib/native-manifest.json').decode('utf-8-sig'))['build_id'])" $wheels[1]
+          if ($LASTEXITCODE -ne 0) { throw 'Could not identify the selected native wheel.' }
+          & $py -m pip install --no-index --no-deps --force-reinstall @wheels
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate installation failed.' }
+          $run = Join-Path '$(Agent.TempDirectory)' 'msal-python-mi-v2-candidate'
+          New-Item -ItemType Directory -Force -Path $run | Out-Null
+          Copy-Item -LiteralPath tests\test_mi_v2_e2e.py -Destination $run -Force
+          Push-Location $run
+          try {
+            & $py -m pytest -vv -ra test_mi_v2_e2e.py --junitxml='$(Build.ArtifactStagingDirectory)\junit-mi-v2.xml'
+            if ($LASTEXITCODE -ne 0) { throw 'The installed-candidate MSI v2 profile failed.' }
+          } finally {
+            Pop-Location
+          }
+      env:
+        MSAL_TEST_MI_IMDS_V2: '1'
+        MSAL_TEST_MI_V2_REQUIRE_INSTALLED: '1'
+        MSAL_NATIVE_PRIMITIVES_DIR: ''
+        MSAL_KEY_ATTESTATION_DIR: ''
+        MSAL_TEST_MI_V2_REQUIRE_ATTESTATION: '1'
+        MSAL_TEST_MI_V2_TOKEN_ONLY: '0'
+        MSAL_ALLOW_DEVELOPMENT_NATIVE: '1'
+        MSAL_TEST_MI_V2_UAMI_CLIENT_ID: $(MSAL_TEST_MI_V2_UAMI_CLIENT_ID)
+        MSAL_TEST_MI_V2_BOUND_SECRET_URL: $(MSAL_TEST_MI_V2_BOUND_SECRET_URL)
+        MSAL_TEST_MI_V2_BEARER_SECRET_URL: $(MSAL_TEST_MI_V2_BEARER_SECRET_URL)
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: '$(Build.ArtifactStagingDirectory)\junit-mi-v2.xml'
+        failTaskOnFailedTests: true
+        failTaskOnMissingResultsFile: true
+        testRunTitle: 'MI E2E - installed MSI v2 KeyGuard full profile'

@@ -63,5 +63,10 @@ msal_cache.bin
 .env
 .perf-baseline/
 
+# Optional Windows integration candidate staging
+/packages/*/build/
+/packages/*/*.egg-info/
+/packages/*/*/lib/
+
 *.pfx
 .vscode/settings.json
