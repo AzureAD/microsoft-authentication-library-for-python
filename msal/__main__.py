@@ -14,11 +14,17 @@ import base64, getpass, json, logging, sys, os, atexit, msal
 
 _token_cache_filename = "msal_cache.bin"
 global_cache = msal.SerializableTokenCache()
-atexit.register(lambda:
-    open(_token_cache_filename, "w").write(global_cache.serialize())
-    # Hint: The following optional line persists only when state changed
-    if global_cache.has_state_changed else None
-    )
+
+def _save_cache():
+    if global_cache.has_state_changed:  # Persists only when state changed
+        # The cache contains refresh tokens, so only its owner may read it
+        fd = os.open(
+            _token_cache_filename, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            if hasattr(os, "fchmod"):  # Also covers a file that already existed
+                os.fchmod(fd, 0o600)
+            f.write(global_cache.serialize())
+atexit.register(_save_cache)
 
 _AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 _VISUAL_STUDIO = "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
