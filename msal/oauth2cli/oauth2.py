@@ -249,7 +249,7 @@ class BaseClient(object):
                 raw = self.client_assertion
             _data["client_assertion"] = encoder(raw)
 
-        _data.update(self.default_body)  # It may contain authen parameters
+        _data.update(self.default_body)  # It may contain authentication parameters
         _data.update(data or {})  # So the content in data param prevails
         _data = {k: v for k, v in _data.items() if v}  # Clean up None values
 
@@ -686,7 +686,7 @@ class Client(BaseClient):  # We choose to implement all 4 grants in 1 class
         :return: Same as :func:`~obtain_token_by_auth_code_flow()`
         """
         if auth_code_receiver:  # Then caller already knows the listen port
-            return self._obtain_token_by_browser(  # Use all input param as-is
+            return self._obtain_token_by_browser(  # Use all input params as-is
                 auth_code_receiver, redirect_uri=redirect_uri, **kwargs)
         # Otherwise we will listen on _redirect_uri.port
         _redirect_uri = urlparse(redirect_uri or "http://127.0.0.1:0")
