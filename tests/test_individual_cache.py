@@ -1,6 +1,7 @@
 from time import sleep
 from random import random
 import unittest
+from unittest.mock import patch
 from msal.individual_cache import _ExpiringMapping as ExpiringMapping
 from msal.individual_cache import _IndividualCache as IndividualCache
 
@@ -91,6 +92,47 @@ class TestExpiringMapping(unittest.TestCase):
         self.assertEqual(2, len(self.m), "It contains 2 items")
         self.assertNotIn("thing one", self.m)
 
+    def test_invalidation_compacts_orphans_and_preserves_live_expiry(self):
+        with patch("msal.individual_cache.time.time", return_value=1000):
+            self.m.set("keep", "value", 100)
+            self.m.set("reject", "old", 200)
+            self.m.set("reject", "new", 300)
+            self.m.pop("reject")
+            self.m.set("reject", "latest", 400)
+            self.assertEqual(4, len(self.m._peek()[0]))
+
+            self.m._invalidate("reject")
+            self.assertEqual(([[1100, 1000, "keep"]], {"keep": [1100, 1000]}),
+                self.m._peek())
+            self.assertNotIn("reject", self.mapping)
+            self.assertEqual("value", self.m["keep"])
+            self.m._invalidate("reject")
+            self.assertEqual(1, len(self.m._peek()[0]))
+
+        with patch("msal.individual_cache.time.time", return_value=1100):
+            self.assertEqual(0, len(self.m))
+            self.assertEqual(([], {}), self.m._peek())
+
+    def test_invalidation_rejects_reserved_index(self):
+        self.m["keep"] = "value"
+        with self.assertRaises(ValueError):
+            self.m._invalidate(ExpiringMapping._INDEX)
+        self.assertEqual("value", self.m["keep"])
+
+    def test_invalidation_preserves_heap_order_and_capacity_eviction(self):
+        mapping = ExpiringMapping(capacity=3)
+        with patch("msal.individual_cache.time.time", return_value=1000):
+            mapping.set("later", "later", 200)
+            mapping.set("earlier", "earlier", 100)
+            mapping.set("reject", "reject", 300)
+            mapping._invalidate("reject")
+            self.assertEqual("earlier", mapping._peek()[0][0][2])
+            mapping.set("third", "third", 300)
+            mapping.set("fourth", "fourth", 400)
+            self.assertNotIn("earlier", mapping)
+            self.assertEqual({"later", "third", "fourth"}, set(mapping))
+            self.assertEqual(3, len(mapping._peek()[0]))
+
 
 class TestIndividualCache(unittest.TestCase):
     mapping = {}
@@ -107,4 +149,3 @@ class TestIndividualCache(unittest.TestCase):
             "Subsequent run should obtain same result from cache")
         # Note: In Python 3.7+, dict is ordered, so the following is typically True:
         #self.assertNotEqual(self.foo(a=1, b=2), self.foo(b=2, a=1))
-

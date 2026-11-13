@@ -2,6 +2,22 @@
 
 We have adopted the semantic versioning flow that is industry standard for OSS projects. It gives the maximum amount of control on what risk you take with what versions. If you know how semantic versioning works with node.js, java, and ruby none of this will be new.
 
+## Unreleased behavior changes
+
+For explicit `oidc_authority`, custom authorities no longer accept regional
+prefixes on Microsoft issuer hosts or on their own host. Exact built-in
+Microsoft authority hosts (case-insensitive) still accept any single nonempty
+regional label before a built-in Microsoft issuer host; no region allowlist
+is introduced. Microsoft authorities can no longer use the B2C/CIAM issuer
+fallback. Exact Microsoft issuer hosts, same-host matching, and existing
+B2C/CIAM mappings for non-Microsoft authorities remain supported.
+
+Rejected issuers raise the existing `ValueError` before advertised endpoints
+are consumed, and their discovery responses are removed from MSAL's HTTP cache
+so later valid metadata can succeed. Ordinary `authority` behavior and existing
+URL parsing and scheme handling are unchanged. This is an issuer-policy
+behavior change, not a complete credential-theft remediation.
+
 ## Semantic Versioning and API stability promises
 
 Microsoft Authentication libraries are independent open source libraries that are used by partners both internal and external to Microsoft. As with the rest of Microsoft, we have moved to a rapid iteration model where bugs are fixed daily and new versions are produced as required. To communicate these frequent changes to external partners and customers, we use semantic versioning for all our public Microsoft Authentication SDK libraries. This follows the practices of other open source libraries on the internet. This allows us to support our downstream partners which will lock on certain versions for stability purposes, as well as providing for the distribution over NuGet, CocoaPods, and Maven. 
