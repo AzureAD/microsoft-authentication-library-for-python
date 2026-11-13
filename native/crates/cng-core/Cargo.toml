@@ -1,0 +1,15 @@
+[package]
+name = "cng-core"
+version.workspace = true
+description = "Windows CNG key ownership, policy validation, hashing, and opaque signing primitives"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+windows-sys.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true
