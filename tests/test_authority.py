@@ -1,14 +1,14 @@
 import os
 try:
-    from unittest.mock import patch
+    from unittest.mock import patch, Mock
 except:
-    from mock import patch
+    from mock import patch, Mock
 
 import msal
 from msal.authority import *
 from msal.authority import _CIAM_DOMAIN_SUFFIX
 from tests import unittest
-from tests.http_client import MinimalHttpClient
+from tests.http_client import MinimalHttpClient, MinimalResponse
 
 
 @unittest.skipIf(os.getenv("TRAVIS_TAG"), "Skip network io during tagged release")
@@ -337,6 +337,43 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
                 "user_realm_discovery() should memorize domains not supporting URD")
             a.user_realm_discovery("john.doe@example.com",
                 response="This would cause exception if memorization did not work")
+        finally:  # MUST NOT let the previous test changes affect other test cases
+            Authority._domains_without_user_realm_discovery = set([])
+
+
+@patch("msal.authority.tenant_discovery", return_value={
+    "authorization_endpoint": "https://contoso.com:8443/common/oauth2/v2.0/authorize",
+    "token_endpoint": "https://contoso.com:8443/common/oauth2/v2.0/token",
+    })
+class TestUserRealmDiscoveryOnNonDefaultPort(unittest.TestCase):
+    def _user_realm_discovery_url(self, authority_url, status_code=200):
+        http_client = Mock()
+        http_client.get.return_value = MinimalResponse(
+            status_code=status_code, text='{"account_type": "Managed"}')
+        authority = Authority(
+            authority_url, http_client, instance_discovery=False)
+        authority.user_realm_discovery("john.doe@example.com")
+        return http_client.get.call_args[0][0] if http_client.get.called else None
+
+    def test_user_realm_discovery_should_use_the_authority_port(self, _):
+        self.assertEqual(
+            "https://contoso.com:8443/common/userrealm/john.doe@example.com"
+                "?api-version=1.0",
+            self._user_realm_discovery_url("https://contoso.com:8443/common"))
+
+    def test_user_realm_discovery_should_keep_using_the_default_port(self, _):
+        self.assertEqual(
+            "https://contoso.com/common/userrealm/john.doe@example.com"
+                "?api-version=1.0",
+            self._user_realm_discovery_url("https://contoso.com/common"))
+
+    def test_memorizing_a_port_without_user_realm_discovery_should_not_affect_other_ports(self, _):
+        try:
+            self._user_realm_discovery_url(
+                "https://contoso.com:8443/common", status_code=404)
+            self.assertIsNotNone(
+                self._user_realm_discovery_url("https://contoso.com/common"),
+                "The default port is a different server and should still be asked")
         finally:  # MUST NOT let the previous test changes affect other test cases
             Authority._domains_without_user_realm_discovery = set([])
 
