@@ -250,6 +250,18 @@ class ThrottledHttpClientTestCase(ThrottledHttpClientBaseTestCase):
         logger.debug(http_cache)
         self.assertNotEqual(resp1.text, resp2.text, "Should return a new response")
 
+    def test_ropc_error_should_not_be_cached(self):
+        http_cache = {}
+        http_client = DummyHttpClient(status_code=400)
+        http_client = ThrottledHttpClient(http_client, http_cache=http_cache)
+        data = {"grant_type": "password", "username": "user", "password": "secret"}
+        resp1 = http_client.post("https://example.com", data=data)
+        resp2 = http_client.post("https://example.com", data=data)
+        logger.debug(http_cache)
+        self.assertNotEqual(resp1.text, resp2.text, "Should return a new response")
+        self.assertEqual({}, http_cache,
+            "A key derived from the password should not be stored in http_cache")
+
     def test_throttled_http_client_should_provide_close(self):
         http_client = DummyHttpClient(status_code=200)
         http_client = ThrottledHttpClient(http_client)
