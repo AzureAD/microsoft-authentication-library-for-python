@@ -31,6 +31,7 @@ from typing import Dict, Optional
 
 from azure.identity import CertificateCredential
 from azure.keyvault.secrets import SecretClient
+from cryptography.hazmat.primitives.serialization import pkcs12
 
 logger = logging.getLogger(__name__)
 
@@ -411,7 +412,8 @@ def get_client_certificate() -> Dict[str, object]:
             }
     
     Raises:
-        EnvironmentError: If LAB_APP_CLIENT_CERT_PFX_PATH is not set.
+        EnvironmentError: If LAB_APP_CLIENT_CERT_PFX_PATH is not set or unreadable.
+        ValueError: If the PFX is invalid or lacks a private key or certificate.
     """
     cert_path = clean_env("LAB_APP_CLIENT_CERT_PFX_PATH")
     if not cert_path:
@@ -419,7 +421,13 @@ def get_client_certificate() -> Dict[str, object]:
             "LAB_APP_CLIENT_CERT_PFX_PATH environment variable is required "
             "for certificate authentication"
         )
-    
+    with open(cert_path, "rb") as cert_file:
+        private_key, certificate, _ = pkcs12.load_key_and_certificates(
+            cert_file.read(), None)
+    if private_key is None or certificate is None:
+        raise ValueError(
+            "LAB_APP_CLIENT_CERT_PFX_PATH must contain a private key and certificate")
+
     logger.debug("Using client certificate from: %s", cert_path)
     return {
         "private_key_pfx_path": cert_path,
