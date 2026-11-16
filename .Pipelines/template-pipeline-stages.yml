@@ -436,6 +436,12 @@ stages:
             if ($wheel.Count -ne 1) { throw "Expected exactly one built candidate matching $pattern." }
             Copy-Item -LiteralPath $wheel[0].FullName -Destination '$(Build.ArtifactStagingDirectory)' -Force
           }
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish MSI v2 candidate wheels'
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: 'drop_MIE2EImdsV2_BuildCandidate'
+        publishLocation: pipeline
   - job: PytestV2
     dependsOn: BuildCandidate
     pool:
