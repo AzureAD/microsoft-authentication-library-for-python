@@ -403,17 +403,57 @@ stages:
   dependsOn: UnitTests
   condition: and(eq(dependencies.UnitTests.result, 'Succeeded'), ne(variables['System.PullRequest.IsFork'], 'True'), not(in(variables['MSAL_SKIP_MI_V2'], '1', 'true')))
   jobs:
-  - job: PytestV2
+  - job: BuildCandidate
+    displayName: 'Build MSI v2 candidate wheels'
     pool:
       type: windows
       isCustom: true
-      name: MISEManagedIdentity
+      vmImage: 'windows-2022'
     timeoutInMinutes: 60
     variables:
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
     steps:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python 3.12'
+      inputs:
+        versionSpec: '3.12'
+        architecture: 'x64'
     - task: PowerShell@2
-      displayName: 'Build and test MSI v2 candidate against Key Vault'
+      displayName: 'Build core, native and attestation wheels'
+      inputs:
+        targetType: inline
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $candidate = Join-Path '$(Agent.TempDirectory)' ('mi-v2-' + [guid]::NewGuid())
+          $venv = Join-Path $candidate 'venv'
+          & python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { throw 'Creating the wheel-build environment failed.' }
+          $env:PATH = "$(Join-Path $venv 'Scripts');$env:PATH"
+          & '$(System.DefaultWorkingDirectory)\tools\build_mi_e2e_candidate.ps1' -WheelDirectory $candidate
+          New-Item -ItemType Directory -Force -Path '$(Build.ArtifactStagingDirectory)' | Out-Null
+          foreach ($pattern in @('msal-*-py3-none-any.whl', 'msal_native_primitives-*-win_amd64.whl', 'msal_key_attestation-*-win_amd64.whl')) {
+            $wheel = @(Get-ChildItem -LiteralPath $candidate -Filter $pattern -File)
+            if ($wheel.Count -ne 1) { throw "Expected exactly one built candidate matching $pattern." }
+            Copy-Item -LiteralPath $wheel[0].FullName -Destination '$(Build.ArtifactStagingDirectory)' -Force
+          }
+  - job: PytestV2
+    dependsOn: BuildCandidate
+    pool:
+      type: windows
+      isCustom: true
+      name: MISEManagedIdentity
+    timeoutInMinutes: 30
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+    steps:
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download candidate wheels from this build'
+      inputs:
+        buildType: current
+        artifactName: 'drop_MIE2EImdsV2_BuildCandidate'
+        targetPath: '$(Pipeline.Workspace)\mi-v2-candidate-$(Build.BuildId)'
+    - task: PowerShell@2
+      displayName: 'Install and test MSI v2 candidate against Key Vault'
       inputs:
         targetType: inline
         script: |
@@ -424,13 +464,13 @@ stages:
           if (-not (Confirm-SecureBootUEFI)) { throw 'MSI v2 requires Secure Boot.' }
           $guard = Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard
           if ($guard.VirtualizationBasedSecurityStatus -ne 2) { throw 'MSI v2 requires running VBS.' }
-          $candidate = Join-Path '$(Agent.TempDirectory)' ('msal-python-mi-v2-' + [guid]::NewGuid())
-          $venv = Join-Path $candidate 'venv'
+          $candidate = '$(Pipeline.Workspace)\mi-v2-candidate-$(Build.BuildId)'
+          $work = Join-Path '$(Agent.TempDirectory)' ('msal-python-mi-v2-' + [guid]::NewGuid())
+          $venv = Join-Path $work 'venv'
           & $py -m venv --system-site-packages $venv
           if ($LASTEXITCODE -ne 0) { throw 'Creating the isolated candidate environment failed.' }
           $py = Join-Path $venv 'Scripts\python.exe'
           $env:PATH = "$(Split-Path $py -Parent);$env:PATH"
-          & '$(System.DefaultWorkingDirectory)\tools\build_mi_e2e_candidate.ps1' -WheelDirectory $candidate
           $wheels = @()
           foreach ($pattern in @('msal-*-py3-none-any.whl', 'msal_native_primitives-*-win_amd64.whl', 'msal_key_attestation-*-win_amd64.whl')) {
             $selected = @(Get-ChildItem -LiteralPath $candidate -Filter $pattern -File)
@@ -444,7 +484,7 @@ stages:
           if ($LASTEXITCODE -ne 0) { throw 'Could not identify the selected native wheel.' }
           & $py -m pip install --no-index --no-deps --force-reinstall @wheels
           if ($LASTEXITCODE -ne 0) { throw 'Candidate installation failed.' }
-          $run = Join-Path $candidate 'tests'
+          $run = Join-Path $work 'tests'
           New-Item -ItemType Directory -Force -Path $run | Out-Null
           Copy-Item -LiteralPath tests\test_mi_v2_e2e.py -Destination $run -Force
           Push-Location $run

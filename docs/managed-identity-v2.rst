@@ -151,13 +151,17 @@ It checks attested PoP acquisition, caching, forced refresh, successful bound
 resource calls and rejection without the binding certificate. It does not
 select the token-only profile.
 
-The stage verifies TPM/Secure Boot/VBS, builds the native candidate from the
+A hosted ``windows-2022`` build job compiles the native candidate from the
 checkout with the pinned Rust/vcpkg versions, downloads and verifies the pinned
-attestation dependency, and builds all three wheels automatically. It installs
-them into an isolated environment and runs the copied test outside the checkout.
-The runner requires Visual Studio 2022 C++/CMake tools, Python with the existing
-MI test dependencies, and access to the tool/dependency download endpoints.
-Missing prerequisites fail the stage rather than silently skipping.
+attestation dependency, and builds all three wheels automatically. Only the
+wheels are published as the candidate artifact.
+
+The dependent job on ``MISEManagedIdentity`` downloads that artifact from the
+same pipeline run, verifies TPM/Secure Boot/VBS, installs the wheels into an
+isolated environment and runs the copied test outside the checkout. The MI
+runner needs Python with the existing MI test dependencies, not Visual Studio,
+CMake or Rust. Missing prerequisites fail the stage rather than silently
+skipping.
 
 The broader full suite remains available through the manual procedure above,
 including UAMI, bearer-resource, mismatched-certificate and attestation-required

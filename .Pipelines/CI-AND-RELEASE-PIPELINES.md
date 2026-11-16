@@ -56,11 +56,13 @@ PreBuildCheck ─► UnitTests ─► E2ETests ─► Benchmark (post-merge to d
 
 The `Validate` stage is **skipped** on PR/CI runs (it only applies to release builds).
 
-The MSI v2 stage needs no queue-time setup: it builds its core/native/attestation
-wheels and uses the same `tokenbinding` / `boundsecret` fixture as MSAL Java.
-Its runner must have Visual Studio 2022 C++/CMake tools, Python with the existing
-MI test dependencies, ready TPM, Secure Boot and running VBS. The stage checks
-these prerequisites and fails if candidate preparation or live validation fails.
+The MSI v2 stage needs no queue-time setup: a hosted `windows-2022` job builds
+the core/native/attestation wheels, and the dependent `MISEManagedIdentity` job
+downloads those wheels from the same run and uses the same `tokenbinding` /
+`boundsecret` fixture as MSAL Java. The MI runner only needs Python with the
+existing MI test dependencies, ready TPM, Secure Boot and running VBS; the
+compiler toolchain stays on the hosted agent. The stage checks these
+prerequisites and fails if candidate preparation or live validation fails.
 See [the validation profiles](../docs/managed-identity-v2.rst#validation-profiles)
 for the separately retained full suite.
 
