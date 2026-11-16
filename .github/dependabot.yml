@@ -9,3 +9,16 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+  - package-ecosystem: "cargo"
+    directory: "/native"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      rust-development-dependencies:
+        dependency-type: "development"
+        patterns: ["*"]
+
+# Native vcpkg/OpenSSL baseline updates are reviewed manually because they
+# change the cryptographic/runtime trusted computing base.

@@ -31,6 +31,15 @@ by the GitHub Actions workflow
 [`.github/workflows/python-package.yml`](../.github/workflows/python-package.yml),
 which builds the package and runs `twine check` on every PR.
 
+For the native integration stack targeting `feature/native-primitives`, that
+workflow also runs secret-free unit tests on Python 3.9 through 3.14, including
+draft PRs. The [native workflow](../.github/workflows/native-primitives.yml)
+accepts that stacked base and runs the Windows Debug/Release native matrix,
+dependency policy checks, and Python 3.12 native integration tests. Both workflows
+publish JUnit artifacts. These checks do not replace OneBranch SDL or live
+VBS/MAA/Key Vault validation; the existing ADO branch and draft policies remain
+unchanged.
+
 ### Stages
 
 ```
@@ -42,9 +51,20 @@ PreBuildCheck ─► UnitTests ─► E2ETests ─► Benchmark (post-merge to d
 | **PreBuildCheck** | Runs SDL security scans: PoliCheck (policy/offensive content), CredScan (leaked credentials), and PostAnalysis (breaks the build on findings) | Always |
 | **UnitTests** | Runs the unit test suite on Python 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14 (no Key Vault required) | After PreBuildCheck |
 | **E2ETests** | Fetches the MSID Lab certificate from Key Vault and runs `tests/test_e2e.py` + `tests/test_fmi_e2e.py` on the same Python matrix. On forked PRs the stage still runs, but the Key Vault tasks are skipped and the E2E tests self-skip (because `LAB_APP_CLIENT_CERT_PFX_PATH` is unset), so the stage reports green with all E2E tests marked Skipped in the Tests tab. | After UnitTests |
+| **MIE2EImdsV2** | Builds and installs the current MSI v2 candidate, then exercises SAMI attested PoP, caching/refresh, the shared Key Vault fixture and rejection without a certificate. The broader full suite remains available manually. | After successful UnitTests on non-fork builds, unless `MSAL_SKIP_MI_V2=1` or `true` |
 | **Benchmark** | Runs performance benchmarks on Python 3.9 and publishes `benchmark-results` artifact | Post-merge pushes to `dev` and manual runs only |
 
 The `Validate` stage is **skipped** on PR/CI runs (it only applies to release builds).
+
+The MSI v2 stage needs no queue-time setup: a hosted `windows-2022` job builds
+the core/native/attestation wheels, and the dependent `MISEManagedIdentity` job
+downloads those wheels from the same run and uses the same `tokenbinding` /
+`boundsecret` fixture as MSAL Java. The MI runner only needs Python with the
+existing MI test dependencies, ready TPM, Secure Boot and running VBS; the
+compiler toolchain stays on the hosted agent. The stage checks these
+prerequisites and fails if candidate preparation or live validation fails.
+See [the validation profiles](../docs/managed-identity-v2.rst#validation-profiles)
+for the separately retained full suite.
 
 > **SDL coverage:** The PreBuildCheck stage satisfies the OneBranch SDL requirement.
 > It runs on every PR, every merge to `dev`, and on the daily schedule — ensuring

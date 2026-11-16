@@ -396,3 +396,123 @@ stages:
         testResultsFiles: 'test-results/junit-mi-e2e-arc.xml'
         failTaskOnFailedTests: true
         testRunTitle: 'MI E2E - Azure Arc'
+
+# Like MSAL Java, build the candidate and run the shared SAMI/Key Vault fixture by default.
+- stage: MIE2EImdsV2
+  displayName: 'MI E2E - MSI v2 KeyGuard / Key Vault'
+  dependsOn: UnitTests
+  condition: and(eq(dependencies.UnitTests.result, 'Succeeded'), ne(variables['System.PullRequest.IsFork'], 'True'), not(in(variables['MSAL_SKIP_MI_V2'], '1', 'true')))
+  jobs:
+  - job: BuildCandidate
+    displayName: 'Build MSI v2 candidate wheels'
+    pool:
+      type: windows
+      isCustom: true
+      vmImage: 'windows-2022'
+    timeoutInMinutes: 60
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+    steps:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python 3.12'
+      inputs:
+        versionSpec: '3.12'
+        architecture: 'x64'
+    - task: PowerShell@2
+      displayName: 'Build core, native and attestation wheels'
+      inputs:
+        targetType: inline
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $candidate = Join-Path '$(Agent.TempDirectory)' ('mi-v2-' + [guid]::NewGuid())
+          $venv = Join-Path $candidate 'venv'
+          & python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { throw 'Creating the wheel-build environment failed.' }
+          $env:PATH = "$(Join-Path $venv 'Scripts');$env:PATH"
+          & '$(System.DefaultWorkingDirectory)\tools\build_mi_e2e_candidate.ps1' -WheelDirectory $candidate
+          New-Item -ItemType Directory -Force -Path '$(Build.ArtifactStagingDirectory)' | Out-Null
+          foreach ($pattern in @('msal-*-py3-none-any.whl', 'msal_native_primitives-*-win_amd64.whl', 'msal_key_attestation-*-win_amd64.whl')) {
+            $wheel = @(Get-ChildItem -LiteralPath $candidate -Filter $pattern -File)
+            if ($wheel.Count -ne 1) { throw "Expected exactly one built candidate matching $pattern." }
+            Copy-Item -LiteralPath $wheel[0].FullName -Destination '$(Build.ArtifactStagingDirectory)' -Force
+          }
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish MSI v2 candidate wheels'
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: 'drop_MIE2EImdsV2_BuildCandidate'
+        publishLocation: pipeline
+  - job: PytestV2
+    dependsOn: BuildCandidate
+    pool:
+      type: windows
+      isCustom: true
+      name: MISEManagedIdentity
+    timeoutInMinutes: 30
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+    steps:
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download candidate wheels from this build'
+      inputs:
+        buildType: current
+        artifactName: 'drop_MIE2EImdsV2_BuildCandidate'
+        targetPath: '$(Pipeline.Workspace)\mi-v2-candidate-$(Build.BuildId)'
+    - task: PowerShell@2
+      displayName: 'Install and test MSI v2 candidate against Key Vault'
+      inputs:
+        targetType: inline
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $py = (Get-Command python.exe -ErrorAction Stop).Source
+          $tpm = Get-Tpm
+          if (-not $tpm.TpmPresent -or -not $tpm.TpmReady) { throw 'MSI v2 requires a ready TPM.' }
+          if (-not (Confirm-SecureBootUEFI)) { throw 'MSI v2 requires Secure Boot.' }
+          $guard = Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard
+          if ($guard.VirtualizationBasedSecurityStatus -ne 2) { throw 'MSI v2 requires running VBS.' }
+          $candidate = '$(Pipeline.Workspace)\mi-v2-candidate-$(Build.BuildId)'
+          $work = Join-Path '$(Agent.TempDirectory)' ('msal-python-mi-v2-' + [guid]::NewGuid())
+          $venv = Join-Path $work 'venv'
+          & $py -m venv --system-site-packages $venv
+          if ($LASTEXITCODE -ne 0) { throw 'Creating the isolated candidate environment failed.' }
+          $py = Join-Path $venv 'Scripts\python.exe'
+          $env:PATH = "$(Split-Path $py -Parent);$env:PATH"
+          $wheels = @()
+          foreach ($pattern in @('msal-*-py3-none-any.whl', 'msal_native_primitives-*-win_amd64.whl', 'msal_key_attestation-*-win_amd64.whl')) {
+            $selected = @(Get-ChildItem -LiteralPath $candidate -Filter $pattern -File)
+            if ($selected.Count -ne 1) { throw "Stage exactly one selected candidate matching $pattern." }
+            $wheels += $selected[0].FullName
+            Write-Host "Candidate SHA256: $((Get-FileHash -LiteralPath $selected[0].FullName).Hash)"
+          }
+          $env:MSAL_TEST_MI_V2_SOURCE_FINGERPRINT = & $py -c "from tests.test_mi_v2_e2e import _sdk_fingerprint; print(_sdk_fingerprint())"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not fingerprint the selected SDK source.' }
+          $env:MSAL_TEST_MI_V2_NATIVE_BUILD_ID = & $py -c "import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(json.loads(z.read('msal_native_primitives/lib/native-manifest.json').decode('utf-8-sig'))['build_id'])" $wheels[1]
+          if ($LASTEXITCODE -ne 0) { throw 'Could not identify the selected native wheel.' }
+          & $py -m pip install --no-index --no-deps --force-reinstall @wheels
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate installation failed.' }
+          $run = Join-Path $work 'tests'
+          New-Item -ItemType Directory -Force -Path $run | Out-Null
+          Copy-Item -LiteralPath tests\test_mi_v2_e2e.py -Destination $run -Force
+          Push-Location $run
+          try {
+            & $py -m pytest -vv -ra 'test_mi_v2_e2e.py::test_cold_cache_and_forced_pop[sami]' --junitxml='$(Build.ArtifactStagingDirectory)\junit-mi-v2.xml'
+            if ($LASTEXITCODE -ne 0) { throw 'The installed-candidate MSI v2 SAMI/Key Vault profile failed.' }
+          } finally {
+            Pop-Location
+          }
+      env:
+        MSAL_TEST_MI_IMDS_V2: '1'
+        MSAL_TEST_MI_V2_REQUIRE_INSTALLED: '1'
+        MSAL_NATIVE_PRIMITIVES_DIR: ''
+        MSAL_KEY_ATTESTATION_DIR: ''
+        MSAL_TEST_MI_V2_TOKEN_ONLY: '0'
+        MSAL_ALLOW_DEVELOPMENT_NATIVE: '1'
+        MSAL_TEST_MI_V2_BOUND_SECRET_URL: 'https://tokenbinding.vault.azure.net/secrets/boundsecret?api-version=7.5'
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: '$(Build.ArtifactStagingDirectory)\junit-mi-v2.xml'
+        failTaskOnFailedTests: true
+        failTaskOnMissingResultsFile: true
+        testRunTitle: 'MI E2E - installed MSI v2 KeyGuard SAMI / Key Vault'

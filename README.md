@@ -113,6 +113,12 @@ You can follow the latest updates and plans for MSAL Python in the [Roadmap](htt
 
 ## Samples and Documentation
 
+The repository also hosts the pre-release
+[Microsoft.Identity.Native.Primitives](https://github.com/AzureAD/microsoft-authentication-library-for-python/tree/dev/native)
+project under `native/`. It provides Windows CNG/OpenSSL and bounded mTLS
+transport primitives through a C ABI. It builds and tests independently and
+is not integrated into the `msal` Python package or its PyPI distributions.
+
 MSAL Python supports multiple [application types and authentication scenarios](https://docs.microsoft.com/azure/active-directory/develop/authentication-flows-app-scenarios).
 The generic documents on
 [Auth Scenarios](https://docs.microsoft.com/azure/active-directory/develop/authentication-scenarios)

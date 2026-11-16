@@ -7,6 +7,8 @@ MSAL Python Documentation
    :caption: Contents:
    :hidden:
 
+   managed-identity-v2
+
 ..
     Comment: Perhaps because of the theme, only the first level sections will show in TOC,
     regardless of maxdepth setting.
