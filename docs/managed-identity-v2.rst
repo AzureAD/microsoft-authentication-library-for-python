@@ -140,9 +140,26 @@ profile: skipped resource/negative-control cases are not live binding evidence.
 JUnit records package paths, versions, build IDs and the profile, never tokens,
 native key handles or secret values.
 
-The dedicated ``MIE2EImdsV2`` pipeline stage is opt-in. Set
-``MSAL_RUN_MI_V2=1`` and ``MSAL_MI_V2_CANDIDATE_DIR`` to a trusted directory
-containing exactly one core, native and attestation wheel. Configure the UAMI
-and both vault URLs as pipeline variables. The stage preserves the non-fork
-guard, verifies TPM/Secure Boot/VBS, installs the selected wheels and runs the
-copied live suite outside the checkout. It never uses the token-only profile.
+The dedicated ``MIE2EImdsV2`` pipeline stage runs by default after successful
+unit tests on non-fork builds. Set the Azure Pipelines variable
+``MSAL_SKIP_MI_V2=1`` (or ``true``) to skip it explicitly. No enable variable,
+candidate directory, identity ID or vault URL is required.
+
+Like MSAL Java's default MI v2 job, it uses the system-assigned identity on
+``MISEManagedIdentity`` and the ``tokenbinding`` vault's ``boundsecret``.
+It checks attested PoP acquisition, caching, forced refresh, successful bound
+resource calls and rejection without the binding certificate. It does not
+select the token-only profile.
+
+The stage verifies TPM/Secure Boot/VBS, builds the native candidate from the
+checkout with the pinned Rust/vcpkg versions, downloads and verifies the pinned
+attestation dependency, and builds all three wheels automatically. It installs
+them into an isolated environment and runs the copied test outside the checkout.
+The runner requires Visual Studio 2022 C++/CMake tools, Python with the existing
+MI test dependencies, and access to the tool/dependency download endpoints.
+Missing prerequisites fail the stage rather than silently skipping.
+
+The broader full suite remains available through the manual procedure above,
+including UAMI, bearer-resource, mismatched-certificate and attestation-required
+host checks. Those additional fixture requirements are not prerequisites for
+the default CI profile.
