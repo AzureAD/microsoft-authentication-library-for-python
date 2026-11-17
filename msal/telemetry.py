@@ -1,4 +1,4 @@
-import uuid
+import os
 import logging
 
 
@@ -16,7 +16,12 @@ RESERVED = 5
 
 
 def _get_new_correlation_id():
-    return str(uuid.uuid4())
+    # Same as str(uuid.uuid4()), without the cost of a UUID object
+    octets = bytearray(os.urandom(16))
+    octets[6] = octets[6] & 0x0F | 0x40  # Version 4
+    octets[8] = octets[8] & 0x3F | 0x80  # Variant RFC 4122
+    h = octets.hex()
+    return "-".join([h[:8], h[8:12], h[12:16], h[16:20], h[20:]])
 
 
 class _TelemetryContext(object):
