@@ -136,6 +136,8 @@ def _printify(text):
     return repr(text) if isinstance(text, str) and not text.isprintable() else text
 
 class _AuthCodeHandler(BaseHTTPRequestHandler):
+    timeout = 5  # Bound socket inactivity after accept, not the user's sign-in time.
+
     def do_GET(self):
         qs = parse_qs(urlparse(self.path).query)
         welcome_param = qs.get('welcome', [None])[0]
@@ -161,8 +163,11 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
         # For flexibility, we choose to not check self.path matching redirect_uri
         #assert self.path.startswith('/THE_PATH_REGISTERED_BY_THE_APP')
         content_length = int(self.headers.get('Content-Length', 0))
-        post_data = self.rfile.read(content_length).decode('utf-8')
-        qs = parse_qs(post_data)
+        post_data = self.rfile.read(content_length)
+        if len(post_data) != content_length:
+            self._send_full_response("Incomplete POST request", is_ok=False)
+            return
+        qs = parse_qs(post_data.decode('utf-8'))
         if qs.get('code') or qs.get('error'):  # So, it is an auth response
             self._process_auth_response(_qs2kv(qs))
         else:
@@ -201,6 +206,8 @@ class _AuthCodeHandler(BaseHTTPRequestHandler):
 
 
 class _AuthCodeHttpServer(HTTPServer, object):
+    timeout = 1  # Poll for cancellation even when no connections arrive.
+
     def __init__(self, server_address, *args, **kwargs):
         _, port = server_address
         if port and (sys.platform == "win32" or is_wsl()):
@@ -210,14 +217,6 @@ class _AuthCodeHttpServer(HTTPServer, object):
             # So, we need to turn it off.
             self.allow_reuse_address = False
         super(_AuthCodeHttpServer, self).__init__(server_address, *args, **kwargs)
-
-    def handle_timeout(self):
-        # It will be triggered when no request comes in self.timeout seconds.
-        # See https://docs.python.org/3/library/socketserver.html#socketserver.BaseServer.handle_timeout
-        raise RuntimeError("Timeout. No auth response arrived.")  # Terminates this server
-            # We choose to not call self.server_close() here,
-            # because it would cause a socket.error exception in handle_request(),
-            # and likely end up the server being server_close() twice.
 
 
 class _AuthCodeHttpServer6(_AuthCodeHttpServer):
@@ -267,7 +266,7 @@ class AuthCodeReceiver(object):
         return self._server.server_address[1]
 
     def get_auth_response(self, timeout=None, **kwargs):
-        """Wait and return the auth response. Raise RuntimeError when timeout.
+        """Wait and return the auth response, or None on timeout.
 
         :param str auth_uri:
             If provided, this function will try to open a local browser.
@@ -306,37 +305,30 @@ class AuthCodeReceiver(object):
             and https://openid.net/specs/openid-connect-core-1_0.html#AuthResponse
             Returns None when the state was mismatched, or when timeout occurred.
         """
-        # Historically, the _get_auth_response() uses HTTPServer.handle_request(),
-        # because its handle-and-retry logic is conceptually as easy as a while loop.
-        # Also, handle_request() honors server.timeout setting, and CTRL+C simply works.
-        # All those are true when running on Linux.
-        #
-        # However, the behaviors on Windows turns out to be different.
-        # A socket server waiting for request would freeze the current thread.
-        # Neither timeout nor CTRL+C would work. End user would have to do CTRL+BREAK.
-        # https://stackoverflow.com/questions/1364173/stopping-python-using-ctrlc
-        #
-        # The solution would need to somehow put the http server into its own thread.
-        # This could be done by the pattern of ``http.server.test()`` which internally
-        # use ``ThreadingHTTPServer.serve_forever()`` (only available in Python 3.7).
-        # Or create our own thread to wrap the HTTPServer.handle_request() inside.
+        # Keep socket waits off the caller's thread so timeouts and Ctrl+C
+        # remain responsive on Windows.
         result = {}  # A mutable object to be filled with thread's return value
+        stop = threading.Event()
         t = threading.Thread(
-            target=self._get_auth_response, args=(result,), kwargs=kwargs)
+            target=self._get_auth_response, args=(result, stop),
+            kwargs=dict(kwargs, timeout=timeout))
         t.daemon = True  # So that it won't prevent the main thread from exiting
         t.start()
-        begin = time.time()
-        while (time.time() - begin < timeout) if timeout else True:
-            time.sleep(1)  # Short detection interval to make happy path responsive
-            if not t.is_alive():  # Then the thread has finished its job and exited
-                break
-            while (self._scheduled_actions
-                    and time.time() - begin > self._scheduled_actions[0][0]):
-                _, callback = self._scheduled_actions.pop(0)
-                callback()
+        begin = time.monotonic()
+        try:
+            while not timeout or time.monotonic() - begin < timeout:
+                time.sleep(1)  # Short detection interval to make happy path responsive
+                if not t.is_alive():  # Then the thread has finished its job and exited
+                    break
+                while (self._scheduled_actions
+                        and time.monotonic() - begin > self._scheduled_actions[0][0]):
+                    _, callback = self._scheduled_actions.pop(0)
+                    callback()
+        finally:
+            stop.set()
         return result or None
 
-    def _get_auth_response(self, result, auth_uri=None, timeout=None, state=None,
+    def _get_auth_response(self, result, stop, auth_uri=None, timeout=None, state=None,
             welcome_template=None, success_template=None, error_template=None,
             auth_uri_callback=None,
             browser_name=None,
@@ -392,14 +384,15 @@ class AuthCodeReceiver(object):
             # Besides, we have been using these standard keys for years. Changing now would break backward compatibility.
             "Authentication failed. $error: $error_description. ($error_uri).\n\n" + recommendation)
 
-        self._server.timeout = timeout  # Otherwise its handle_timeout() won't work
         self._server.auth_response = {}  # Shared with _AuthCodeHandler
         self._server.auth_state = state  # So handler will check it before sending response
-        while not self._closing:  # Otherwise, the handle_request() attempt
-                                  # would yield noisy ValueError trace
-            # Derived from
-            # https://docs.python.org/2/library/basehttpserver.html#more-examples
-            self._server.handle_request()
+        while not (self._closing or stop.is_set()):
+            try:
+                self._server.handle_request()
+            except (OSError, ValueError):
+                if self._closing:  # close() can close the listener during handle_request().
+                    break
+                raise
             if self._server.auth_response:
                 break
         result.update(self._server.auth_response)  # Return via writable result param
