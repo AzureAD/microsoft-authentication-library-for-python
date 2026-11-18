@@ -412,6 +412,7 @@ class ServiceFabricTestCase(ClientTestCase):
                 "xms_cc": "foo,bar",
             },
             headers={'Secret': 'foo'},
+            allow_redirects=False,
         )
 
     def test_happy_path_with_claim_challenge_should_send_sha256_to_provider(self):
@@ -427,6 +428,7 @@ class ServiceFabricTestCase(ClientTestCase):
                 # There is no xms_cc in this case
             },
             headers={'Secret': 'foo'},
+            allow_redirects=False,
         )
 
     def test_unified_api_service_should_ignore_unnecessary_client_id(self):
@@ -552,6 +554,35 @@ class _ServiceFabricTlsFixture(unittest.TestCase):
 
 
 class ServiceFabricTlsValidationTestCase(_ServiceFabricTlsFixture):
+    def test_environment_proxies_are_ignored_without_mutating_source_session(self):
+        source = self._new_session()
+        source.trust_env = True
+        for scheme in ("http", "https"):
+            with self.subTest(scheme=scheme), patch.dict(os.environ, {
+                    "HTTPS_PROXY": "{}://127.0.0.1:1".format(scheme),
+                    "NO_PROXY": "",
+            }, clear=True):
+                result = _obtain_token_on_service_fabric(
+                    source, self.endpoint, "service-fabric-secret", self.thumbprint, "R")
+                self.assertEqual("AT", result["access_token"])
+                self.assertTrue(source.trust_env)
+        self.assertEqual(2, len(self.server.requests))
+
+    def test_redirects_are_not_followed(self):
+        self.server.body = json.dumps({"error": {"code": "RedirectNotAllowed"}})
+        for status in (301, 302, 303, 307, 308):
+            with self.subTest(status=status):
+                self.server.status = status
+                self.server.response_headers = {"Location": self.endpoint + "/next"}
+                result = _obtain_token_on_service_fabric(
+                    self._new_session(), self.endpoint, "service-fabric-secret",
+                    self.thumbprint, "R")
+                self.assertEqual("invalid_request", result["error"])
+        self.assertEqual(5, len(self.server.requests))
+        self.assertTrue(all(
+            urlparse(request["path"]).path == "/token"
+            for request in self.server.requests))
+
     def test_matching_thumbprint_sends_secret_after_validating_certificate(self):
         result = _obtain_token_on_service_fabric(
             _ThrottledHttpClient(self._new_session()),
@@ -1130,6 +1161,23 @@ class ServiceFabricHttpOptionsTestCase(_ServiceFabricTlsFixture):
             self.assertTrue(all("Secret" not in headers for _, headers in proxy.connects))
             self.assertTrue(all("Proxy-Authorization" not in request["headers"]
                 for request in self.server.requests))
+
+    def test_legacy_client_authenticates_explicit_https_proxy(self):
+        proxy, address = self._proxy(tls=True)
+        source = self._new_session()
+        source.proxies["https"] = address.replace("://", "://proxy-user:proxy-password@")
+        with patch("requests.adapters.DEFAULT_CA_BUNDLE_PATH", proxy.ca_path):
+            result = _obtain_token_on_service_fabric(
+                source, self.endpoint, "service-fabric-secret", self.thumbprint, "R")
+        self.assertEqual("AT", result["access_token"])
+        self.assertEqual(1, len(proxy.connects))
+
+        with self.assertRaises((SSLError, requests.exceptions.ProxyError)):
+            _obtain_token_on_service_fabric(
+                source, self.endpoint, "service-fabric-secret", self.thumbprint, "R")
+        self.assertEqual(1, len(proxy.connects))
+        self.assertEqual(1, len(self.server.requests))
+        self.assertNotIn(b"service-fabric-secret", b"".join(proxy.tunnel_data))
 
     def test_https_proxy_authenticates_proxy_hostname_not_endpoint_hostname(self):
         proxy, address = self._proxy(tls=True)
