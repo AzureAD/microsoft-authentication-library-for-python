@@ -330,7 +330,8 @@ class ManagedIdentityClient(object):
             MSAL derives a separate session for the Service Fabric endpoint so that
             its certificate thumbprint can be validated before the Secret header is sent.
             Standard session, retry, and connection-pool settings are preserved,
-            but custom adapter behavior is not used.
+            except environment settings are ignored and redirects are disabled.
+            Custom adapter behavior is not used.
 
         :param service_fabric_http_options:
             Optional :class:`msal.ServiceFabricHttpOptions` dictionary. Any dict,
@@ -775,7 +776,8 @@ def _obtain_token_on_service_fabric(
         service_fabric_http_client = _create_service_fabric_http_client(
             http_client, endpoint, thumbprint)
         return _parse_service_fabric_response(service_fabric_http_client.get(
-            endpoint, params=params, headers={"Secret": identity_header}))
+            endpoint, params=params, headers={"Secret": identity_header},
+            allow_redirects=False))
 
     service_fabric_http_client = _create_owned_service_fabric_http_client(options, thumbprint)
     response = None
@@ -983,13 +985,14 @@ def _create_service_fabric_http_client(http_client, endpoint, server_thumbprint)
         event: handlers[:] for event, handlers in http_client.hooks.items()}
     service_fabric_client.proxies = http_client.proxies.copy()
     service_fabric_client.stream = http_client.stream
-    service_fabric_client.trust_env = http_client.trust_env
+    service_fabric_client.trust_env = False
     service_fabric_client.max_redirects = http_client.max_redirects
     service_fabric_client.cert = http_client.cert
     service_fabric_client.verify = True
     service_fabric_client.adapters.clear()
     service_fabric_client.mount("https://", _ServiceFabricHTTPAdapter(
         server_thumbprint,
+        _restrict_proxies=True,
         max_retries=copy.deepcopy(source_adapter.max_retries),
         pool_connections=source_adapter._pool_connections,
         pool_maxsize=source_adapter._pool_maxsize,

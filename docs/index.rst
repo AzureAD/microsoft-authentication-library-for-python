@@ -320,6 +320,11 @@ Omitting ``service_fabric_http_options`` or passing top-level ``None`` preserves
 the legacy Service Fabric contract: a Requests session with an HTTPAdapter
 or subclass is required, and its settings are inherited by MSAL's pinned
 transport (not its custom sending behavior). ``None`` does **not** mean ``{}``.
+As security exceptions to inherited settings, environment-derived proxies and
+other environment settings are ignored, and token requests never follow
+redirects. Explicit session proxies remain supported with proxy validation;
+HTTPS proxies must pass certificate-chain and hostname validation against
+Requests' default CA bundle independently of the endpoint thumbprint.
 Other providers, token protocol, token cache, and HTTP cache behavior are
 unchanged.
 
