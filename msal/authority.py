@@ -238,6 +238,8 @@ class Authority(object):
         if not issuer_host:
             return False
         authority_host = authority_parsed.hostname.lower() if authority_parsed.hostname else ""
+        if authority_host.endswith("."):  # Ignore one DNS root dot only for eligibility.
+            authority_host = authority_host[:-1]
         is_microsoft_authority = authority_host in WELL_KNOWN_AUTHORITY_HOSTS
         
         # Case 2: Issuer is from a trusted Microsoft host - O(1) lookup

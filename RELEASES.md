@@ -10,7 +10,9 @@ Microsoft authority hosts (case-insensitive) still accept any single nonempty
 regional label before a built-in Microsoft issuer host; no region allowlist
 is introduced. Microsoft authorities can no longer use the B2C/CIAM issuer
 fallback. Exact Microsoft issuer hosts, same-host matching, and existing
-B2C/CIAM mappings for non-Microsoft authorities remain supported.
+B2C/CIAM mappings for non-Microsoft authorities remain supported. The configured
+authority's eligibility lookup ignores one optional final DNS root dot; this
+does not rewrite discovery URLs, cache keys, or issuer hosts.
 
 Rejected issuers raise the existing `ValueError` before advertised endpoints
 are consumed, and their discovery responses are removed from MSAL's HTTP cache

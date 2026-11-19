@@ -680,7 +680,8 @@ class ClientApplication(object):
             Exact known Microsoft issuer hosts remain accepted for custom
             authorities. Regional issuer hosts are accepted only when the
             configured authority host is an exact built-in Microsoft host
-            (case-insensitive). Any single nonempty regional label is still
+            (case-insensitive, ignoring one optional final DNS root dot for
+            this eligibility check only). Any single nonempty regional label is still
             accepted for those authorities; there is no region allowlist.
             Custom authorities no longer accept regional prefixes on Microsoft
             hosts or on their own host. Same-host matching and existing
