@@ -342,6 +342,31 @@ class TestAuthorityInternalHelperUserRealmDiscovery(unittest.TestCase):
 
 
 @patch("msal.authority.tenant_discovery", return_value={
+    "authorization_endpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "token_endpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    })
+class TestUserRealmDiscoveryEscapesUsername(unittest.TestCase):
+    def _get_url(self, username):
+        a = Authority("https://login.microsoftonline.com/common", MinimalHttpClient())
+        with patch.object(a._http_client, "get") as mocked_get:
+            mocked_get.return_value.status_code = 200
+            mocked_get.return_value.text = '{"account_type": "Managed"}'
+            a.user_realm_discovery(username)
+        return mocked_get.call_args[0][0]
+
+    def test_plain_username_is_unchanged(self, _):
+        self.assertEqual(
+            "https://login.microsoftonline.com/common/userrealm/john.doe@example.com?api-version=1.0",
+            self._get_url("john.doe@example.com"))
+
+    def test_username_cannot_alter_path_or_query(self, _):
+        self.assertEqual(
+            "https://login.microsoftonline.com/common/userrealm/"
+            "alice@contoso.com%2F..%2Fbob@fabrikam.com%3Fx%3D%23?api-version=1.0",
+            self._get_url("alice@contoso.com/../bob@fabrikam.com?x=#"))
+
+
+@patch("msal.authority.tenant_discovery", return_value={
     "authorization_endpoint": "https://contoso.com/placeholder",
     "token_endpoint": "https://contoso.com/placeholder",
     "issuer": "https://contoso.com/tenant",
