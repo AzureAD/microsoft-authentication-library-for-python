@@ -4,7 +4,6 @@
 """Generation-specific requests transport for the blocking Rust transaction ABI."""
 
 import base64
-import asyncio
 import ctypes
 import hashlib
 import logging
@@ -13,14 +12,13 @@ from pathlib import Path
 import tempfile
 import threading
 from contextlib import contextmanager
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from urllib.parse import urlencode
 
 import requests
 from requests.adapters import BaseAdapter
 
 from ._managed_identity_v2 import _V2Error
+from ._managed_identity_async import _AsyncWorker
 from ._native_mtls import _NativeMtlsError, _https_origin
 
 
@@ -215,72 +213,28 @@ class _BoundSession(requests.Session):
         return super().send(request, **kwargs)
 
 
-class _AsyncBoundSession:
+class _AsyncBoundSession(_AsyncWorker):
+    _closed_error_code = "binding_closed"
+
     def __init__(self, binding, concurrency, *, resource_origin=None):
-        if isinstance(concurrency, bool) or not isinstance(concurrency, int) or not 1 <= concurrency <= 32:
-            raise _V2Error("Async binding concurrency must be an integer in [1, 32].",
-                           stage="binding", error_code="unsupported_transport_option")
+        super().__init__(concurrency)
         self._binding = binding
         self._adapter = _BoundAdapter(binding, resource_origin=resource_origin)
-        self._executor = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="msal-mi-mtls")
-        self._slots = asyncio.Semaphore(concurrency)
-        self._loop, self._closed, self._inflight = None, False, set()
-
-    def _check_loop(self):
-        loop = asyncio.get_running_loop()
-        if self._loop is not None and self._loop is not loop:
-            raise _V2Error("An async binding session must stay on its original event loop.",
-                           stage="binding", error_code="unsupported_transport_option")
-        self._loop = loop
-        return loop
 
     async def request(self, method, url, *, headers=None, data=None, json=None,
                       params=None, timeout=10, allow_redirects=False):
-        loop = self._check_loop()
         if allow_redirects:
             raise _V2Error("Bound async requests cannot follow redirects.",
                            stage="binding", error_code="unsupported_transport_option")
-        await self._slots.acquire()
-        if self._closed:
-            self._slots.release()
-            raise _V2Error("The async binding session is closed.",
-                           stage="binding", error_code="binding_closed")
-        try:
+        def send():
             prepared = requests.Request(method, url, headers=headers, data=data,
                                         json=json, params=params).prepare()
-            operation = partial(self._adapter.send, prepared, timeout=timeout,
-                                verify=self._binding._ca_bundle_path)
-            future = loop.run_in_executor(self._executor, operation)
-        except BaseException:
-            self._slots.release()
-            raise
-        self._inflight.add(future)
-        future.add_done_callback(self._completed)
-        # Cancellation must not release the native call's slot, buffers or binding.
-        return await asyncio.shield(future)
+            return self._adapter.send(prepared, timeout=timeout, verify=self._binding._ca_bundle_path)
 
-    def _completed(self, future):
-        self._inflight.discard(future)
-        self._slots.release()
-        if not future.cancelled():
-            future.exception()
+        return await self._run(send)
 
     async def get(self, url, **kwargs):
         return await self.request("GET", url, **kwargs)
 
     async def post(self, url, **kwargs):
         return await self.request("POST", url, **kwargs)
-
-    async def aclose(self):
-        self._check_loop()
-        self._closed = True
-        self._executor.shutdown(wait=False)
-        if self._inflight:
-            await asyncio.shield(asyncio.gather(*self._inflight, return_exceptions=True))
-
-    async def __aenter__(self):
-        self._check_loop()
-        return self
-
-    async def __aexit__(self, *_exception):
-        await self.aclose()

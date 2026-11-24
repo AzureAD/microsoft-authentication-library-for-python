@@ -418,6 +418,32 @@ class ManagedIdentityClient(object):
         self._v2_lock = threading.Lock()
         self._capability_discovery = None
 
+    def open_async_session(self, *, max_concurrency=4):
+        """Create a bounded, worker-backed asyncio session for managed identity v2.
+
+        The session offers awaitable ``acquire_token_for_client`` and
+        ``get_managed_identity_capabilities`` methods, plus ``aclose`` and
+        async context management. Acquisition requires an explicit
+        ``mtls_proof_of_possession`` or ``request_over_mtls`` mode and
+        otherwise preserves this client's arguments, results and errors.
+        Existing synchronous managed identity routing is unchanged.
+
+        :param int max_concurrency:
+            Maximum submitted worker operations, from 1 to 32; default 4.
+            Additional callers wait without occupying another worker.
+
+        The session shares this client's token cache and binding policy;
+        it does not own the supplied HTTP client or returned bindings.
+        Keep the HTTP client open until ``aclose`` has drained submitted work.
+        Cancelling acquisition stops waiting and cooperatively cancels lock
+        waits and subsequent stages. It cannot interrupt synchronous HTTP or
+        native work already in progress; the session drains that work before
+        releasing its resources. Use and close the session on one event loop.
+        This is not an aiohttp or Azure Identity credential adapter.
+        """
+        from ._managed_identity_async import _AsyncManagedIdentityClient
+        return _AsyncManagedIdentityClient(self, max_concurrency)
+
     def get_managed_identity_capabilities(self, *, timeout=None):
         """Discover the host source and maximum binding strength.
 

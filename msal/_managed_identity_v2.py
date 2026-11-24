@@ -17,7 +17,8 @@ import time
 import uuid
 import weakref
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures import CancelledError, ThreadPoolExecutor, TimeoutError as FutureTimeout
+from contextlib import contextmanager
 from datetime import timezone
 from urllib.parse import urlsplit
 from pathlib import Path
@@ -47,6 +48,7 @@ _CLOUD_SUFFIXES = {
     "azurebleucloud": "attestation.sovcloud-identity.fr",
 }
 _BINDINGS, _POLICY_LOCKS = OrderedDict(), weakref.WeakValueDictionary()
+_ACQUISITION_CONTEXT = threading.local()
 # Failed store deletion must stay invalid across clients until replacement persists.
 _FORCE_MINT = set()
 _CACHE_LOCK = threading.Lock()
@@ -59,6 +61,22 @@ class _V2Error(ManagedIdentityError):
         self.stage, self.error_code, self.status_code = stage, error_code, status_code
 
 
+@contextmanager
+def _acquisition_cancellation(event):
+    previous = getattr(_ACQUISITION_CONTEXT, "cancellation", None)
+    _ACQUISITION_CONTEXT.cancellation = event
+    try:
+        yield
+    finally:
+        _ACQUISITION_CONTEXT.cancellation = previous
+
+
+def _check_cancellation():
+    event = getattr(_ACQUISITION_CONTEXT, "cancellation", None)
+    if event is not None and event.is_set():
+        raise CancelledError()
+
+
 class _Deadline:
     def __init__(self, timeout, *, clock=time.monotonic, sleep=time.sleep):
         if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
@@ -68,6 +86,7 @@ class _Deadline:
         self._end = clock() + timeout
 
     def remaining(self):
+        _check_cancellation()
         remaining = self._end - self._clock()
         if remaining <= 0:
             raise _V2Error("The managed identity operation deadline expired.",
@@ -76,7 +95,11 @@ class _Deadline:
 
     def wait(self, seconds):
         remaining = self.remaining()
-        self._sleep(min(seconds, remaining))
+        cancellation = getattr(_ACQUISITION_CONTEXT, "cancellation", None)
+        if cancellation is None:
+            self._sleep(min(seconds, remaining))
+        else:
+            cancellation.wait(min(seconds, remaining))
         self.remaining()
 
 
@@ -310,7 +333,10 @@ class _MaaTokenCache:
 
     def get_or_attest(self, endpoint, generation, operation):
         cache_key = (_endpoint(endpoint, stage="attestation"), generation)
-        with self._lock:
+        while not self._lock.acquire(timeout=0.05):
+            _check_cancellation()
+        try:
+            _check_cancellation()
             for name in list(self._entries):
                 if self._entries[name][1] <= self._clock() + 300:
                     del self._entries[name]
@@ -338,6 +364,8 @@ class _MaaTokenCache:
             while len(self._entries) > 128:
                 self._entries.popitem(last=False)
             return jwt
+        finally:
+            self._lock.release()
 
 
 _MAA_CACHE = _MaaTokenCache()
@@ -580,7 +608,7 @@ class _V2Client:
         self._runtime = self._key = self._attestation = None
         self._store = _CertificateStore()
 
-    def _binding(self, policy, resource, attested, ca_bundle, *, force=False):
+    def _binding(self, policy, resource, attested, ca_bundle, *, force=False, cached_only=False):
         from ._managed_identity_binding import _BindingCertificate
         from ._managed_identity_store import _store_alias
         alias = _store_alias(policy)
@@ -589,6 +617,8 @@ class _V2Client:
             if binding and (force or binding._closed or binding.expires_on <= time.time() + 86400):
                 del _BINDINGS[policy]
                 binding = None
+        if cached_only and binding is None:
+            return None
         if force:
             _FORCE_MINT.add(policy)
             self._store.remove(alias)
@@ -615,8 +645,12 @@ class _V2Client:
             if reusable:
                 key.close()
                 with _CACHE_LOCK:
-                    _BINDINGS.move_to_end(policy)
+                    if _BINDINGS.get(policy) is binding:
+                        _BINDINGS.move_to_end(policy)
                 return binding
+        if cached_only:
+            key.close()
+            return None
         if binding:
             with _CACHE_LOCK:
                 if _BINDINGS.get(policy) is binding:
@@ -730,6 +764,7 @@ class _V2Client:
         return result
 
     def acquire(self, resource, *, pop, attested, floor, force, claims_challenge):
+        _check_cancellation()
         _resource_scope(resource)
         ca_bundle = _trust_bundle(self.http)
         claims = _claims(self.owner._client_capabilities, claims_challenge)
@@ -743,9 +778,13 @@ class _V2Client:
         origin = _https_origin(resource)[1] if pop else None
         policy = (client_id, tuple(sorted(policy_data.items())), origin,
                   ca_bundle, os.getenv("MSAL_NATIVE_PRIMITIVES_DIR", "installed"))
-        with _policy_lock(policy):
+        cache = self.owner._token_cache
+        lock = _policy_lock(policy)
+        use_cache = not force and not claims_challenge
+
+        def select_binding(**options):
             try:
-                binding = self._binding(policy, resource if pop else None, attested, ca_bundle, force=force)
+                return self._binding(policy, resource if pop else None, attested, ca_bundle, **options)
             except _NativeMtlsError as error:
                 if floor != 3:
                     raise
@@ -753,21 +792,46 @@ class _V2Client:
                                    stage="keyguard", error_code="minimum_binding_strength_not_met")
                 failure.native_code, failure.system_error = error.native_code, error.system_error
                 raise failure from error
+
+        def cached_result(binding):
+            if binding is None:
+                return None, False
             data = dict(policy_data, mi_v2_binding_id=binding.key_id if pop else "")
-            cache = self.owner._token_cache
-            if not force and not claims_challenge:
-                for entry in cache.search(cache.CredentialType.ACCESS_TOKEN, target=[resource], query=dict(
-                        client_id=client_id, environment="localhost", realm="managed_identity",
-                        home_account_id=None, ext_cache_key=_compute_ext_cache_key(data))):
-                    now = time.time()
-                    if (isinstance(entry.get("token_type"), str)
-                            and entry["token_type"].lower() == mode
-                            and int(entry["expires_on"]) > now + 300
-                            and int(entry.get("refresh_on", entry["expires_on"])) > now):
-                        return dict(access_token=entry["secret"], token_type=entry["token_type"],
-                                    expires_in=int(int(entry["expires_on"]) - now), token_source="cache",
-                                    binding_certificate=binding if pop else None)
+            for entry in cache.search(cache.CredentialType.ACCESS_TOKEN, target=[resource], query=dict(
+                    client_id=client_id, environment="localhost", realm="managed_identity",
+                    home_account_id=None, ext_cache_key=_compute_ext_cache_key(data))):
+                now = time.time()
+                if (isinstance(entry.get("token_type"), str)
+                        and entry["token_type"].lower() == mode
+                        and int(entry["expires_on"]) > now + 300):
+                    return (dict(access_token=entry["secret"], token_type=entry["token_type"],
+                                 expires_in=int(int(entry["expires_on"]) - now), token_source="cache",
+                                 binding_certificate=binding if pop else None),
+                            int(entry.get("refresh_on", entry["expires_on"])) <= now)
+            return None, False
+
+        cached_binding = select_binding(cached_only=True) if use_cache else None
+        cached, refresh_due = cached_result(cached_binding)
+        _check_cancellation()
+        if cached and not refresh_due:
+            return cached
+        if cached:
+            # Proactive work must not queue a caller that already has a usable token.
+            if not lock.acquire(blocking=False):
+                return cached
+        else:
+            while not lock.acquire(timeout=0.05):
+                _check_cancellation()
+        try:
+            _check_cancellation()
+            binding = select_binding(force=force)
+            data = dict(policy_data, mi_v2_binding_id=binding.key_id if pop else "")
+            if use_cache:
+                current, still_due = cached_result(binding)
+                if current and (not cached or not still_due):
+                    return current
             for attempt in range(2):
+                _check_cancellation()
                 try:
                     result = self._exchange(binding, mode, resource, claims)
                     break
@@ -784,13 +848,24 @@ class _V2Client:
                     _FORCE_MINT.add(policy)
                     if attempt:
                         raise
-                    binding = self._binding(policy, resource if pop else None, attested, ca_bundle)
+                    binding = select_binding()
                     data["mi_v2_binding_id"] = binding.key_id if pop else ""
             cache.add(dict(
                 client_id=client_id, scope=[resource], token_endpoint="https://localhost/managed_identity",
                 response=result, params={}, data=data))
             result.update(token_source="identity_provider", binding_certificate=binding if pop else None)
             return result
+        except (_V2Error, _NativeMtlsError, requests.RequestException, ConnectionResetError) as error:
+            if cached:
+                fallback_binding = select_binding(cached_only=True)
+                fallback, _ = cached_result(fallback_binding) if fallback_binding is cached_binding else (None, False)
+                if fallback:
+                    logger.warning("Managed identity proactive refresh failed; using a valid cached token (%s).",
+                                   type(error).__name__)
+                    return fallback
+            raise
+        finally:
+            lock.release()
 
 
 def _der(tag, contents):

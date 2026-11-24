@@ -48,7 +48,8 @@ including cache hits. Bearer-over-mTLS results carry an explicit bearer type
 and ``binding_certificate=None``. Private key bytes never cross the CNG boundary.
 Tokens remain opaque in product code.
 
-The public sample supports both modes and bounded worker-backed async requests::
+The public sample supports both modes and bounded worker-backed async
+acquisition and resource requests::
 
     python sample\managed_identity_v2.py pop --resource https://vault.azure.net --url https://YOUR-VAULT.vault.azure.net/secrets/NAME?api-version=7.5
     python sample\managed_identity_v2.py async-pop --resource https://vault.azure.net --url https://YOUR-VAULT.vault.azure.net/secrets/NAME?api-version=7.5
@@ -69,6 +70,111 @@ offers async ``request/get/post`` and ``aclose`` / async context management.
 It is not an aiohttp integration. Cancellation stops waiting, not the native
 transaction: worker slots, buffers, the exact binding and cleanup ownership
 remain held until native work exits. Sessions stay on one event loop.
+
+Async acquisition
+-----------------
+
+``client.open_async_session(max_concurrency=4)`` exposes awaitable
+``acquire_token_for_client`` and ``get_managed_identity_capabilities`` methods,
+with ``aclose`` and async context management. Only explicit
+``mtls_proof_of_possession`` or ``request_over_mtls`` acquisition is supported;
+ordinary managed identity routing and existing synchronous API signatures are
+unchanged. The v2 refresh behavior below applies to both sync and async calls.
+For example, with an existing ``ManagedIdentityClient`` and an approved resource
+origin::
+
+    async def acquire_and_send(client, resource, url):
+        async with client.open_async_session() as acquisition:
+            result = await acquisition.acquire_token_for_client(
+                resource=resource, mtls_proof_of_possession=True)
+            async with result["binding_certificate"].open_async_session(
+                    resource_origin=url) as transport:
+                return await transport.get(url, headers={
+                    "Authorization": result["token_type"] + " " + result["access_token"],
+                    "x-ms-tokenboundauth": "true",
+                })
+
+The acquisition session owns only its worker executor. It shares the original
+client's token cache, certificate policy and attestation cache; there is no
+separate async token partition. Results, claims challenges, force-refresh
+semantics and typed failures are the same as synchronous acquisition.
+Returned bindings remain usable after the acquisition session closes.
+Keep the caller-supplied synchronous HTTP client open until acquisition work
+has drained. The resource session has its own independent concurrency bound.
+Both limits accept integers from 1 through 32 and apply per session, not
+process-wide.
+
+Cancellation immediately stops the caller's wait and signals its acquisition
+worker. A worker waiting for the v2 policy or attestation lock abandons the
+wait; acquisition stages and token retry delays also observe cancellation.
+An already-running synchronous HTTP or native call cannot be interrupted.
+Its worker slot, native handles and buffers remain occupied until it returns,
+then cancellation prevents the next stage from starting. A result already
+committed before cancellation may remain cached. Cancellation of one
+acquisition does not cancel other callers. Callers cancelled while waiting
+for worker capacity never start work. ``aclose``
+rejects further work and drains submitted operations without blocking the
+event loop. Cancelling ``aclose`` does not cancel those operations; await it
+again before closing the HTTP client or event loop. Failures after caller
+cancellation are logged by category without token or error-body details;
+cooperative cancellation itself is not logged as a background failure.
+Capability-discovery timeouts include waiting for worker capacity.
+
+To attach response handling, schedule ``acquire_and_send`` with
+``asyncio.create_task`` and use ``task.add_done_callback(handler)``. The handler
+must account for cancellation and exceptions before accessing ``task.result()``.
+Other async work can continue; await the task before closing its surrounding
+resources. No separate MSAL callback API is required.
+
+This is an asyncio adapter over blocking native operations, not native
+nonblocking I/O or an aiohttp SSL context. It does not by itself implement an
+``azure.identity.aio`` credential, Azure Core response adapter, PoP authentication
+policy or service-specific challenge handling.
+
+Concurrent refresh
+------------------
+
+MSAL owns token-cache lookup and refresh coordination. The existing token
+cache implementation, persistence format and partition dimensions are
+unchanged; there is no separate async cache or error cache. The v2 acquisition
+logic is shared by synchronous and asynchronous callers. Ordinary managed
+identity routing and the rest of MSAL are not converted to async.
+
+Cold acquisitions, expired tokens and tokens at or within the five-minute reuse
+boundary serialize certificate selection, renewal and exchange by binding
+policy. A caller rechecks its own token cache after entering the policy lock:
+one successful exchange populates a shared cache and matching waiters reuse it.
+If an acquisition fails, it releases the lock and each queued caller can make
+its own attempt. Failures are not shared across a group or stored with a TTL.
+There is no outage-wide cooldown or circuit breaker.
+
+A token at or past ``refresh_on`` but still outside the five-minute expiry boundary
+can be proactively refreshed. One caller attempts refresh without waiting for
+the policy lock; concurrent callers return the still-usable cached token rather
+than queueing behind that refresh. If proactive refresh fails, the owner
+revalidates the token and its original binding before falling back, with a
+category-only warning. An expired token, unusable binding, changed key generation
+or rejected/replaced certificate cannot be used as a fallback. A later call may
+retry immediately; no proactive retry cooldown is added.
+
+This refresh behavior follows MSAL Go's IMDSv2 feature
+(``e06994c7f557580e2e379aa602c445d70884959a``), not Azure Core Go's separate
+temporal-resource cache and its 30-second proactive backoff. Python retains its
+existing per-policy locks rather than adding Go's process-wide endpoint gate.
+All coordination is process-local.
+
+Certificate renewal selects the replacement binding before looking up its
+token. An LRU eviction does not invalidate a binding already held by a caller,
+and an in-flight resource request retains its exact generation during rotation.
+``force_refresh=True`` bypasses the token cache and remints the certificate,
+matching .NET's MSI v2 delegation path
+(``3e78a47d7fb9308c68403b6f82b085f4ce3de342``); Go differs on this point.
+Nonempty ``claims_challenge`` requests also bypass cached tokens. Both explicit
+paths remain separate exchanges and never use proactive-refresh fallback.
+Requests to the resource service itself are not deduplicated.
+
+Discovery, retries and persistence
+----------------------------------
 
 ``client.get_managed_identity_capabilities(timeout=seconds)`` returns a dict
 with ``source``, ``error_reason``, ``max_supported_binding_strength`` and
