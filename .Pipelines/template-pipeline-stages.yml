@@ -182,18 +182,16 @@ stages:
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 3 - E2ETests - runs only if unit tests pass. Fetches the MSID Lab
 #           certificate from Key Vault.
-#           Fork behaviour: the stage still runs on forked PRs, but the
-#           Key Vault retrieval and certificate decoding steps are skipped
-#           via `ne(System.PullRequest.IsFork, 'True')`. The pytest step then
-#           self-skips each test because LAB_APP_CLIENT_CERT_PFX_PATH is unset
-#           (see tests/test_e2e.py). Result: green stage on forks with all
-#           E2E tests reported as Skipped in the Tests tab.
+#           Fork behaviour: offline unit tests run, but this credentialed stage
+#           is skipped for forked PRs. Trusted runs require the lab certificate;
+#           missing credentials must fail, not produce green skipped coverage.
+#           Legacy optional scenarios retain their existing skips.
 # ═══════════════════════════════════════════════════════════════════════════
 - stage: E2ETests
   displayName: 'E2E tests'
   dependsOn: UnitTests
 
-  condition: eq(dependencies.UnitTests.result, 'Succeeded')
+  condition: and(eq(dependencies.UnitTests.result, 'Succeeded'), ne(variables['System.PullRequest.IsFork'], 'True'))
   jobs:
   - job: Pytest
     displayName: 'pytest'
