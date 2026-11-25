@@ -1,6 +1,8 @@
-import unittest
+from contextlib import ExitStack
 import socket
 import sys
+import threading
+import unittest
 
 try:  # Python 3
     from unittest.mock import patch, mock_open
@@ -79,6 +81,54 @@ class TestAuthCodeReceiver(unittest.TestCase):
             self.assertIsNotNone(result, "Should receive auth response via POST")
             self.assertEqual(result.get("code"), test_code)
             self.assertEqual(result.get("state"), test_state)
+
+    def test_idle_and_incomplete_connections_do_not_block_callback(self):
+        with ExitStack() as sockets, AuthCodeReceiver() as receiver:
+            def browser_connection(body=None, incomplete=False):
+                browser, accepted = socket.socketpair()
+                sockets.enter_context(browser)
+                sockets.enter_context(accepted)
+                if body is not None:
+                    browser.sendall(
+                        b"POST / HTTP/1.1\r\nHost: localhost\r\n"
+                        b"Content-Length: %d\r\n\r\n%s"
+                        % (len(body) + incomplete, body))
+                    browser.shutdown(socket.SHUT_WR)
+                return browser, accepted
+
+            idle_browser, idle_socket = browser_connection()
+            _, incomplete_socket = browser_connection(
+                b"code=incomplete&state=expected", incomplete=True)
+            _, callback_socket = browser_connection(b"code=complete&state=expected")
+            pending = iter((idle_socket, incomplete_socket, callback_socket))
+            server = receiver._server
+
+            def handle_request():
+                server.process_request(next(pending), ("127.0.0.1", 0))
+
+            with patch.object(server, "handle_request", side_effect=handle_request):
+                result = receiver.get_auth_response(timeout=15, state="expected")
+
+            self.assertEqual(result, {"code": "complete", "state": "expected"})
+            idle_browser.settimeout(1)
+            self.assertEqual(idle_browser.recv(1), b"")
+
+    def test_overall_timeout_stops_receiver_worker_without_a_callback(self):
+        with AuthCodeReceiver() as receiver:
+            server = receiver._server
+            handle_request = server.handle_request
+            workers = []
+
+            def observe_worker():
+                workers.append(threading.current_thread())
+                handle_request()
+
+            with patch.object(server, "handle_request", side_effect=observe_worker):
+                self.assertIsNone(receiver.get_auth_response(timeout=1))
+                self.assertTrue(workers)
+                worker = workers[0]
+                worker.join(timeout=3)
+                self.assertFalse(worker.is_alive())
 
     def test_post_request_with_error(self):
         """Test that POST request with error is handled correctly"""
