@@ -52,3 +52,13 @@ class TestTesterTokenCacheFile(unittest.TestCase):
         open(self.tester._token_cache_filename, "w").close()
         os.chmod(self.tester._token_cache_filename, 0o644)  # Left by older versions
         self.assertCacheFileIsOwnerOnly()
+
+    def test_unchmodable_cache_file_should_keep_its_content(self):
+        filename = self.tester._token_cache_filename
+        with open(filename, "w") as f:  # A cache owned by somebody else
+            f.write("previous content")
+        with patch("os.fchmod", side_effect=PermissionError):
+            with self.assertRaises(PermissionError):
+                self.tester._save_cache()
+        with open(filename) as f:
+            self.assertEqual("previous content", f.read())

@@ -600,13 +600,18 @@ class SerializableTokenCache(TokenCache):
         cache = msal.SerializableTokenCache()
         if os.path.exists(cache_filename):
             cache.deserialize(open(cache_filename, "r").read())
-        atexit.register(lambda:
-            open(  # Readable only by its owner, because it contains refresh tokens
-                os.open(cache_filename, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
-                "w").write(cache.serialize())
+        def save_cache():
             # Hint: The following optional line persists only when state changed
-            if cache.has_state_changed else None
-            )
+            if not cache.has_state_changed:
+                return
+            # The cache contains refresh tokens, so only its owner may read it
+            fd = os.open(cache_filename, os.O_WRONLY | os.O_CREAT, 0o600)
+            with os.fdopen(fd, "w") as f:
+                if hasattr(os, "fchmod"):  # Also tightens a pre-existing file
+                    os.fchmod(fd, 0o600)
+                f.truncate(0)  # Only once the file is known to be owner-only
+                f.write(cache.serialize())
+        atexit.register(save_cache)
         app = msal.ClientApplication(..., token_cache=cache)
         ...
 
