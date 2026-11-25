@@ -241,13 +241,18 @@ class Client(oauth2.Client):
         """
         warnings.warn(
             "Use obtain_token_by_auth_code_flow() instead", DeprecationWarning)
+        on_obtaining_tokens = (
+            kwargs.pop("on_obtaining_tokens", None) or self.on_obtaining_tokens)
+        events = []  # Do not store any token until the nonce is validated
         result = super(Client, self).obtain_token_by_authorization_code(
-            code, **kwargs)
+            code, on_obtaining_tokens=events.append, **kwargs)
         nonce_in_id_token = result.get("id_token_claims", {}).get("nonce")
         if "id_token_claims" in result and nonce and nonce != nonce_in_id_token:
             raise ValueError(
                 'The nonce in id token ("%s") should match your nonce ("%s")' %
                 (nonce_in_id_token, nonce))
+        for event in events:
+            on_obtaining_tokens(event)
         return result
 
     def initiate_auth_code_flow(
@@ -297,8 +302,12 @@ class Client(oauth2.Client):
         See :func:`oauth2.Client.obtain_token_by_auth_code_flow` in parent class
         for descriptions on other parameters and return value.
         """
+        on_obtaining_tokens = (
+            kwargs.pop("on_obtaining_tokens", None) or self.on_obtaining_tokens)
+        events = []  # Do not store any token until the ID token passes the checks below
         result = super(Client, self).obtain_token_by_auth_code_flow(
-            auth_code_flow, auth_response, **kwargs)
+            auth_code_flow, auth_response,
+            on_obtaining_tokens=events.append, **kwargs)
         if "id_token_claims" in result:
             nonce_in_id_token = result.get("id_token_claims", {}).get("nonce")
             expected_hash = _nonce_hash(auth_code_flow["nonce"])
@@ -326,6 +335,8 @@ class Client(oauth2.Client):
                         now=now,
                         id_token=json.dumps(result["id_token_claims"], indent=2),
                         ))
+        for event in events:
+            on_obtaining_tokens(event)
         return result
 
     def obtain_token_by_browser(
