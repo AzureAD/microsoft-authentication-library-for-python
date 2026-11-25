@@ -1484,7 +1484,8 @@ class TestAuthCodeTokensRejectedByIdTokenChecksAreNotCached(unittest.TestCase):
         self.assertEqual([], app.get_accounts())
         for credential_type in (
                 msal.TokenCache.CredentialType.ACCESS_TOKEN,
-                msal.TokenCache.CredentialType.REFRESH_TOKEN):
+                msal.TokenCache.CredentialType.REFRESH_TOKEN,
+                msal.TokenCache.CredentialType.ID_TOKEN):
             self.assertEqual([], list(app.token_cache.search(credential_type)))
 
     def test_tokens_with_mismatching_nonce_should_not_be_cached(self):
