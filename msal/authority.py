@@ -1,8 +1,9 @@
 import json
 try:
-    from urllib.parse import urlparse
+    from urllib.parse import urlparse, quote
 except ImportError:  # Fall back to Python 2
     from urlparse import urlparse
+    from urllib import quote
 import logging
 
 logger = logging.getLogger(__name__)
@@ -191,7 +192,7 @@ class Authority(object):
         if self.instance not in self.__class__._domains_without_user_realm_discovery:
             resp = response or self._http_client.get(
                 "https://{netloc}/common/userrealm/{username}?api-version=1.0".format(
-                    netloc=self.instance, username=username),
+                    netloc=self.instance, username=quote(username, safe="@")),
                 headers={'Accept': 'application/json',
                          'client-request-id': correlation_id},)
             if resp.status_code != 404:
